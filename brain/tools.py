@@ -134,26 +134,57 @@ def tool_help_extra():
         return ""
 
 
-def run_chat_with_tools(chat_fn, text, max_rounds=2):
+def run_chat_with_tools(chat_fn, text, max_rounds=4):
     """带工具循环的聊天外层。
 
     chat_fn(t) -> (ans, mode)。她第一轮的回复里带 [tool:...] 就执行，
     结果拼进系统提示再问一轮（img 描述已在 text 里，第二轮不重看图）。
-    返回 (最终回复, mode, 用过的工具名)，没用到工具第三个返回 ""。
+
+    ## 为什么默认给 4 轮而不是 2
+
+    2 轮的意思是"她最多只能调一次工具"。而现实里一次常常不够：
+    "上海和杭州现在哪个热" 要两次天气，"我这单到哪了顺便看看天气" 要两个工具。
+    一次机会用掉她就没辙了，只能回"我查一下"然后拿一个结果硬答 ——
+    表现为答不全、或者干脆不调。**给她多次机会比教她一次调两个便宜**。
+
+    ## 一轮里写了多个标签怎么办
+
+    全跑完（TOOL_TAG_RE.findall，不是 search）。她如果一次写
+    "[tool:weather:杭州] [tool:search:杭州新闻]"，两个都该执行。
+    以前只跑第一个，第二个标签被后面的清扫扫掉 —— 她明明写了却没执行。
+
+    返回 (最终回复, mode, 用过的工具名列表)，没用到第三个返回 []。
     """
-    used = ""
+    used = []
     ans, mode = chat_fn(text)
     for _ in range(max(0, max_rounds - 1)):
-        m = TOOL_TAG_RE.search(ans or "")
-        if not m:
+        # findall 带两个捕获组时返回的是元组 [(名字, 参数), ...] 而不是
+        # Match 对象 —— 想拿 .group() 就得用 finditer，别混用
+        tags = [(m.group(1) or "", m.group(2) or "")
+                for m in TOOL_TAG_RE.finditer(ans or "")]
+        if not tags:
             break
-        used = m.group(1).lower()
-        result = run_tool(used, m.group(2))
-        hint = ("（系统提示：你刚才调用了工具[%s]，结果：%s。"
-                "现在用这个结果直接回答他，别再写任何工具标签）"
-                % (used, result if result else "查询失败，照实说查不到，别编"))
+        # 同一轮里重复调同一个工具没有意义（结果一样），去重但保持顺序
+        seen, todo = set(), []
+        for name, arg in tags:
+            n = name.strip().lower()
+            if n and n not in seen:
+                seen.add(n)
+                todo.append((n, arg))
+        if not todo:
+            break
+        results = []
+        for name, arg in todo:
+            result = run_tool(name, arg)
+            if name not in used:
+                used.append(name)
+            results.append("[%s] %s" % (
+                name, result if result else "查询失败，照实说查不到，别编"))
+        hint = ("（系统提示：你刚才调用了工具，结果：\n%s\n"
+                "现在用这些结果直接回答他，别再写任何工具标签）"
+                % "\n".join(results))
         ans, mode = chat_fn(text + "\n" + hint)
-    # 兜底清扫：两轮后还残留的（或压根没触发循环的）不能漏给用户。
+    # 兜底清扫：循环跑完还残留的（或压根没触发循环的）不能漏给用户。
     # 这里用宽口径，连模型编出来的名字一起扫
     ans = TOOL_TAG_ANY_RE.sub("", ans or "").replace("  ", " ").strip()
     return ans, mode, used

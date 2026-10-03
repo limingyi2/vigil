@@ -273,10 +273,11 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
     import tools as _tools
     ans, mode, used = _tools.run_chat_with_tools(_once, text)
     if used:
-        print(f"[大脑] 她调用了工具 {used}", flush=True)
-        # 用过的工具要进 trace，否则重启后没法追"这轮为什么答成那样"
+        print("[大脑] 她调用了工具 %s" % "、".join(used), flush=True)
+        # 用过的工具要进 trace，否则重启后没法追"这轮为什么答成那样"。
+        # 一轮可能调多个，用逗号连开 —— trace 是给人读的，列表字面量不好扫
         if trace_out is not None:
-            trace_out["tool"] = used
+            trace_out["tool"] = ",".join(used)
     return ans, mode
 
 
@@ -593,6 +594,14 @@ def start_remote_api(brain):
                     # 认不出来的值当默认 —— 宁可跟 App 共用，也别因为一个
                     # 拼错的字段名开出空历史让她失忆。
                     _src = _norm_src(body.get("src"))
+                    # 把渠道记进 features：同一个功能在 App 和群聊里该有不同的
+                    # 开合（群聊里她不该报天气、不该把别人的单号加进你的监控）。
+                    # 全局那一份仍是基线，这里只查 features_by_src 的覆盖。
+                    try:
+                        import features as _feat
+                        _feat.set_current_src(_src)
+                    except Exception:
+                        pass
                     # 话里带单号就进监控（每 30 分钟自动查），现状也塞给模型，
                     # 她回话时能顺口说一句"刚发出去了"
                     try:
@@ -1001,13 +1010,16 @@ def start_remote_api(brain):
                                              negative_prompt=GEN_NEGATIVE)
                     self._json(200, {"name": name, "err": "" if name else "生图失败"})
                 elif path == "/api/features":
-                    # App 设置页的功能开关：传哪个改哪个，返回改后的全量
+                    # App 设置页的功能开关：传哪个改哪个，返回改后的全量。
+                    # 带上 src 就改那个渠道的覆盖（只写这几个键，不动全局）；
+                    # 不带 src 改的是全局那一份。
                     import features as _feat
                     patch = body if isinstance(body, dict) else {}
                     patch.pop("token", None)
-                    cur = _feat.set_features(patch) if patch else None
+                    _fsrc = _norm_src(patch.pop("src", "") or "") or None
+                    cur = _feat.set_features(patch, _fsrc) if patch else None
                     if cur is None:
-                        cur = _feat.all_features()
+                        cur = _feat.all_features(_fsrc)
                     self._json(200, {"features": cur})
                 elif path == "/api/plugins/reload":
                     # 改完 plugins/ 里的文件不用重启大脑：重扫目录重装。
@@ -1231,9 +1243,17 @@ def start_remote_api(brain):
                 except Exception as e:
                     self._json(200, {"items": [], "err": str(e)[:80]})
             elif path == "/api/features":
-                # App 设置页读功能开关
+                # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。
                 import features as _feat
-                self._json(200, {"features": _feat.all_features()})
+                _q = {}
+                try:
+                    from urllib.parse import parse_qs, urlparse
+                    _q = {k: v[0] for k, v in
+                          parse_qs(urlparse(self.path).query).items()}
+                except Exception:
+                    _q = {}
+                _fsrc = _norm_src(_q.get("src") or "") or None
+                self._json(200, {"features": _feat.all_features(_fsrc)})
             elif path == "/api/plugins":
                 # 插件清单：装了哪些、各自有什么能力/工具/接口、开关状态
                 import plugin_host as _ph

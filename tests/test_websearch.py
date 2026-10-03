@@ -261,6 +261,13 @@ class TestWebSearchTurnHook(unittest.TestCase):
         for bad in ("你自己判断", "值不值得", "要不要"):
             self.assertNotIn(bad, r)
 
+    def test_提示不许禁止她提搜索(self):
+        """栽过（群聊里发现的）：写"不要提搜索"她会先应一声"我看看啊"
+        就不动了 —— 群里本来可以慢慢回，更显得像在敷衍。"""
+        r = self._hook("帮我查一下天气")
+        for bad in ("不要提搜索", "不要提「", "别提搜索"):
+            self.assertNotIn(bad, r)
+
 
 if __name__ == "__main__":
     unittest.main()

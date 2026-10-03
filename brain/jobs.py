@@ -22,6 +22,28 @@ from proactive import (
 from moment_flow import try_post_moment, _SEEDED_AT, _seed_initial_moment
 
 
+class _NullChannel(object):
+    """features 还没 import 上时的占位（让 with 语句照常工作）。"""
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *a):
+        return False
+
+
+def _feat_channel(src):
+    """features.with_channel 的安全版 —— features 导入失败不能连带提醒线程挂掉。"""
+    try:
+        import features
+        return features.with_channel(src)
+    except Exception:
+        return _NullChannel()
+
+
 def start_background(brain):
     """把她的"生活"全部跑起来（run_server 装配完大脑后调一次）。"""
     threading.Thread(target=_life_loop, args=(brain,), daemon=True).start()
@@ -221,13 +243,17 @@ def _reminder_loop(b):
     静默时段照躲：快递到了也不凌晨轰炸，睡醒那轮补说。"""
 
     def _say(prompt):
-        with _LOCAL["lock"]:
-            ans, _m = b.chat(prompt, proactive=True, log=False)
-        text = strip_say_marker((ans or "").strip())
-        if not text or text == "无":
-            _trace_loop("reminder", sent=0, reason="她自己不想说")
-            return
-        _cloud_append_assistant(text)
+        # 事件提醒是**私聊**内容：天气变化、快递到货都是跟你一个人的事，
+        # 发到群里会出戏（"该加衣服了"当着另外三个人说）。所以显式按 app 渠道
+        # 走，别让后台线程落在上一个处理过的渠道上。
+        with _feat_channel("app"):
+            with _LOCAL["lock"]:
+                ans, _m = b.chat(prompt, proactive=True, log=False, src="app")
+            text = strip_say_marker((ans or "").strip())
+            if not text or text == "无":
+                _trace_loop("reminder", sent=0, reason="她自己不想说")
+                return
+            _cloud_append_assistant(text)
         _trace_loop("reminder", sent=1, chars=len(text))
         print("[大脑] 事件提醒：%s" % text[:50], flush=True)
 
