@@ -993,8 +993,12 @@ def start_remote_api(brain):
                     except Exception as e:
                         self._json(200, {"ok": False, "err": str(e)[:120]})
                 elif path == "/api/gen":
-                    # 她"拍一张照片"：prompt -> 生成图 -> 存云上，返回文件名
-                    name = _cloud_gen_image(str(body.get("prompt") or "")[:400])
+                    # 她"拍一张照片"：prompt -> 生成图 -> 存云上，返回文件名。
+                    # 走 _cloud_gen_selfie 而不是 _cloud_gen_image：这个接口出的图
+                    # 也是"她本人的照片"，不锁参考图的话脸每次都变，和对话里
+                    # [gen:] 触发生成的不是同一个人。
+                    name = _cloud_gen_selfie(str(body.get("prompt") or "")[:400],
+                                             negative_prompt=GEN_NEGATIVE)
                     self._json(200, {"name": name, "err": "" if name else "生图失败"})
                 elif path == "/api/features":
                     # App 设置页的功能开关：传哪个改哪个，返回改后的全量

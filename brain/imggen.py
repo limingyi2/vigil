@@ -100,7 +100,15 @@ def _cloud_gen_image(prompt, model=None, negative_prompt=None, size=None,
 
 # --- 她的标准长相 ---
 # 实测：参考图只给脸（上半身裁切）效果最好，整张沙滩照会把海景一起带进结果
-_LOOK_CACHE = {"path": "", "uri": None}
+# 缓存键带 mtime：换人设换了参考图、或者手动替换了 look_face.jpg 之后，
+# 不重启进程也必须立刻用新脸。写死"切换时清缓存"意味着每个换参考图的入口
+# 都要记得清，漏一个就出图还是旧脸 —— 让缓存自己比对文件指纹更省事。
+_LOOK_CACHE = {"path": "", "mtime": 0.0, "size": 0, "uri": None}
+
+
+def _look_cache_reset():
+    """丢掉缓存的参考图。下次调用会重新读盘。"""
+    _LOOK_CACHE.update({"path": "", "mtime": 0.0, "size": 0, "uri": None})
 
 
 def _look_ref_path():
@@ -135,21 +143,41 @@ def _look_ref_path():
 
 
 def _look_ref_uri():
-    """参考图的 data URI（读一次缓存住 —— 别每张照片都重读盘 + 重新编码）。"""
-    if _LOOK_CACHE["uri"]:
-        return _LOOK_CACHE["uri"]
+    """参考图的 data URI（读一次缓存住 —— 别每张照片都重读盘 + 重新编码）。
+
+    命中缓存前先比一次文件指纹（mtime + 字节数）：文件被换过就重读。
+    """
+    try:
+        p = _look_ref_path()
+    except Exception:
+        p = ""
+    if p:
+        try:
+            st = os.stat(p)
+            fresh = (p == _LOOK_CACHE["path"]
+                     and st.st_mtime == _LOOK_CACHE["mtime"]
+                     and st.st_size == _LOOK_CACHE["size"])
+        except OSError:
+            st, fresh = None, False
+        if fresh and _LOOK_CACHE["uri"]:
+            return _LOOK_CACHE["uri"]
+    elif _LOOK_CACHE["uri"]:
+        # 之前找到过、现在找不到了（参考图被删）：缓存作废，别再拿旧的凑
+        _look_cache_reset()
+
     try:
         import base64 as _b64
-        p = _look_ref_path()
         if not p:
             print("[大脑] 没找到她的长相参考图（look_refs/），自拍只能退回文字描述",
                   flush=True)
             return None
         mime = "image/png" if p.lower().endswith(".png") else "image/jpeg"
         with open(p, "rb") as f:
-            uri = "data:%s;base64,%s" % (mime, _b64.b64encode(f.read()).decode())
-        _LOOK_CACHE["path"] = p
-        _LOOK_CACHE["uri"] = uri
+            raw = f.read()
+        uri = "data:%s;base64,%s" % (mime, _b64.b64encode(raw).decode())
+        st = os.stat(p)
+        _LOOK_CACHE.update({"path": p, "mtime": st.st_mtime,
+                            "size": st.st_size, "uri": uri})
         print("[大脑] 已加载她的长相参考图：" + os.path.basename(p), flush=True)
         return uri
     except Exception as e:
