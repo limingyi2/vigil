@@ -555,7 +555,9 @@ class Brain:
             parts.append("\n" + HIST_TIME_NOTE)
         try:
             import recap_store
-            rb = recap_store.block()
+            # 摘要按「人设+渠道」分区：不传的话读的是上一次切过的那个人的
+            rb = recap_store.block(
+                persona_key=self._persona_key_for(self._cur_src))
             if rb:
                 parts.append("\n" + rb)
                 _rb_len = len(rb)

@@ -213,15 +213,24 @@ def _day_path(day):
 def _read_log():
     """读 chat_history.jsonl，返回 [(行号, 时间, 角色, 正文)]（行号从 1 起）
 
-    只读主渠道那份。历史摘要是给「她」回顾跟这个人聊过什么用的，
-    而她真正的对话底稿是主渠道的；微信侧是另一个人设，那边的对话不该
-    混进她的记忆里。
+    🔴 读的是**当前人设分区**那一份，不是模块级的 CHAT_LOG。
+    用 CHAT_LOG 的话，新人设的摘要会拿旧人设的对话去生成 ——
+    表现是"换了人设她还是知道你上个月说过什么"，而分区目录建了、
+    文件也有，看着一切正常，只有内容是错的（这个坑查了好几轮）。
+    分区规则跟 Brain._log_for 一致：<人设>.<渠道>.chat_history.jsonl。
     """
-    if not os.path.exists(CHAT_LOG):
+    log = CHAT_LOG
+    if _SCOPE:
+        try:
+            import paths
+            log = paths.scoped(CHAT_LOG, _SCOPE.rsplit(".", 1)[0] or "", "app")
+        except Exception:
+            log = CHAT_LOG
+    if not os.path.exists(log):
         return []
     out = []
     try:
-        with open(CHAT_LOG, encoding="utf-8") as f:
+        with open(log, encoding="utf-8") as f:
             for i, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
@@ -511,11 +520,20 @@ def _week_label(name):
         return name
 
 
-def block(cap=BLOCK_CAP, use_cache=True):
+def block(cap=BLOCK_CAP, use_cache=True, persona_key=None):
     """拼成给模型的注入块。没有摘要就返回 ""。
 
     顺序按时间正序（最近的放最后）—— 离当前对话越近，模型越看得住。
     """
+    # 按人设分区读摘要。**每次调用都切**，而不是靠 reload_persona 时切一次
+    # 模块状态 —— 后者在两个渠道各用不同人设时会互相覆盖：
+    # 切到渠道B把目录换成B的，切回渠道A没人换回来，读的就是B的。
+    # 摘要块只有几百字符，代价可以忽略。
+    if persona_key:
+        try:
+            scoped_to(persona_key)
+        except Exception:
+            pass
     now = time.time()
     if use_cache and _CACHE["text"] and (now - _CACHE["t"]) < CACHE_TTL:
         return _CACHE["text"]
