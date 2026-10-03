@@ -133,13 +133,25 @@ def _attach_life_engine(b, api_config, verbose=False):
     try:
         from life_engine import LifeEngine
         from persona_store import key_from_config
+        pk = key_from_config(api_config)
+        # 经历流和日记也按人设分区：换了人就是换了个人，她过去那阵子过的
+        # 是另一个人的日子。不分区的话新人设会继承旧人设的日常 ——
+        # 名字换了、说话方式换了，但"她昨天去了哪儿"还是另一个人的记忆。
+        home = None
+        try:
+            import paths
+            if paths.scope_name(pk, "app"):
+                home = os.path.join(paths.DATA_DIR, "her_life.%s" % pk)
+        except Exception:
+            home = None
         eng = LifeEngine(api_config,
                          name=(b.persona.get("name") or ""),
-                         persona=key_from_config(api_config))
+                         persona=pk, home=home)
         if eng.enabled:
             b.life = eng
             if verbose:
-                print("[大脑] 生活引擎就绪", flush=True)
+                print("[大脑] 生活引擎就绪%s"
+                      % ("（人设分区 %s）" % pk if home else ""), flush=True)
             return eng
     except Exception as e:
         if verbose:

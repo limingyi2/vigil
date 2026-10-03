@@ -56,6 +56,53 @@ def chat_log_for(src="app"):
         return CHAT_LOG
     return os.path.join(DATA_DIR, "chat_history.%s.jsonl" % src)
 
+
+# --- 人设隔离 ---
+# 换人设 = 换一个人。她的记忆、聊天存档、经历流、日记都该是**另一份**，
+# 不该带着上一段的记忆上岗 —— 那正是"换了人设但感知不明显"的原因：
+# 人设文本换了，可她还记得你上个月跟她说过的所有事，说话方式自然还是老的。
+#
+# 所以每个「人设 × 渠道」组合一份数据。**不按人设分区的东西**：配置本身、
+# 表情包、图库、look_refs —— 那是素材，不是记忆。
+#
+# 生活流 / 朋友圈 / 日记也分区：换了人设就是换了个人，她过去那阵子过的是
+# 另一个人的日子。只有"当前人设的日常"会继续往前长。
+def scope_name(persona_key="", src="app"):
+    """算出一个人设+渠道的数据分区名。默认人设返回 ""（沿用老路径，老数据不用搬）。"""
+    p = _safe(persona_key)
+    s = _safe(src) or "app"
+    if not p or p == "default":
+        return "" if s == "app" else s
+    return "%s.%s" % (p, s)
+
+
+def _safe(v):
+    """把任意字符串收拾成能当文件名的样子。
+
+    人设 key 会进文件名（分区名），所以白名单而不是黑名单：只准字母数字
+    下划线短横线点，认不出来的整个丢掉退回去。这样拼错一个人设名
+    也造不出 "../../" 这种路径。
+    """
+    out = []
+    for ch in str(v or ""):
+        if ch.isalnum() or ch in "_-":
+            out.append(ch)
+        elif ch in ". ":
+            out.append("_")
+    return "".join(out)[:40].strip("._-")
+
+
+def scoped(path, persona_key="", src="app"):
+    """给一个 data/ 下的路径加上人设+渠道分区。
+
+    scope 为空（默认人设 + app）时原样返回，老数据不用搬。
+    """
+    name = scope_name(persona_key, src)
+    if not name:
+        return path
+    d, f = os.path.split(path)
+    return os.path.join(d, "%s.%s" % (name, f))
+
 # --- data/run/：运行时标记 ---
 PET_STAMP = os.path.join(RUN_DIR, "pet_stamp")       # 看门狗上次拉桌宠的时间
 CATCHUP_LOCK = os.path.join(RUN_DIR, "catchup.lock")  # 生活补算的跨进程锁

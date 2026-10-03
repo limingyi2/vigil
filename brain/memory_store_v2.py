@@ -460,10 +460,36 @@ def configured_mem_dir():
     return FALLBACK_MEM_DIR
 
 
-def get_default_store():
-    """按 config.json 打开默认记忆库"""
+def get_default_store(persona_key=None, src="app"):
+    """按 config.json 打开默认记忆库。
+
+    persona_key / src 决定用哪一份数据：换人设 = 换一个人，她不该带着上一段
+    的记忆上岗（那正是"换了人设但感知不明显"的根源 —— 人设文本换了，
+    可她还记得你说过的所有事，说话方式自然还是老的）。
+    两者都为空时沿用老路径，老数据不用搬。
+    """
     d = configured_mem_dir()
-    return MemoryStore(os.path.join(d, "memory.json"))
+    if persona_key is None:
+        return MemoryStore(os.path.join(d, "memory.json"))
+    import paths
+    p = paths.scoped(os.path.join(d, "memory.json"), persona_key, src)
+    return _cached_store(p)
+
+
+_stores = {}
+
+
+def _cached_store(path):
+    """同一个路径只开一个 MemoryStore。
+
+    必须复用：每个 store 各自持有一把 RLock 和一份内存索引，
+    两个实例写同一个文件会互相覆盖（后写的赢，前面的白写）。
+    """
+    st = _stores.get(path)
+    if st is None:
+        st = MemoryStore(path)
+        _stores[path] = st
+    return st
 
 
 def _synchronized(fn):

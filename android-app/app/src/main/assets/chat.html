@@ -809,6 +809,8 @@ function copyText(s, okMsg) {
   }
 }
 let histSig = '';
+let _histBusy = false;               // 拉取进行中：防止两次 loadHistory 交错
+let _histQueued = false;             // 拉取期间有人点了刷新 → 完事补一次
 let msgNodes = [];                  // [{key, els}] —— 增量渲染时用来删掉滑出窗口的旧消息
 let optEls = [];                    // 刚发出去的"乐观气泡"（本地先画的，服务端历史一到就摘掉）
 
@@ -922,28 +924,35 @@ function renderHistory(items) {
 }
 function updateHistory(items) {
   // 增量：只删滑出窗口的旧节点、只追加新消息，不动已有 DOM 就不会丢滚动位置、也不会闪。
+  //
+  // 🔴 这里的匹配**只能从末尾对齐**，而且**只能在"服务端比页面上多"的时候增量**。
+  //
+  // 原来的写法是拿 msgNodes 的尾巴去 items 里找（"我最后几条在服务端的第几段"），
+  // 方向反了：只要末尾有一条对不上，算出来的位置就偏，
+  // "保留 0 条 + 追加 0 条" → **整屏消息被清空**。
+  //
+  // 为什么"服务端多出来的"必须走全量而不是补在前面：
+  // addMsg 建节点只会 $('list').appendChild()，**永远追加到末尾**，
+  // 没有任何 insertBefore。所以"把这几条插到列表前面"这件事
+  // 光靠 msgNodes.unshift() 做不到 —— 数组顺序和 DOM 顺序会对不上，
+  // 下一次比对又全错位。
+  // 末尾对齐 + 只删不加，是唯一能用现有 DOM 操作正确表达的增量。
   if (!msgNodes.length) { renderHistory(items); return; }
   const oldK = msgNodes.map(m => m.key);
   const newK = items.map(keyOf);
-  let hitK = 0, hitI = -1;
-  for (let k = oldK.length; k > 0 && !hitK; k--) {
-    const sub = oldK.slice(-k);
-    for (let i = 0; i + k <= newK.length; i++) {
-      let ok = true;
-      for (let j = 0; j < k; j++) {
-        if (newK[i + j] !== sub[j]) { ok = false; break; }
-      }
-      if (ok) { hitK = k; hitI = i; break; }
-    }
-  }
-  if (!hitK) { renderHistory(items); return; }
-  for (let j = 0; j < hitI && j < msgNodes.length; j++) {
+  let hitK = 0;                          // 末尾连续对上多少条
+  while (hitK < oldK.length && hitK < newK.length &&
+         oldK[oldK.length - 1 - hitK] === newK[newK.length - 1 - hitK]) hitK++;
+  // 一条都对不上 → 全量；对上了但服务端**更早**的地方还有消息（newK 更长）
+  // → 那些是补进来的历史，插不到前面去 → 也全量。
+  // 只有"服务端纯追加"（dropNew == 0）才走增量。
+  const dropOld = oldK.length - hitK;    // 页面上多出来的（滑出窗口了）→ 删
+  const dropNew = newK.length - hitK;    // 服务端多出来的 → 只能全量重绘
+  if (!hitK || dropNew > 0) { renderHistory(items); return; }
+  for (let j = 0; j < dropOld; j++) {
     msgNodes[j].els.forEach(el => { try { el.remove(); } catch (e) {} });
   }
-  msgNodes = msgNodes.slice(hitI);
-  for (let i = hitI + hitK; i < items.length; i++) {
-    msgNodes.push(addTracked(items[i]));
-  }
+  msgNodes = msgNodes.slice(dropOld);
 }
 function markSeen(items) {
   try {
@@ -952,6 +961,12 @@ function markSeen(items) {
   } catch (e) {}
 }
 async function loadHistory(manual) {
+  // 同一时刻只允许一次拉取在飞。
+  // 两个 loadHistory 交错（sendText 里的对账 + 12 秒轮询撞上）会让
+  // optEls / msgNodes / histSig 三个状态互相对不上，表现为同一条消息画两遍。
+  // 后来的直接跳过：这次拿到的数据马上就会被下一次拉取覆盖。
+  if (_histBusy) { if (manual) _histQueued = true; return; }
+  _histBusy = true;
   try {
     const r = await fetch(api('/api/history?limit=300'));
     const d = await r.json();
@@ -962,7 +977,12 @@ async function loadHistory(manual) {
       const nearBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 80;
       histSig = sig;
       // 乐观气泡（本地先画的）到这里退役，服务端历史才是唯一真源。
-      // 不摘的话历史一到再画一遍，整轮消息双份
+      // 不摘的话历史一到再画一遍，整轮消息双份。
+      // 🔴 两处都要清 —— **msgNodes 里也要踢掉**。原来只清了 DOM 和 optEls，
+      // 于是乐观气泡"已经不在页面上、却还占着 msgNodes 的位置"，
+      // updateHistory 的增量比对会拿一条看不见的节点当锚点，后面全部错位
+      // （表现：同一条消息显示两遍）。这两份状态必须同进同出。
+      msgNodes = msgNodes.filter(m => optEls.indexOf(m.key) < 0);
       optEls.forEach(el => { try { el.remove(); } catch (e) {} });
       optEls = [];
       updateHistory(items);                 // 优先增量；算不出来才整列表重绘
@@ -972,6 +992,11 @@ async function loadHistory(manual) {
       renderSess(items);
     } else if (manual) { renderSess(items); scrollBottom(true); settlePin(); }
   } catch (e) { if (manual) tip('刷新失败，检查网络'); }
+  finally {
+    _histBusy = false;
+    // 拉取期间有人点了刷新 → 再来一次（只多一次，用户看不出来）
+    if (_histQueued) { _histQueued = false; loadHistory(true); }
+  }
 }
 async function sendText(t, img) {
   $('typing').style.display = 'block';
@@ -984,14 +1009,27 @@ async function sendText(t, img) {
     // 服务端已按她的换行拆好段（messages）；旧服务器没这个字段就整条显示，前后版本都兼容
     const parts = (Array.isArray(d.messages) && d.messages.length)
       ? d.messages : [d.reply || (d.err ? '（出错了：' + d.err + '）' : '…')];
-    for (let i = 0; i < parts.length; i++) {
+    // 标记"她已经答了"：下面的 loadHistory 不该再把刚画的这些气泡当乐观气泡摘掉。
+    // 不设的话 loadHistory(true) 会走 optEls.remove()，而她刚画的气泡
+    // 靠 msgNodes 的增量比对才补得回来 —— 中间那一瞬列表是空的。
+    let i0 = 0;
+    for (; i0 < parts.length; i0++) {
       // 条与条之间歇一下，间隔随上一条的长度微增，像真人一条条打出来
-      if (i) await new Promise(res => setTimeout(res, Math.min(350 + (parts[i-1] || '').length * 25, 900)));
-      addMsg('assistant', parts[i], i === 0 ? (d.t || '') : '');
-      optEls.push(..._newNodes);
+      if (i0) await new Promise(res => setTimeout(res, Math.min(350 + (parts[i0-1] || '').length * 25, 900)));
+      addMsg('assistant', parts[i0], i0 === 0 ? (d.t || '') : '');
+      // 这些不是乐观气泡（服务端已经存了），**别**进 optEls。
+      // 但要进 msgNodes，否则 updateHistory 的增量比对不知道它们存在。
+      msgNodes.push({ key: keyOf({ role: 'assistant', text: parts[i0], t: i0 === 0 ? (d.t || '') : '' }),
+                      els: _newNodes.slice() });
     }
-    // 立刻对一次服务端历史：乐观气泡被摘掉、换成存档版，重开 App 也不会错位
-    loadHistory(true);
+    // 立刻对一次服务端历史：换成存档版（带语音文件名等），重开 App 也不会错位。
+    // **必须 await**：不等的话这次拉取会和 12 秒轮询撞在一起，
+    // 两个 loadHistory 交错执行会让 optEls / msgNodes 状态对不上，
+    // 表现出来就是同一条消息显示两遍。
+    await loadHistory(true);
+    // 对完历史，乐观气泡已经退役，这轮不再需要它们
+    optEls.forEach(el => { try { el.remove(); } catch (e) {} });
+    optEls = [];
   } catch (e) {
     // 别画一个空的"她"的气泡假装她回了：这条消息其实**没发出去**，
     // 下一次拉历史它就消失了 —— 用户以为发出去了、她没理。把原话放回输入框。

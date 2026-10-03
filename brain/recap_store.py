@@ -57,8 +57,55 @@ except Exception:                      # 单独跑这个文件时的兜底
     CHAT_LOG = os.path.join(_HERE, "data", "chat_history.jsonl")
     SUMMARY_DIR = os.path.join(_HERE, "data", "summary")
 
+_BASE_SUMMARY_DIR = SUMMARY_DIR      # 未分区时的基准，供 scoped_to 复原
 ROLLUP_DIR = os.path.join(SUMMARY_DIR, "rollup")
 STATE_PATH = os.path.join(SUMMARY_DIR, "_state.json")
+
+
+# 当前人设分区。空 = 用默认目录（老数据）。
+# 为什么是模块级而不是给每个函数加参数：这份文件里 26 处引用 SUMMARY_DIR /
+# ROLLUP_DIR / STATE_PATH，逐个加参数改的面太大，而它们**只在这一份文件里用**。
+# 用 scoped_to() 在入口处切一次，比改 26 处可靠。
+_SCOPE = ""
+
+
+def _apply_scope():
+    """把分区名套到三个路径上。模块加载时先调一次（无分区）。"""
+    global SUMMARY_DIR, ROLLUP_DIR, STATE_PATH
+    if not _SCOPE:
+        return
+    base = _BASE_SUMMARY_DIR
+    SUMMARY_DIR = os.path.join(os.path.dirname(base), "summary.%s" % _SCOPE)
+    ROLLUP_DIR = os.path.join(SUMMARY_DIR, "rollup")
+    STATE_PATH = os.path.join(SUMMARY_DIR, "_state.json")
+
+
+def scoped_to(persona_key=""):
+    """切到某个人设的摘要分区。传空回到默认。
+
+    摘要里全是"你们聊过什么"—— 换了人设还带上一段的摘要，新人设一开口
+    就知道你的旧事，感知上完全没换。分区跟记忆库一个道理。
+    顺带清缓存：切了分区还留着上一段的缓存块，等于没切。
+    """
+    # ⚠️ 三个路径都必须在函数开头声明 global。
+    # 漏掉任何一个，函数里的赋值就变成**局部变量**：调用方看不到变化，
+    # 而且不报错 —— 实测「切回默认」时路径留在上一个分区就是这么来的。
+    global _SCOPE, SUMMARY_DIR, ROLLUP_DIR, STATE_PATH
+    name = ""
+    if persona_key:
+        try:
+            import paths
+            name = paths.scope_name(persona_key, "app")
+        except Exception:
+            name = ""
+    _SCOPE = name
+    # 先无条件复原到基准，再按需套分区
+    SUMMARY_DIR = _BASE_SUMMARY_DIR
+    ROLLUP_DIR = os.path.join(SUMMARY_DIR, "rollup")
+    STATE_PATH = os.path.join(SUMMARY_DIR, "_state.json")
+    _apply_scope()
+    _CACHE["t"], _CACHE["text"] = 0.0, ""   # 缓存是上一段的，不清等于没切
+    return _SCOPE or "(默认)"
 
 # --- 压缩口径 ---
 KEEP_RECENT = 24         # 最近这么多行不压（= 12 个来回，正好是窗口里的原话）

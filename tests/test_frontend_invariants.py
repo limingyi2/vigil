@@ -408,5 +408,75 @@ class TestAlbumDirIsOneConstant(unittest.TestCase):
                       "deleteImage 没试老目录 —— 老图删不掉了")
 
 
+class TestHistoryNoDuplicate(unittest.TestCase):
+    """聊天页"同一条消息显示两遍"的三个成因，各钉一条。
+
+    用户截图：她连着说的两句一模一样的话，在页面上出现了两遍。
+    服务端存档其实只有一份（查过 /api/history），所以是前端画重了。
+    """
+
+    def setUp(self):
+        self.src = _src()
+
+    def test_loadHistory_has_a_concurrency_guard(self):
+        """两个 loadHistory 交错会让 optEls/msgNodes 互相对不上 → 显示两遍。
+
+        sendText 里的对账和 12 秒轮询最容易撞上。
+        """
+        self.assertIn("_histBusy", self.src,
+                      "loadHistory 没有并发守卫：轮询和对账撞上就会显示重复")
+        body = re.search(r"async function loadHistory\(manual\)\s*\{(.*?)\n\}\n",
+                         self.src, re.S)
+        self.assertIsNotNone(body, "找不到 loadHistory")
+        self.assertIn("if (_histBusy)", body.group(1),
+                      "_histBusy 声明了但没在 loadHistory 里用")
+
+    def test_optimistic_nodes_are_removed_from_msgNodes_too(self):
+        """乐观气泡退役必须同时清 DOM 和 msgNodes。
+
+        只清 DOM 的话，它"已经不在页面上、却还占着 msgNodes 的位置"，
+        updateHistory 拿这条看不见的节点当锚点，后面全部错位。
+        """
+        self.assertRegex(
+            self.src,
+            r"msgNodes\s*=\s*msgNodes\.filter\([^)]*optEls",
+            "optEls 退役时没同步清 msgNodes —— 两者状态分家了")
+
+    def test_updateHistory_matches_from_the_end(self):
+        """比对必须从末尾对齐。
+
+        原来拿 msgNodes 的尾巴去 items 里找，方向反了：末尾有一条对不上，
+        算出的位置就偏，"保留 0 条 + 追加 0 条" → **整屏消息被清空**。
+        """
+        body = re.search(r"function updateHistory\(items\)\s*\{(.*?)\n\}",
+                         self.src, re.S)
+        self.assertIsNotNone(body, "找不到 updateHistory")
+        b = body.group(1)
+        self.assertIn("oldK[oldK.length - 1 - hitK]", b,
+                      "updateHistory 不是从末尾对齐的")
+        # 服务端补出更早的消息时必须全量重绘（addMsg 只能 appendChild，
+        # 没法往列表前面插）
+        self.assertRegex(b, r"if \(!hitK \|\| dropNew > 0\)",
+                         "dropNew > 0 时必须全量重绘，否则 DOM 顺序会错")
+
+    def test_send_reply_registers_into_msgNodes(self):
+        """她在 sendText 里画的那几段必须进 msgNodes。
+
+        原来只 push 进 optEls，随后被 loadHistory 摘掉，
+        增量比对又认为那是新消息 → 再画一遍。
+        """
+        body = re.search(r"async function sendText\(t, img\)\s*\{(.*?)\nasync function",
+                         self.src, re.S)
+        self.assertIsNotNone(body, "找不到 sendText")
+        b = body.group(1)
+        self.assertIn("msgNodes.push", b,
+                      "sendText 画的气泡没进 msgNodes —— 摘掉后补不回来")
+        self.assertNotIn("optEls.push(..._newNodes);", b,
+                         "她的回复不是乐观气泡，别再塞 optEls")
+        # 对账必须 await，否则和轮询交错
+        self.assertIn("await loadHistory(true)", b,
+                      "sendText 里的 loadHistory 没 await —— 会和轮询交错")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -293,6 +293,9 @@ class Brain:
         # 必须在 reload_persona 之前建好 —— 那儿会往 self.hist 里写 system 段。
         self._hists = {}
         self._cur_src = DEFAULT_SRC
+        # 每个渠道的内存历史**当初是按哪个人设载入的**。
+        # 换人设时靠它判断"这份 hist 能不能留" —— 换了人就不能接着上一段的话说。
+        self._hist_persona = {}
 
         # 人设来自 personas/*.json，由 config.json 的 persona_file 指定
         self.reload_persona(keep_history=False)
@@ -344,7 +347,7 @@ class Brain:
         self._hists[src] = [{"role": "system",
                              "content": self._persona_text_for(src)}]
         try:
-            os.remove(chat_log_for(src))
+            os.remove(self._log_for(src))
         except OSError:
             pass
         return max(0, n)
@@ -371,6 +374,35 @@ class Brain:
     def persona_key_of(self, src=DEFAULT_SRC):
         return self._persona_key_for(src)
 
+    def _mem_for(self, src=None):
+        """这个渠道 + 当前人设的记忆库。
+
+        换人设 = 换一个人，记忆库必须跟着换 —— 否则人设换了但她还记得你说过
+        的所有事，感知上就完全没变（"换了人设但感觉还是她"）。
+        用记忆库自己的 persona/src 分区（见 memory_store_v2.get_default_store）。
+        """
+        s = norm_src(src or self._cur_src)
+        try:
+            import memory_store_v2
+            return memory_store_v2.get_default_store(self._persona_key_for(s), s)
+        except Exception:
+            return self.mem
+
+    def _log_for(self, src=None):
+        """这个渠道 + 当前人设的聊天存档路径。
+
+        换人设就是换一个人：她的存档也该换一份，不然新的人设一开口就
+        记得你跟上一个她说过的所有事 —— 人设换了但感知不变，就是这么来的。
+        默认人设 + app 走老路径，老数据不用搬。
+        """
+        s = norm_src(src or self._cur_src)
+        try:
+            import paths
+            return paths.scoped(paths.chat_log_for(s),
+                                self._persona_key_for(s), s)
+        except Exception:
+            return chat_log_for(s)
+
     # --- 人设 / 时间 ---
     def reload_persona(self, keep_history=True):
         """重新读取人设（设置窗口保存后调用，热更新，不用重启）。
@@ -384,13 +416,27 @@ class Brain:
         self.persona = load_persona(key_from_config(self.api))
         self.persona_text = build_system_text(self.persona)
         self.draft_rules = build_draft_rules(self.persona)
+        # 历史摘要也跟着换人设 —— 摘要里全是"你们聊过什么"，
+        # 不切的话新人设一开口就知道你的旧事（实测：换了人设她还记得
+        # 上次说摸鱼被老板抓了）。分区跟记忆库一个道理。
+        try:
+            import recap_store
+            _rs = recap_store.scoped_to(key_from_config(self.api))
+            if _rs and _rs != "(默认)":
+                print(f"[大脑] 历史摘要已切到人设分区 {_rs}", flush=True)
+        except Exception:
+            pass
+        # 换了人设就换了个人：内存里的对话历史**必须丢掉**。
+        # 不丢的话，新人设一开口就接着上一段的话说 —— 记忆和存档虽然已经
+        # 分区了，但 hist 是内存里的，跨人设留着就等于没换。
         for src in list(self._hists.keys()):
-            h = self._hists[src]
             fresh = self._persona_text_for(src)
-            if keep_history and h:
-                h[0] = {"role": "system", "content": fresh}
+            same = self._hist_persona.get(src) == self._persona_key_for(src)
+            if keep_history and same and self._hists[src]:
+                self._hists[src][0] = {"role": "system", "content": fresh}
             else:
                 self._hists[src] = [{"role": "system", "content": fresh}]
+            self._hist_persona[src] = self._persona_key_for(src)
         # 没有任何渠道的历史时，至少给主渠道建一份（否则第一次聊天是空白）
         self._hist(self._cur_src)
 
@@ -686,10 +732,11 @@ class Brain:
         # 短句闲聊（"嗯""在吗""哈哈"）不检索：这种话本身没信息量，硬凑出来的
         # "最相关"记忆反而把她的话题带跑。阈值 0.25 → 0.40。
         q = (user_text or "").strip()
-        if self.mem is not None and len(q) >= 6:
+        _m = self._mem_for()
+        if _m is not None and len(q) >= 6:
             try:
                 _t1 = time.time()
-                memory_block = self.mem.render(query=q, top_k=5,
+                memory_block = _m.render(query=q, top_k=5,
                                               chan=self._cur_src)
                 print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
             except Exception:
@@ -739,17 +786,18 @@ class Brain:
         # 串得比不隔离还糟（微信侧抽出来的东西进了 App 的记忆库）。
         _chan = norm_src(self._cur_src)
 
-        if self.mem is not None:
+        _mw = self._mem_for()
+        if _mw is not None:
             def _extract_bg(her_text=None):
                 try:
                     _t = time.time()
                     nf = ne = 0
                     facts, events, _mode = MemoryStore.extract(user_text, self.api)
                     for k, v in facts:
-                        self.mem.add(f"{k}：{v}", mtype="fact", chan=_chan)
+                        _mw.add(f"{k}：{v}", mtype="fact", chan=_chan)
                         nf += 1
                     for e in events:
-                        self.mem.add(e, mtype="event", chan=_chan)
+                        _mw.add(e, mtype="event", chan=_chan)
                         ne += 1
 
                     # 她自己说的承诺/约定也要记。以前只抽用户的话，于是她说过的
@@ -772,9 +820,9 @@ class Brain:
                                 # 标来源：主动搭话里凭空冒出来的（"下午那个高铁"）
                                 # 跟对话里应承的不一样，前者大概率是编的，检索到时
                                 # 降权，不当作已经说定的安排
-                                self.mem.add(e, mtype="event",
-                                             src="proactive" if proactive else "chat",
-                                             chan=_chan)
+                                _mw.add(e, mtype="event",
+                                        src="proactive" if proactive else "chat",
+                                        chan=_chan)
                                 saved += 1
                             # 两种"没记下"要分得清：判定不通过 vs 抽取认为不是约定。
                             # 后者常见（"打算先把高数对付过去"是回顾自己，不是承诺），
@@ -828,7 +876,7 @@ class Brain:
             u = {"t": t, "role": "user", "text": user_text}
             if img:
                 u["img"] = img
-            with open(chat_log_for(self._cur_src), "a", encoding="utf-8") as f:
+            with open(self._log_for(self._cur_src), "a", encoding="utf-8") as f:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
                 for piece in split_messages(ans):
                     f.write(json.dumps({"t": t, "role": "assistant", "text": piece},
@@ -836,13 +884,13 @@ class Brain:
         except OSError:
             pass
 
-    @staticmethod
-    def read_history(limit=40, src=None):
+    def read_history(self, limit=40, src=None):
         """读回聊天存档，返回最近 limit 条（正序）。文件不在就返回空。
 
         src 不传读主渠道。分渠道后App 只看得到 App 的对话，两边不互相污染。
+        路径带人设分区（见 _log_for）：换人设读不到上一段的对话。
         """
-        path = chat_log_for(norm_src(src) if src else DEFAULT_SRC)
+        path = self._log_for(src)
         if not os.path.exists(path):
             return []
         out = []
@@ -890,14 +938,14 @@ class Brain:
         finally:
             self.use_src(prev)
 
-    @staticmethod
-    def clear_history(src=None):
+    def clear_history(self, src=None):
         """清空聊天记录存档（聊天窗里"清空聊天记录"用）。
 
-        分渠道后只清那一份 —— 在 App 里清记录不该把微信侧也抹掉。
+        分渠道+分人设后只清那一份 —— 在 App 里清记录不该把微信侧、
+        也不该把别人设的对话抹掉。
         """
         try:
-            os.remove(chat_log_for(norm_src(src) if src else DEFAULT_SRC))
+            os.remove(self._log_for(src))
             return True
         except OSError:
             return False
@@ -930,10 +978,11 @@ class Brain:
             return "", "无内容"
 
         memory_block = ""
-        if self.mem is not None:
+        _mz = self._mem_for(DEFAULT_SRC)
+        if _mz is not None:
             try:
-                memory_block = self.mem.render(query=f"{what} {detail}", top_k=4,
-                                              chan=DEFAULT_SRC)
+                memory_block = _mz.render(query=f"{what} {detail}", top_k=4,
+                                          chan=DEFAULT_SRC)
             except Exception:
                 memory_block = ""
 
