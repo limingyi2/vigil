@@ -417,7 +417,375 @@ def start(brain):
             len(ts), ", ".join(sorted(ts)[:6]) or "（无）"), flush=True)
 
 
+# --- 装 / 卸 -----------------------------------------------------------------
+# 这一段是给面板用的**第二条通道**，跟 plugin_ops 的插件上传是两回事。
+# 插件那边只准 .py（见本文件开头「为什么不直接把 .js 当插件装」），
+# 技能这边的 zip 里就是 .js，两边各用各的白名单。
+
+# 技能包能有什么。**不含 .py**：技能跑在 Node 里，混进 .py 只会让人
+# 以为它生效了。.mjs/.cjs 是 ESM/CommonJS 的显式写法，外面下的技能常见。
+SKILL_EXT = (".js", ".mjs", ".cjs", ".json", ".md")
+
+# 复用 plugin_ops 的安全上限，不另设一套 —— 两边的风险是同一个
+# （上传来的 zip 都可能带 ../ 跳目录、可能是炸弹、可能是加密包）。
+# 🔴 别复制一份数字过来：改一处漏一处，出问题时更难查。
+try:
+    from plugin_ops import (MAX_ZIP_BYTES, MAX_UNPACKED, MAX_FILE_BYTES,
+                            MAX_FILES, _norm_entry)
+except Exception:                          # plugin_ops 不可用时自己兜底
+    MAX_ZIP_BYTES = 4 * 1024 * 1024
+    MAX_UNPACKED = 16 * 1024 * 1024
+    MAX_FILE_BYTES = 2 * 1024 * 1024
+    MAX_FILES = 64
+
+    def _norm_entry(name):
+        n = str(name or "").replace("\\", "/").strip()
+        if not n or n.endswith("/"):
+            return None
+        if n.startswith("/") or n.startswith("~") or ":" in n:
+            return None, "包里不许有绝对路径或盘符：%s" % n[:60]
+        if ".." in n.split("/"):
+            return None, "包里不许用 .. 跳目录：%s" % n[:60]
+        return n
+
+
+def _skill_dir():
+    """技能目录。跟 server.js 的 SKILL_DIR 保持一致。
+
+    server.js 那边的算法是 `process.env.ZX_SKILL_DIR || <宿主目录>/skills`。
+    这里必须算出**同一个**目录，否则装完了宿主看不见 ——
+    表现是「装完说成功，重载完还是 0 个技能」，极难查。
+    """
+    env = os.environ.get("ZX_SKILL_DIR")
+    if env:
+        return env
+    try:
+        from runtime import ROOT
+        return os.path.join(ROOT, "skill_host", "skills")
+    except Exception:
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(here, "skill_host", "skills")
+
+
+def _backup_path(path):
+    """给 path 找一个还没被占用的备份名。返回 None 表示挪不动。
+
+    🔴 **不能只用时间戳**：一秒内两次操作就撞名了
+    （`os.rename` 报 `WinError 183 当文件已存在时，无法创建该文件`），
+    而「装一次→卸一次→再装一次」这种连着操作很常见。
+    所以时间戳后面再补一个递增序号，直到不撞为止。
+    """
+    base = "%s.bak_%d" % (path, int(time.time()))
+    if not os.path.exists(base):
+        return base
+    for i in range(1, 100):
+        cand = "%s-%d" % (base, i)
+        if not os.path.exists(cand):
+            return cand
+    return None
+
+
+def _pkg_name_ok(name):
+    """包名（会变成 skills/ 下的目录名）合法性。"""
+    import re as _re
+    return bool(_re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", name or ""))
+
+
+def _read_manifest_from_zip(zf, names):
+    """从 zip 里读 skill.json，拿 name/id/version。读不到返回空 dict。
+
+    🔴 **manifest 是给人看的，宿主认不认它靠的是 index.js 在不在**。
+    所以 manifest 解析失败**不能当失败处理** —— 那种包照样能跑，
+    只是列表里显示成目录名。判据是「有 index.js」，不是「manifest 齐」。
+    """
+    import json as _json
+    import zipfile as _zf
+    cands = [n for n in names if n.lower().endswith("skill.json")]
+    for n in cands:
+        try:
+            return _json.loads(zf.read(n).decode("utf-8", "replace")) or {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _install_zip(raw, note=""):
+    """把一个 zip 装进技能目录。返回 dict（ok/err/skill）。
+
+    流程：验形状（不解压）→ 解到临时目录 → 找包根 → 搬进 skills/ → 打宿主 /reload。
+
+    为什么「先验完再落盘」：解压一半失败会留下半个包，
+    下次 loadAll 读到它、报个看不懂的错。宁可一个字节都不写。
+    """
+    import io as _io
+    import json as _json
+    import shutil
+    import tempfile
+    import zipfile as _zip
+
+    if not raw:
+        return {"ok": False, "err": "没收到内容"}
+    if len(raw) > MAX_ZIP_BYTES:
+        return {"ok": False, "err": "包 %.1f MB，超过上限 %d MB" % (
+            len(raw) / 1048576.0, MAX_ZIP_BYTES // 1048576)}
+
+    # --- 1) 落临时文件（inspect_zip 只认路径）---
+    tmpdir = tempfile.mkdtemp(prefix="zxskill_")
+    zpath = os.path.join(tmpdir, "s.zip")
+    try:
+        with open(zpath, "wb") as f:
+            f.write(raw)
+        try:
+            zf = _zip.ZipFile(zpath)
+        except Exception as e:
+            return {"ok": False, "err": "不是有效的 zip：%s" % str(e)[:80]}
+
+        # --- 2) 逐条检查：加密 / 大小 / 路径 / 后缀 ---
+        infos = zf.infolist()
+        if len(infos) > MAX_FILES:
+            return {"ok": False, "err": "包里有 %d 个文件，超过上限 %d"
+                                      % (len(infos), MAX_FILES)}
+        total = 0
+        names = []
+        for inf in infos:
+            if inf.flag_bits & 0x1:
+                return {"ok": False, "err": "不支持加密的包"}
+            total += int(inf.file_size or 0)
+            n = _norm_entry(inf.filename)
+            if isinstance(n, tuple):
+                return {"ok": False, "err": n[1]}
+            if n is None:
+                continue
+            ext = os.path.splitext(n)[1].lower()
+            if ext not in SKILL_EXT:
+                return {"ok": False, "err": (
+                    "技能包里不许有 %s（只准 %s）"
+                    % (ext or "(无扩展名)", " ".join(SKILL_EXT)))}
+            if inf.file_size > MAX_FILE_BYTES:
+                return {"ok": False, "err": "%s 有 %.1f MB，单文件上限 %d MB"
+                                          % (n[:40], inf.file_size / 1048576.0,
+                                             MAX_FILE_BYTES // 1048576)}
+            names.append(n)
+        if total > MAX_UNPACKED:
+            return {"ok": False, "err": "解开后 %.1f MB，超过上限 %d MB"
+                                      % (total / 1048576.0,
+                                         MAX_UNPACKED // 1048576)}
+        if not names:
+            return {"ok": False, "err": "包里是空的"}
+
+        # --- 3) 找包根 ---
+        # 真实 skill zip 常是两层：`包名/包名/index.js`（外面一层是仓库名）。
+        # 宿主 server.js 的 resolveEntry() 认这种形状，所以这里要**剥到内层**，
+        # 否则装进去的目录结构跟外面下的对不上。
+        #
+        # 🔴 入口判断要用 `endswith("index.js")` 而不是
+        # `endswith("/index.js")` —— 后者是精确后缀匹配，
+        # 而实际路径是 `包名/index.js`，前面还有目录名，永远匹配不上，
+        # 结果是**所有合法包都被判成「没入口」**。
+        # 写成 `os.path.basename(r) in ("index.js", "index.mjs", "index.cjs")`
+        # 才是「根目录下有个叫 index.js 的文件」这个意思。
+        _ENTRY = ("index.js", "index.mjs", "index.cjs")
+
+        def _has_entry(rel_list):
+            for r in rel_list:
+                if os.path.basename(r) in _ENTRY:
+                    return True
+            return False
+
+        tops = sorted({n.split("/")[0] for n in names})
+        root = None
+        if len(tops) == 1 and len(tops[0]) > 0:
+            top = tops[0]
+            # 🔴 双层的判据必须是「**内层目录跟顶层同名**」，不能只看
+            # 「顶层里面还有一层」。少了这个前提，`solo/index.js` 这种
+            # **单层**包会被误判成双层（内层 rels = ["index.js"] 也算“有入口”），
+            # root 拼成 "solo/solo"，后面切 rels 切出空列表，
+            # 结果是**单层包全军覆没**，报的却是「没有 index.js」——
+            # 错误信息跟真实原因完全对不上，排查时会被带偏很远。
+            inner_rels = [n.split("/", 1)[1] for n in names
+                          if n.count("/") >= 1 and n.split("/")[0] == top]
+            # inner_rels 已经去掉顶层了，形如 "包名/index.js"，
+            # 所以这里**直接拿它判入口**，不要再切一层 ——
+            # 再切一次只剩目录名（"包名"），文件没了，判据永远 False，
+            # 结果是双层包被当单层装、rels 里混进一层多余目录。
+            same_name = [r for r in inner_rels if r.split("/")[0] == top]
+            if same_name and _has_entry(same_name):
+                root = top + "/" + top          # 双层：包名/包名/
+            else:
+                root = top                      # 单层：包名/
+        else:
+            return {"ok": False, "err": (
+                "包里顶层有多个目录（%s），看不出哪个是技能包"
+                % " ".join(tops[:3]))}
+
+        if not _pkg_name_ok(root.split("/")[0]):
+            return {"ok": False, "err": (
+                "包名不合法（只准英文/数字/点/下划线/短横线）：%s"
+                % root.split("/")[0][:40])}
+
+        pkg = root.split("/")[0]
+        rels = [n[len(root) + 1:] for n in names
+                if n.startswith(root + "/")]
+        if not _has_entry(rels):
+            return {"ok": False, "err": (
+                "技能包根目录里没有 index.js（宿主靠它当入口）：%s" % pkg)}
+
+        # --- 4) 解到临时目录 ---
+        stage = os.path.join(tmpdir, "stage")
+        os.makedirs(stage, exist_ok=True)
+        for r in rels:
+            dst = os.path.join(stage, *r.split("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, "wb") as f:
+                f.write(zf.read(root + "/" + r))
+        zf.close()
+
+        # --- 5) 搬进技能目录 ---
+        sk_dir = _skill_dir()
+        os.makedirs(sk_dir, exist_ok=True)
+        final = os.path.join(sk_dir, pkg)
+        # 同名旧版先挪走而不是覆盖：装一半失败时还能退回去，
+        # 直接覆盖失败就是半个包 + 半个旧的，比不装更难查。
+        backup = None
+        if os.path.isdir(final):
+            backup = _backup_path(final)
+            if backup is None:
+                return {"ok": False, "err": "旧版本备份名取不到了，装不了新的"}
+            try:
+                os.rename(final, backup)
+            except Exception as e:
+                return {"ok": False, "err": "旧版本挪不走（%s），装不了新的"
+                                          % str(e)[:80]}
+        try:
+            shutil.move(stage, final)
+        except Exception as e:
+            if backup and not os.path.isdir(final):
+                try:
+                    os.rename(backup, final)      # 装失败要还原
+                except Exception:
+                    pass
+            return {"ok": False, "err": "搬进技能目录失败：%s" % str(e)[:100]}
+
+        # --- 6) 告诉宿主重载 ---
+        # 装完不打 /reload 的话，宿主内存里的清单还是旧的 ——
+        # 面板显示「已装 1 个」而模型一个工具都看不到。
+        meta = _read_manifest_from_zip(
+            _zip.ZipFile(zpath), names) if os.path.isfile(zpath) else {}
+        reloaded = None
+        reload_err = ""
+        try:
+            d = _post_json("/reload", {}, 30)
+            reloaded = d.get("reloaded")
+            with _cache_lock:                  # 重载完必须清缓存
+                _cache["at"] = 0.0
+                _cache["tools"] = []
+        except Exception as e:
+            reload_err = str(e)[:100]
+
+        return {"ok": True, "skill": pkg,
+                "name": str(meta.get("name") or pkg)[:60],
+                "files": len(rels), "reloaded": reloaded,
+                "warn": ("文件放好了，但宿主重载失败：%s（面板上点「重载」再试）"
+                         % reload_err) if reload_err else ""}
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _uninstall(pkg):
+    """卸一个技能：只删目录，不碰数据。
+
+    刻意**不做**「连同数据一起删」—— 技能可能已经在她的记忆里留下了东西，
+    删目录不等于回收那些。要清数据得单独一个明确的动作。
+    """
+    import shutil
+    if not _pkg_name_ok(pkg):
+        return {"ok": False, "err": "包名不合法"}
+    sk_dir = _skill_dir()
+    final = os.path.join(sk_dir, pkg)
+    if not os.path.isdir(final):
+        return {"ok": False, "err": "没这个技能：%s" % pkg}
+    bak = _backup_path(final)
+    if bak is None:
+        return {"ok": False, "err": "备份名取不到了，没敢删"}
+    try:
+        os.rename(final, bak)
+    except Exception as e:
+        return {"ok": False, "err": "删不掉：%s" % str(e)[:80]}
+    try:
+        _post_json("/reload", {}, 30)
+        with _cache_lock:
+            _cache["at"] = 0.0
+            _cache["tools"] = []
+    except Exception:
+        pass                # 卸载已经成功了，宿主重载失败只影响「马上生效」
+    return {"ok": True, "skill": pkg,
+            "warn": "已挪到 %s.bak_<时间戳>，确认没问题可以自己删" % pkg}
+
+
 # --- 面板接口 ---------------------------------------------------------------
+
+def _b64_body(body):
+    """从请求里取出 zip 内容。
+
+    面板传的 base64 而不是 multipart：面板那边已经有一个 multipart 上传器了
+    （插件那块），但它跟 .py 白名单写死在一起，**复用它就绕不开那个白名单**。
+    重新走一遍 multipart 只会多一处要同步的地方。
+    base64 的代价是体积 +33%，技能包很小（几十 KB），不值当为它做流式。
+    """
+    import base64 as _b64
+    d = body if isinstance(body, dict) else {}
+    for k in ("zip_b64", "data", "content"):
+        v = d.get(k)
+        if v:
+            try:
+                return _b64.b64decode(str(v), validate=False)
+            except Exception as e:
+                raise ValueError("base64 解不开：%s" % str(e)[:60])
+    raise ValueError("没找到 zip 内容（要 zip_b64 字段）")
+
+
+def _r_install(body, query):
+    """面板：装技能。"""
+    try:
+        raw = _b64_body(body)
+    except ValueError as e:
+        return {"ok": False, "err": str(e)}
+    if not host_alive():
+        return {"ok": False, "err": (
+            "技能宿主（%s）没起来，装了也不会生效。先把 Node 宿主拉起来。"
+            % _host())}
+    return _install_zip(raw, str((body or {}).get("note") or ""))
+
+
+def _r_uninstall(body, query):
+    """面板：卸技能。"""
+    pkg = str((body or {}).get("skill") or "").strip()
+    if not pkg:
+        return {"ok": False, "err": "没说要卸哪个（要 skill 字段）"}
+    return _uninstall(pkg)
+
+
+def _r_status(body, query):
+    """面板：技能区一次拉全。宿主活不活、技能目录在哪、装了哪些。
+
+    合成一个接口而不是让面板发三个：面板每次刷新都要这三个，
+    分开意味着三次往返 + 三种失败态。
+    """
+    alive = host_alive()
+    sk = list_skills() if alive else []
+    d = {"ok": True, "host": _host(), "alive": alive,
+         "dir": _skill_dir(), "skills": sk,
+         "ext": list(SKILL_EXT),
+         "host_missing": (not os.path.isdir(_skill_dir()))}
+    try:
+        import subprocess
+        r = subprocess.run(["node", "-v"], capture_output=True, timeout=20)
+        d["node"] = (r.stdout or b"").decode("utf-8", "replace").strip() or \
+                    "有 node 但跑不起来"
+    except Exception:
+        d["node"] = ""            # 空 = 没装 node
+    return d
+
 
 def _r_list(body, query):
     """面板：列技能。附带宿主活不活。"""
@@ -439,5 +807,8 @@ def _r_reload(body, query):
 
 
 ROUTES = [("POST", "/api/skill/list", _r_list),
+          ("POST", "/api/skill/status", _r_status),
+          ("POST", "/api/skill/install", _r_install),
+          ("POST", "/api/skill/uninstall", _r_uninstall),
           ("POST", "/api/skill/reload", _r_reload),
           ("POST", "/api/skill/say", _r_say)]

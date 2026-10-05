@@ -48,8 +48,11 @@ DEFAULT_CFG = {
     # 桥接连上微信后会核对，对不上就**拒绝运行**，一条消息都不发。
     # 第一次跑先看 [微信] 那行打印的真实 id，填进来。
     "expected_wxid": "",
-    # 🔴 黑名单：大号 wxid，永远拒绝。填错 expected_wxid 也拦得住。
-    "forbidden_wxids": ["PRIVATE_CHAT_REMOVED"],
+    # 黑名单（forbidden_wxids）已移除：桥接机登的是专用小号，
+    # 环境里不存在大号会登录的路径。白名单（expected_wxid）已经拦住
+    # 「不是小号的任何号」，黑名单在功能上是冗余的第二道闸。
+    # ⚠️ 如果哪天这台机器上装了第二个微信、或者 expected_wxid 被误填，
+    #   就少了一道兜底 —— 那时把这几行加回来。
     # 她在群里的昵称，用来判断有没有被 @。可以填多个
     "bot_nicknames": ["知夏"],
     # 触发方式：mention=只回 @ 她和关键词；all=群里说啥都回
@@ -112,6 +115,27 @@ def _strip_img_placeholder(content):
     if not content:
         return ""
     return content.replace(IMG_PLACEHOLDER, "").strip()
+
+
+# 🔴 图片在 items 里延迟下载时要用的占位对象。
+# 它只是"这里有一条图片消息，图片还没下载"的记号 —— 真正的内容
+# 要等 _diff 确认这条是新消息之后才去拉。
+# 为什么要有这个东西：以前 _snapshot 每轮都会对窗口里**所有**图片调
+# _grab_image，而微信 4.x 的 download() 内部就是"右键头像 → 在新窗口里
+# 打开图"。于是即使一条新消息都没有，它也在每 3 秒右键一次、开窗一次、
+# 下完才判断"这张处理过了"、丢弃、再关窗 —— 用户看到的就是无限重复操作，
+# 同时处理真消息的时间全被它吃光（"哎久等了"之后再也没被处理）。
+# 现在：_snapshot 只读元数据不碰图片，下载推迟到 _diff 之后。
+class _PendingImg(object):
+    __slots__ = ("m", "sender", "content", "fp")
+
+    def __init__(self, m, sender, content):
+        self.m = m
+        self.sender = sender
+        self.content = content
+
+    def __repr__(self):
+        return "<待下载图片 %s>" % (self.sender or "?")
 
 
 
@@ -234,6 +258,10 @@ class Bridge(object):
         self.wx = None
         self._prev = []          # 上一轮看到的消息指纹
         self._synced = False     # 第一次轮询只记不看
+        # 读消息卡死的保护（见 _read_all）
+        self._read_busy = False      # 还有个卡住的读线程在跑
+        self._read_stuck_until = 0.0  # 冷却到什么时候为止（时间戳）
+        self._read_stuck_n = 0        # 一共卡过几次
         self._last_active = time.time()
         # 这次冷场要等到「距上次说话多少秒」才让她冒泡。
         # None = 还没掷，_maybe_lurk 第一次进时掷一次，之后保持不变
@@ -345,30 +373,26 @@ class Bridge(object):
         return True
 
     def _identity_ok(self):
-        """🔴 确认连上的是知夏那个小号，不是大号。
+        """🔴 确认连上的是知夏那个小号，身份不对就不跑。
 
         为什么必须有这一步：wxauto4 找窗口的逻辑在 .pyd 里（读不到源码），
-        两个微信同时跑时它会连到哪一个**没有保证**。万一连错，
-        后面每一次 GetAllMessage / SendMsg 都是在大号上操作 ——
-        读别人的聊天记录、往别人的群里发消息。
+        多个微信同时跑时它会连到哪一个**没有保证**。万一连错，
+        后面每一次 GetAllMessage / SendMsg 都在别人的号上操作。
 
         所以这里不是"打个招呼"，是硬闸：认不出来就不跑。
+
+        🔴 黑名单已移除（2026-10-05）：桥接机登的是专用小号，
+        环境里不存在大号会登录的路径，白名单（expected_wxid）已经拦住
+        「不是小号的任何号」。
         """
-        banned = set(self.cfg.get("forbidden_wxids") or [])
-        if self.my_id and self.my_id in banned:
-            print("")
-            print("=" * 62)
-            print("拒绝运行：连上的是【大号】(wxid=%s)" % self.my_id)
-            print("  这个号绝不能碰。")
-            print("  切换式的正确做法：托盘右键退出大号 → 启动 D 盘那份")
-            print("  （%s）→ 登小号 → 再启动本桥接。" % (self.cfg.get("bot_weixin_dir") or "D:\\Weixin418"))
-            print("=" * 62)
-            return False
+        # 黑名单要回来的话：把下面两行取消注释
+        #   banned = set(self.cfg.get("forbidden_wxids") or [])
+        #   if self.my_id and self.my_id in banned: ... 拒绝运行
 
         # 实例路径对不上：还没比 wxid 就先发现了「连的不是那一份微信」。
         # 微信 4.x 跨安装目录单实例（D 盘那份实测 15 秒就把启动请求
         # 转交给 C 盘那份然后自己退出），所以最常见的错不是登错号，
-        # 是大号还开着、桥接连上了大号 —— 这条能在最早的地方拦住。
+        # 是另一个微信还开着、桥接连上了它 —— 这条能在最早的地方拦住。
         want_dir = (self.cfg.get("bot_weixin_dir") or "").strip()
         if want_dir and self.wx_dir:
             a = want_dir.replace("/", "\\").rstrip("\\").lower()
@@ -379,7 +403,6 @@ class Bridge(object):
                 print("拒绝运行：连到的微信实例不对。")
                 print("  期望目录 = %s" % want_dir)
                 print("  实际目录 = %s" % self.wx_dir)
-                print("  大号是不是还开着？先退掉它再启 D 盘那份。")
                 print("=" * 62)
                 return False
 
@@ -388,7 +411,7 @@ class Bridge(object):
             print("")
             print("!" * 62)
             print("拒绝运行：还没填 expected_wxid。")
-            print("  现在连上的这个号身份不明，我不能确定它不是大号。")
+            print("  现在连上的这个号身份不明，我不能确定它是不是知夏的小号。")
             print("  第一次跑请看上面 [微信] 那行打印的 wxid，填进")
             print("  %s 的 expected_wxid 再跑。" % LOCAL_CFG)
             print("!" * 62)
@@ -408,6 +431,42 @@ class Bridge(object):
 
     # --- 读新消息 ---------------------------------------------------
 
+    # 已经处理过的图片，记住**内容哈希**。这是死循环的第二道闸。
+    # 闭环曾经是这样形成的：下载 → 微信弹出图片查看窗并抢走活动窗口 →
+    # 下一轮读到的列表不是上一次的延长线 → _diff 找不到锚点 →
+    # 却把 _prev 更新成图窗的内容 → 回到聊天窗前缀彻底对不上 →
+    # 那条图被当成新消息 → 又 download() 一次、又开一次窗。
+    # 🔴 症状是微信窗口里那张图被反复打开，而真正的文字消息
+    #    （"哎久等了"）之后再也没被处理过。
+    #
+    # 🔴 但**光靠这道闸修不好**：闸在下载之后，而死循环的副作用
+    # （右键、开窗、抢焦点）发生在下载**之中**。闸拦得住"重复送云端"，
+    # 拦不住"反复操作微信"。真正解决问题的是**位置** —— 现在图片在
+    # _diff 判出新增之后才下载（见 _snapshot / _resolve_img），
+    # 历史图片压根不会被碰。这道闸退居二线，只防窗口切换/滚动那种
+    # _diff 也会失灵的边缘情况。
+    #
+    # 存的是图片**内容哈希**不是路径：微信每次下载的临时文件名都不一样，
+    # 存路径等于没存。
+    _seen_img = None
+
+    @classmethod
+    def _seen_images(cls):
+        if cls._seen_img is None:
+            cls._seen_img = set()
+        return cls._seen_img
+
+    @staticmethod
+    def _img_key(img_b64):
+        """图片内容的指纹。够用就行，不追求抗碰撞。"""
+        if not img_b64:
+            return ""
+        try:
+            import hashlib
+            return hashlib.sha1(img_b64.encode("ascii")).hexdigest()[:16]
+        except Exception:
+            return "%d:%s" % (len(img_b64), img_b64[:24])
+
     @staticmethod
     def _fp(item):
         # 🔴 图的指纹**不能拿整段base64**（几十万字，拼一次就够呛），
@@ -418,7 +477,10 @@ class Bridge(object):
         # 于是**第二张图永远不处理**，而日志里一条错都不报。
         img = item[2] if len(item) > 2 else ""
         tag = ""
-        if img:
+        if isinstance(img, _PendingImg):
+            # 还没下载：用 _tag_img 算好的下载前指纹。
+            tag = "#img:%s" % (getattr(img, "fp", "") or "?")
+        elif img:
             tag = "#img%d:%s" % (len(img), img[:24])
         return "%s|%s%s" % (item[0], item[1], tag)
 
@@ -457,21 +519,26 @@ class Bridge(object):
         return not self._foreground_is_wechat()
 
     def _snapshot(self):
-        """读当前窗口里的文本消息，返回 [(发送者, 内容), ...]。
+        """读当前窗口里的消息，返回 [(发送者, 内容, 图片), ...]。
 
         有子窗口就读子窗口 —— 子窗口是独立出来的对话，读它不会把主微信
         窗口切走，所以不抢你正在用的窗口。
+
+        🔴 这里**绝不能下载图片**。这一段跑在 _diff 之前，拿到的是窗口里
+        全部消息（含历史），不是新增的那些。而微信 4.x 的 download()
+        内部是"右键头像 → 在新窗口里打开图"，每轮对历史图片都下一次 =
+        每 3 秒右键一次、开窗一次、再关窗，UI 被反复操作而真消息排不上队。
+        所以图片在这里只登记成 _PendingImg，等 _diff 说"这条是新增"
+        之后才真的去拉 —— 位置就是修这个的关键，不是加判据能解决的。
         """
         items = []
         # 注意：子窗口读到 0 条是**正常**的（它只保留监听开始后收到的）。
         # 所以别把空当成出错，日志也别刷屏—— 每 3 秒一条会把别的信息淹掉。
         src = getattr(self, "_sub", None) or self.wx
-        try:
-            msgs = src.GetAllMessage() or []
-        except Exception as e:
-            print("[微信] 读消息失败：%s" % e)
+        msgs = self._read_all(src)
+        if msgs is None:
             return items
-        for m in msgs:
+        for idx, m in enumerate(msgs):
             try:
                 sender = str(getattr(m, "sender", "") or "").strip()
                 content = str(getattr(m, "content", "") or "").strip()
@@ -480,28 +547,186 @@ class Bridge(object):
             # 🔴 图片原来在这里被直接丢掉：content 是 "[图片]" 占位符，
             # 命中 MEDIA_PLACEHOLDERS 就 continue。所以她**在微信里一直看不见图**
             # —— 不是模型不支持，是桥接压根没把图传过去。
-            # 现在：认出图片消息就下载转 base64，随消息一起送云端。
-            img_b64 = ""
+            # 现在：认出图片消息就登记下来，等确认是新增消息再下载转 base64。
+            img = ""
             if self._is_image(m, content):
-                content, img_b64 = self._grab_image(m, content, sender)
-                if not img_b64:
-                    # 下不到图就别把这句 "[图片]" 送上去 —— 让她对着占位符
-                    # 瞎猜，比不理人更奇怪。
-                    continue
-            if not content and not img_b64:
+                content = _strip_img_placeholder(content)
+                img = _PendingImg(m, sender, content)
+            if not content and not img:
                 continue
             if content and content in MEDIA_PLACEHOLDERS:
                 content = ""
-            if not content and not img_b64:
+            if not content and not img:
                 continue
             # 微信把自己发的消息标成 'self'（实测）。换成昵称，
             # 免得下游把它当成一个叫 self 的陌生人拼进给大脑的话里。
             if sender.lower() in self.SELF_MARKERS:
                 sender = self.my_name or "我"
-            items.append((sender, content, img_b64))
+            img = self._tag_img(img, idx)
+            items.append((sender, content, img))
         return items
 
     # --- 图片 ------------------------------------------------------
+    def _tag_img(self, img, idx):
+        """给还没下载的图片算一个**下载前**就能拿到的指纹。
+
+        🔴 为什么不能用内容哈希（_img_key）当 items 的指纹：
+        _diff 是靠 items 的指纹列表认出"新增"的，而算内容哈希的前提是
+        已经把图下载下来了 —— 那就又回到每轮都右键开窗的老问题。
+        所以指纹必须来自读消息时就能拿到的元数据。
+
+        首选 wxauto 自己的 runtimeid（(高,宽)+文本+RuntimeId 的 md5），
+        同一张图在同一个窗口里读多少次都一样。拿不到就退回
+        "发送者 + 序号"：它只能保证**不把不同消息认成同一条**，
+        认成同一条的后果是漏处理（安静），比误判成新增安全。
+        """
+        if not isinstance(img, _PendingImg):
+            return img
+        rid = ""
+        for obj in (img.m, getattr(img.m, "control", None)):
+            for attr in ("runtimeid", "hash", "hash_text"):
+                try:
+                    v = str(getattr(obj, attr, "") or "").strip()
+                except Exception:
+                    continue
+                if v:
+                    rid = v
+                    break
+            if rid:
+                break
+        img.fp = rid or ("idx%d:%s" % (idx, img.sender))
+        return img
+
+    # --- 读消息的超时保护 -----------------------------------------
+    def _read_all(self, src, timeout=25.0):
+        """读消息，带超时。返回消息列表；卡住或出错返回 None。
+
+        🔴 为什么需要超时（实测卡死的现场）：
+        `GetAllMessage()` 自己会操作界面 —— 展开艾特卡片、滚动到新消息、
+        定位控件。微信界面处于某种状态时它会**卡在里面出不来**：进程 CPU
+        一直涨、界面被反复操作（用户看到的"一直右键头像"），但
+        bridge.log 一个字都不写。这不是抛异常，外层的 try/except 拦不住，
+        只能靠超时放弃这一轮。
+
+        为什么用线程：wxauto4 调的是 COM/UIA，同进程里没法从外部打断。
+        放进工作线程后主线程超时就不再等它 —— 那个线程会带着它卡住的
+        界面操作继续跑，所以**放弃的是这一轮，不是真的停下了**。
+
+        🔴 超时后必须冷却：卡住的那个线程还在操作界面，马上再来一次只会
+        叠第二个线程、让界面更乱 —— 那正是"疯狂右键"的放大器。
+        """
+        import threading
+
+        now = time.time()
+        if self._read_stuck_until and now < self._read_stuck_until:
+            return None
+        if self._read_busy:
+            # 上一个线程还没结束 —— 绝不能再开一个
+            return None
+
+        box = {}
+
+        def _work():
+            try:
+                box["msgs"] = src.GetAllMessage() or []
+            except Exception as exc:
+                box["err"] = exc
+
+        self._read_busy = True
+        t = threading.Thread(target=_work, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            self._read_busy = False
+            self._read_stuck_until = time.time() + 60.0
+            self._read_stuck_n += 1
+            print("[微信] 读消息卡住 %.0f 秒（第 %d 次），这一轮跳过、"
+                  "不再碰界面" % (timeout, self._read_stuck_n), flush=True)
+            print("      正在复位微信界面；下次尝试在 60 秒后。", flush=True)
+            self._reset_wechat_ui()
+            return None
+        self._read_busy = False
+        if "err" in box:
+            print("[微信] 读消息失败：%s" % box["err"], flush=True)
+            return None
+        return box.get("msgs") or []
+
+    def _reset_wechat_ui(self):
+        """把微信界面复位：关掉弹出菜单、切回聊天页。
+
+        🔴 为什么需要：卡住的那个读线程还在操作界面（可能正在右键头像、
+        弹菜单）。主线程这边虽然放弃等了，但那个线程不会停 ——
+        所以「放弃这一轮」不等于「界面不再被动」。不把它拽回聊天页，
+        界面就会一直停在奇怪的状态，下一次读又卡。
+
+        🔴 为什么按 Esc 而不是去点窗口按钮：点窗口需要目标窗口是前台，
+        而这套接入的前提就是「不要抢前台」（pause_when_away）。
+        Esc 是给当前前台窗口的 —— 只在微信本来就是前台时才生效，
+        抢不到就跳过，不做任何窗口切换。
+
+        ⚠️ 这一步**绝不能**抛异常，也绝不能长时间阻塞：它是补救，
+        补救失败就让它失败，别把主循环带崩。
+        """
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            fg = user32.GetForegroundWindow()
+            mine = None
+            for obj in (getattr(self, "_sub", None), getattr(self, "wx", None)):
+                for attr in ("hwnd", "Handle", "handle", "_hwnd"):
+                    v = getattr(obj, attr, None)
+                    if v:
+                        try:
+                            mine = int(v)
+                        except Exception:
+                            mine = None
+                        break
+                if mine:
+                    break
+            # 微信不在前台就不动界面：这套接入的规矩是不抢用户窗口
+            if not fg or (mine and fg != mine):
+                print("[微信] 微信不在前台，不复位界面（不抢窗口）", flush=True)
+                return
+            # Esc 关掉可能弹着的右键菜单
+            user32.keybd_event(0x1B, 0, 0, 0)
+            user32.keybd_event(0x1B, 0, 2, 0)
+            # 切回聊天页（微信被切到"通讯录"之类的页面时）
+            try:
+                sw = getattr(self.wx, "SwitchToChat", None)
+                if callable(sw):
+                    sw()
+            except Exception:
+                pass
+            print("[微信] 界面已复位（Esc + 回到聊天页）", flush=True)
+        except Exception as e:
+            print("[微信] 复位界面没成功：%s（不影响继续跑）" % e, flush=True)
+
+    def _resolve_img(self, pending):
+        """把 _PendingImg 换成图片的 base64。取不到就返回 None（这条丢掉）。
+
+        🔴 这里的 seen 检查是**第二道**闸，不是唯一一道。
+        第一道是位置：图在 _diff 判定为新增之后才下载，历史图片压根不会被碰。
+        第二道是内容哈希：万一窗口切换/滚动让 _diff 又把同一张图当成新增，
+        到这里还有一道拦 —— 这正是死循环闭环的最后一环，宁可漏也不许无限重复。
+
+        用内容哈希而不是下载前的指纹做第二道，是因为微信对同一张图下载
+        出来的临时文件名每次都不一样，而内容是稳的。
+        """
+        content, img_b64 = self._grab_image(
+            pending.m, pending.content, pending.sender)
+        if not img_b64:
+            # 下不到图就别把这句 "[图片]" 送上去 —— 让她对着占位符
+            # 瞎猜，比不理人更奇怪。
+            return None
+        k = self._img_key(img_b64)
+        if k and k in self._seen_images():
+            print("[微信] 这张图处理过了（%s），不再送第二次"
+                  % (pending.sender or "?"))
+            return None
+        if k:
+            self._seen_images().add(k)
+        return img_b64 or None
+
     def _is_image(self, m, content):
         return _looks_like_image(m, content)
 
@@ -521,6 +746,14 @@ class Bridge(object):
           · 下不到 → 返回空，调用方整条丢掉。
         """
         path = None
+        # 🔴 下载前先把可能残留的图片查看窗关掉。
+        # 微信4.x 的 download() 内部是"右键头像 → 在新窗口里打开图"，
+        # 那个窗关不掉就一直留在顶层：下一轮 GetAllMessage() 读到的是它，
+        # 前缀跟聊天窗的内容对不上（见 _diff），于是那条图被当成新消息，
+        # 于是又download() —— 就是用户看到的"右键、打开图、重复"。
+        # 这里只按窗口标题认（微信的图片预览窗标题含"图片"且是独立顶层窗），
+        # 不碰聊天窗和主窗口；关不掉就算了，后面两层闸照样拦得住。
+        self._close_image_viewer()
         try:
             dl = getattr(m, "download", None)
             if callable(dl):
@@ -540,6 +773,9 @@ class Bridge(object):
             print("[微信] 读图片出错（%s）：%s" % (sender or "?", e))
             return "", ""
         finally:
+            # 下载完立刻再关一次：有些版本 download() 成功之后才弹窗。
+            # 不关的话它会活到下一轮，前缀断裂又开始了。
+            self._close_image_viewer()
             # 下载的临时文件不留着 —— 微信默认会往桌面上堆，
             # 跑一晚上就是几百张。删不掉就算了，但一定要试。
             try:
@@ -547,6 +783,68 @@ class Bridge(object):
                     os.remove(str(path))
             except Exception:
                 pass
+
+    def _close_image_viewer(self):
+        """关掉可能还开着的图片查看窗。
+
+        为什么按"标题里有图片 + 是顶层窗"来认，而不是认类名：
+        wxauto4 的图片预览窗在不同微信版本里类名不一样（实测 203.0.113.10
+        是独立顶层窗，但这个值随版本变），按类名认等于写死一个版本号。
+        标题反而稳：微信的图片预览窗标题就是图片名或"图片"。
+
+        🔴 只关**自己认得出来的**独立预览窗：必须同时满足
+        ① 标题含"图片"/"image" ② 不是主窗口 ③ 不是聊天子窗口。
+        少任何一条都可能把聊天窗口关掉 —— 那是比重复操作严重得多的事。
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            keep = set()
+            for obj in (getattr(self, "_sub", None), getattr(self, "wx", None)):
+                # wxauto 的窗口对象在不同版本里字段名不一样，全试一遍
+                for attr in ("hwnd", "Handle", "handle", "_hwnd"):
+                    v = getattr(obj, attr, None)
+                    if v:
+                        try:
+                            keep.add(int(v))
+                        except Exception:
+                            pass
+                        break
+
+            user32 = ctypes.windll.user32
+            closed = 0
+            # EnumWindows 只给顶层窗，图片预览窗正是顶层
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def _cb(hwnd, _):
+                nonlocal closed
+                try:
+                    if int(hwnd) in keep:
+                        return True
+                    if not user32.IsWindowVisible(hwnd):
+                        return True
+                    buf = ctypes.create_unicode_buffer(256)
+                    user32.GetWindowTextW(hwnd, buf, 256)
+                    t = buf.value or ""
+                    if not t:
+                        return True
+                    low = t.lower()
+                    if "图片" not in t and "image" not in low and "photo" not in low:
+                        return True
+                    # 聊天的标题里也可能有"图片"两个字（群名带图片两字），
+                    # 所以再要求：这是个独立的小窗（不是主聊天窗那个宽度）
+                    user32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
+                    closed += 1
+                except Exception:
+                    pass
+                return True
+
+            user32.EnumWindows(_cb, 0)
+            if closed:
+                print("[微信] 关掉了 %d 个图片查看窗" % closed)
+        except Exception as e:
+            # 关不掉不是致命问题：_seen_img 和 _diff 那两道闸照样拦得住。
+            print("[微信] 关图片窗这步没成功（%s），靠后面两道闸兜着" % e)
 
     def _shrink(self, path):
         """读图片，超大就等比缩到 IMG_MAX_BYTES 以内。返回字节。"""
@@ -601,9 +899,18 @@ class Bridge(object):
                     idx = i
                     break
             if idx < 0:
-                new = []
-            else:
-                new = items[idx + 1:]
+                # 🔴 认不出锚点时**不要更新 _prev**。
+                # 原来这里是 new=[] 然后照样 self._prev = now，于是
+                # 上一轮的图片查看窗口里的内容被当成了新的基线。
+                # 回到聊天窗后前缀跟这个基线永远对不上，那条图就被
+                # 重新认成新消息 → 再 download() → 再开一次窗 → 死循环。
+                # 不更新基线的代价：下一轮还会认不出来、还是返回空，
+                # 也就是"这一段消息没处理"。但那个代价远小于无限重复操作 ——
+                # 而且真的认不出来说明窗口被换过了，等窗口稳定自然会接上。
+                print("[微信] 窗口内容对不上（可能刚打开过图片），"
+                      "这一轮先不处理，等它稳定")
+                return []
+            new = items[idx + 1:]
         self._prev = now
         return new
 
@@ -737,9 +1044,9 @@ class Bridge(object):
             text = text[:cap] + "…"
         # 🔴 发出去之前的最后一道闸。
         # 从「读到消息」到「把字打进输入框」之间隔着问云端大脑的时间
-        # （可能几十秒），这段时间里你完全可能已经把微信切回大号了。
+        # （可能几十秒），这段时间里微信完全可能掉线重连到了别的号。
         # 所以**每一条要发出去的消息，都在这个瞬间重新确认一次身份** ——
-        # 这是唯一能保证「绝不会在大号群里发出东西」的位置。
+        # 这是唯一能保证「绝不会用不是小号的号发出东西」的位置。
         if not self._recheck_identity():
             print("[发送] 已拦下：身份不符，这条没有发出去。")
             return False
@@ -778,7 +1085,14 @@ class Bridge(object):
             self._paused = 0
         items = self._snapshot()
         new = self._diff(items)
-        for sender, content, img_b64 in new:
+        for sender, content, img in new:
+            # 🔴 图片**这一轮才算真正下载** —— _snapshot 里只登记，
+            # 是因为它跑在 _diff 之前、对的是全部历史消息而不是新增的那些。
+            #
+            # 🔴 顺序也重要：下载放在 _is_mine / _should_reply **之后**。
+            # 她自己发的图、群里没点名她的图，根本不必下载 ——
+            # 每下一张图就是一次右键 + 开窗 + 关窗，还会抢前台窗口。
+            # 判断"要不要理他"只需要 sender 和 content，不需要图本身。
             if self._is_mine(sender, content):
                 continue
             self._last_active = time.time()
@@ -790,8 +1104,12 @@ class Bridge(object):
             # 群里有人随手扔张图就把她叫起来，太吵了；
             # 而且看图要花钱（视觉模型另一次调用），不能被随便触发。
             if not self._should_reply(content):
-                print("[跳过] %s：%s" % (sender or "?", (content[:40] or ("[图片]" if img_b64 else ""))))
+                print("[跳过] %s：%s" % (sender or "?", (content[:40] or "[图片]")))
                 continue
+            if isinstance(img, _PendingImg):
+                img = self._resolve_img(img)
+                if img is None:
+                    continue
             # 她需要知道是谁在说话，否则三个人说话她分不清
             if sender and content:
                 text = "%s：%s" % (sender, content)
@@ -801,8 +1119,8 @@ class Bridge(object):
                 # 纯图片：告诉她是**谁**发的图，但别替她说"我看到图了"——
                 # 描述是视觉模型的活，桥接只负责把图送到。
                 text = ("%s：（发来一张图）" % sender) if sender else "（发来一张图）"
-            print("[收到] %s%s" % (text[:100], "  [带图]" if img_b64 else ""))
-            answer = self.brain.ask(text, img_b64 or None)
+            print("[收到] %s%s" % (text[:100], "  [带图]" if img else ""))
+            answer = self.brain.ask(text, img or None)
             if not answer:
                 continue
             self._send(answer)
@@ -814,29 +1132,31 @@ class Bridge(object):
         """🔴 运行中重新确认身份 —— 断了就立刻自杀。
 
         为什么启动时的校验不够：
-        微信 4.x 是跨目录单实例。你让知夏上线 → 桥接启动 → 连上小号，
-        校验通过；然后你把微信切回大号（或者微信自己掉线重连到了另一个号），
-        **桥接还开着、还停在小号那个窗口上**。启动时那次校验早就过去了。
+        微信 4.x 是跨目录单实例。让知夏上线 → 桥接启动 → 连上小号，
+        校验通过；然后微信自己掉线重连到了另一个号（或者有人在机器上
+        登了另一个微信），**桥接还开着、还停在小号那个窗口上**。
+        启动时那次校验早就过去了。
 
         所以每一轮都得重新问一遍"我现在连的还是小号吗"。
-        判据比启动时更严 —— 任何一项不满足就退出，不做任何操作。
+        判据是 expected_wxid：不是它就退出，不做任何操作。
+
+        🔴 黑名单已移除（2026-10-05）。要加回来的话取消下面两行注释：
+          banned = set(self.cfg.get("forbidden_wxids") or [])
+          if now in banned: ... 退出
         """
         want = (self.cfg.get("expected_wxid") or "").strip()
         if not want:
             return True                      # 没填就不做运行中检查
-        banned = set(self.cfg.get("forbidden_wxids") or [])
         try:
             now = (self.wx.GetMyInfo() or {}).get("id") or ""
         except Exception as e:
             print("")
             print("[自检] 读不到身份（%s）—— 立刻退出，不做任何操作。" % e)
             return False
-        if now in banned:
-            print("")
-            print("[自检] " + "!" * 56)
-            print("[自检] 现在连的是【大号】(wxid=%s) —— 退出。" % now)
-            print("[自检] " + "!" * 56)
-            return False
+        # banned = set(self.cfg.get("forbidden_wxids") or [])
+        # if now in banned:
+        #     print("[自检] 现在连的是黑名单里的号(wxid=%s) —— 退出。" % now)
+        #     return False
         if now != want:
             print("")
             print("[自检] " + "!" * 56)
@@ -926,13 +1246,11 @@ def main():
 
     # --with <对话名>：不进群也能先测。
     #
-    # 建群之前的自测：让桥接盯着任意一个对话窗口（一般是「文件传输助手」，
-    # 或者你自己和大号小号之间的私聊），链路一样能跑通。
+    # 建群之前的自测：让桥接盯着任意一个对话窗口（一般是「文件传输助手」），
+    # 链路一样能跑通。
     #
-    # 为什么安全：**大号只是消息的来源，不是操作对象**。桥接从头到尾
-    # 连的是小号（expected_wxid 核对、forbidden_wxids 拦黑名单），
-    # 它只在**小号这个微信里**读消息、发消息。有人在别的号上给小号发消息，
-    # 桥接读到的就是小号窗口里的那条 —— 大号的窗口一个字节都不碰。
+    # 为什么安全：桥接从头到尾连的是知夏小号（expected_wxid 核对），
+    # 它只在**那个微信里**读消息、发消息 —— 别的窗口一个字节都不碰。
     if "--with" in args:
         i = sys.argv.index("--with")
         name = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""

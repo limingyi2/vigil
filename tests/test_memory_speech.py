@@ -156,8 +156,11 @@ class TestWeight(unittest.TestCase):
         self.assertEqual(M._weight(it), 1.0)
 
     def test_future_event_is_untouched(self):
+        # 相对今天往后算。原来写死 2026-10-02，到了那天之后
+        # 「明天上午10点提醒起床学习」就成了过去的事，权重被降，
+        # 断言 assertEqual(1.0) 必然红 —— 代码没变，是日期流走了。
         it = self._item("明天上午10点提醒起床学习",
-                        datetime.datetime(2026, 10, 2, 3, 26))
+                        datetime.datetime.now() + datetime.timedelta(days=2))
         self.assertEqual(M._weight(it), 1.0)
 
     def test_proactive_source_is_downweighted(self):
@@ -248,15 +251,21 @@ class TestRenderOrdering(unittest.TestCase):
         import tempfile
         d = tempfile.mkdtemp()
         self.store = M.MemoryStore(os.path.join(d, "memory.json"))
-        with self.store._lock:
-            self.store.data["items"] = [
-                {"id": "a", "type": "event", "text": "今天学习了Python一天",
-                 "time": "2026-09-30 18:18"},
-                {"id": "b", "type": "event", "text": "明天下午去接他",
-                 "time": "2026-10-03 07:40"},
-                {"id": "c", "type": "fact", "text": "用户喜欢猫",
-                 "time": "2026-09-23 00:36"},
-            ]
+        # 时间戳按**今天**相对算，不写死日期。
+        # 写死的后果很具体：这个类 2026-10-05 跑时 b 条（10-03）已经过去，
+        # 「未来的事件」变成「两天前的事件」，权重一降排序就变了，
+        # 两条断言同时红 —— 而代码一行没动。以后每年都会再红一次。
+        today = datetime.date.today()
+        def ts(offset_days):
+            return (today + datetime.timedelta(days=offset_days)).strftime("%Y-%m-%d %H:%M")
+        self.store.data["items"] = [
+            # 10 天前：过期，应压到末尾
+            {"id": "a", "type": "event", "text": "今天学习了Python一天", "time": ts(-10)},
+            # 2 天后：未来，不降权，应排前面
+            {"id": "b", "type": "event", "text": "明天下午去接他", "time": ts(2)},
+            # 8 天前但类型是 fact（喜好/习惯/身份），日期逻辑不管它
+            {"id": "c", "type": "fact", "text": "用户喜欢猫", "time": ts(-8)},
+        ]
 
     def test_expired_goes_last(self):
         out = self.store.render(query=None, max_items=10)
@@ -272,14 +281,18 @@ class TestRenderOrdering(unittest.TestCase):
         self.assertEqual(segs[:2], ["明天下午去接他", "用户喜欢猫"])
 
 
-
-
 class TestAddSrcField(unittest.TestCase):
-    """add() 的 src 参数：记来源，不写进 text（写进去会污染检索）"""
+    """add() 的 src / chan 参数：记来源，不写进 text（写进去会污染检索）"""
 
     def test_src_is_optional(self):
-        self.assertIn("def add(self, text, mtype=\"event\", src=\"\")",
-                      open(M.__file__, encoding="utf-8").read())
+        # 断言签名片段。原来写的是三参数版，chan 加进来后这个测试就红了 ——
+        # 它断言的是文本内容，不是行为，所以代码改了它不会自己跟上。
+        src = open(M.__file__, encoding="utf-8").read()
+        line = [l for l in src.split("\n")
+                if l.strip().startswith("def add(self")]
+        self.assertTrue(line, "add() 定义没找到")
+        self.assertIn('src=""', line[0])
+        self.assertIn("chan", line[0], "渠道隔离靠 chan 参数，签名里不能没有")
 
     def test_src_stored_on_item(self):
         import inspect

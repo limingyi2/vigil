@@ -93,9 +93,17 @@ _stats = {"turns": 0, "parsed": 0, "think_chars": 0}
 # ---------- 配置 ----------
 
 def _cfg():
+    """读 config.json 的 react 段。
+
+    🔴 原来写的是 `from config import CONFIG` —— brain/ 下**没有 config.py**，
+    那个 import 必然抛 ImportError，被except 吞掉之后 _cfg() 永远返回 {}，
+    于是 on_reply 第一行就 return，整个插件静默不干活。
+    没有报错、没有日志，只有"她怎么不落盘了"。跟 gate.py 用同一套写法。
+    """
     try:
-        from config import CONFIG
-        return CONFIG.get("react") or {}
+        from runtime import CFG_PATH
+        with open(CFG_PATH, encoding="utf-8") as f:
+            return json.load(f).get("react") or {}
     except Exception:
         return {}
 
@@ -105,9 +113,12 @@ def _data_dir():
 
     刻意放 data 下面 —— 那是唯一确定会被备份的地方，
     放日志目录会被人清日志时一起清掉。
+
+    🔴 DATA_DIR 在 paths.py 里，原来写的 `from config import DATA_DIR`
+    同样是那个不存在的模块。跟 reminder.py 用同一个来源。
     """
     try:
-        from config import DATA_DIR
+        from paths import DATA_DIR
     except Exception:
         return None
     d = os.path.join(DATA_DIR, "react")
