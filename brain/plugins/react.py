@@ -294,19 +294,29 @@ def last_for(src=None):
         return dict(_last.get(src or "", {}) or _last.get("app", {}))
 
 
+def _r_stats(body, query):
+    """看板：思维链统计 + 最近一轮拆解。只读，不改任何状态。
+
+    签名是插件路由约定的 (body, query) —— 都为 dict；返回 dict。
+    """
+    src = str((body or {}).get("src") or (query or {}).get("src") or "")
+    return {"ok": True, "stats": stats(), "last": last_for(src)}
+
+
+def _r_recent(body, query):
+    """看板：最近若干条思维链。只读。"""
+    body, query = body or {}, query or {}
+    try:
+        limit = int(body.get("limit") or query.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    src = body.get("src") or query.get("src")
+    return {"ok": True, "items": recent(limit, src)}
+
+
+# 🔴 原来两项都只有 (method, path)，缺第三个 handler，route_table() 会判
+# "ROUTES 项不完整"直接跳过，两个接口全 404。补齐 handler（签名 (body,query)）。
 ROUTES = [
-    ("POST", "/api/react/stats"),
-    ("POST", "/api/react/recent"),
+    ("POST", "/api/react/stats", _r_stats),
+    ("POST", "/api/react/recent", _r_recent),
 ]
-
-
-def route(method, path, body):
-    """只读接口，看她的推理留痕。"""
-    body = body or {}
-    if path == "/api/react/stats":
-        return 200, {"ok": True, "stats": stats(), "last": last_for()}
-    if path == "/api/react/recent":
-        return 200, {"ok": True,
-                     "items": recent(int(body.get("limit") or 20),
-                                     body.get("src"))}
-    return 404, {"ok": False}
