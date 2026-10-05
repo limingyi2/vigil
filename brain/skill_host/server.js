@@ -87,7 +87,16 @@ async function loadAll() {
     let st = null
     try { st = fs.statSync(dir) } catch (e) { continue }
     // 跳过非目录和下划线开头的（跟 python 插件同一套规矩，别搞两套标准）
+    //
+    // 🔴 .bak_ 结尾的也必须跳过，而且**后果比"多一个幽灵技能"更隐蔽**：
+    // python 侧的 _uninstall 把目录改名成 `<包名>.bak_<时间戳>` 而不是真删
+    // （不覆盖、不销毁，是有意的）。skills 这个 Map 是拿 manifest 里的 id
+    // 做 key 的，于是备份目录和真技能**同名** → 互相覆盖 →
+    // 日志里三个都"装载成功"，最后 `装好 1 个技能`。
+    // 也就是说：不跳的话，日志完全正常、/skills 数量看着正常，
+    // 但清单里到底是哪一份取决于目录顺序 —— 已卸载的技能可能顶掉在用的。
     if (!st.isDirectory() || name.startsWith('_') || name.startsWith('.')) continue
+    if (name.includes('.bak_')) continue
     await loadOne(name, dir).catch(e =>
       log(fmt('装载 %s 失败：%s', name, String(e.message || e).slice(0, 120))))
   }
