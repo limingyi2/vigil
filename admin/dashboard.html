@@ -670,6 +670,48 @@ async function api(path, opts={}) {
   }
 }
 
+/* ===== 只看一眼 zip 里有什么 =====
+
+   用来分辨「技能包」和「插件包」—— 两者都是 zip，长得一模一样，
+   而后端的 plugin_ops 只收 .py/.json/.md/.txt，skill 才收 .js。
+
+   只解析**中央目录**（末尾那张文件名表），不解压、不校验内容，
+   所以加密包或者内容损坏的包也能拿到文件名 —— 那正是最需要判断的时候。 */
+function peekZip(b64) {
+  try {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const dv = new DataView(u8.buffer);
+    // 从尾部倒着找 EOCD（签名 0x06054b50）。最多回退 64KB+22，
+    // 注释字段最长 65535 字节。
+    let eocd = -1;
+    for (let i = u8.length - 22; i >= Math.max(0, u8.length - 66000); i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) return null;
+    // EOCD +10 是中央目录条目个数（这里不跟 totalSize，因为只要名字）
+    const count = dv.getUint16(eocd + 10, true);
+    let off = dv.getUint32(eocd + 16, true);
+    const entries = [];
+    for (let n = 0; n < count && n < 500; n++) {
+      // 中央目录文件头签名 0x02014b50
+      if (dv.getUint32(off, true) !== 0x02014b50) break;
+      const nameLen = dv.getUint16(off + 28, true);
+      const extraLen = dv.getUint16(off + 30, true);
+      const cmtLen = dv.getUint16(off + 32, true);
+      const name = new TextDecoder('utf-8').decode(
+        u8.subarray(off + 46, off + 46 + nameLen));
+      entries.push(name);
+      off += 46 + nameLen + extraLen + cmtLen;
+    }
+    return { entries: entries };
+  } catch (e) {
+    console.warn('peekZip failed:', e && e.message);
+    return null;
+  }
+}
+
 /* ===== 整页拖放 =====
    浏览器默认会把丢在页面上的文件当成"打开这个文件"，
    然后整页导航过去 —— 面板上看着就是"东西没了"。
@@ -1805,6 +1847,34 @@ Views.plugins = async function(container) {
     setDzBusy(true);
     try {
       const b64 = await fileToB64(file);
+      // 🔴 看一眼包里是什么，再决定送哪个路由。
+      //
+      // 症状是用户拖一个技能包进来，撞到 "不允许的文件类型 .js
+      // (只准 .py .json .md .txt)" —— 那是 plugin_ops 的白名单。
+      // 原因是两个视图各自绑整页 drop，而技能包和插件包**长得一模一样**
+      // （都是 zip），用户没有、也不该有办法分辨自己在哪个视图。
+      //
+      // 不去改 plugin_ops 的白名单：那是后端的安全边界，
+      // 让它接受 .js 等于让任意脚本文件从插件通道进来。
+      // 判据放在前端 —— 一眼就能看出包里有没有 manifest。
+      const peek = await peekZip(b64);
+      const looksLikeSkill = !!(peek && peek.entries.some(
+        n => /(^|\/)(skill\.json|index\.(js|mjs|cjs))$/i.test(n)));
+      if (looksLikeSkill) {
+        toast('这个包里有 skill.json，是技能包。已改送到技能接口…', 'info');
+        const rs = await api('/api/skill/install',
+          {method:'POST', body:{zip_b64: b64, source: file.name}});
+        if (!rs) {
+          toast('装不上：' + (State.lastNetError
+            ? explainNetError(State.lastNetError) : '服务没回应'), 'error');
+        } else if (rs.ok) {
+          toast('已装上技能「' + (rs.name || file.name) + '」', 'success');
+          renderView('skills');
+        } else {
+          toast(rs.err || '装不上', 'error');
+        }
+        return;
+      }
       const r = await api('/api/plugins/install',
         {method:'POST', body:{zip_b64: b64, source: file.name}});
       if (!r) {
@@ -2136,6 +2206,29 @@ Views.skills = async function(container) {
     setDzBusy(true);
     try {
       const b64 = await fileToB64(file);
+      // 同上：包里没有 skill.json / index.js 那就是插件包，改送插件接口。
+      // 两个视图的整页 drop 是同一个机制，谁先接到全看你在哪个页签，
+      // 而技能包和插件包外观一模一样 —— 所以两边都得能自己认出来。
+      const peek = await peekZip(b64);
+      const entries = (peek && peek.entries) || [];
+      const looksLikeSkill = entries.some(
+        n => /(^|\/)(skill\.json|index\.(js|mjs|cjs))$/i.test(n));
+      if (!looksLikeSkill) {
+        toast('这个包看着像插件包（没有 skill.json）。已改送到插件接口…', 'info');
+        const rp = await api('/api/plugins/install',
+          {method:'POST', body:{zip_b64: b64, source: file.name}});
+        if (!rp) {
+          toast('装不上：' + (State.lastNetError
+            ? explainNetError(State.lastNetError) : '服务没回应'), 'error');
+        } else if (rp.ok) {
+          toast('已装上插件「'
+            + ((rp.installed && rp.installed.name) || file.name) + '」', 'success');
+          renderView('plugins');
+        } else {
+          toast(rp.err || '装不上', 'error');
+        }
+        return;
+      }
       const r = await api('/api/skill/install',
         {method:'POST', body:{zip_b64: b64}});
       if (!r) {
