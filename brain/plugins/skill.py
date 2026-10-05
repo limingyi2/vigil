@@ -36,6 +36,7 @@ skill 侧判"群里有没有被点名"读的是 `ctx.session.contextTier`，
 """
 import os
 import json
+import sys
 import time
 import threading
 
@@ -398,17 +399,33 @@ def _r_say(body, query):
                     "请你自己把这段话说出来，不要复述也不要解释。"}
 
 
-_brain_ref = {"b": None}
+# 🔴 这两个 dict 会被 reload 清空，所以里面只能放「本轮/本次」的东西。
+# start() 存下来的 brain 不属于这里，见下面 _PERSIST。
 _turn_ref = {"t": None}          # 本轮的 Turn。只在 skills 调用期间有效。
+
+# 🔴 brain 必须住在**模块之外**。
+#
+# plugin_host.load() 每次热重载都重新 exec 一遍这个文件（模块名 zxplug_skill），
+# 于是模块级变量全部换成全新的：`_brain_ref = {"b": None}` 重新绑定，
+# 之前 start(brain) 存进去的 brain 随旧模块对象一起被丢掉。
+# 而 start_all() 只在开机时调一次 —— 所以面板点一次「重载」、或者装/卸
+# 一次技能（install/uninstall 内部会打宿主 /reload 并清工具缓存），
+# 就把 say 通道永久打瞎，而且**不会自己恢复**。
+#
+# 表现极具迷惑性：装/列/状态全都正常（那些不依赖 brain），
+# 只有"技能自己发消息"这一条报「拿不到大脑」，重启大脑又好了。
+#
+# 存在 sys.modules 上：这个 dict 挂在模块命名空间里，reload 不清它。
+_PERSIST = sys.modules.setdefault("zxskill_shared", type("S", (), {})())
 
 
 def _brain_global():
-    return _brain_ref.get("b")
+    return getattr(_PERSIST, "brain", None)
 
 
 def start(brain):
     """进程启动时调一次。记下大脑，好让技能能回话。"""
-    _brain_ref["b"] = brain
+    _PERSIST.brain = brain
     if not host_alive():
         print("[技能] 云端 Node 宿主没起来（%s），技能功能这次不可用。" % _host(), flush=True)
     else:
@@ -459,9 +476,12 @@ def _skill_dir():
     env = os.environ.get("ZX_SKILL_DIR")
     if env:
         return env
+    # runtime.HERE 即 brain/ 目录（runtime.py 与 skill_host/ 同级）。
+    # 🔴 原来写 `from runtime import ROOT` —— runtime 没有 ROOT，恒 ImportError，
+    # 每次都静默走下面的兜底分支（兜底路径恰好正确，所以功能没坏）。改用 HERE。
     try:
-        from runtime import ROOT
-        return os.path.join(ROOT, "skill_host", "skills")
+        from runtime import HERE
+        return os.path.join(HERE, "skill_host", "skills")
     except Exception:
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         return os.path.join(here, "skill_host", "skills")
