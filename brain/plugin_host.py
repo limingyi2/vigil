@@ -78,11 +78,35 @@ class Turn(object):
         self.text = str(text or "")          # 他这一轮说的话（原值，含插件前处理）
         self.src = str(src or "app")         # 渠道：app / wechat
         self.api_config = api_config or {}   # 共享的那份 API_CFG
-        self.brain = brain                   # 大脑对象，只读用（问问题、查记忆）
+        self.brain = brain# 大脑对象，只读用（问问题、查记忆）
         self.meta = {}                       # 插件自己的中途数据，同轮内互相传
+        self.vetoed = False                  # 有插件否决了这一轮（见 veto）
+
+    def veto(self, why=""):
+        """**否决这一轮**：大脑根本不会被问，她这一轮彻底不说话。
+
+        ## 为什么不靠返回值表达
+
+        最早的方案是「on_turn_in 返回空串 = 否决」。看着更省事，实际立刻炸：
+        `reminder` 插件"没有提醒要注入"时返回的也是空串 —— **同一个值两种意思**。
+        两种情况在宿主层长得一模一样，于是：
+
+        - 所有插件都放行 → `"\n".join([])` = `""` → 被当成否决 → **她一句话都说不出来**
+        - reminder 没东西注入 → `""` → 也被当成否决
+
+        表现是"她突然完全不回话了"，而每个插件单独看都正常。
+        空串在两种语义下**无法区分**，所以改成显式声明：插件想否决就调
+        `ctx.veto(原因)`，返回值只负责"要注入的提示文本"。
+
+        返回值于是恢复成只有一种含义：非空字符串 = 注入 system 的提示。
+        """
+        self.vetoed = True
+        self.veto_reason = str(why or "")[:120]
+        _log("turn", "这一轮被否决：%s" % (self.veto_reason or "未说明原因"))
+        return None
 
     def say(self, text):
-        """让插件能主动开口（跟 proactive 那条路一样，App 轮询会弹通知）。"""
+        """让插件能主动开口（跟 proactive 那条路一样，App轮询会弹通知）。"""
         try:
             from proactive import _cloud_append_assistant
             _cloud_append_assistant(str(text or ""))
@@ -302,16 +326,25 @@ def prompt_block(ctx=None):
 
 
 def on_turn_in(ctx):
-    """他发来消息时，各插件可返回一段要注入 system 的提示。拼起来返回。
+    """他发来消息时，各插件可返回一段要注入 system 的提示。
 
     对应以前硬写在 /api/chat 里的"检测到快递单号"那段 —— 现在那类东西
     归插件管，核心不认识具体功能。
+
+    🔴 **否决整轮靠 `ctx.veto()`，不靠返回值。**
+    试过"返回空串 = 否决"，立刻踩坑：`reminder` 插件"没有提醒要注入"
+    时返回的也是空串，而"所有插件都放行"时 `join([])` 同样是空串 ——
+    三种情况在返回值上完全一样，于是"她一句话都说不出来"，
+    而每个插件单独看都正常。空串这个值本身没有信息量。
+    详见 Turn.veto 的说明。
     """
     out = []
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if not _enabled(p):
             continue
         ok, v = _call(p, "on_turn_in", ctx)
+        if ctx.vetoed:          # 任何插件表态了就不用往下走
+            return ""
         if ok and isinstance(v, str) and v.strip():
             out.append(v.strip())
     return "\n".join(out)

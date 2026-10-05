@@ -53,9 +53,14 @@ if not isinstance(MOB_CFG, dict):
 BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 
 # 白名单式浅拷贝。这里漏掉哪个键，对应模块就读到空配置、改了也不生效
-# （vision 和 voice 各栽过一次）。往 config 加新功能段时记得同步这里
+# （vision 和 voice 各栽过一次，persona_file 是第三次）。
+#
+# 🔴 persona_file 特别要紧：Brain 只认 API_CFG（self.api 就是它），
+# 漏了这个键 → key_from_config 返回 "default" → 所有分区名都算成空 →
+# 换人设不换记忆、换渠道不换存档，**看着分区建了，其实全写进同一份**。
 API_CFG = {k: api_config[k] for k in
-           ("api_base", "api_key", "model", "vision", "voice", "uapi")
+           ("api_base", "api_key", "model", "vision", "voice", "uapi",
+            "persona_file")
            if k in api_config}
 
 

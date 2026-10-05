@@ -72,6 +72,12 @@ body { display:flex; overflow:hidden; }
 .topbar button:hover { background:var(--brand-dark); }
 .topbar button.ghost { background:transparent; color:var(--text-secondary); border:1px solid var(--border); }
 .topbar button.ghost:hover { background:var(--bg); color:var(--text); }
+/* 渠道切换：App / 微信。放在顶栏最左边，切换后整个面板跟着换一套数据 */
+.src-switch { display:flex; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:2px; gap:2px; flex-shrink:0; }
+.src-switch button { height:26px; padding:0 14px; border:none; border-radius:3px; background:transparent; color:var(--text-secondary); font-size:12.5px; font-weight:500; cursor:pointer; }
+.src-switch button:hover { background:var(--card-bg); color:var(--text); }
+.src-switch button.on { background:var(--brand); color:#fff; }
+.src-hint { font-size:11.5px; color:var(--text-muted); white-space:nowrap; }
 
 /* 内容区 */
 .content { flex:1; overflow-y:auto; padding:22px 24px; }
@@ -267,6 +273,43 @@ table.data .num { text-align:right; font-variant-numeric:tabular-nums; }
   .topbar input[type="text"], .topbar input[type="password"] { width:100px; }
   .content { padding:14px; }
 }
+/* ===== 插件管理 ===== */
+.plug-item { display:flex; align-items:flex-start; padding:14px 20px; border-bottom:1px solid #f2f3f5; gap:14px; }
+.plug-item:last-child { border-bottom:none; }
+.plug-item .ficon { width:36px; height:36px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:var(--brand-light); color:var(--brand-dark); }
+.plug-item .ficon svg { width:18px; height:18px; }
+.plug-item .finfo { flex:1; min-width:0; }
+.plug-item .fname { font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.plug-item .fdesc { font-size:12.5px; color:var(--text-secondary); margin-top:3px; line-height:1.5; }
+.plug-item .fmeta { font-size:11.5px; color:var(--text-muted); margin-top:5px; display:flex; gap:10px; flex-wrap:wrap; }
+.plug-item .fmeta code { background:#f4f5f7; padding:1px 5px; border-radius:3px; font-size:11px; }
+
+/* 渠道多选：两个渠道各一个勾选框，不做成"下拉单选"——
+   「App 和微信都开」是最常见的一档，单选下拉要多点一次才能表达出来。
+   竖着排：横排的话加上"生效于"三个字，一行放不下会挤成一团 */
+.chan-picker { display:flex; flex-direction:column; align-items:flex-end; gap:5px; flex-shrink:0; }
+.chan-picker .lab { font-size:11px; color:var(--text-muted); }
+.chan-picker .row { display:flex; gap:6px; }
+.chan-chk { display:inline-flex; align-items:center; gap:5px; padding:5px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:12px; cursor:pointer; user-select:none; transition:all .15s; background:#fff; }
+.chan-chk:hover { border-color:var(--brand); }
+.chan-chk.on { background:var(--brand-light); border-color:var(--brand); color:var(--brand-dark); font-weight:600; }
+.chan-chk.off-locked { opacity:.5; cursor:not-allowed; }
+.chan-chk input { display:none; }
+.plug-actions { display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
+
+/* 拖拽上传区 */
+.dropzone { border:2px dashed var(--border); border-radius:var(--radius); padding:26px 20px; text-align:center; cursor:pointer; transition:all .18s; background:#fafbfc; }
+.dropzone:hover { border-color:var(--brand); background:#fffafb; }
+.dropzone.drag { border-color:var(--brand); background:var(--brand-light); }
+.dropzone.busy { pointer-events:none; opacity:.6; }
+.dropzone .dz-icon { color:var(--brand); margin-bottom:8px; }
+.dropzone .dz-icon svg { width:34px; height:34px; }
+.dropzone .dz-title { font-size:13.5px; font-weight:600; margin-bottom:4px; }
+.dropzone .dz-sub { font-size:12px; color:var(--text-secondary); line-height:1.6; }
+.plug-note { font-size:12px; color:var(--text-secondary); line-height:1.7; }
+.plug-note code { background:#f4f5f7; padding:1px 5px; border-radius:3px; font-size:11.5px; }
+.plug-note li { margin:3px 0; }
+.plug-note ul { margin:6px 0 0; padding-left:20px; }
 </style>
 </head>
 <body>
@@ -303,6 +346,10 @@ table.data .num { text-align:right; font-variant-numeric:tabular-nums; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
       <span>功能开关</span>
     </div>
+    <div class="nav-item" data-view="plugins">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6l-5 8.5A3 3 0 0 0 6.6 20h10.8a3 3 0 0 0 2.6-3.5L15 8V2"/><path d="M8 2h8"/><path d="M6.6 14h10.8"/></svg>
+      <span>插件管理</span>
+    </div>
     <div class="nav-item" data-view="moments">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
       <span>朋友圈 & 日记</span>
@@ -328,6 +375,10 @@ table.data .num { text-align:right; font-variant-numeric:tabular-nums; }
   <!-- 顶栏 -->
   <header class="topbar">
     <div class="page-title" id="pageTitle">概览</div>
+    <div class="src-switch" id="srcSwitch" title="App 和微信是两套人设、两份记忆、两组开关">
+      <!-- 由 renderSrcSwitch 填 -->
+    </div>
+    <div class="src-hint" id="srcHint"></div>
     <div class="spacer"></div>
     <div class="conn-status">
       <span class="dot" id="connDot"></span>
@@ -373,14 +424,23 @@ const State = {
   demoMode: false,
   lastNetError: '',
   currentView: 'overview',
+  // 当前在看哪个渠道。App 和微信是两套人设、两份记忆、两组开关 ——
+  // 混在一起看只会看到全局那份（= App 的），微信那边关掉的开关一个都看不到。
+  src: localStorage.getItem('zhixia_src') || 'app',
   charts: {},
   cache: {}
 };
 
+// 渠道清单。服务端 paths.CHANNELS 是唯一真源，这里只管显示名和说明。
+const CHANNELS = [
+  { id: 'app', name: 'App', hint: '知夏·八奈見杏菜·你的私人对话' },
+  { id: 'wechat', name: '微信', hint: '麦麦·群聊人设·独立的记忆和开关' }
+];
+
 const PAGE_TITLES = {
   overview: '概览', trace: '对话 Trace', history: '聊天历史',
-  persona: '人格管理', features: '功能开关', moments: '朋友圈 & 日记',
-  logs: '日志监控', config: '系统配置'
+  persona: '人格管理', features: '功能开关', plugins: '插件管理',
+  moments: '朋友圈 & 日记', logs: '日志监控', config: '系统配置'
 };
 
 /* ===== 工具函数 ===== */
@@ -427,13 +487,32 @@ $('#modalOverlay').addEventListener('click', e => { if (e.target === $('#modalOv
 const Views = {};
 
 /* ===== API 封装 ===== */
+// 🔴 src 参数**只加在按渠道分化的接口上**（features / history / persona /
+// moments / diary / memory）。模型、语音、插件这些是全局的，加了也没用，
+// 反而会让服务端把 _norm_src 里的空值当成合法渠道。
+const CHANNEL_SCOPED = [
+  '/api/features', '/api/history', '/api/persona', '/api/moments',
+  '/api/diary', '/api/memory', '/api/chat', '/api/gate'
+];
+
+function withSrc(path) {
+  if (State.src === 'app' || !CHANNEL_SCOPED.some(p => path.startsWith(p))) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'src=' + encodeURIComponent(State.src);
+}
+
 async function api(path, opts={}) {
   if (State.demoMode) return demoApi(path, opts);
-  const url = State.serverUrl.replace(/\/$/, '') + path;
+  const url = State.serverUrl.replace(/\/$/, '') + withSrc(path);
   const headers = { 'Content-Type': 'application/json' };
   if (State.token) headers['Authorization'] = 'Bearer ' + State.token;
+  // POST 也要带渠道：功能开关改的是「那个渠道的覆盖」，不带就改到全局去了
+  let body = opts.body;
+  if (body && CHANNEL_SCOPED.some(p => path.startsWith(p))
+      && typeof body === 'object' && !Array.isArray(body)) {
+    body = Object.assign({}, body, { src: State.src });
+  }
   try {
-    const res = await fetch(url, { ...opts, headers, ...(opts.body ? {body: JSON.stringify(opts.body)} : {}) });
+    const res = await fetch(url, { ...opts, headers, ...(body ? {body: JSON.stringify(body)} : {}) });
     if (res.status === 401) { toast('Token 无效或未配置', 'error'); return null; }
     if (res.status === 404) return null;
     return await res.json();
@@ -588,11 +667,44 @@ function navigate(view) {
 }
 
 function renderView(view) {
+  renderSrcSwitch();
   const c = $('#viewContainer');
   c.innerHTML = '';
   const fn = Views[view];
   if (fn) fn(c);
   else c.innerHTML = '<div class="empty"><p>视图不存在</p></div>';
+}
+
+/* ===== 渠道切换 =====
+   App 和微信是两套人设 + 两份记忆 + 两组开关。不分开看的话，
+   面板所有接口拿到的都是全局那份（= App 的），微信那边关掉的
+   开关一个都看不见，还以为没生效。 */
+function renderSrcSwitch() {
+  const box = $('#srcSwitch');
+  if (!box) return;
+  box.innerHTML = '';
+  CHANNELS.forEach(ch => {
+    const b = el('button', {
+      class: State.src === ch.id ? 'on' : '',
+      title: ch.hint,
+      onclick: () => {
+        if (State.src === ch.id) return;
+        State.src = ch.id;
+        localStorage.setItem('zhixia_src', ch.id);
+        // 图表缓存是按旧渠道拿的数据，不清会显示串了的图
+        State.cache = {};
+        State.charts = {};
+        $('#srcHint').textContent = ch.hint;
+        renderView(State.currentView);
+      }
+    }, ch.name);
+    box.appendChild(b);
+  });
+  const hint = $('#srcHint');
+  if (hint) {
+    const cur = CHANNELS.find(x => x.id === State.src);
+    hint.textContent = cur ? cur.hint : '';
+  }
 }
 
 // 导航点击
@@ -1010,13 +1122,18 @@ Views.history = async function(container) {
 /* ===== 视图：人格管理 ===== */
 Views.persona = async function(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>加载中…</div>';
-  const data = await api('/api/persona/full');
+  // 🔴 用 /api/persona 拿列表，**不要**用 /api/persona/full ——
+  // 那个是「读单套人设的全部字段」给人设编辑器用的，必须带 ?key=xxx。
+  // 不带 key 时服务端找不到就说「没有这套人设」，面板拿到 null，
+  // data.personas 恒为 undefined -> 「共 0 个人格」。
+  // 另一个坑：列表项字段是 key/label/name，**没有 file**。
+  const data = await api('/api/persona');
   if (!data) {
     container.innerHTML = '<div class="empty"><p>无法获取人格数据</p></div>';
     return;
   }
-  const personas = data.personas || [];
-  const current = data.current || '';
+  const personas = data.templates || data.personas || data.presets || [];
+  const current = data.key || '';
 
   const wrap = el('div');
   // 操作栏
@@ -1034,19 +1151,26 @@ Views.persona = async function(container) {
   // 人格卡片网格
   const grid = el('div', {class:'persona-grid'});
   personas.forEach(p => {
-    const isCurrent = p.file === current || p.name === current;
+    const key = p.key || '';
+    // current 标记以服务端给的为准；fallback 用 key 比对
+    const isCurrent = (p.current === true) || (key && key === current);
+    // 渠道视角：微信/App 各自在用哪套人设（persona_by_src）
+    const forThisSrc = key && key === data.src_persona_key;
+    const chName = (CHANNELS.find(x => x.id === State.src) || {}).name || '';
     const card = el('div', {class:'persona-card '+(isCurrent?'current':'')}, [
       isCurrent ? el('div', {class:'current-badge'}, el('span',{class:'tag brand'},'使用中')) : null,
-      el('div', {class:'pname'}, p.name || p.file),
-      el('div', {class:'prelation'}, p.relation || '未设定关系'),
-      el('div', {class:'pdesc'}, p.desc || p.description || '（无描述）'),
+      (!isCurrent && forThisSrc) ? el('div', {class:'current-badge'}, el('span',{class:'tag'}, chName+'在用')) : null,
+      el('div', {class:'pname'}, p.name || p.label || key),
+      (p.label && p.label !== p.name) ? el('div', {class:'prelation'}, p.label) : null,
+      el('div', {class:'pdesc'}, p.desc || '（无描述）'),
       el('div', {style:'margin-top:12px;display:flex;gap:8px'}, [
         isCurrent
           ? el('button', {class:'btn sm', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '查看详情')
           : el('button', {class:'btn sm primary', onclick:async(e)=>{
               e.stopPropagation();
-              const r = await api('/api/persona/apply', {method:'POST', body:{file:p.file}});
-              toast(r ? `已切换到 ${p.name}` : '切换失败', r?'success':'error');
+              // 🔴 传 key（不是 file）；带 src 才知道改的是哪个渠道的人设
+              const r = await api('/api/persona/apply', {method:'POST', body:{key:key, file:key, src:State.src}});
+              toast(r && r.ok !== false ? `已切换到 ${p.name || key}` : '切换失败', r && r.ok !== false ?'success':'error');
               if (r) renderView('persona');
             }}, '应用'),
         el('button', {class:'btn sm', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '详情'),
@@ -1061,14 +1185,19 @@ Views.persona = async function(container) {
 };
 
 function viewPersonaDetail(p) {
-  // 尝试获取完整人格 JSON
-  api('/api/persona').then(data => {
+  // 🔴 这里才用 /api/persona/full —— 它必须带 ?key=xxx 才有意义。
+  // 列表页和这里原来都用它、且都不传 key，是同一个 bug 的两处表现。
+  const key = p.key || '';
+  api(key ? '/api/persona/full?key=' + encodeURIComponent(key) : '/api/persona/full')
+  .then(data => {
     let detail = p;
-    if (data && data.personas) {
-      const full = data.personas.find(x => x.file === p.file || x.name === p.name);
-      if (full) detail = full;
+    if (data && data.ok !== false) {
+      // 接口把人设字段平铺在顶层（外加 ok/err），合并进来
+      const { ok, err, ...fields } = data;
+      if (Object.keys(fields).length) detail = Object.assign({}, p, fields);
     }
-    const fields = Object.entries(detail).filter(([k]) => !['file'].includes(k));
+    const skip = ['key','file','label','desc','blank','current','ok','err'];
+    const fields = Object.entries(detail).filter(([k]) => !skip.includes(k));
     const html = `<div style="display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;align-items:center;gap:12px">
         <div style="width:48px;height:48px;border-radius:10px;background:var(--brand-light);display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:20px;font-weight:700">夏</div>
@@ -1076,7 +1205,7 @@ function viewPersonaDetail(p) {
       </div>
       ${fields.map(([k,v]) => `<div class="form-group"><label>${k}</label><div style="padding:8px 11px;background:var(--bg);border-radius:6px;font-size:12.5px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">${typeof v === 'object' ? JSON.stringify(v,null,2) : String(v??'-')}</div></div>`).join('')}
     </div>`;
-    showModal('人格详情 - ' + (detail.name||p.file), html,
+    showModal('人格详情 - ' + (detail.name||key), html,
       '<button class="btn" onclick="closeModal()">关闭</button>'
     );
   });
@@ -1134,6 +1263,316 @@ Views.features = async function(container) {
   wrap.appendChild(card);
   container.innerHTML = '';
   container.appendChild(wrap);
+};
+
+/* ===== 视图：插件管理 =====
+   三块东西：拖 zip 装、已装的列表、每个插件在哪些渠道生效。
+   渠道**多选**而不是"跟着顶栏那个 App/微信 切换器走"—— 顶栏那个是
+   「我现在看哪边」，这里是「这个插件在哪些边开着」，两件事。
+   跟着顶栏走的话，"两个都开"这个最常见的一档根本没法表达。 */
+
+// 从服务端拿回来的渠道 id 配本地的显示名。CHANNELS 是显示名的真源，
+// 服务端 paths.CHANNELS 是 id 的真源；两边对不上就退回 id 本身，
+// 别把渠道名显示成空白。
+function chanName(id) {
+  const c = CHANNELS.find(x => x.id === id);
+  return c ? c.name : id;
+}
+
+/** 把 File 读成 base64（不带 data: 前缀）。
+ *  走 FileReader 而不是 arrayBuffer+btoa：后者要先转 Uint8Array，
+ *  大文件上 btoa 会因为参数是字符串而抛 "invalid character"，
+ *  报错信息完全看不出是这个原因。 */
+function fileToB64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || '');
+      const i = s.indexOf(',');
+      resolve(i >= 0 ? s.slice(i + 1) : s);
+    };
+    r.onerror = () => reject(new Error('读文件失败'));
+    r.readAsDataURL(file);
+  });
+}
+
+Views.plugins = async function(container) {
+  container.innerHTML = '<div class="loading"><div class="spinner"></div>加载中…</div>';
+  const data = await api('/api/plugins');
+  const mg = (data && data.manage) || {};
+  const channels = mg.channels || ['app', 'wechat'];
+  let items = mg.items || [];
+
+  const wrap = el('div');
+
+  // ---- 顶部工具条 ----
+  const bar = el('div', {class:'filter-bar'});
+  bar.appendChild(el('span', {style:'font-size:12.5px;color:var(--text-secondary)'},
+    '插件的渠道开关改动即时生效；带后台线程的插件装完需要重启大脑'));
+  bar.appendChild(el('span', {style:'flex:1'}));
+  bar.appendChild(el('button', {class:'btn sm', onclick:async () => {
+    const r = await api('/api/plugins/reload', {method:'POST'});
+    if (r) toast('已重载 ' + (r.count || 0) + ' 个插件'
+      + (r.restart_needed ? '（有后台线程的插件要重启大脑才生效）' : ''), 'success');
+    else toast('重载失败', 'error');
+    renderView('plugins');
+  }}, '重载'));
+  bar.appendChild(el('button', {class:'btn sm', onclick:()=>renderView('plugins')}, '刷新'));
+  wrap.appendChild(bar);
+
+  // ---- 上传区 ----
+  const dz = el('div', {class:'dropzone'});
+  const setDzBusy = busy => {
+    dz.classList.toggle('busy', busy);
+    $('.dz-title', dz).textContent = busy ? '正在装…' : '把插件 .zip 拖到这里';
+  };
+  const doInstall = async file => {
+    if (!file) return;
+    const fn = (file.name || '').toLowerCase();
+    if (!fn.endsWith('.zip')) { toast('只接受 .zip 插件包', 'error'); return; }
+    setDzBusy(true);
+    try {
+      const b64 = await fileToB64(file);
+      const r = await api('/api/plugins/install',
+        {method:'POST', body:{zip_b64: b64, source: file.name}});
+      if (!r) {
+        toast('装不上：' + (State.lastNetError
+          ? explainNetError(State.lastNetError) : '服务没回应'), 'error');
+      } else if (r.ok) {
+        const nm = (r.installed && r.installed.name) || file.name;
+        toast('已装上「' + nm + '」'
+          + (r.restart_needed ? '，重启大脑后带后台线程的部分才生效' : ''),
+          'success');
+        // 用返回里带的 manage 重画，不再拉一次：后端已经把新列表算好了
+        items = (r.manage && r.manage.items) || items;
+        paint();
+      } else {
+        // 后端拒绝的理由是给人看的，直接显示，别再包一层"安装失败"
+        toast(r.err || '装不上', 'error');
+      }
+    } catch(e) {
+      toast('装不上：' + (e.message || e), 'error');
+    } finally {
+      setDzBusy(false);
+    }
+  };
+  dz.innerHTML =
+    '<div class="dz-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 5 17 10"/>' +
+    '<line x1="12" y1="5" x2="12" y2="15"/></svg></div>' +
+    '<div class="dz-title">把插件 .zip 拖到这里</div>' +
+    '<div class="dz-sub">或点击选择文件　·　也可以直接把文件拖进这个页面</div>';
+  dz.addEventListener('click', () => {
+    const inp = el('input', {type:'file', accept:'.zip,application/zip'});
+    inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => { doInstall(inp.files[0]); inp.remove(); });
+    inp.click();
+  });
+  // 整页都能接住拖放：光高亮那一小块，用户拖偏了 20px 就不知道该放哪
+  ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.add('drag');
+  }));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    if (ev === 'dragleave' && dz.contains(e.relatedTarget)) return;
+    dz.classList.remove('drag');
+  }));
+  dz.addEventListener('drop', e => {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    doInstall(f);
+  });
+
+  const dzCard = el('div', {class:'card', style:'margin-bottom:16px'}, [
+    el('div', {class:'card-header'}, [
+      el('h3', {}, '添加插件'),
+      el('span', {class:'tag gray'}, 'zip 上传')
+    ]),
+    el('div', {class:'card-body'}, [
+      dz,
+      el('div', {class:'plug-note', style:'margin-top:12px'}, [
+        '插件包长这样：',
+        el('code', {}, '你的插件.py'),
+        ' 一个文件（可选带 ',
+        el('code', {}, 'zxplugin.json'),
+        ' 写作者和版本）。不接受目录包 —— 加载器只认 ',
+        el('code', {}, '*.py'),
+        '，压成目录装上去也不会生效。',
+        el('ul', {}, [
+          el('li', {}, '想按渠道开关，插件里要声明 FEATURE；没声明就是"永远开"，页面上会置灰。'),
+          el('li', {}, '解压后超过 16MB / 单文件超 2MB / 文件数超 64 会被拒（有 zip 炸弹防护）。'),
+          el('li', {}, '装了会自动热重载，不用重启大脑 —— 除非它起了后台线程。'),
+        ])
+      ])
+    ])
+  ]);
+  wrap.appendChild(dzCard);
+
+  // ---- 已装列表 ----
+  const listCard = el('div', {class:'card'});
+  const list = el('div', {class:'plug-list'});
+  listCard.appendChild(el('div', {class:'card-header'}, [
+    el('h3', {}, '已安装的插件'),
+    el('span', {class:'tag gray'}, (items.length || 0) + ' 个')
+  ]));
+  listCard.appendChild(list);
+  wrap.appendChild(listCard);
+
+  function paint() {
+    list.innerHTML = '';
+    if (!items.length) {
+      list.appendChild(el('div', {class:'empty'},
+        el('p', {}, '一个插件都没装。拖一个 zip 到上面试试。')));
+      return;
+    }
+    items.forEach(p => list.appendChild(paintOne(p)));
+    $('.tag.gray', listCard).textContent = items.length + ' 个';
+  }
+
+  function paintOne(p) {
+    const meta = p.meta || {};
+    const ch = p.channels || {};
+    const name = el('div', {class:'fname'}, [
+      p.name,
+      // 装载出错的插件要显眼 —— 它在列表里但钩子全都没挂上，
+      // 用户看不到这一条就会以为"装了没用"
+      p.err ? el('span', {class:'tag danger', title:p.err}, '装载失败')
+            : el('span', {class:'tag success'}, '运行中'),
+      !p.channelable ? el('span', {class:'tag gray',
+        title:'没声明 FEATURE，契约上永远开，不能按渠道关'}, '不可按渠道关') : null
+    ]);
+    const desc = el('div', {class:'fdesc'}, p.desc || '（这个插件没写说明）');
+    const bits = [];
+    if (p.tools && p.tools.length) bits.push('工具 ' + p.tools.join('、'));
+    if (p.hooks && p.hooks.length) bits.push('钩子 ' + p.hooks.join('、'));
+    if (p.routes && p.routes.length) bits.push('接口 ' + p.routes.length + ' 个');
+    const mrow = el('div', {class:'fmeta'}, [
+      el('code', {}, p.file || p.name + '.py'),
+      meta.author ? el('span', {}, '作者 ' + meta.author) : null,
+      meta.version ? el('span', {}, 'v' + meta.version) : null,
+      meta.installed_at ? el('span', {}, '装于 ' + meta.installed_at) : null,
+      bits.length ? el('span', {}, bits.join('　')) : null,
+      p.err ? el('span', {style:'color:var(--danger)'}, p.err) : null
+    ]);
+
+    // ---- 渠道多选 ----
+    const picker = el('div', {class:'chan-picker'}, [
+      el('span', {class:'lab'}, '生效于'),
+      el('div', {class:'row'})
+    ]);
+    const prow = picker.querySelector('.row');
+    const pending = new Set(Object.keys(ch).filter(k => ch[k]));
+    channels.forEach(cid => {
+      const b = el('label', {
+        class: 'chan-chk' + (pending.has(cid) ? ' on' : '')
+          + (p.channelable ? '' : ' off-locked'),
+        title: p.channelable ? ('在' + chanName(cid) + '里'
+                  + (pending.has(cid) ? '生效' : '不生效'))
+                : '这个插件没声明 FEATURE，不能按渠道关'
+      }, [el('input', {type:'checkbox', checked: pending.has(cid) ? 'checked' : null}),
+          chanName(cid)]);
+      if (!p.channelable) return;      // 置灰且真的不响应点击，不是只看着灰
+      b.addEventListener('click', async ev => {
+        ev.preventDefault();
+        // 🔴 开没开必须在**点击那一刻**读 pending，不能读渲染时算好的值。
+        // 写成 const on = pending.has(cid) 的话第二次点击还在按第一次的判断走：
+        // 于是"点一下开、再点一下"永远关不掉 —— 而渠道开关最常见的用法
+        // 就是来回改。界面上看着能点、第二次毫无反应。
+        const wasOn = pending.has(cid);
+        if (wasOn) pending.delete(cid); else pending.add(cid);
+        b.classList.toggle('on', pending.has(cid));
+        const want = channels.filter(c => pending.has(c));
+        const r = await api('/api/plugins/channels',
+          {method:'POST', body:{name:p.name, channels:want}});
+        // 🔴 判据必须是 r && r.ok，不是"r 不是 null"。api() 只在 401/404
+        // 和网络失败时给 null；服务端带着理由拒掉时（400 没声明 FEATURE、
+        // 渠道名不认识）返回的是 {ok:false, err:...}。
+        // 只判 null 的话，拒绝会掉进下面的成功分支 —— 界面显示"生效"，
+        // 背后一个字都没写。这跟"以为关掉了其实还开着"是同一个坑。
+        if (!r || r.ok !== true) {
+          // 把勾退回原样，别让界面显示着一个没生效的状态
+          if (wasOn) pending.add(cid); else pending.delete(cid);
+          b.classList.toggle('on', pending.has(cid));
+          toast('没改成：' + ((r && r.err) || explainNetError(State.lastNetError || '服务没回应')),
+            'error');
+          return;
+        }
+        // 用后端回传的为准：界面显示的必须是运行时问的那个值，
+        // 自己本地改一遍就会出现"界面关了、其实还开着"。
+        // 只换 items，不回写 p.channels —— p 是渲染这一行时的旧对象，
+        // 已经被上面那行换掉了，往它身上写等于写进没人读的地方。
+        // 勾选状态由 pending 持有，它就是这一行的唯一真源。
+        if (r.manage && r.manage.items) items = r.manage.items;
+        const tip = want.length ? want.map(chanName).join(' + ') : '哪个渠道都不生效';
+        toast('「' + p.name + '」现在在 ' + tip + ' 里生效', 'success');
+      });
+      prow.appendChild(b);
+    });
+
+    const del = el('button', {class:'btn sm danger', onclick:async () => {
+      const withData = el('input', {type:'checkbox'});
+      const body = el('div', {style:'font-size:13px;line-height:1.8'}, [
+        el('p', {}, '卸掉「' + p.name + '」？'),
+        el('label', {style:'display:flex;gap:6px;align-items:center;margin-top:8px;cursor:pointer'},
+          [withData, '同时删掉它的数据目录（不可恢复）']),
+        el('p', {style:'color:var(--text-secondary);font-size:12px;margin-top:8px'},
+          '默认只删代码。它自己攒的配置和状态会留在 data/plugins/' + p.name + '/。')
+      ]);
+      showModal('卸载插件', '', '');
+      $('#modalBody').innerHTML = ''; $('#modalBody').appendChild(body);
+      const ok = el('button', {class:'btn danger', onclick:async () => {
+        const r = await api('/api/plugins/uninstall',
+          {method:'POST', body:{name:p.name, purge_data: withData.checked}});
+        closeModal();
+        if (r && r.ok) {
+          items = (r.manage && r.manage.items) || items.filter(x => x.name !== p.name);
+          paint();
+          toast('已卸掉「' + p.name + '」'
+            + (r.restart_needed ? '，重启大脑后带后台线程的部分才停' : ''), 'success');
+        } else {
+          toast('卸不掉：' + ((r && r.err) || explainNetError(State.lastNetError)), 'error');
+        }
+      }}, '卸载');
+      const cancel = el('button', {class:'btn', onclick:closeModal}, '算了');
+      const f = $('#modalFooter'); f.innerHTML = ''; f.appendChild(cancel); f.appendChild(ok);
+      $('#modalOverlay').classList.add('show');
+    }}, '卸载');
+
+    return el('div', {class:'plug-item', 'data-plugin':p.name}, [
+      el('div', {class:'ficon', html:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+        '<path d="M9 2v6l-5 8.5A3 3 0 0 0 6.6 20h10.8a3 3 0 0 0 2.6-3.5L15 8V2"/>' +
+        '<path d="M8 2h8"/></svg>'}),
+      el('div', {class:'finfo'}, [name, desc, mrow]),
+      el('div', {class:'plug-actions'}, [picker, del])
+    ]);
+  }
+
+  paint();
+  container.innerHTML = '';
+  container.appendChild(wrap);
+
+  // 整页接住拖放（浏览器默认行为会把文件丢到别处、并直接导航过去）。
+  // 绑在 body 上、随视图移除 —— 不这么做的话，用户拖到页面空白处
+  // 松手，浏览器会当成"打开这个文件"然后什么都看不见。
+  const onWinDrag = e => { e.preventDefault(); };
+  const onWinDrop = e => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) doInstall(f);
+  };
+  window.addEventListener('dragover', onWinDrag);
+  window.addEventListener('drop', onWinDrop);
+  // 视图被切走时把监听摘掉，否则每切一次页就多挂一份 ——
+  // 装一个插件会被 POST 好几次。
+  const stop = () => {
+    window.removeEventListener('dragover', onWinDrag);
+    window.removeEventListener('drop', onWinDrop);
+  };
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(dz)) { stop(); obs.disconnect(); }
+  });
+  obs.observe(document.getElementById('viewContainer'), {childList:true, subtree:true});
 };
 
 /* ===== 视图：朋友圈 & 日记 ===== */
@@ -1295,17 +1734,33 @@ Views.config = async function(container) {
   wrap.appendChild(twoCol);
 
   // 模型配置
+  // 🔴 /api/models 的 current 是**整个配置对象**（model_hub.public_current，
+  // 跟 App 的 chat.html 共用，不能改它的结构），不是模型名字符串。
+  // 直接丢给 el() 会渲染成一坨 [object Object]。这里取 .chat 才是模型名。
+  const curModel = (mData && mData.current
+      && typeof mData.current === 'object' ? mData.current.chat : mData.current)
+      || (stats && stats.model) || '-';
   const modelCard = el('div', {class:'card'});
   modelCard.appendChild(el('div', {class:'card-header'}, [el('h3', {}, '聊天模型')]));
   const mBody = el('div', {class:'card-body'});
   mBody.appendChild(el('div', {style:'margin-bottom:14px;padding:10px 14px;background:var(--bg);border-radius:8px'}, [
     el('div', {style:'font-size:11.5px;color:var(--text-muted);margin-bottom:3px'}, '当前模型'),
-    el('div', {style:'font-size:14px;font-weight:600;font-family:var(--mono)'}, (mData && mData.current) || (stats && stats.model) || '-')
+    el('div', {style:'font-size:14px;font-weight:600;font-family:var(--mono)'}, String(curModel))
   ]));
   const modelList = el('div', {style:'display:flex;flex-direction:column;gap:8px'});
-  if (mData && mData.models) {
-    mData.models.forEach(m => {
-      const isCur = m.id === mData.current;
+  const models = (mData && Array.isArray(mData.models) && mData.models.length)
+      ? mData.models
+      // 服务端没给可选列表时，自己列一份常见的。
+      // 🔴 别只显示当前那一个 —— 那样面板看着是好的，但你没法切模型，
+      // 会以为是配置被锁住了。当前项放第一个并标「当前」。
+      : [
+          { id: String(curModel), name: String(curModel) },
+          { id: 'deepseek-ai/DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash（快、便宜）' },
+          { id: 'zai-org/GLM-5.3', name: 'GLM-5.3' },
+          { id: 'Qwen/Qwen3-8B', name: 'Qwen3-8B' },
+        ].filter((m,i,a) => a.findIndex(x => x.id === m.id) === i);
+  models.forEach(m => {
+      const isCur = m.id === curModel;
       const item = el('div', {style:`display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid ${isCur?'var(--brand)':'var(--border)'};border-radius:8px;cursor:pointer;${isCur?'background:var(--brand-light)':''}`}, [
         el('div', {style:'flex:1'}, [
           el('div', {style:'font-size:13.5px;font-weight:500'}, m.name || m.id),
@@ -1313,16 +1768,18 @@ Views.config = async function(container) {
         ]),
         isCur ? el('span',{class:'tag brand'},'当前') : el('button',{class:'btn sm primary',onclick:async(e)=>{
           e.stopPropagation();
-          const r = await api('/api/models/apply', {method:'POST', body:{model:m.id}});
-          toast(r ? `已切换到 ${m.name}` : '切换失败', r?'success':'error');
-          if (r) renderView('config');
+          // 🔴 字段名必须是 chat —— 服务端 model_hub.apply_cfg 只认
+          // provider/api_base/api_key/chat/vision/image/audio 这些。
+          // 发 {model: id} 会走成「没有改动」，而这里却弹「已切换」，
+          // 看着成功了其实模型没换（config.json 里那个 GLM 就是这么换不掉的）。
+          const r = await api('/api/models/apply', {method:'POST', body:{chat:m.id}});
+          const ok = r && r.ok !== false && !(r.changed && !r.changed.length);
+          toast(ok ? `已切换到 ${m.name}` : '切换失败：' + ((r && (r.err || r.msg)) || '未知原因'), ok?'success':'error');
+          if (ok) renderView('config');
         }}, '切换')
       ]);
       modelList.appendChild(item);
     });
-  } else {
-    modelList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">无法获取模型列表</div>';
-  }
   mBody.appendChild(modelList);
   modelCard.appendChild(mBody);
   twoCol.appendChild(modelCard);

@@ -223,7 +223,13 @@ def _read_log():
     if _SCOPE:
         try:
             import paths
-            log = paths.scoped(CHAT_LOG, _SCOPE.rsplit(".", 1)[0] or "", "app")
+            # 🔴 渠道要从 _SCOPE 里**取出来**，不能写死 "app"。
+            # 写死的话群聊那半份对话的摘要会从 app 的存档里取原料 ——
+            # 分区名算对了、文件也在，只有内容是错的。
+            parts = _SCOPE.split(".")
+            pk = parts[0] if len(parts) > 1 else ""
+            sc = parts[1] if len(parts) > 1 else "app"
+            log = paths.scoped(CHAT_LOG, pk, sc)
         except Exception:
             log = CHAT_LOG
     if not os.path.exists(log):

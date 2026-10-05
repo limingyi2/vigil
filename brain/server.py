@@ -87,7 +87,16 @@ def build_local_brain(verbose=True):
     # 她就少了新插件的工具说明 —— 提示词不会自己补，得重跑 reload_persona
     load_plugins(verbose=verbose)
 
-    mem = get_default_store()
+    # self.mem 只是**兜底**（brain._mem_for 异常时才用），但它得指向一份
+    # 分区过的库。传空会让 get_default_store() 落回无分区名的公共库
+    # memory.json —— 那份装着旧人设的旧账，于是换人设后她照样带着上一段的
+    # 记忆开口（分区建了、文件也有，只有内容是错的）。
+    # 走默认人设 + app 渠道：老数据在那儿，不用搬。
+    try:
+        from persona_store import key_from_config
+        mem = get_default_store(key_from_config(api_config), "app")
+    except Exception:
+        mem = get_default_store()
     mode = api_config.get("chat_mode", "api")
     b = Brain(mem, api_config, mode=mode)
     if verbose:
@@ -190,6 +199,23 @@ def _norm_src(src):
         allowed = ("app", "wechat")
     s = str(src or "").strip().lower()
     return s if s in allowed else "app"
+
+
+def _persona_for_src(src, default_key=""):
+    """这个渠道该用哪个人设（读 config.json 的 persona_by_src）。
+
+    跟 brain._persona_key_for 同一套规则：渠道有人设专用就用那个，
+    否则回默认人设。**必须共用一份实现** —— 两处各读一次 config，
+    改了一处忘了另一处，存档路径和记忆路径就会算成两个名字，
+    表现是「分区建了、文件也有，只有内容是错的」。
+    """
+    try:
+        import paths, json as _json
+        cfg = _json.loads(open(paths.CONFIG_PATH, encoding="utf-8").read())
+        by = cfg.get("persona_by_src") or {}
+        return str(by.get(src) or "").strip() or str(default_key or "")
+    except Exception:
+        return str(default_key or "")
 
 
 @contextlib.contextmanager
@@ -472,11 +498,26 @@ def _cloud_history(limit=60, src="app"):
     """最近 N 条聊天记录（t / role / text），给手机 App 显示会话用。
 
     按渠道读不同文件 —— App 里不该看见微信侧那半份对话。
+
+    🔴 分区名必须跟 brain._log_for 算出来的一致（人设 × 渠道），不能只按渠道拼。
+    两边各算一套的后果：群友人设在群里聊的对话被写进
+    preset_group.app.chat_history.jsonl（按渠道拼的名字），而这里读的也是那份
+    —— 看着「读到了」，读到的是错人设的对话。
     """
-    p = data_file("chat_history.jsonl"
-                  if _norm_src(src) == "app" else
-                  "chat_history.%s.jsonl" % _norm_src(src),
-                  r"C:\Vigil\data\chat_history.jsonl")
+    try:
+        import paths
+        from persona_store import key_from_config
+        pk = _persona_for_src(_norm_src(src), key_from_config(API_CFG))
+        # 🔴 用不带渠道的基础名再 scoped：chat_log_for('wechat') 已经带了
+        # ".wechat" 后缀，再 scoped 一次会拼出 chat_history.wechat.wechat.jsonl
+        # 这种双后缀名 —— 跟 brain._log_for 同一个毛病，一并对齐成基础名。
+        base = os.path.join(paths.DATA_DIR, "chat_history.jsonl")
+        p = paths.scoped(base, pk, _norm_src(src))
+    except Exception:
+        p = data_file("chat_history.jsonl"
+                      if _norm_src(src) == "app" else
+                      "chat_history.%s.jsonl" % _norm_src(src),
+                      r"C:\Vigil\data\chat_history.jsonl")
     items = []
     try:
         with open(p, encoding="utf-8") as f:
@@ -548,6 +589,186 @@ def start_remote_api(brain):
             self._cors()
             self.send_header("Content-Length", "0")
             self.end_headers()
+
+        def _plugin_reload_now(self):
+            """重扫 plugins/ 并重拼提示词。返回 (插件数, 是否需要重启大脑)。
+
+            装/卸/改开关之后都要走这里 —— 少走一步就会出现
+            "界面显示装上了、实际那轮对话里没有它"。
+            """
+            try:
+                n = load_plugins(verbose=True)
+            except Exception:
+                n = 0
+            need = False
+            try:
+                import plugin_host as _ph
+                need = any(callable(p.hook("start"))
+                           for p in _ph.all_plugins().values())
+            except Exception:
+                pass
+            b = _LOCAL.get("brain")
+            # 提示词里的工具清单是构造时拼的，重装后得重拼
+            if b is not None:
+                try:
+                    b.reload_persona()
+                except Exception:
+                    pass
+            return n, need
+
+        def _plugin_admin(self, method, path, body):
+            """插件管理面：装/卸/渠道开关/清单。命中返回 True（已回包）。
+
+            为什么不写进 do_POST 的 elif 链：那条链已经有六十多个分支，
+            再往里塞四个"装机"分支，下一个来改的人就得在一屏缩进里找。
+            整块收进独立方法，链上只留一个调用点。
+            """
+            if not path.startswith("/api/plugins"):
+                return False
+            try:
+                import plugin_ops as _po
+            except Exception as e:
+                self._json(500, {"ok": False, "err": "插件管理模块不可用：%s"
+                                 % str(e)[:80]})
+                return True
+
+            # 渠道列表只有一个真源：paths.CHANNELS。以后加第三个渠道
+            # （比如网页版）这里自动跟上，不用改这个文件。
+            try:
+                import paths
+                chans = list(paths.CHANNELS)
+            except Exception:
+                chans = ["app", "wechat"]
+
+            if method == "GET":
+                # /api/plugins 已经被微信桥接和 VM 启动器当"大脑活着吗"
+                # 的探针（只看 200），plugins 键保持原样别动。
+                # 管理视图另起一个键 —— 老消费者读不到新东西，新页面
+                # 不必知道那个键的存在。
+                if path == "/api/plugins":
+                    try:
+                        import plugin_host as _ph
+                        self._json(200, {
+                            "plugins": _ph.listing(),
+                            "manage": {
+                                "channels": chans,
+                                "items": _po.overview(chans),
+                            },
+                        })
+                    except Exception as e:
+                        self._json(200, {"plugins": [],
+                                         "manage": {"channels": chans,
+                                                    "items": []},
+                                         "err": str(e)[:80]})
+                    return True
+                return False
+
+            if method != "POST":
+                return False
+
+            if path == "/api/plugins/install":
+                # zip 走 base64 塞在 JSON 里：能复用现成的 body 解析，
+                # 不用在这个文件里另写一套 multipart（那是另一份能出 bug 的代码）。
+                # 4MB 的包 base64 之后 5.6MB，还在 MAX_BODY 里。
+                import base64
+                raw = str(body.get("zip_b64") or "")
+                if not raw:
+                    self._json(400, {"ok": False, "err": "没收到插件包"})
+                    return True
+                if raw.startswith("data:"):          # 前端 FileReader 的原样
+                    raw = raw.split(",", 1)[-1]
+                try:
+                    blob = base64.b64decode(raw, validate=True)
+                except Exception:
+                    self._json(400, {"ok": False, "err": "包是坏的（不是合法 zip）"})
+                    return True
+                import tempfile
+                fp = os.path.join(tempfile.gettempdir(),
+                                  "zxplug_%d.zip" % int(time.time()))
+                try:
+                    with open(fp, "wb") as f:
+                        f.write(blob)
+                    ok, res = _po.install(fp, note=str(body.get("source") or "")[:40])
+                finally:
+                    try:
+                        os.remove(fp)
+                    except OSError:
+                        pass
+                if not ok:
+                    self._json(400, {"ok": False, "err": res.get("err") or "装不上"})
+                    return True
+                n, need = self._plugin_reload_now()
+                self._json(200, {"ok": True, "installed": res,
+                                 "count": n, "restart_needed": need,
+                                 "manage": {"channels": chans,
+                                            "items": _po.overview(chans)}})
+                return True
+
+            if path == "/api/plugins/uninstall":
+                ok, res = _po.uninstall(str(body.get("name") or ""),
+                                        purge_data=bool(body.get("purge_data")))
+                if not ok:
+                    self._json(400, {"ok": False, "err": res.get("err") or "卸不掉"})
+                    return True
+                n, need = self._plugin_reload_now()
+                self._json(200, {"ok": True, "uninstalled": res,
+                                 "count": n, "restart_needed": need,
+                                 "manage": {"channels": chans,
+                                            "items": _po.overview(chans)}})
+                return True
+
+            if path == "/api/plugins/channels":
+                # 传的是插件名而不是 FEATURE 键：界面上用户看得见的是插件名，
+                # 让前端自己去查 FEATURE 等于把内部结构漏到前端去。
+                name = str(body.get("name") or "")
+                want = body.get("channels")
+                want = want if isinstance(want, list) else []
+                try:
+                    import plugin_host as _ph
+                    info = next((p for p in _ph.listing()
+                                 if p.get("name") == name), None)
+                except Exception:
+                    info = None
+                if not info:
+                    self._json(404, {"ok": False, "err": "没这个插件"})
+                    return True
+                feat = str(info.get("feature") or "")
+                if not feat:
+                    # 不声明 FEATURE 是契约上的"永远开"，界面该置灰。
+                    # 这里必须拒，不能"假装改了" —— 否则界面上能勾、
+                    # 背后没写任何东西，用户以为关掉了其实一直开着。
+                    self._json(400, {"ok": False,
+                                     "err": "这个插件不声明 FEATURE，"
+                                             "契约上永远开，没法按渠道关"})
+                    return True
+                bad = [s for s in want if s not in chans]
+                if bad:
+                    self._json(400, {"ok": False,
+                                     "err": "不认识的渠道：%s" % ",".join(bad)[:60]})
+                    return True
+                if not _po.set_channels(feat, chans,
+                                        {s: (s in want) for s in chans}):
+                    self._json(500, {"ok": False, "err": "写不进配置"})
+                    return True
+                self._json(200, {"ok": True, "feature": feat,
+                                 "channels": _po.channels_of(feat, chans),
+                                 "manage": {"channels": chans,
+                                            "items": _po.overview(chans)}})
+                return True
+
+            if path == "/api/plugins/reload":
+                n, need = self._plugin_reload_now()
+                try:
+                    import plugin_host as _ph
+                    listing = _ph.listing()
+                except Exception:
+                    listing = []
+                self._json(200, {"ok": True, "count": n,
+                                 "restart_needed": need,
+                                 "plugins": listing})
+                return True
+
+            return False
 
         def _plugin_route(self, method, path, body):
             """插件的 HTTP 接口。命中返回 True（已经自己回过包）。
@@ -638,14 +859,31 @@ def start_remote_api(brain):
                     # 需要就返回一段要注入 system 的提示（提醒插件靠它把
                     # "手上还有哪些到点要喊的事"喂进上下文）。
                     # 拼在系统提示里而不是塞进 _in_text —— 后者会被当他说的话存档。
+                    #
+                    # 🔴 **否决靠 ctx.veto() 显式声明，不靠返回值**。
+                    # 试过"on_turn_in 返回空串 = 否决"，看着省事实际立刻炸：
+                    # reminder 插件"没有提醒要注入"返回的也是空串，
+                    # 而"所有插件都放行"时 join([]) 同样是空串 ——
+                    # 三种情况在返回值上一模一样，于是"她一句话都说不出来"，
+                    # 且每个插件单独看都正常。空串这个值没有信息量。
                     try:
                         import plugin_host as _ph
-                        _extra = _ph.on_turn_in(
-                            _ph.Turn(text=_disp, src=_src, api_config=API_CFG,
-                                     brain=_LOCAL["brain"]))
+                        _tctx = _ph.Turn(text=_disp, src=_src,
+                                         api_config=API_CFG,
+                                         brain=_LOCAL["brain"])
+                        _extra = _ph.on_turn_in(_tctx)
+                        if _tctx.vetoed:
+                            print("[闸门] 这一轮被否决，不问大脑"
+                                  "（src=%s 原因=%s）"
+                                  % (_src, getattr(_tctx, "veto_reason", "")),
+                                  flush=True)
+                            self._json(200, {"reply": "", "mode": "闸门拦下",
+                                             "gated": True})
+                            return
                         if _extra:
                             _in_text += "\n" + _extra
                     except Exception:
+                        # 钩子链自己炸了不能连累聊天 —— 当没否决，照常问大脑
                         pass
                     _snap = {}
                     ans, mode, err = ask_with_retry(
@@ -822,12 +1060,24 @@ def start_remote_api(brain):
                             cfg = json.load(open(config_path(), encoding="utf-8"))
                         except Exception:
                             cfg = {}
-                        cfg["persona_file"] = "personas/%s.json" % key
+                        # 🔴 带 src 时改的是**那个渠道的覆盖**（persona_by_src），
+                        # 不是全局 persona_file。否则在面板里切到微信点「应用」，
+                        # 会把 App 的默认人设也一起换掉 —— 两个渠道各换各的。
+                        _asrc = _norm_src(body.get("src") or "")
+                        if _asrc != "app":
+                            by = cfg.get("persona_by_src") or {}
+                            by[_asrc] = key
+                            cfg["persona_by_src"] = by
+                        else:
+                            cfg["persona_file"] = "personas/%s.json" % key
                         with open(config_path(), "w", encoding="utf-8") as f:
                             json.dump(cfg, f, ensure_ascii=False, indent=2)
                         # 内存那份也要改：reload_persona() 读的是内存的 persona_file，
                         # 只写盘的话会载回旧人设
-                        api_config["persona_file"] = cfg["persona_file"]
+                        if _asrc == "app":
+                            api_config["persona_file"] = cfg["persona_file"]
+                        else:
+                            api_config.setdefault("persona_by_src", {})[_asrc] = key
                         with _chat_lock():
                             brain.reload_persona()
                             # 生活引擎在构造时读了名字和 world.json，不重建她
@@ -1033,24 +1283,6 @@ def start_remote_api(brain):
                     if cur is None:
                         cur = _feat.all_features(_fsrc)
                     self._json(200, {"features": cur})
-                elif path == "/api/plugins/reload":
-                    # 改完 plugins/ 里的文件不用重启大脑：重扫目录重装。
-                    # 已经起了后台线程的插件**不会**被重启（线程无法二次启动），
-                    # 它们的改动要重启大脑才生效 —— 这点在返回里说清楚
-                    import plugin_host as _ph
-                    n = load_plugins(verbose=True)
-                    has_bg = any(callable(p.hook("start"))
-                                 for p in _ph.all_plugins().values())
-                    b = _LOCAL.get("brain")
-                    # 提示词里的工具清单是构造时拼的，重装后得重拼
-                    if b is not None:
-                        try:
-                            b.reload_persona()
-                        except Exception:
-                            pass
-                    self._json(200, {"ok": True, "count": n,
-                                     "restart_needed": has_bg,
-                                     "plugins": _ph.listing()})
                 elif path == "/api/moment/like":
                     try:
                         import moments
@@ -1090,11 +1322,14 @@ def start_remote_api(brain):
                         self._json(200, {"posted": False, "raw": "",
                                          "items": [], "err": str(e)[:120]})
                 else:
-                    # 插件自己的接口（ROUTES）。放最后当兜底：核心路由都叫
-                    # /api/xxx，插件要求自己的路径带 /api/plugin/ 前缀，
-                    # 撞名的可能交给名字去管，这里只做精确匹配
-                    if not self._plugin_route("POST", path, body):
-                        self._json(404, {"err": "no such api"})
+                    # 插件管理面（装/卸/渠道开关）优先于插件自带路由：
+                    # 前者只在 /api/plugins* 这一小片里，前缀不重叠。
+                    if not self._plugin_admin("POST", path, body):
+                        # 插件自己的接口（ROUTES）。放最后当兜底：核心路由都叫
+                        # /api/xxx，插件要求自己的路径带 /api/plugin/ 前缀，
+                        # 撞名的可能交给名字去管，这里只做精确匹配
+                        if not self._plugin_route("POST", path, body):
+                            self._json(404, {"err": "no such api"})
             except Exception as e:
                 print(f"[大脑] 接口异常 {path}：{type(e).__name__}: {e}",
                       flush=True)
@@ -1156,10 +1391,29 @@ def start_remote_api(brain):
                         })
                 except Exception:
                     pass
-                self._json(200, {"name": name, "key": cur, "presets": presets,
+                # 带 src 时按那个渠道回答：微信和 App 是两套人设，
+                # 「当前是谁」必须按渠道算，不然面板切到微信看到的还是 App 的。
+                try:
+                    from urllib.parse import parse_qs, urlparse
+                    _qs = {k: v[0] for k, v in
+                           parse_qs(urlparse(self.path).query).items()}
+                except Exception:
+                    _qs = {}
+                _psrc = _norm_src(_qs.get("src") or "")
+                _pkey = _persona_for_src(_psrc, cur) if _psrc != "app" else cur
+                _pname = ""
+                try:
+                    _pname = (persona_store.load(_pkey) or {}).get("name") or ""
+                except Exception:
+                    pass
+                self._json(200, {"name": _pname or name, "key": _pkey,
+                                 "presets": presets,
                                  "relation": persona_store.relation_of(
-                                     persona_store.load(cur)),
-                                 "templates": persona_store.list_templates(cur),
+                                     persona_store.load(_pkey)),
+                                 "templates": persona_store.list_templates(_pkey),
+                                 # 🔴 这个渠道在用哪套人设（面板靠它标「微信在用」）
+                                 "src_persona_key": _pkey,
+                                 "src": _psrc,
                                  "max": persona_store.MAX_TEMPLATES,
                                  "used": persona_store.template_count()})
             elif path == "/api/voices":
@@ -1267,9 +1521,12 @@ def start_remote_api(brain):
                 _fsrc = _norm_src(_q.get("src") or "") or None
                 self._json(200, {"features": _feat.all_features(_fsrc)})
             elif path == "/api/plugins":
-                # 插件清单：装了哪些、各自有什么能力/工具/接口、开关状态
-                import plugin_host as _ph
-                self._json(200, {"plugins": _ph.listing()})
+                # 插件清单 + 管理视图（渠道视图）。微信桥接和 VM 启动器拿这个
+                # 接口当"大脑还活着吗"的探针，只看 200 不看 body ——
+                # plugins 键的形状保持原样，管理视图另起一个键。
+                if self._plugin_admin("GET", path, None):
+                    return
+                self._json(200, {"plugins": []})
             elif path == "/api/app/version":
                 # App 内置更新检查：读版本文件（发布新 APK 时一起更新）
                 try:

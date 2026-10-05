@@ -367,9 +367,78 @@ class Brain:
             extra = {}
         return str(extra.get(src) or "").strip() or key_from_config(self.api)
 
+    def _persona_for(self, src):
+        """这个渠道的人设 dict（带缓存 —— 每轮重建太贵）。
+        缓存键是 (人设 key)：换了人设 key 变了自然重新读。
+        """
+        key = self._persona_key_for(src)
+        cache = getattr(self, "_persona_cache", None)
+        if cache is None:
+            cache = self._persona_cache = {}
+        if key not in cache:
+            try:
+                cache[key] = load_persona(key) or {}
+            except Exception:
+                cache[key] = {}
+        return cache[key]
+
     def _persona_text_for(self, src):
-        p = load_persona(self._persona_key_for(src))
-        return build_system_text(p)
+        """这个渠道的 system 段。缓存的是 build 之后的结果（读文件 + 拼装
+        不便宜，但内容只随人设 key 变）。"""
+        key = self._persona_key_for(src)
+        cache = getattr(self, "_ptext_cache", None)
+        if cache is None:
+            cache = self._ptext_cache = {}
+        if key not in cache:
+            try:
+                cache[key] = build_system_text(load_persona(key) or {})
+            except Exception:
+                cache[key] = ""
+        return cache[key]
+
+    def _draft_rules_for(self, src):
+        """这个渠道的工具使用规则。跟 persona_text 同理，必须跟着人设走：
+        人设换了而规则没换，等于新的人在用旧的人的工具。"""
+        key = self._persona_key_for(src)
+        cache = getattr(self, "_rules_cache", None)
+        if cache is None:
+            cache = self._rules_cache = {}
+        if key not in cache:
+            try:
+                cache[key] = build_draft_rules(load_persona(key) or {})
+            except Exception:
+                cache[key] = ""
+        return cache[key]
+
+    # 🔴 persona_text / draft_rules 走**当前渠道**，不再是一份全局的。
+    # 原来它们在 reload_persona 里按全局 persona_file 生成，而聊天主链路
+    # （hist[0]、主动搭话、朋友圈、moment）全读这两个属性 —— 于是
+    # persona_by_src 配了也白配：分区名算对了、存档分开了，开口却还是
+    # 那个全局人设。**症状是"配置改了但她在群里还是旧人"**，
+    # 而每处看起来都"按渠道取历史了"，极难查。
+    # 保留同名属性是为了十几处老代码不用改；setter 只在 reload_persona
+    # 显式赋值时用，存进同一个缓存，下一次读还是拿到它。
+    @property
+    def persona_text(self):
+        return self._persona_text_for(self._cur_src)
+
+    @persona_text.setter
+    def persona_text(self, v):
+        cache = getattr(self, "_ptext_cache", None)
+        if cache is None:
+            cache = self._ptext_cache = {}
+        cache[self._persona_key_for(self._cur_src)] = v
+
+    @property
+    def draft_rules(self):
+        return self._draft_rules_for(self._cur_src)
+
+    @draft_rules.setter
+    def draft_rules(self, v):
+        cache = getattr(self, "_rules_cache", None)
+        if cache is None:
+            cache = self._rules_cache = {}
+        cache[self._persona_key_for(self._cur_src)] = v
 
     def persona_key_of(self, src=DEFAULT_SRC):
         return self._persona_key_for(src)
@@ -385,7 +454,12 @@ class Brain:
         try:
             import memory_store_v2
             return memory_store_v2.get_default_store(self._persona_key_for(s), s)
-        except Exception:
+        except Exception as e:
+            # 🔴 兜底不能回 self.mem —— 那是构造时传进来的单实例，
+            # 换人设后仍指着**默认人设 + app** 那份。她在群里说话时一旦走到
+            # 这里，就会读到你的私人记忆库（分区建了、文件也有，只有内容是错的）。
+            print("[记忆] 分区库打不开，这一轮退回默认人设库：%s"
+                  % str(e)[:100], flush=True)
             return self.mem
 
     def _log_for(self, src=None):
@@ -398,8 +472,14 @@ class Brain:
         s = norm_src(src or self._cur_src)
         try:
             import paths
-            return paths.scoped(paths.chat_log_for(s),
-                                self._persona_key_for(s), s)
+            # 🔴 用**不带渠道后缀**的基础名再 scoped。
+            # chat_log_for('wechat') 返回的已经是 chat_history.wechat.jsonl，
+            # 再 scoped 一次会拼出 chat_history.wechat.wechat.jsonl ——
+            # 写的是双后缀那份、读的也是双后缀那份，看起来自洽，
+            # 但默认人设那条老路径（chat_history.jsonl）永远读不到，
+            # 于是「换渠道/换人设后记忆对不上」这类问题很难查。
+            base = os.path.join(paths.DATA_DIR, "chat_history.jsonl")
+            return paths.scoped(base, self._persona_key_for(s), s)
         except Exception:
             return chat_log_for(s)
 
@@ -413,7 +493,15 @@ class Brain:
         每个渠道的 system 段都要换 —— 微信那边可能是另一套人设，
         只换当前这份的话，切渠道后她会顶着上一套设定开口。
         """
+        # 🔴 先丢缓存再重建。persona_text / draft_rules 现在是按
+        # (人设 key) 缓存的属性，配置文件刚被改过（换人设/改渠道绑定）时
+        # 不清就会继续用旧内容 —— 表现是"保存了但没变化，重启才好"。
+        self._persona_cache = {}
+        self._ptext_cache = {}
+        self._rules_cache = {}
+
         self.persona = load_persona(key_from_config(self.api))
+        # 这两行走属性 setter，存进缓存里，下一次读到的就是它。
         self.persona_text = build_system_text(self.persona)
         self.draft_rules = build_draft_rules(self.persona)
         # 历史摘要也跟着换人设 —— 摘要里全是"你们聊过什么"，
@@ -426,9 +514,10 @@ class Brain:
                 print(f"[大脑] 历史摘要已切到人设分区 {_rs}", flush=True)
         except Exception:
             pass
-        # 换了人设就换了个人：内存里的对话历史**必须丢掉**。
-        # 不丢的话，新人设一开口就接着上一段的话说 —— 记忆和存档虽然已经
-        # 分区了，但 hist 是内存里的，跨人设留着就等于没换。
+        # 🔴 渠道绑定可能被改了（面板里换人设就是改 persona_by_src），
+        # 所以连 _hist_persona 里记的"这份历史当初属于谁"也要作废，
+        # 否则 key 变了但 same 判定用的是旧 key 的对照结果，历史会被留下来。
+        # 换句话说：改渠道人设必须重载，不然旧的对话历史会跟着新的人设走。
         for src in list(self._hists.keys()):
             fresh = self._persona_text_for(src)
             same = self._hist_persona.get(src) == self._persona_key_for(src)
@@ -439,6 +528,13 @@ class Brain:
             self._hist_persona[src] = self._persona_key_for(src)
         # 没有任何渠道的历史时，至少给主渠道建一份（否则第一次聊天是空白）
         self._hist(self._cur_src)
+        # 各渠道人设 key 打一行，换完人设不用猜它有没有生效
+        try:
+            for s in sorted(set(list(self._hists.keys()) + [DEFAULT_SRC, "wechat"])):
+                print("[大脑] 渠道 %s -> 人设 %s" % (s, self._persona_key_for(s)),
+                      flush=True)
+        except Exception:
+            pass
 
     def _time_hint(self):
         """把当前时间 / 离开时长拼成一句提示，喂给模型。可开关。"""

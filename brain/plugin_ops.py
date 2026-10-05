@@ -1,0 +1,547 @@
+# -*- coding: utf-8 -*-
+"""插件的安装 / 卸载 / 元数据 —— **管理面**，不是加载面。
+
+## 为什么要单独一个文件
+
+`plugin_host` 是**运行时**：扫目录、导模块、拼工具清单、调钩子。那部分
+一旦稳定就不该为了"做个界面"去动 —— 它是聊天链路的一部分，每轮都在走。
+
+这里是**管理面**：装、卸、记元信息、算渠道策略。跟运行时的唯一交点是
+`plugin_host.load()`（装完调它重扫）。
+
+分开的理由不是洁癖：加载面要极稳（改坏了聊天就断），管理面可以随便加功能。
+早期把两者揉在一起的结果是"想加个安装按钮"这种需求会让人忍不住去改
+加载逻辑，而加载逻辑一动就是"表情不生效"这种查不出根因的 bug。
+
+## 插件包长什么样
+
+一个 zip **只接受一种形状**：
+
+    xxx.zip
+    ├── xxx.py                # 插件本体：NAME / DESC / FEATURE / 钩子
+    └──（可选）zxplugin.json  # 作者/版本等元信息（不是插件文件）
+
+**且只能有一个 .py**。塞多个能装上（取第一个），但第二个会被静默丢掉 ——
+"装上了但少了一半"比直接拒绝难查得多，所以明确拒。
+
+## 为什么只收单文件
+
+不是图省事，是**加载器只认单文件**：`plugin_host.load()` 扫的是
+`plugins/*.py`，目录（哪怕里面有 `__init__.py`）一律看不见。
+真去支持目录就得改那段扫描逻辑 —— 它在聊天链路每轮都跑，
+为了"让包好看点"去动它不划算。
+
+所以形状校验直接按"必须是单个 .py"判，目录包给一句人话
+（"请压成单个 .py 再上传"）而不是默默装成一个不生效的东西。
+**装得上但跑不起来是最坏的失败方式**：界面显示"已安装"，
+而功能永远不出现。
+
+要放开目录支持时，解锁条件是加载器先支持扫目录（`docs/插件系统.md`）。
+
+## 为什么用白名单而不是"禁止../"
+
+黑名单永远补不完 —— 绝对路径、Windows 盘符、反斜杠和斜杠混用、
+NTFS 的 ADS（`x.py:stream`）、超长路径、大小写下的符号链接……
+每堵一个就想下一个。改成"只接受上面那一种形状"之后，
+上面那些**一个都不需要逐个堵**，因为不符合形状的压根不进流程。
+
+判据是 `zipfile` 里的**原始条目名**（还没解压），所以判断时
+不需要信任解压后的任何路径。
+
+## 元数据放哪
+
+`plugins/_registry.json`，**不塞进 .py**。理由：
+- .py 是插件自己的代码，作者不该被要求改代码来登记安装信息
+- 换机器/重装系统时registry 能重建（从文件扫），而写进 .py 的元数据会跟着
+  旧机器的路径走
+- registry 是**可丢弃的**：文件丢了能从 `plugins/` 重新扫出来，
+  只是丢了作者/版本/安装时间这类信息
+
+🔴 `_registry.json` 以下划线开头 —— 现有加载器会跳过下划线开头的 .py，
+这里同名不同扩展名，但命名习惯保持一致：一眼看出"这不是插件"。
+
+## 渠道策略：不新造机制
+
+插件的"App 生效 / 微信生效"**直接落到 `features_by_src`**，复用现有开关键。
+
+    features.<FEATURE>                = false   # 全局关
+    features_by_src.wechat.<FEATURE>  = true    # 但微信开着
+
+为什么不用新字段（比如 `plugin_channels`）：那会让"这个功能此刻开没开"
+的答案分散在两个地方 —— `features.on()` 只认 features 段，于是新字段
+**必然**有"写了但没生效"的分支。覆盖语义（只写差异）已经是正解。
+
+不声明 FEATURE 的插件（永远开的）无法按渠道关掉 —— 这是它自己的选择：
+`plugin_host` 的契约就是"不声明 = 永远开"。所以面板上这类插件的
+渠道选择框要说明为什么不可用，而不是给个假开关。
+"""
+import io
+import json
+import os
+import re
+import shutil
+import time
+import zipfile
+
+try:
+    import paths
+    _PLUG_DIR = str(paths.PLUGINS_DIR)
+except Exception:
+    _PLUG_DIR = os.path.join(os.getcwd(), "plugins")
+
+REGISTRY = os.path.join(_PLUG_DIR, "_registry.json")
+
+# --- 安装的硬边界（改这些要同时改 docs/插件系统.md）---
+MAX_ZIP_BYTES = 4 * 1024 * 1024# 压缩包上限
+MAX_UNPACKED = 16 * 1024 * 1024    # 解开后总大小上限（防 zip 炸弹）
+MAX_FILE_BYTES = 2 * 1024 * 1024   # 单文件上限
+MAX_FILES = 64                     # 条目数上限
+ALLOWED_EXT = (".py", ".json", ".md", ".txt")
+
+_PY_NAME_OK = re.compile(r"^[A-Za-z0-9_-]+\.py$")
+
+
+# --- 元数据 ---
+
+def _blank():
+    return {"version": 1, "plugins": {}}
+
+
+def read_registry():
+    """读元数据。读不出来就当空的 —— 宁可没信息，不能装不了插件。"""
+    try:
+        d = json.load(open(REGISTRY, encoding="utf-8"))
+        if not isinstance(d, dict) or not isinstance(d.get("plugins"), dict):
+            return _blank()
+        return d
+    except Exception:
+        return _blank()
+
+
+def write_registry(reg):
+    try:
+        os.makedirs(_PLUG_DIR, exist_ok=True)
+        with open(REGISTRY, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(reg, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _meta_of(name):
+    return (read_registry().get("plugins") or {}).get(name) or {}
+
+
+def _set_meta(name, patch):
+    reg = read_registry()
+    plugins = reg.setdefault("plugins", {})
+    cur = plugins.get(name) or {}
+    cur.update(patch or {})
+    plugins[name] = cur
+    return write_registry(reg)
+
+
+# --- 渠道策略（复用 features，不新造机制）---
+
+def channels_of(feature_key, src_names):
+    """这个插件此刻在哪些渠道开着。返回 {渠道: bool}。
+
+    判据是 `features.all_features(src)` —— 也就是**运行时真正问的那个值**。
+    面板显示的必须等于实际生效的，不然又会出现"界面显示开着、实际没生效"。
+    """
+    out = {}
+    if not feature_key:
+        # 不声明 FEATURE = 契约上是"永远开"，没有渠道差异可言
+        return {s: True for s in src_names}
+    try:
+        import features
+        for s in src_names:
+            out[s] = bool(features.all_features(s).get(feature_key, True))
+    except Exception:
+        out = {s: True for s in src_names}
+    return out
+
+
+def set_channels(feature_key, src_names, on_map):
+    """按勾选写 features 段。**只写差异**，不动没勾到的渠道。
+
+    写出的形状：
+        勾了的渠道  -> features_by_src.<src>.<key> = true
+        没勾的渠道  -> features_by_src.<src>.<key> = false
+    为什么要显式写 false：只写 true 的话，插件装之前全局是 true，
+    取消勾选就"没写=跟全局走=还开着"—— 界面上关了、实际没关。
+    """
+    if not feature_key:
+        return False
+    try:
+        import features
+        for s in src_names:
+            features.set_features({feature_key: bool(on_map.get(s))}, src=s)
+        return True
+    except Exception:
+        return False
+
+
+# --- zip 形状校验 ---
+
+class Bad(Exception):
+    """安装被拒。message 直接给用户看，别写内部术语。"""
+
+
+def _norm_entry(name):
+    """把 zip 条目名收拾成能判定的形状。返回 (ok, 原因) / (名字, None) / None。"""
+    n = str(name or "").replace("\\", "/").strip()
+    if not n or n.endswith("/"):
+        return None                     # 目录条目，忽略
+    if n.startswith("/") or n.startswith("~"):
+        return None, "zip 里不许有绝对路径：%s" % n[:60]
+    if re.match(r"^[A-Za-z]:", n):
+        return None, "zip 里不许有盘符路径：%s" % n[:60]
+    if ".." in n.split("/"):
+        return None, "zip 里不许用 .. 跳目录：%s" % n[:60]
+    if ":" in n:                        # NTFS 的 ADS：evil.py:hidden
+        return None, "文件名里不许有冒号：%s" % n[:60]
+    # 顶层（要落成 plugins/ 下那个东西）的名字不能是 _ 或 . 开头 ——
+    # 不是安全问题，是**装了不会生效**：加载器只收不以 "_" 开头的 .py，
+    # 点开头的同理（被当隐藏文件跳过）。放进来只会让人以为装上了。
+    #
+    # ⚠️ 但**目录内部**的文件名随便用 _ 开头：__init__.py 是目录插件的
+    # 必需文件，_helper.py 也是正常写法。规则只管顶层。
+    if "/" not in n:
+        base = os.path.basename(n)
+        if base.startswith("_") or base.startswith("."):
+            return None, ("文件名不能以 _ 或 . 开头（加载器会跳过，装了不生效）：%s"
+                          % base[:40])
+    else:
+        segs = n.split("/")
+        # 目录名本身也不能是隐藏/下划线（它会成为 plugins/ 下的一个入口）
+        if segs[0].startswith("_") or segs[0].startswith("."):
+            return None, "插件目录名不能以 _ 或 . 开头：%s" % segs[0][:40]
+    return n
+
+
+def inspect_zip(path):
+    """验形状，返回 (ok, 条目列表, 错误原因)。不解压。
+
+    全部判断都基于 zip 的原始条目名，所以调用方可以先看结果再决定要不要落盘。
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError as e:
+        return False, [], "读不到文件：%s" % e
+    if size > MAX_ZIP_BYTES:
+        return False, [], "压缩包 %.1f MB，超过上限 %d MB" % (
+            size / 1048576.0, MAX_ZIP_BYTES // 1048576)
+
+    try:
+        zf = zipfile.ZipFile(path)
+    except Exception as e:
+        return False, [], "不是有效的 zip：%s" % str(e)[:80]
+
+    with zf:
+        infos = zf.infolist()
+        if len(infos) > MAX_FILES:
+            return False, [], "包里有 %d 个文件，超过上限 %d" % (len(infos), MAX_FILES)
+        total = 0
+        for inf in infos:
+            if inf.flag_bits & 0x1:
+                return False, [], "不支持加密的包"
+            total += int(inf.file_size or 0)
+        if total > MAX_UNPACKED:
+            return False, [], "解开后 %.1f MB，超过上限 %d MB（防 zip 炸弹）" % (
+                total / 1048576.0, MAX_UNPACKED // 1048576)
+
+        names = []
+        for inf in infos:
+            n = _norm_entry(inf.filename)
+            if isinstance(n, tuple):
+                return False, [], n[1]
+            if n is None:
+                continue
+            ext = os.path.splitext(n)[1].lower()
+            if ext not in ALLOWED_EXT:
+                return False, [], "不许的文件类型 %s（只准 %s）" % (
+                    ext or "(无扩展名)", " ".join(ALLOWED_EXT))
+            if inf.file_size > MAX_FILE_BYTES:
+                return False, [], "%s 有 %.1f MB，单文件上限 %d MB" % (
+                    n[:40], inf.file_size / 1048576.0, MAX_FILE_BYTES // 1048576)
+            names.append(n)
+
+        if not names:
+            return False, [], "包里是空的"
+
+        # 形状：要么全是 .py 平铺，要么全是同一个目录
+        tops = {n.split("/")[0] for n in names}
+        if len(tops) == 1 and "/" in names[0]:
+            top = list(tops)[0]
+            # 单文件插件
+            if _PY_NAME_OK.match(top):
+                return True, names, ""
+            # 🔴 目录插件**目前装不了**。
+            # 看着"支持一下"只是一行判断的事，但真去实现要动 plugin_host.load()
+            # 的扫描逻辑 —— 那是聊天链路每轮都在走的地方。
+            # 与其在这里放一个"装得上、跑不起来"的承诺，不如现在就说清楚。
+            # 解锁条件：加载器支持扫目录（见 docs/插件系统.md 的 TODO）。
+            if not any(n.lower().endswith("/__init__.py") for n in names):
+                return False, [], ("目录包里必须有 __init__.py：%s" % top[:40])
+            return False, [], (
+                "%s 是目录形式，但加载器当前只认单文件 .py（plugin_host.load "
+                "只扫 *.py），装了不会生效。请把插件压成单个 .py 再上传。" % top[:40])
+        # 平铺：.py 走插件名校验，.json/.md/.txt 是附属文件（原样接受）
+        for n in names:
+            if "/" in n:
+                return False, [], ("这个 zip 看起来是个目录包（%s）；"
+                                   "加载器只认单文件 .py，请压成单个 .py 再上传。"
+                                   % n[:40])
+            base = os.path.basename(n)
+            if base.lower().endswith(".py") and not _PY_NAME_OK.match(base):
+                return False, [], "插件文件名不合法（只准英文/数字/下划线/短横线）：%s" % base[:40]
+        # 🔴 多个 .py 一律拒。装是能装上的（取第一个），但第二个会被
+        # 静默丢掉 —— 那种"装上了但少了一半"比直接拒绝难查得多。
+        # 附属文件（json/md/txt）不算。
+        pys = [n for n in names if n.lower().endswith(".py")]
+        if len(pys) > 1:
+            return False, [], (
+                "包里塞了 %d 个 .py，插件只能是单文件。请只留插件本身"
+                "（多余的依赖文件暂不支持）：%s" % (len(pys),
+                                          "、".join(pys[:4])))
+        if not pys:
+            return False, [], "包里没有 .py（这不是一个插件包）"
+        #🔴 名字按**后缀**定，不靠 names 的顺序。
+        # zip 里的条目顺序由打包工具决定（先写 json 还是先写 py 都能打包成功），
+        # 而 install 一度用 names[0] 当插件本体 —— 碰上"json 在前"的包，
+        # 就会把 zxplugin.json 当插件装成 zxplugin.py，语法检查照样通过
+        # （JSON 本身就是合法 Python 字面量），用户看到"安装成功"，
+        # 实际装进去一个不加载的空壳。**判据必须是语义（后缀），不是位置。**
+        names = pys + [n for n in names if n not in pys]
+        return True, names, ""
+
+
+def _guess_plugin_name(names):
+    """从条目名猜插件名。目录插件取目录名，平铺取 .py 的文件名。"""
+    top = names[0].split("/")[0]
+    if "/" in names[0]:
+        return top
+    return os.path.splitext(top)[0]
+
+
+def _find_manifest(names):
+    """找 zxplugin.json（可选）。没有就用 .py 里的 NAME/DESC。"""
+    for n in names:
+        if n.lower().endswith("zxplugin.json"):
+            return n
+    return ""
+
+
+def install(zip_path, note=""):
+    """装一个插件。返回 (ok, 结果字典)。
+
+    顺序是刻意安排的 —— **先在临时目录里全部验完，最后才动plugins/**：
+    一个坏包不该让已有的插件跟着遭殃（zip 炸弹、超限、语法错都发生在落盘前）。
+    """
+    ok, names, err = inspect_zip(zip_path)
+    if not ok:
+        return False, {"err": err}
+    # inspect_zip 已保证 .py 排在第一个，但仍显式挑一次：
+    # 下一个靠 names[0] 的人不该重新踩一遍"顺序取决于打包工具"这个坑。
+    main_py = next((n for n in names if n.lower().endswith(".py")), "")
+    if not main_py:
+        return False, {"err": "包里没有 .py（这不是一个插件包）"}
+
+    pname = _guess_plugin_name(names)
+    if not re_name_ok_safe(pname):
+        return False, {"err": "插件名不合法（只准英文/数字/下划线/短横线）：%s" % pname[:40]}
+
+    tmp = os.path.join(_PLUG_DIR, "_tmp_install_%d" % int(time.time()))
+    try:
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        with zipfile.ZipFile(zip_path) as zf:
+            for n in names:
+                dest = os.path.join(tmp, *n.split("/"))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with zf.open(n) as src, open(dest, "wb") as out:
+                    shutil.copyfileobj(src, out)
+        # 语法检查在临时目录做：不通过就地丢掉，plugins/ 还没被碰过
+        bad = _syntax_check(tmp, names)
+        if bad:
+            return False, {"err": bad}
+        man = _read_manifest(tmp, names)
+        # 正式落盘。inspect_zip 已经保证只有单文件一种形状（目录包被拒了），
+        # 所以这里只处理单文件 —— 别留一条走不到的分支，
+        # 它会在"以后放开目录支持"时悄悄生效，而那时早就没人记得它写于何时。
+        dest = os.path.join(_PLUG_DIR, pname + ".py")
+        if os.path.isfile(dest):
+            os.remove(dest)
+        shutil.copy2(os.path.join(tmp, main_py), dest)
+        # 附属文件也落盘（zxplugin.json / 说明文档）。名字以 _ 开头 ——
+        # 加载器跳过下划线开头的文件，所以它永远不会被当成另一个插件。
+        extras = [n for n in names if not n.lower().endswith(".py")]
+        extra_dst = []
+        for n in extras:
+            src = os.path.join(tmp, *n.split("/"))
+            # ⚠️ 别写成 dst = "_" + os.path.basename(dst) —— 那样把绝对路径
+            # 换成了相对路径，文件会落到**当前工作目录**（云端是大脑根目录），
+            # 而这里 except: pass 会把它静默吞掉：安装报"成功"、文件却没了。
+            # 这种"看起来成功"的失败最难查，宁可多写一次 basename。
+            base = "_%s_%s" % (pname, os.path.basename(n))
+            dst = os.path.join(_PLUG_DIR, base)
+            try:
+                shutil.copy2(src, dst)
+                extra_dst.append(dst)
+            except Exception as e:
+                print("[插件] 附属文件 %s 没落盘：%s" % (base[:30], str(e)[:60]),
+                      flush=True)
+    except Exception as e:
+        return False, {"err": "装的时候出错：%s" % str(e)[:120]}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    real = man.get("name") or ""
+    _set_meta(real or pname, {
+        "installed_at": time.strftime("%Y-%m-%d %H:%M"),
+        "author": str(man.get("author") or "")[:60],
+        "version": str(man.get("version") or "")[:20],
+        "desc": str(man.get("desc") or "")[:120],
+        "source": note or "zip 上传",
+        "package": pname,
+    })
+    return True, {"ok": True, "package": pname, "name": real or pname,
+                  "manifest": man, "files": [dest] + extra_dst}
+
+
+def re_name_ok_safe(n):
+    try:
+        import plugin_host
+        return bool(plugin_host.re_name_ok(n))
+    except Exception:
+        return bool(n) and all(c.isalnum() or c in "_-" for c in str(n))
+
+
+def _syntax_check(tmp_root, names):
+    """py_compile 每一个 .py，返回第一个错误（没有则 None）。
+
+    🔴 cfile **不能写 os.devnull**。Windows 上 devnull 是"nul"这个设备名，
+    py_compile 拿它当输出文件会直接抛
+    「nul is a non-regular file」—— 于是**每个包都装不进去**，
+    而且错误信息里完全看不出是这个原因（第一次跑就被这个坑拦住过）。
+    用临时文件，验完删。
+    """
+    import py_compile
+    import tempfile
+    for n in names:
+        if not n.lower().endswith(".py"):
+            continue
+        p = os.path.join(tmp_root, *n.split("/"))
+        cf = os.path.join(tempfile.gettempdir(), "_zxpc_%d.pyc" % os.getpid())
+        try:
+            py_compile.compile(p, doraise=True, cfile=cf)
+        except Exception as e:
+            where = n
+            msg = str(e).replace(tmp_root, "包内").replace(cf, "缓存")
+            return "%s 语法有问题：%s" % (where[:40], msg[:160])
+        finally:
+            try:
+                if os.path.isfile(cf):
+                    os.remove(cf)
+            except OSError:
+                pass
+    return ""
+
+
+def _read_manifest(tmp_root, names):
+    """读 zxplugin.json（可选）。没有就返回空 dict。"""
+    p = _find_manifest(names)
+    if not p:
+        return {}
+    try:
+        d = json.load(open(os.path.join(tmp_root, *p.split("/")), encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def uninstall(name, purge_data=False):
+    """卸一个插件。返回 (ok, 信息)。
+
+    删的是 `plugins/<name>.py`（以及一并存在的同名目录，
+    那是早期允许过目录包时留下的）；顺带清元数据。
+    插件自己的数据目录（data/plugins/<name>/）默认留着 —— 那里面可能有
+    它的配置和状态，误删不可恢复，要删得显式 purge_data。
+    """
+    name = str(name or "").strip()
+    if not name or not re_name_ok_safe(name):
+        return False, {"err": "插件名不合法"}
+    hit = ""
+    f = os.path.join(_PLUG_DIR, name + ".py")
+    d = os.path.join(_PLUG_DIR, name)
+    if os.path.isfile(f):
+        os.remove(f)
+        hit = f
+    if os.path.isdir(d):          # 有目录就一起清，别留半个空壳
+        shutil.rmtree(d, ignore_errors=True)
+        hit = hit or d
+    if not hit:
+        return False, {"err": "没找到这个插件（可能已经被删了）"}
+    # 附属文件（安装时落的 _<name>_xxx.json / md）跟着清，
+    # 不然每装一次留一批，重装几轮就攒出一堆同名不同代的文件。
+    try:
+        for fn in os.listdir(_PLUG_DIR):
+            if fn.startswith("_" + name + "_"):
+                try:
+                    os.remove(os.path.join(_PLUG_DIR, fn))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    reg = read_registry()
+    (reg.get("plugins") or {}).pop(name, None)
+    write_registry(reg)
+    extra = ""
+    if purge_data:
+        try:
+            import paths
+            pd = os.path.join(str(paths.DATA_DIR), "plugins", name)
+            if os.path.isdir(pd):
+                shutil.rmtree(pd, ignore_errors=True)
+                extra = "，数据也清了"
+        except Exception:
+            pass
+    return True, {"ok": True, "removed": os.path.basename(hit), "msg": "已卸载" + extra}
+
+
+# --- 给面板的完整视图 ---
+
+def overview(src_names):
+    """一次给全：装了哪些、每个的能力/开关/渠道状态/元信息。
+
+    面板只要一个接口就能画完整个页面 —— 拆成四五个接口的话，
+    页面得等好几轮才能填满，切换渠道时还要重新拉一遍。
+    """
+    try:
+        import plugin_host as ph
+        listing = ph.listing()
+    except Exception:
+        listing = []
+    reg = (read_registry().get("plugins") or {})
+    out = []
+    for p in listing:
+        name = p.get("name") or ""
+        feat = str(p.get("feature") or "")
+        meta = reg.get(name) or {}
+        out.append({
+            "name": name,
+            "desc": p.get("desc") or "",
+            "feature": feat,
+            "tools": p.get("tools") or [],
+            "routes": p.get("routes") or [],
+            "hooks": p.get("hooks") or [],
+            "file": p.get("file") or "",
+            "err": p.get("err") or "",
+            "channels": channels_of(feat, src_names),
+            # 不声明 FEATURE = 契约上永远开，界面上要说清不能按渠道关
+            "channelable": bool(feat),
+            "meta": meta,
+        })
+    return out
