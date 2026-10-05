@@ -437,9 +437,13 @@ def skill_list(ctx=None, name="", args=""):
 
 # --- 给模型调的入口 ---------------------------------------------------------
 
-def skill_call(ctx, name="", args=""):
-    """调用一个 JS 技能工具。name 是技能工具名（如 daily-fortune__today），
-    args 是 JSON 对象字符串（如 {"who": "小明"}）。"""
+def _run_skill(ctx, name, args=""):
+    """解析参数 → 调 call() → 取出能直接喂给模型的那句。
+
+    平铺写法（`[tool:daily-fortune__today:{"who":"我"}]`）和
+    老写法（`[tool:skill_call:{"name":..,"args":..}]`）共用这一条路，
+    否则两边各维护一份解析，改一处忘一处。
+    """
     n = str(name or "").strip()
     if not n:
         return "没说要调哪个技能工具。"
@@ -459,6 +463,47 @@ def skill_call(ctx, name="", args=""):
     finally:
         _turn_ref["t"] = None
     return str(r.get("content") or "")
+
+
+def skill_call(ctx, name="", args=""):
+    """老的嵌套写法：技能名和参数都塞在 JSON 里。保留兼容。"""
+    return _run_skill(ctx, name, args)
+
+
+def owns_tool(name):
+    """认领宿主上真实存在的技能工具名。plugin_host 拿它做动态兜底。
+
+    🔴 **为什么必须有这个**：插件的 `TOOLS` 是**装载时**拍的快照，
+    只有 `skill_list` / `skill_call` 两个壳。宿主上几十个真实工具名
+    （`包名__工具名`）是运行时从 Node 那边问来的，永远进不了快照 ——
+    于是模型按它最熟悉的样子写出
+    `[tool:daily-fortune__today:{"who":"我"}]`，
+    `plugin_host.run_tool` 查索引查不到 → 返回 None →
+    外层拼一句「查询失败，照实说查不到，别编」。
+    用户看到的症状就是"技能没生效"。
+
+    判据用**不带渠道过滤**的清单：被人改成"这个渠道不开"的工具也要认领，
+    好让 call() 回那句设计好的「当没这件事就行」；不认领的话会掉进
+    「查不到」，两句话的处置完全不同。
+    """
+    n = str(name or "").strip().lower()
+    if not n or "__" not in n:
+        return False
+    return n in _all_tools_now()
+
+
+def invoke_tool(name, arg="", ctx=None):
+    """平铺写法的执行入口。形状跟天气/搜索一致，模型不用先猜一层壳。"""
+    n = str(name or "").strip().lower()
+    s = str(arg or "").strip()
+    # 没给参数或参数不是 JSON（模型常直接写个名字），别回"参数不合法"
+    # 把她逼回去重猜 —— 工具本来就有默认值，按没传处理。
+    if s:
+        try:
+            json.loads(s)
+        except Exception:
+            s = ""
+    return _run_skill(ctx, n, s)
 
 
 # 固定两个入口。别的一律走它们 —— 见 skill_list 上面那段说明。
@@ -495,9 +540,17 @@ TOOL_HELP = """## JS 技能
 - `valorant-match__recent_schedule` 无畏契约近期赛程。
 - `valorant-match__recent_results` 无畏契约近期战绩。
 
-怎么调：
-1. 先调 `skill_list` 确认现在有哪些（装了新的会以它为准）。
-2. 调 `skill_call`，`name` 填上面那个工具名，`args` 是 JSON 字符串。
+怎么调 —— **跟天气、搜索一模一样的写法**，括号里直接写参数：
+
+    [tool:daily-fortune__today:{"who": "小明"}]
+    [tool:hot-trends__hot_brief]
+    [tool:reply-meme__find_meme:{"mood": "无语"}]
+
+不用先查清单，也不用在外面再包一层。**不确定参数叫什么就一个都不写**
+（像第二行那样），工具自己会用默认值，比填错强。
+
+上面没列出的、**后来新装的**技能，调 `[tool:skill_list]` 能看到；
+空列表或调不通都当没有，别提它。
 
 🔴 **拿到结果别照抄，也别改数字。** 签位、分数、宜忌、幸运色这些都是
 工具给的原文，你用自己的话说，语气像平时说话就行；但**不许自己另编一个**。

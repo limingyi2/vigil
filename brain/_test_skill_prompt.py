@@ -102,8 +102,22 @@ def main():
           ("不许自己编" in th or "不要自己编" in th or "自己编" in th))
 
     print("\n[3] 没退化：宿主晚起时的兜底路径还在")
-    check("skill_call 还在（模型唯一入口）", "skill_call" in th)
-    check("skill_list 还在（宿主晚起时的兜底）", "skill_list" in th)
+    # 2026-10-06 改设计：`skill_call` 不再是"模型唯一入口"。
+    # 它要求 JSON 套 JSON（`{"name":..,"args":{..}}`），实测 DeepSeek
+    # 一次都不肯这么写 —— 提示词里写了名字也没用，她就自己编。
+    # 现在入口是**平铺写法** `[tool:包名__工具名:{参数}]`，跟天气/搜索同形状。
+    # 所以这条判据改成"提示词里必须有一个能直接照抄的调用示例"，
+    # 而不是死盯 skill_call 这个壳。skill_call **运行时**还得能用 ——
+    # 那件事由 _test_skill_flat_form.py [4] 守着（兼容性不许回归）。
+    # 字符集必须容得下**连字符** —— 技能工具名是 `包名__工具名`，包名里带 `-`。
+    # 第一次写成 [a-z0-9_]+，跟 TOOL_TAG_RE 当初那个洞一模一样：
+    # 正则比真实数据窄，于是"明文摆在眼前的示例"被判成不存在。
+    import re as _re
+    has_form = bool(_re.search(r"\[tool:[a-zA-Z0-9_\-]+__[a-zA-Z0-9_\-]+", th))
+    check("提示词里有能直接照抄的调用示例（[tool:包名__工具名...]）",
+          has_form, [l.strip()[:80] for l in th.splitlines()
+                     if "[tool:" in l][:3])
+    check("skill_list 还在（后来新装的技能靠它发现）", "skill_list" in th)
     check("调不通时有退路提示（当没这件事/不要提技能）",
           ("当没这件事" in th) or ("不要提" in th) or ("正常聊天" in th))
 

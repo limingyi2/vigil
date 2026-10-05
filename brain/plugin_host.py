@@ -369,19 +369,44 @@ def on_reply(ctx, text):
 
 
 def run_tool(name, arg):
-    """插件的工具。名字不在册返回 None（tools.run_tool 负责先问内置那三个）。"""
-    p = get_by_tool(name)
-    if not p or not _enabled(p):
-        return None
-    fn = p.tools.get(str(name or "").lower())
-    if not fn:
-        return None
-    ctx = Turn(text=arg or "")
-    ctx._owner = p.name
-    try:
-        return fn(arg) or None
-    except Exception as e:
-        return _log(p.name, "工具 %s 失败：%s" % (name, str(e)[:100]))
+    """插件的工具。名字不在册返回 None（tools.run_tool 负责先问内置那三个）。
+
+    🔴 **索引是装载时的快照，会有永远查不到的合法工具名。**
+    技能插件每次真调只有一个正确形状，而宿主上的工具名（`包名__工具名`）
+    是运行时才问出来的，`p.tools` 里只有 `skill_list` / `skill_call`
+    两个壳。按 name 查不到就返回 None，外层会拼
+    「查询失败，照实说查不到，别编」—— 用户看到的症状是"技能没生效"，
+    而宿主明明活着、工具明明在。
+    所以查不到时再逐个问插件认不认（`owns_tool` + `invoke_tool`）。
+    """
+    n = str(name or "").lower()
+
+    p = get_by_tool(n)
+    if p and _enabled(p):
+        fn = p.tools.get(n)
+        if fn:
+            ctx = Turn(text=arg or "")
+            ctx._owner = p.name
+            try:
+                return fn(arg) or None
+            except Exception as e:
+                return _log(p.name, "工具 %s 失败：%s" % (n, str(e)[:100]))
+
+    for q in _registry.values():
+        if not _enabled(q):
+            continue
+        owns = getattr(q.mod, "owns_tool", None)
+        inv = getattr(q.mod, "invoke_tool", None)
+        if not (callable(owns) and callable(inv)):
+            continue
+        try:
+            if owns(n):
+                ctx = Turn(text=arg or "")
+                ctx._owner = q.name
+                return inv(n, arg, ctx) or None
+        except Exception as e:
+            _log(q.name, "认领工具 %s 时出错：%s" % (n, str(e)[:100]))
+    return None
 
 
 _TOOL_INDEX = {}
