@@ -1070,6 +1070,120 @@ class Bridge(object):
 
     # --- 主循环 -----------------------------------------------------
 
+    def _diag_once(self):
+        """设了 `ZX_DIAG` 时，把微信窗口的控件树报进日志（**只跑一次**）。
+
+        ## 为什么需要它
+
+        用户报「她有顺序地右键群聊的头像」。代码侧能排的都排掉了
+        （sha1 一致、零 right_click、`_snapshot` 只登记不 download、
+        `_read_all` 从没卡住、配置正常），而 wxauto4 的业务代码
+        (`wx.py`、`ui/chatbox.py`) **是.pyd，没有源码**。
+
+        剩下的唯一办法是**行为证据**：她在真桌面里跑，能看到界面控件树；
+        而从 SSH 会话里 `GetRootControl().GetChildren()` 返回**空**
+        （跨会话看不见 UIA 控件树）。所以必须**借她自己的进程**来看。
+
+        ## 为什么只跑一次
+
+        遍历控件树不便宜，而每 5 秒跑一次没意义 —— 现象是一次性的。
+        所以用 `_diag_done` 闩住，跑完就不再跑。
+
+        ## 🔴 绝不点任何控件
+
+        这里只读 Name / ClassName / ControlType。**一旦调Click/Invoke
+        就变成了问题本身**（那正是要查的东西）。
+
+        ## 怎么用
+
+            set ZX_DIAG=1
+            然后双击启动。日志里会出现 `[诊断] …`。
+
+        没设这个变量时，`os.environ.get` 每次返回 None，**零开销**。
+        """
+        if getattr(self, "_diag_done", False):
+            return
+        if not os.environ.get("ZX_DIAG"):
+            return
+        self._diag_done = True
+        print("[诊断] ===== 开始（只读，不点任何控件）=====")
+        try:
+            import uiautomation as auto
+        except Exception:
+            try:
+                from wxauto4.uia import uiautomation as auto
+            except Exception as e:
+                print("[诊断] 拿不到 uiautomation：%s" % str(e)[:90])
+                return
+        # 1) 根节点下都有什么 —— 先确认能看到窗口
+        roots = []
+        try:
+            for c in auto.GetRootControl().GetChildren():
+                try:
+                    roots.append((c.ClassName or "", (c.Name or "")[:40]))
+                except Exception:
+                    roots.append(("?", ""))
+        except Exception as e:
+            print("[诊断] 读根节点失败：%s" % str(e)[:90])
+            return
+        print("[诊断] 根节点 %d 个：%s" % (len(roots), roots[:8]))
+        wins = []
+        for c in auto.GetRootControl().GetChildren():
+            try:
+                cn = c.ClassName or ""
+            except Exception:
+                continue
+            if "WeChat" in cn or "Weixin" in cn:
+                wins.append(c)
+        print("[诊断] 微信窗口 %d 个" % len(wins))
+        if not wins:
+            print("[诊断] 这个会话看不到微信窗口"
+                  "（真桌面在Console 会话里，不在本进程能看的范围）")
+            return
+        # 2) 遍历第一个窗口，只记列表项和图片（头像）
+        stats = {"ListItem": 0, "Image": 0, "Menu": 0, "total": 0}
+        items = []
+        imgs = []
+
+        def walk(c, d, maxd=9):
+            if d > maxd or stats["total"] > 20000:
+                return
+            stats["total"] += 1
+            try:
+                cn = c.ClassName or ""
+                nm = c.Name or ""
+            except Exception:
+                return
+            if "ListItem" in cn:
+                stats["ListItem"] += 1
+                if len(items) < 40:
+                    items.append("%s%s | %s" % ("  " * d, cn, nm[:36]))
+            elif "Image" in cn:
+                stats["Image"] += 1
+                if len(imgs) < 25:
+                    imgs.append("%s%s | %s" % ("  " * d, cn, nm[:36]))
+            elif "Menu" in cn or "Popup" in cn:
+                stats["Menu"] += 1
+            try:
+                for ch in c.GetChildren():
+                    walk(ch, d + 1, maxd)
+            except Exception:
+                pass
+
+        try:
+            walk(wins[0], 0)
+        except Exception as e:
+            print("[诊断] 遍历失败：%s" % str(e)[:90])
+            return
+        print("[诊断] 控件总数=%d 列表项=%d 图片=%d 菜单=%d"
+              % (stats["total"], stats["ListItem"], stats["Image"],
+                 stats["Menu"]))
+        for l in items[:30]:
+            print("[诊断] 项 %s" % l)
+        for l in imgs[:20]:
+            print("[诊断] 图 %s" % l)
+        print("[诊断] ===== 结束 =====")
+
     def step(self):
         # 🔴 你正在用别的软件吗？是就这一轮完全不碰微信。
         # 这套接入靠界面操作，不这么做就会不停把微信顶到前台抢你窗口。
@@ -1083,6 +1197,7 @@ class Bridge(object):
         if self._paused:
             print("[让路] 回到微信了，继续读（暂停了 %d 轮）" % self._paused)
             self._paused = 0
+        self._diag_once()
         items = self._snapshot()
         new = self._diff(items)
         for sender, content, img in new:
