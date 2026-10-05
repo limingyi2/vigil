@@ -1506,6 +1506,11 @@ async function openTemplateManager() {
   });
 }
 
+// 🔴 notes 不在这里面 —— 它挪到下面的「整份人设」大框去了。
+// 真实的角色卡是从别处抄来的一整段 Markdown（带"一、你是谁"这种编号章节），
+// 逼用户拆进九个框，抄一次动九次，栏顺序跟原文不一致时抄着抄着就乱了。
+// 面板那边已经这么改了（admin/dashboard.html），两边必须一致 ——
+// 不一致会出现"在 App 里改了这边没变"这种双向对不上。
 const PERSONA_FIELDS = [
   { k: 'name',        t: '她的名字',     h: '叫什么' },
   { k: 'nicknames',   t: '小名',         h: '你平时怎么叫她，顿号分开', list: true },
@@ -1514,7 +1519,6 @@ const PERSONA_FIELDS = [
   { k: 'background',  t: '你们怎么认识的', h: '一段话。要留空就空着，别靠现编' },
   { k: 'scene',       t: '现在的生活状态', h: '在哪、在做什么、你们多久联系一次' },
   { k: 'personality', t: '她的性格',     h: '性格 + 说话习惯写一起，越具体越好用' },
-  { k: 'notes',       t: '补充规则',     h: '什么话她不会说、什么腔调不要。多写几条效果很明显' },
   { k: 'appearance',  t: '长相',         h: '生图用。年龄、脸型、发型、身高这些' },
 ];
 
@@ -1552,12 +1556,20 @@ async function openPersonaEditor(key) {
   inner.style.cssText = 'background:#fff;width:100%;max-height:88vh;border-radius:14px 14px 0 0;display:flex;flex-direction:column';
   let html = '<div style="padding:14px 16px 8px;font-size:15px;font-weight:500;border-bottom:1px solid #f0f0f0">改她的设定</div>';
   html += '<div style="flex:1;overflow-y:auto;padding:4px 16px 16px">';
+  // --- 整份人设（主入口，放最上面）-------------------------------
+  html += '<div style="margin-top:10px"><div style="font-size:12px;color:#888;margin-bottom:5px">' +
+    '整份人设<span style="color:#aaa">从别处抄来的角色卡整段粘进来就行，不用拆。名字和小名会自己认出来。</span></div>' +
+    '<textarea id="pf_raw" placeholder="把你的角色卡整个粘进来。比如：&#10;&#10;一、你是谁&#10;你是GLM，一个混在群里的AI角色…&#10;二、说话习惯&#10;能一个字说清就不要十个字…&#10;&#10;（下面那些小栏可以不填，粘完整份就够了）" ' +
+    'style="width:100%;height:180px;border:1px solid #e5e5e5;border-radius:8px;padding:9px;font-size:14px;line-height:1.5;resize:none;box-sizing:border-box">' +
+    esc(cur.notes || '') + '</textarea>' +
+    '<div id="rawHint" style="font-size:11.5px;color:#9c9c9c;margin-top:5px;line-height:1.6"></div></div>';
+  html += '<div style="font-size:12px;color:#888;margin:18px 0 0">想分开调也行（以下是可选的细项）</div>';
   PERSONA_FIELDS.forEach(f => {
     const v = cur[f.k];
     const val = Array.isArray(v) ? v.join('、') : (v || '');
     html += '<div style="margin-top:14px"><div style="font-size:12px;color:#888;margin-bottom:5px">' + esc(f.t) + '</div>' +
       '<textarea id="pf_' + f.k + '" placeholder="' + esc(f.h) + '" ' +
-      'style="width:100%;height:' + (f.k === 'notes' || f.k === 'personality' ? '110px' : '56px') +
+      'style="width:100%;height:' + (f.k === 'personality' ? '110px' : '56px') +
       ';border:1px solid #e5e5e5;border-radius:8px;padding:9px;font-size:14px;line-height:1.5;resize:none;box-sizing:border-box">' +
       esc(val) + '</textarea></div>';
   });
@@ -1571,6 +1583,51 @@ async function openPersonaEditor(key) {
   box.appendChild(inner);
   document.body.appendChild(box);
 
+  // 名字/小名**代码要读**（闸门判"群里是不是在叫她"靠这两个字段），
+  // 光在提示词正文里没有。所以粘完整份之后从整段里认出来填进那两栏。
+  // 拆解规则在服务端（persona_store.split_raw_persona），这里不自己写一份 ——
+  // 两份规则迟早不一致，表现是"App 里说认出来了、存下去名字还是空的"。
+  //
+  // 🔴 覆盖策略跟面板一致：**粘整份 = 换人设，就该覆盖**旧名字；
+  // 但用户手改过的那一栏要保住（他可能特意改成别的名字）。
+  // touched 靠 input 事件打标记 —— 下面自动填的时候**不能**派发 input，
+  // 否则自己填的值会被当成"用户改的"，下一次粘贴就填不进去了。
+  const touched = {};
+  ['name', 'nicknames'].forEach(k => {
+    const el = $('pf_' + k);
+    if (el) el.addEventListener('input', () => { touched[k] = true; });
+  });
+  const hint = $('rawHint');
+  const checkRaw = async () => {
+    const v = ($('pf_raw').value || '').trim();
+    if (!v) { hint.textContent = ''; return; }
+    let r;
+    try {
+      r = await (await fetch(api('/api/persona/split_raw'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw: v })
+      })).json();
+    } catch (e) {
+      hint.textContent = '（认名字那个接口没通，不影响保存：整份照样会进她的提示词）';
+      return;
+    }
+    if (!r || r.err) { hint.textContent = '（认名字那个接口没通，不影响保存）'; return; }
+    const parts = [];
+    const fill = (k, el, val, label) => {
+      if (!el) return;
+      if (touched[k]) { parts.push(label + '你手改过的，没动'); return; }
+      if (el.value === val) { parts.push(label + '已是「' + (val || '空') + '」'); return; }
+      el.value = val;
+      parts.push(label + '认成「' + (val || '空') + '」');
+    };
+    if (r.name) fill('name', $('pf_name'), r.name, '名字');
+    else parts.push('没认出名字 —— 上面「她的名字」那一栏得自己填，否则群里 @ 她她不应');
+    if (r.nicknames && r.nicknames.length) fill('nicknames', $('pf_nicknames'), r.nicknames.join('、'), '小名');
+    hint.textContent = parts.join('，');
+  };
+  $('pf_raw').addEventListener('input', checkRaw);
+  checkRaw();
+
   const close = () => box.remove();
   $('pCancel').onclick = close;
   $('pSave').onclick = async () => {
@@ -1581,6 +1638,9 @@ async function openPersonaEditor(key) {
       if (f.list) out[f.k] = v ? v.split(/[、,，]/).map(x => x.trim()).filter(Boolean) : [];
       else out[f.k] = v;
     });
+    // 整份人设落在 notes —— build_system_text 把它整段拼进系统提示，一字不改。
+    // 这是"粘一整份就能用"的关键，别再拆回各栏。
+    out.notes = ($('pf_raw').value || '').trim();
     if (!out.name) return tip('总得有个名字');
     $('pSave').disabled = true; $('pSave').textContent = '保存中…';
     try {

@@ -1020,7 +1020,25 @@ def start_remote_api(brain):
                         self._json(200, {"ok": False, "err": "她正忙着"})
                         return
                     self._json(200, {"ok": True})
+                elif path == "/api/persona/split_raw":
+                    # 从整段人设里认名字和小名。**只给面板做预览用** ——
+                    # 真正的落点在 /api/persona/save：整段落在 notes。
+                    # 拆解规则必须在服务端（persona_store.split_raw_persona），
+                    # 前端不自己写一份 —— 两份规则迟早不一致，
+                    # 表现是"面板说认出来了、存下去名字还是空的"。
+                    try:
+                        import persona_store
+                        raw = str(body.get("raw") or "")
+                        if len(raw) > 200000:
+                            self._json(200, {"ok": False, "err": "太长了"})
+                            return
+                        nm, nk = persona_store.split_raw_persona(raw)
+                        self._json(200, {"ok": True, "name": nm, "nicknames": nk})
+                    except Exception as e:
+                        errlog.log_exc("api/persona/split_raw", e)
+                        self._json(200, {"ok": False, "err": str(e)[:120]})
                 elif path == "/api/persona/save":
+
                     # 保存人设字段。与切换人设不同：改的是当前这套的文件本身。
                     # 落盘 + 热重载两处都要，只改一处会出现"界面变了、她没变"
                     try:

@@ -254,6 +254,21 @@ table.data .num { text-align:right; font-variant-numeric:tabular-nums; }
 /* 文本框上下内边距 6px（全局是 8px）：九栏一共省 36px，代价是几乎看不出来 */
 .pgrid textarea { padding-top:6px; padding-bottom:6px; }
 .modal.wide .modal-body { padding:10px 22px; }
+/* 整份人设的大框。这是主入口，视觉上要比下面八个小栏更"主"——
+ * 用户第一次打开要能一眼看出"粘这儿就行"，而不是先去研究八个框。 */
+.rawbox { margin:0 0 14px; }
+.rawbox label { display:block; font-size:13px; font-weight:600; margin-bottom:5px; }
+.rawta { width:100%; border:1.5px solid var(--brand-light); border-radius:10px;
+         padding:10px 12px; font-size:13px; line-height:1.6; outline:none;
+         font-family:ui-monospace,Consolas,"PingFang SC",monospace;
+         background:#fffdfd; resize:vertical; }
+.rawta:focus { border-color:var(--brand); }
+.rawhint { font-size:11.5px; color:var(--text-secondary); margin-top:5px; min-height:16px; }
+.rawhint.warn { color:var(--danger); }
+/* 细项区的小标题。写"想分开调也行"是因为多数人只用上面那个框，
+ * 这一区是给需要分栏精调的场合 —— 让它看起来像可选项而不是必填项。 */
+.subhead { font-size:11.5px; color:var(--text-muted); margin:4px 0 8px;
+           padding-top:8px; border-top:1px dashed var(--border); }
 /* 窄屏（手机上看面板）退回单列，否则两列各剩一百多像素，一个字都放不下 */
 @media (max-width:760px) {
   .modal.wide { width:94vw; }
@@ -1265,9 +1280,10 @@ const PERSONA_FIELDS = [
   { k:'background',  t:'你们怎么认识的', h:'一段话。要留空就空着，别靠现编',rows:3, wide:true },
   { k:'scene',       t:'现在的生活状态', h:'在哪、在做什么、你们多久联系一次',       rows:2 },
   { k:'personality', t:'她的性格',     h:'性格 + 说话习惯写一起，越具体越好用',      rows:4, wide:true },
-  { k:'notes',       t:'补充规则',     h:'什么话她不会说、什么腔调不要。多写几条效果很明显', rows:3, wide:true },
   { k:'appearance',  t:'长相',         h:'生图用。年龄、脸型、发型、身高这些',        rows:2 },
 ];
+// 🔴 **notes 不在这张表里** —— 它是"整份人设"的落点，单独一个大框。
+// 见下面 renderRawPersona() 那段。
 
 function viewPersonaDetail(p) {
   // 🔴 这里才用 /api/persona/full —— 它必须带 ?key=xxx 才有意义。
@@ -1304,15 +1320,92 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   // 它显示的名字和关系，下面第1 栏「她的名字」和第 4 栏「你们的关系」
   // 就是同一份东西，一屏放不下时先砍重复的，不砍真内容。
   //
-  // 🔴 九个字段竖着排要滚一千多像素（实测 1415px，1080p 视口只露得下 874px）。
-  // 真正管用的是三件事一起做，缺一件都还是得滚：
+  // 🔴 细分八栏竖着排要滚一千多像素。真正管用的是：
   //   ① 短字段并排、长字段整行（下面 pgrid）
   //   ② 弹窗 900px（.modal.wide），长字段一行能放约 45 个中文字
   //   ③ 去掉重复的头部、收紧内边距与标签间距
   // ⚠️ 顺带把「列数自适应」这个直觉否掉了：实测 2 列 1000px、3 列 1040px、
   //    4 列 972px —— 列数越多反而越挤，因为长字段跟着变窄、行数变多。
-  //    详见 .pgrid 那段注释。
+
+  // --- 整份人设（主入口，放最上面）---------------------------------
+  // 真实的角色卡是从别处抄来的**一整段** Markdown，带着"一、你是谁 /
+  // 二十七、核心人格总结"这种编号章节。逼用户拆进八个框，抄一次动八次，
+  // 而且栏的顺序跟原文不一致时抄着抄着就乱了。
+  // 所以主入口是这一个框：粘进去，原样进提示词（落在 persona.notes）。
+  const rawWrap = el('div', {class:'rawbox'});
+  rawWrap.appendChild(el('label', {}, ['整份人设',
+    el('span', {style:'font-weight:400;color:var(--text-muted);margin-left:6px'},
+      '从别处抄来的角色卡整段粘进来就行，不用拆。名字和小名会自己认出来。')]));
+  const rawTa = el('textarea', {
+    class: 'rawta',
+    placeholder: '把你的角色卡整个粘进来。比如：\n\n一、你是谁\n你是GLM，一个混在群里的 AI 角色…\n二、说话习惯\n能一个字说清就不要十个字…\n\n（下面那些小栏可以不填，粘完整份就够了）',
+    style: 'overflow:hidden',
+  });
+  rawTa.value = cur.notes || '';
+  rawWrap.appendChild(rawTa);
+  const rawHint = el('div', {class:'rawhint'});
+  rawWrap.appendChild(rawHint);
+  body.appendChild(rawWrap);
+
+  const fitRaw = () => {
+    rawTa.style.height = 'auto';
+    // 整份人设动辄几千字，全展开能把弹窗撑到几万像素。
+    // 给一个上限，超出就在框里滚 —— 但**上限要够大**，
+    // 至少让人看得见刚粘进去的结尾（不然以为没粘上）。
+    rawTa.style.height = Math.min(Math.max(rawTa.scrollHeight + 6, 160), 620) + 'px';
+  };
+  rawTa.addEventListener('input', () => { fitRaw(); checkRaw(); });
+  fitRaw();
+
+  // 名字/小名**代码要读**（闸门判"群里是不是在叫她"靠这两个字段），
+  // 提示词正文里没有。所以粘贴之后得从整段里认出来，填进上面那两栏 ——
+  // 否则她在群里 @ 不响应，而且面板上看着一切正常。
+  //
+  // 🔴 覆盖策略：**粘整份 = 换人设，就该覆盖**。
+  // 原来只在空的时候填，于是「名字栏里还留着上一套的八奈見杏菜」时，
+  // 粘一份 GLM 的卡进去，名字栏不动 → 保存后她还是八奈見杏菜，
+  // 用户以为换完了，其实只换了提示词正文。面板上完全看不出来。
+  // 但**用户手工改过的那一栏要保住** —— 他可能是特意改成别的名字。
+  // 所以记一份"这栏被手改过"的标记，而不是"这栏是不是空"。
+  const touched = {};
+  const RAW_SEED = (cur.notes || '').trim();
+
+  const checkRaw = () => {
+    const v = rawTa.value.trim();
+    if (!v) { rawHint.textContent = ''; rawHint.className = 'rawhint'; return; }
+    const g = {
+      name: inputs['name'] ? inputs['name'].el : null,
+      nick: inputs['nicknames'] ? inputs['nicknames'].el : null,
+    };
+    // 前端只做**预览**：真正拆在服务端 persona_store.split_raw_persona，
+    // 两边规则必须一致，所以这里不自己写拆解逻辑，只是把服务端结果拿来显示。
+    api('/api/persona/split_raw', {method: 'POST', body: {raw: v}})
+    .then(r => {
+      if (!r || r.err) { rawHint.textContent = '（认名字那个接口没通，不影响保存：整份照样会进她的提示词）'; rawHint.className = 'rawhint warn'; return; }
+      const parts = [];
+      const fill = (key, el, val, label) => {
+        if (!el) return;
+        if (touched[key]) { parts.push(label + '你手改过的，没动'); return; }
+        // 内容没变就别写回 —— 写回会把光标弹到末尾，打字时很难受
+        if (el.value === val) { parts.push(label + '已是「' + (val || '空') + '」'); return; }
+        el.value = val;
+        parts.push(label + '认成「' + (val || '空') + '」');
+        if (inputs[key] && inputs[key].fit) inputs[key].fit();
+        markDirty();
+      };
+      if (r.name) fill('name', g.name, r.name, '名字');
+      else parts.push('没认出名字 —— 上面「她的名字」那一栏得自己填，否则群里 @ 她她不应');
+      if (r.nicknames && r.nicknames.length) fill('nicknames', g.nick, r.nicknames.join('、'), '小名');
+      rawHint.textContent = parts.join('，');
+      rawHint.className = 'rawhint' + (r.name ? '' : ' warn');
+    })
+    .catch(() => {});
+  };
+  // 延后一拍再问：inputs 要先建好，上面才绑得到
+  setTimeout(checkRaw, 0);
+
   const grid = el('div', {class:'pgrid'});
+  body.appendChild(el('div', {class:'subhead'}, '想分开调也行（以下是可选的细项）'));
   body.appendChild(grid);
 
   PERSONA_FIELDS.forEach(f => {
@@ -1375,6 +1468,9 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
     // 脏检查在下面统一绑（markDirty 定义在 PERSONA_FIELDS 循环之后，
     // 在这里引用会撞 const 暂时性死区）。这里只管高度。
     e.addEventListener('input', fit);
+    // 「用户手改过这一栏」的标记。粘整份时靠它决定要不要覆盖 ——
+    // 名字/小名会被 checkRaw 自动填，手改过的就不能再被自动冲掉。
+    e.addEventListener('input', () => { touched[f.k] = true; });
     g.appendChild(e);
     inputs[f.k] = { el: e, list: !!f.list, fit: fit };
     grid.appendChild(g);
@@ -1393,7 +1489,12 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
       '正在用的，改了不影响她现在怎么说话。')));
 
   /* --- 脏检查：关窗前拦住没保存的改动 --- */
-  const snapshot = () => PERSONA_FIELDS.map(f => inputs[f.k].el.value).join('\u0001');
+  // 🔴 快照要算上「整份人设」那个大框。它不在 PERSONA_FIELDS 里
+  // （那个表只有八个细项），只算细项的话：粘了一整份角色卡、一个字没改，
+  // 脏检查说"没改动" —— 关窗不拦、保存按钮也不亮，看着像没粘上。
+  const snapshot = () => PERSONA_FIELDS.map(f => inputs[f.k].el.value).join('\u0001')
+                     + '\u0001' + rawTa.value;
+
   // 🔴 用 let 不用 const：保存成功后要把快照重置成"已保存的样子"，
   // 否则接着再改一个字时，基线还是打开弹窗时那份 —— 于是刚存完的改动
   // 又被算成"相对旧基线有差异"，关窗时对着已经存过的内容问要不要放弃。
@@ -1408,6 +1509,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
     body.style.boxShadow = '';
   };
   PERSONA_FIELDS.forEach(f => inputs[f.k].el.addEventListener('input', markDirty));
+  rawTa.addEventListener('input', markDirty);
   // 初始按内容撑开，**必须等整个表单挂进 DOM 之后**。
   // scrollHeight 在元素还没布局时是 0，那会儿算出来的高度会是 0，框塌成一条线。
   PERSONA_FIELDS.forEach(f => inputs[f.k].fit());
@@ -1427,6 +1529,9 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
       // 不一致会出现"在 App 里改了名字这边没变"这种双向对不上。
       out[f.k] = (inputs[f.k].list && v) ? v.split(/[、,，]/).map(x => x.trim()).filter(Boolean) : v;
     });
+    // 🔴 整份人设落在 notes —— build_system_text 把它整段拼进系统提示，
+    // 一字不改。这是"粘一整份就能用"的关键，别再拆回各栏。
+    out.notes = (rawTa.value || '').trim();
     if (!out.name) return toast('总得有个名字', 'error');
     saveBtn.disabled = true;
     saveBtn.textContent = '保存中…';
