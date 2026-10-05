@@ -1042,9 +1042,26 @@ def start_remote_api(brain):
                         pass
                     # reply 整段保留给旧版 App；messages 按她的换行拆好段，
                     # 新版 App 逐条渲染成连发气泡，存档也按这个粒度拆
+                    # 🔴 **trace 必须回给客户端**。原来只把 _snap 写进落盘日志，
+                    # 返回体里一个 trace 键都没有 —— 于是前端
+                    # `d.trace.plan_steps` 恒为 undefined。
+                    # 症状特别有欺骗性：日志里明明打了
+                    # 「[大脑] Plan-and-Execute 完成，2 步」，功能是好的，
+                    # 而面板/接口看着像"没走规划分支"，白查了很久。
+                    # 只给用得到的几个字段，别把 blocks/mem_top 全塞进去。
                     self._json(200, {"reply": ans, "messages": split_messages(ans),
                                      "mode": mode, "err": err,
-                                     "t": time.strftime("%Y-%m-%d %H:%M")})
+                                     "t": time.strftime("%Y-%m-%d %H:%M"),
+                                     "trace": {
+                                         "plan_steps": _snap.get("plan_steps"),
+                                         "revised": bool(_snap.get("revised")),
+                                         "tool": _snap.get("tool") or "",
+                                         "mode": mode,
+                                         "ms": _snap.get("ms"),
+                                         "model": _snap.get("model")
+                                                 or str((API_CFG or {}).get("model") or ""),
+                                         "mem_hits": _snap.get("mem_hits", 0),
+                                     }})
                 elif path == "/api/packages/del":
                     # 删掉就移出监控，她的提醒跟着停（poll 只扫这份存档）
                     import packages as _pkg
