@@ -53,15 +53,33 @@ if not isinstance(MOB_CFG, dict):
 BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 
 # 白名单式浅拷贝。这里漏掉哪个键，对应模块就读到空配置、改了也不生效
-# （vision 和 voice 各栽过一次，persona_file 是第三次）。
+# （vision 和 voice 各栽过一次，persona_file 是第三次，
+#  server.py 里换模型后又抄了一份短的，第四次）。
 #
 # 🔴 persona_file 特别要紧：Brain 只认 API_CFG（self.api 就是它），
 # 漏了这个键 → key_from_config 返回 "default" → 所有分区名都算成空 →
 # 换人设不换记忆、换渠道不换存档，**看着分区建了，其实全写进同一份**。
-API_CFG = {k: api_config[k] for k in
-           ("api_base", "api_key", "model", "vision", "voice", "uapi",
-            "persona_file")
-           if k in api_config}
+
+# 键的列表是**唯一真源**，放在函数里而不是散在各处。
+# 以前 runtime.API_CFG 和 server.py 换模型那段各写一份 ——
+# 两份迟早不等，而 update 是整体替换，少一个键那个键就消失。
+# 现在别处要刷新内存配置，只能调 api_cfg_subset()，不许再抄。
+API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
+                "persona_file")
+
+
+def api_cfg_subset(src):
+    """按白名单从 src 里挑出 API_CFG 那些键。**改配置后用它刷新内存那份。**
+
+    传入 None / 非字典时返回空字典 —— 调用方多数在 try 里，
+    这里不抛比抛更省事（抛了也只是被 except 吞掉）。
+    """
+    if not isinstance(src, dict):
+        return {}
+    return {k: src[k] for k in API_CFG_KEYS if k in src}
+
+
+API_CFG = api_cfg_subset(api_config)
 
 
 def config_path():

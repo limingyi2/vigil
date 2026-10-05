@@ -226,6 +226,42 @@ table.data .num { text-align:right; font-variant-numeric:tabular-nums; }
 .modal-close:hover { background:var(--bg); }
 .modal-body { padding:20px 22px; overflow-y:auto; flex:1; }
 .modal-footer { padding:14px 22px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:10px; }
+/* 人设表单专用。九栏要一屏看完，是几件事一起做才有效果，缺一件就还是得滚：
+ *   ① 弹窗 900px（实测最优点）：比 560 宽，但没敢上 1040+
+ *   ② 短字段两列并排、长字段整行（下面 pgrid）
+ *   ③ 去掉重复的头部头像块、收紧内边距与标签间距
+ *⚠️ **列数不是越多越好**，这点是实测出来的、跟直觉相反：
+ *   2列  实需 1000px
+ *   3列  实需 1040px   ← 反而更高
+ *   4列  实需 972px    ← 只省28px，一行只剩十几个字
+ * 原因是 wide 长字段跟着列数一起变窄：「她的性格」229 字在 412px 列宽下
+ * 占三行，在 270px 列宽下就变五行 —— 短字段省下的行数，长字段又吐回去了。
+ * 所以定死两列，别再"优化"成自适应列数。
+ *
+ * ⚠️ 1080p 视口下实测还差 5~11px 才真正一屏放得下，那 5px 是靠把
+ * 文本框上下内边距压到 5px 挤出来的 —— 挤到了但明显难读，不做。
+ * 剩下的溢出靠 .modal-body 自己滚。**别为了"一屏"把字压小**，
+ * 少看到一行字比看得舒服重要得多。
+ */
+.modal.wide { width:900px; max-width:96vw; max-height:94vh; }
+.pgrid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 14px; }
+.pgrid .form-group { margin:0; min-width:0; }
+.pgrid .form-group.wide { grid-column:1 / -1; }
+/* 标签行在 pgrid 里收窄：九栏各留 5px 下边距，一屏能省 30~40px。
+ * 只在这里收，别动全局的 .form-group —— 别的表单（功能开关那些）
+ * 字段少、框大，松一点更好读。 */
+.pgrid .form-group label { margin-bottom:4px; font-size:12px; }
+/* 文本框上下内边距 6px（全局是 8px）：九栏一共省 36px，代价是几乎看不出来 */
+.pgrid textarea { padding-top:6px; padding-bottom:6px; }
+.modal.wide .modal-body { padding:10px 22px; }
+/* 窄屏（手机上看面板）退回单列，否则两列各剩一百多像素，一个字都放不下 */
+@media (max-width:760px) {
+  .modal.wide { width:94vw; }
+  .pgrid { grid-template-columns:1fr; }
+}
+
+
+.pgrid .form-group.wide { grid-column:1 / -1; }
 
 /* 表单 */
 .form-group { margin-bottom:16px; }
@@ -474,10 +510,14 @@ function toast(msg, type='info') {
   c.appendChild(t);
   setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2800);
 }
-function showModal(title, bodyHtml, footerHtml='') {
+function showModal(title, bodyHtml, footerHtml='', wide='') {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = bodyHtml;
   $('#modalFooter').innerHTML = footerHtml;
+  // 🔴 宽度做成可选而不是改 .modal 的默认值：560px 对"确认/删除"那种
+  // 两行字的弹窗正合适，改大了反而空。只人设表单要放九栏才需要宽。
+  const m = $('#modalOverlay .modal');
+  if (m) { m.classList.toggle('wide', !!wide); m.style.width = ''; }
   $('#modalOverlay').classList.add('show');
 }
 // 🔴 关窗守卫。返回 false 可拦住关闭（弹窗里有未保存的改动时用）。
@@ -1199,21 +1239,33 @@ Views.persona = async function(container) {
   container.appendChild(wrap);
 };
 
-/* ===== 人设字段表（面板与 App 共用同一份文案）=====
+/* 人设字段表（面板与 App 共用同一份文案）=====
  * 🔴 顺序即显示顺序，也是"她先读到什么"的顺序：名字 → 关系 → 背景 → 现状
  *   → 性格 → 说话习惯。relation 靠前是有意的 —— 它是"她跟他现在什么关系"
  *   这个事实，而 CORE_RULES 是无论什么关系都成立的底线，得压在后面。
  * 改这里之前先看 App 那份（chat.html 的 PERSONA_FIELDS），两边说法不一致时
- * 模型收到的就是两份矛盾的设定。 */
+ * 模型收到的就是两份矛盾的设定。
+ *
+ * 🔴 **rows 现在只是"至少给我留几行的空框"，不是"默认高度"。**
+ * 原来它是默认高度（`rows:1` 的框也占 3 行，弹窗里七成是空白），
+ * 改成内容自适应之后它只剩下限这一个作用。
+ * ⚠️ 别随手把 rows 调大来"让框大一点" —— 实测这会**反向制造空白**：
+ *   「她的性格」229 字实际只要 142px，rows:4 的下限是 144px，
+ *   框就被撑到 144，内容只占 142，白留 2px；
+ *   更狠的是「补充规则」174 字实需 106px，rows:3 的下限 108px。
+ *   九栏加起来多出 40~60px 纯空白，弹窗又得滚。
+ *   要让框大一点，正经办法是**多写点内容**，不是调 rows。
+ * wide = 独占一整行（短字段并排时它自己一行才够放）。
+ */
 const PERSONA_FIELDS = [
   { k:'name',        t:'她的名字',     h:'叫什么',                                  rows:1 },
   { k:'nicknames',   t:'小名',         h:'你平时怎么叫她，顿号分开',                rows:1, list:true },
   { k:'call_user',   t:'她怎么叫你',   h:'留空就不叫',                              rows:1 },
   { k:'relation',    t:'你们的关系',   h:'写什么都行：十年老友 / 正在追她 / 同居两年。留空会按老朋友处', rows:2 },
-  { k:'background',  t:'你们怎么认识的', h:'一段话。要留空就空着，别靠现编',rows:3 },
+  { k:'background',  t:'你们怎么认识的', h:'一段话。要留空就空着，别靠现编',rows:3, wide:true },
   { k:'scene',       t:'现在的生活状态', h:'在哪、在做什么、你们多久联系一次',       rows:2 },
-  { k:'personality', t:'她的性格',     h:'性格 + 说话习惯写一起，越具体越好用',      rows:4 },
-  { k:'notes',       t:'补充规则',     h:'什么话她不会说、什么腔调不要。多写几条效果很明显', rows:3 },
+  { k:'personality', t:'她的性格',     h:'性格 + 说话习惯写一起，越具体越好用',      rows:4, wide:true },
+  { k:'notes',       t:'补充规则',     h:'什么话她不会说、什么腔调不要。多写几条效果很明显', rows:3, wide:true },
   { k:'appearance',  t:'长相',         h:'生图用。年龄、脸型、发型、身高这些',        rows:2 },
 ];
 
@@ -1228,7 +1280,7 @@ function viewPersonaDetail(p) {
   const key = p.key || '';
   const body = el('div');
   body.appendChild(el('div', {class:'loading'}, '读取中…'));
-  showModal('编辑人设 - ' + (p.name || key), '', '');
+  showModal('编辑人设 - ' + (p.name || key), '', '', true);
   $('#modalBody').innerHTML = '';
   $('#modalBody').appendChild(body);
 
@@ -1248,46 +1300,96 @@ function viewPersonaDetail(p) {
 function renderPersonaForm(body, key, cur, isForThisSrc) {
   const inputs = {};
   body.innerHTML = '';
-  const head = el('div', {style:'display:flex;align-items:center;gap:12px;margin-bottom:18px'});
-  head.appendChild(el('div', {
-    style:'width:44px;height:44px;border-radius:10px;background:var(--brand-light);'+
-          'display:flex;align-items:center;justify-content:center;color:var(--brand);'+
-          'font-size:18px;font-weight:700'
-  }, (cur.name || '夏').slice(0, 1)));
-  head.appendChild(el('div', {}, [
-    el('div', {style:'font-size:15px;font-weight:600'}, cur.name || key),
-    el('div', {style:'font-size:12px;color:var(--brand)'}, cur.relation || '关系未设定'),
-  ]));
-  body.appendChild(head);
+  // 🔴 原来这里有个头部：44px 头像 + 名字 + "关系未设定"。**删掉**——
+  // 它显示的名字和关系，下面第1 栏「她的名字」和第 4 栏「你们的关系」
+  // 就是同一份东西，一屏放不下时先砍重复的，不砍真内容。
+  //
+  // 🔴 九个字段竖着排要滚一千多像素（实测 1415px，1080p 视口只露得下 874px）。
+  // 真正管用的是三件事一起做，缺一件都还是得滚：
+  //   ① 短字段并排、长字段整行（下面 pgrid）
+  //   ② 弹窗 900px（.modal.wide），长字段一行能放约 45 个中文字
+  //   ③ 去掉重复的头部、收紧内边距与标签间距
+  // ⚠️ 顺带把「列数自适应」这个直觉否掉了：实测 2 列 1000px、3 列 1040px、
+  //    4 列 972px —— 列数越多反而越挤，因为长字段跟着变窄、行数变多。
+  //    详见 .pgrid 那段注释。
+  const grid = el('div', {class:'pgrid'});
+  body.appendChild(grid);
 
   PERSONA_FIELDS.forEach(f => {
     const raw = cur[f.k];
     const val = Array.isArray(raw) ? raw.join('、') : (raw == null ? '' : String(raw));
-    const g = el('div', {class:'form-group'});
+    const g = el('div', {class:'form-group' + (f.wide ? ' wide' : '')});
     // 🔴 提示并进标签行，不再在框下面重复一遍。
     // 两处都写看着啰嗦；而且框里有值之后 placeholder 就看不见了 ——
     // 那时侯唯一还看得到的就是标签行那句，所以它才是提示的真正载体。
     g.appendChild(el('label', {}, [f.t,
       el('span', {style:'font-weight:400;color:var(--text-muted);margin-left:6px'}, f.h)]));
-    const e = el('textarea', {
-      rows: f.rows || 2, placeholder: f.h,
-      style: f.rows > 1 ? 'min-height:' + (f.rows * 22 + 16) + 'px' : '',
-    });
+    // 🔴 高度按**内容**来，不按 rows 写死。
+    // 原来每行都写死高度（rows:1 的也占 3 行），于是「留空就不叫」这种
+    // 五个字的框底下空一大片 —— 弹窗里七成是空白，得拖着滚动条才能看完。
+    // 现在：实际高度全交给 fit() 按 scrollHeight 撑，
+    // rows 只留作"至少让我看到几行"的兜底。
+    //
+    // 🔴 兜底高度**不能写死成 rows*22+14**。那个 22 是行高、14 是上下内边距，
+    // 一旦 CSS 里改了 padding 或 line-height，这里就跟上不上了（表现为
+    // 空框比预期高一截，白白多出十几像素）。改成从真实样式量出来。
+    const e = el('textarea', { placeholder: f.h, style: 'overflow:hidden' });
     e.value = val;
+    // 🔴 oneRow 必须在**元素已经进DOM 之后**才量。getComputedStyle 对没入
+    // DOM 的元素返回空字符串，量出来是 0 —— 于是所有框的兜底高度全变成 0，
+    // 空框塌成一条线。比"写死魔数"错得更隐蔽，所以这里用懒计算 + 标记。
+    let oneRow = 0;
+    const measureRow = () => {
+      if (oneRow) return oneRow;
+      const cs = getComputedStyle(e);
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;visibility:hidden;height:auto;left:-9999px';
+      probe.style.font = cs.font || ('13px ' + cs.fontFamily);
+      probe.style.lineHeight = cs.lineHeight;
+      probe.style.padding = cs.paddingTop + ' ' + cs.paddingBottom;
+      probe.style.border = cs.borderTopWidth + ' ' + cs.borderBottomWidth;
+      probe.textContent = '测';
+      document.body.appendChild(probe);
+      oneRow = probe.offsetHeight || 38;   // 量不到就用一个接近的值，别让框塌成线
+      probe.remove();
+      return oneRow;
+    };
+    const fit = () => {
+      // 🔴 **顺序不能反：先压 min-height，再量 scrollHeight。**
+      // 全局那条 `.form-group textarea { min-height:80px }` 会在元素一进 DOM
+      // 时就把它撑到 80px；而 scrollHeight 量的正是"当前撑起来有多高"——
+      // 于是 Math.max(80, 36) = 80，空框永远收不回去。
+      // 踩过：一量78px 才反应过来不是量错，是量晚了。
+      e.style.minHeight = '0px';
+      e.style.height = 'auto';
+      // 需要的行数 = 内容高度÷ 一行高，往上取整。再跟 rows 取小的那个当底。
+      // 🔴 用 min(行数, rows) 而不是 max(行数, rows)：rows 是"预留几行"，
+      //    内容比它长就按内容算（多出来的行是必须给人看的），
+      //    内容比它短就收成内容那么多行（再往下留就是空白了）。
+      //    写成 max 的话「她的性格」229 字实需 142px 会被 rows:4 的下限
+      //    144px 顶住，白留 2px；九栏加起来就是 40~60px 的纯空白。
+      const one = measureRow();
+      const needRows = Math.max(1, Math.ceil((e.scrollHeight + 2) / one));
+      e.style.height = Math.min(needRows, f.rows || 2) * one + 'px';
+    };
+    // 脏检查在下面统一绑（markDirty 定义在 PERSONA_FIELDS 循环之后，
+    // 在这里引用会撞 const 暂时性死区）。这里只管高度。
+    e.addEventListener('input', fit);
     g.appendChild(e);
-    inputs[f.k] = { el: e, list: !!f.list };
-    body.appendChild(g);
+    inputs[f.k] = { el: e, list: !!f.list, fit: fit };
+    grid.appendChild(g);
   });
 
+  // 这段提示**别为了省地方删掉**：里面两句是看代码才知道的坑
+  // （关系留空会退回老朋友 / 这套不是当前渠道在用的）。挤成两行是折中。
   body.appendChild(el('div', {
-    style:'font-size:11.5px;color:var(--text-muted);line-height:1.7;'+
-          'background:var(--bg);padding:10px 12px;border-radius:8px;margin-top:4px'
-  }, '「你们的关系」留空会退回老朋友，真不想要这条约束就整段删掉。' +
-     '改完点保存立刻生效，不用重启；记忆和聊天记录都不受影响。' +
-     // 🔴 这句的判据只能用列表接口给的 forThisSrc，**不能读 State.srcPersonaKey**
+    style:'font-size:11.5px;color:var(--text-muted);line-height:1.55;'+
+          'background:var(--bg);padding:8px 10px;border-radius:8px;margin-top:12px'
+  }, '「你们的关系」留空会退回老朋友，真不想要就整段删掉。改完保存立刻生效，不用重启，记忆和聊天记录不受影响。' +
+     //🔴 这句的判据只能用列表接口给的 forThisSrc，**不能读 State.srcPersonaKey**
      // —— State 上根本没这个键，一读就是 undefined，于是这句提醒永远显示，
      // 变成一句一直在说「你这套不是当前在用的」的假话。
-     (isForThisSrc ? '' : '\n注意：这套不是' + ((CHANNELS.find(x=>x.id===State.src)||{}).name || '当前渠道') +
+     (isForThisSrc ? '' : '注意：这套不是' + ((CHANNELS.find(x=>x.id===State.src)||{}).name || '当前渠道') +
       '正在用的，改了不影响她现在怎么说话。')));
 
   /* --- 脏检查：关窗前拦住没保存的改动 --- */
@@ -1306,6 +1408,9 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
     body.style.boxShadow = '';
   };
   PERSONA_FIELDS.forEach(f => inputs[f.k].el.addEventListener('input', markDirty));
+  // 初始按内容撑开，**必须等整个表单挂进 DOM 之后**。
+  // scrollHeight 在元素还没布局时是 0，那会儿算出来的高度会是 0，框塌成一条线。
+  PERSONA_FIELDS.forEach(f => inputs[f.k].fit());
 
   const discard = () => {
     if (dirty && !confirm('有改动没保存，关掉就丢了。确定放弃吗？')) return false;

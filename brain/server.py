@@ -21,6 +21,11 @@ import http.server
 from runtime import (
     api_config, API_CFG, MOB_CFG, BRAIN_TOKEN,
     _LOCAL, _trace_write, _trace_tail, load_config, config_path, data_file)
+# 🔴 也把模块本身绑个名：换模型后刷新 API_CFG 要调 runtime.api_cfg_subset()，
+# 而上面是 from...import，只把名字引进来了、模块名没绑。
+# 不绑的话只能再抄一份白名单 —— 而"抄一份少一个键"正是这回的病根
+# （vision/voice/persona_file/uapi 已经栽过四回）。
+import runtime as _runtime
 
 # 模型中枢 + 错误日志：App 在手机上换模型、导出日志都走这两个模块。
 # 异常钩子装上后，线程里静默死掉的异常也会留下记录
@@ -1222,10 +1227,18 @@ def start_remote_api(brain):
                             api_config.update(new_cfg)
                             try:
                                 API_CFG.clear()
-                                API_CFG.update(
-                                    {k: api_config[k] for k in
-                                     ("api_base", "api_key", "model", "vision")
-                                     if k in api_config})
+                                # 🔴 这里**不能重抄一份白名单**。
+                                # 原来写的是 ("api_base","api_key","model","vision") 四个，
+                                # 比 runtime.API_CFG 少了 voice / uapi / persona_file ——
+                                # update 是**整体替换**，少一个键那个键就当場消失。
+                                # 后果：换一次模型，语音配置和 uapi 静默失效；
+                                # 最要命的是 persona_file —— Brain 只认 API_CFG 里的它，
+                                # 丢了之后 key_from_config 一律返回 "default"，
+                                # 于是**所有分区名都算成空**：换人设不换记忆、
+                                # 换渠道不换存档，看着分区建了，其实全写进同一份。
+                                # 白名单抄一次错一次（vision、voice、persona_file 已栽过三回），
+                                # 所以唯一真源只能是 runtime 那个列表本身。
+                                API_CFG.update(_runtime.api_cfg_subset(api_config))
                             except Exception:
                                 pass
                             print("[模型] " + "；".join(changed), flush=True)
