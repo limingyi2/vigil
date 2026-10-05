@@ -160,6 +160,13 @@ tools/publish_apk.py
 wechat_bridge/vm/pkgs/
 wechat_bridge/**/*.zip
 wechat_bridge/**/pkgs/
+#🔴 桥接的真实本地配置：brain_token + 群里人名 + 桥接机公网 IP。
+#   上面的 brain/wechat_bot/wxbridge.local.json* 只管住了**运行时**那一份，
+#   源码目录 wechat_bridge/ 下的同名文件没管住 —— 而配置样例是放在
+#   config-example/ 里的，真配置天然就会摆在源码目录旁边。
+#   仓库是 PUBLIC，真配置一旦入库就是明文泄露，gitignore 事后补救要重写历史。
+wechat_bridge/**/wxbridge.local.json*
+wechat_bridge/**/config.json
 
 #===== 浏览器验收的临时产物 =====
 # _cdp_*.js / _static.js 是用真实 Edge(CDP) 验面板的工具，不入库：

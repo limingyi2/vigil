@@ -88,8 +88,28 @@ moment_flow / jobs 八个模块，对外接口零变化。
 | `brain/voice.py` / `imggen.py` / `selfie.py` | 语音 / 生图 / 自拍 |
 | `brain/features.py` | 功能开关，App 远程控制 |
 | `brain/errlog.py` | 前后端错误日志 |
+| `brain/plugin_host.py` | 插件加载面：扫 `plugins/`、拼工具说明到提示词 |
+| `brain/plugin_ops.py` | 插件管理面：装卸 .zip、元数据、渠道开关 |
 | `pet/` | Windows 桌宠（PyQt6） |
 | `android-app/` | Android 客户端 |
+| `admin/` | Web 管理面板（对话观察、功能开关、插件与人设编辑） |
+| `wechat_bridge/` | 微信群接话子模块，详见 [`wechat_bridge/README.md`](wechat_bridge/README.md) |
+
+### 子模块
+
+`wechat_bridge/` 让同一个大脑在微信群里接话。它**不含任何状态** ——
+记忆、人设、日记跟 App、桌面宠物共用云端那一份，所以三个入口里她记得
+的是同一件事、说的是同一个人。
+
+大号微信有代码级安全闸（`expected_wxid` 对不上直接拒绝运行），
+细节见该目录的 README。
+
+### 插件
+
+`brain/plugins/` 下丢一个 `.py` 就是加一个功能，核心代码不用动。
+插件可以声明 `FEATURE`，这样它受功能开关和**渠道开关**管 ——
+同一个插件可以只在 App 里生效、只在微信里生效、或者两边都开。
+面板上拖个 `.zip` 就能装。详见 [`docs/插件系统.md`](docs/插件系统.md)。
 
 ---
 
@@ -168,6 +188,9 @@ App 里「她是谁」直接进编辑器，9 个字段随便改，改完热更�
 | [`语音平台成本对比.md`](docs/语音平台成本对比.md) | 各家月成本换算，两个容易看错的计费口径 |
 | [`游戏内录音取样指南.md`](docs/游戏内录音取样指南.md) | 想换游戏角色音色时怎么录、哪些角色没有公开数据集 |
 | [`人设瘦身对照.md`](docs/人设瘦身对照.md) | 提示词瘦身前后的逐条对照与验证方法 |
+| [`插件系统.md`](docs/插件系统.md) | 加载面与管理面怎么分、渠道开关复用什么、.zip 的形状约定 |
+| [`微信群聊接入.md`](docs/微信群聊接入.md) | 为什么不用现成框架、大号安全闸、缘分码限制 |
+| [`自部署架构方案-ReAct-Plan-思维链.md`](docs/自部署架构方案-ReAct-Plan-思维链.md) | 哪些能力能挪到本地、哪些必须留在云端 |
 
 ---
 
