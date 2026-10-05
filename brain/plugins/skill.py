@@ -70,6 +70,97 @@ def _host():
     return str(_cfg().get("host") or "http://127.0.0.1:8790")
 
 
+# --- 按渠道开关 --------------------------------------------------------------
+#
+# 🔴 **不能复用 plugin_ops.channels_of / set_channels。**
+# 那套是「一个插件 = 一个 FEATURE 键」，而技能是一个插件里装着好几个包：
+# 每个包要能单独开关。硬塞进 features 段就得给每个包造一个动态键，
+# 而 features.set_features 只认 DEFAULTS 里的白名单键 ——
+# 白名单外的键会被**静默丢掉**（界面显示改了，配置文件里一个字节没动）。
+#
+# 所以走自己的段：config.json 的 skill.channels = {包名: [渠道, ...]}。
+# 没写的包按"所有渠道都生效"算 —— 新装的技能不该是关着的。
+def _chan_cfg():
+    try:
+        from runtime import CFG_PATH
+        with open(CFG_PATH, encoding="utf-8") as f:
+            return ((json.load(f) or {}).get("skill") or {}).get("channels") or {}
+    except Exception:
+        return {}
+
+
+def channels_of(pkg, src_names):
+    """这个包在哪些渠道生效。判据是配置里真写了什么，不是猜。"""
+    pkg = str(pkg or "").strip()
+    m = _chan_cfg()
+    if not pkg or not isinstance(m, dict) or pkg not in m:
+        return {s: True for s in src_names}
+    v = m.get(pkg)
+    if not isinstance(v, list):
+        return {s: True for s in src_names}
+    v = [str(x).strip() for x in v]
+    return {s: (s in v) for s in src_names}
+
+
+def set_channels(pkgs, src_names, want):
+    """按勾选写 skill.channels。**返回 True 才叫成功**。"""
+    pkgs = [str(p).strip() for p in (pkgs or []) if str(p or "").strip()]
+    if not pkgs:
+        return False
+    try:
+        from runtime import CFG_PATH
+        cfg = json.load(open(CFG_PATH, encoding="utf-8")) or {}
+        sk = cfg.get("skill")
+        if not isinstance(sk, dict):
+            sk = {}
+        m = sk.get("channels")
+        if not isinstance(m, dict):
+            m = {}
+        for p in pkgs:
+            m[p] = [s for s in src_names if want.get(s)]
+        sk["channels"] = m
+        cfg["skill"] = sk
+        with open(CFG_PATH, "w", encoding="utf-8", newline="\n") as fp:
+            json.dump(cfg, fp, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _skill_on(pkg, src=None):
+    """这个包在这个渠道开没开。开着的渠道列表为空 = 全开。"""
+    try:
+        import features
+        s = str(src or features.current_src() or "app")
+    except Exception:
+        s = str(src or "app")
+    return bool(channels_of(pkg, [s]).get(s, True))
+
+
+def _drop_channels(pkg):
+    """卸载时摘掉渠道配置。写失败不算失败 —— 技能已经卸掉了。"""
+    pkg = str(pkg or "").strip()
+    if not pkg:
+        return False
+    try:
+        from runtime import CFG_PATH
+        cfg = json.load(open(CFG_PATH, encoding="utf-8")) or {}
+        sk = cfg.get("skill")
+        if not isinstance(sk, dict):
+            return False
+        m = sk.get("channels")
+        if not isinstance(m, dict) or pkg not in m:
+            return False
+        m.pop(pkg, None)
+        sk["channels"] = m
+        cfg["skill"] = sk
+        with open(CFG_PATH, "w", encoding="utf-8", newline="\n") as fp:
+            json.dump(cfg, fp, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 _TIMEOUT = 30                   # 秒。技能可能要爬图，25 秒不够；但不能更久——
                                 # 大脑一轮对话等 30 秒，用户那边看着像卡死。
 _CACHE_TTL = 60                 # 工具清单缓存秒数。别每次对话都打宿主：
@@ -140,9 +231,13 @@ def list_skills(timeout=8):
 
 
 def _tools_now():
-    """宿主上的全部工具，拉平：{全名: {title, desc, skill}}。失败返回空。"""
+    """宿主上的全部工具（已按当前渠道过滤），拉平：{全名: {...}}。"""
     out = {}
     for s in list_skills():
+        # 🔴 清单本身就要按渠道过滤：被关掉的技能连名字都不该出现在
+        # skill_list 的输出里 —— 出现了模型就会去调，调用时再拒是白跑一轮。
+        if not _skill_on(s.get("id") or ""):
+            continue
         for t in (s.get("tools") or []):
             n = str(t.get("name") or "")
             if n:
@@ -150,6 +245,17 @@ def _tools_now():
                           "desc": t.get("desc") or "",
                           "skill": s.get("id") or "",
                           "params": t.get("parameters") or {}}
+    return out
+
+
+def _all_tools_now():
+    """**不带渠道过滤**的全部工具。用来分辨「没这个技能」和「这渠道不开放」。"""
+    out = {}
+    for s in list_skills():
+        for t in (s.get("tools") or []):
+            n = str(t.get("name") or "")
+            if n:
+                out[n] = {"skill": s.get("id") or ""}
     return out
 
 
@@ -242,6 +348,22 @@ def call(name, args, ctx=None):
     """
     ts = tools()
     if name not in ts:
+        # 🔴 名字对但这个渠道关着，要说清楚是**渠道**关的。
+        # 清单是按渠道过滤过的（tools() 里 _tools_now 跳过关掉的包），
+        # 所以这里拿到「没有」有两种可能，得分开回话：
+        # 回一句「没有这个技能工具」会让她以为是自己记错了名字，然后改口道歉 ——
+        # 实际该说的是"这个渠道不让她用"，两件事的处置完全不同。
+        # 判据用**不带过滤**的清单，别拿 ts 自己判（它已经把关掉的滤掉了）。
+        try:
+            import features as _ft
+            _cur = str(_ft.current_src() or "app")
+        except Exception:
+            _cur = "app"
+        _all = _all_tools_now()
+        if name in _all and not _skill_on(_all[name].get("skill"), _cur):
+            return {"ok": False,
+                    "content": "这个技能在%s里不开放，当没这件事就行。"
+                               % ("微信" if _cur == "wechat" else "App")}
         return {"ok": False, "content": "没有这个技能工具：%s" % name}
     # 🔴 拿她的名字**不能写 getattr(brain, 'bot_name', ...)**：Brain 上没有这个
     # 属性（只有 persona 里的 nicknames），getattr 恒返回默认值 —— 于是技能
@@ -738,6 +860,10 @@ def _uninstall(pkg):
             _cache["tools"] = []
     except Exception:
         pass                # 卸载已经成功了，宿主重载失败只影响「马上生效」
+    # 🔴 顺手摘掉它的渠道配置。不摘的话配置里留一个指向已删包的键，
+    # 而 channels_of 只看键在不在 → 那个包再装回来时会**继承卸载前的渠道开关**，
+    # 界面（默认全开）和实际（全关）不一致，还很难联想到是卸载留下的。
+    _drop_channels(pkg)
     return {"ok": True, "skill": pkg,
             "warn": "已挪到 %s.bak_<时间戳>，确认没问题可以自己删" % pkg}
 
@@ -793,8 +919,19 @@ def _r_status(body, query):
     """
     alive = host_alive()
     sk = list_skills() if alive else []
+    # 每个包带上它在哪些渠道生效。判据跟插件那边一样用
+    # 「运行时真正问的那个值」，前端只负责显示和改。
+    try:
+        import paths
+        srcs = list(getattr(paths, "CHANNELS", None) or ["app", "wechat"])
+    except Exception:
+        srcs = ["app", "wechat"]
+    for s in sk:
+        s["channels"] = channels_of(s.get("id") or "", srcs)
+        s["channelable"] = True      # 技能一律可按渠道关（通道在 Node 里，不靠 FEATURE）
     d = {"ok": True, "host": _host(), "alive": alive,
          "dir": _skill_dir(), "skills": sk,
+         "channels": srcs,
          "ext": list(SKILL_EXT),
          "host_missing": (not os.path.isdir(_skill_dir()))}
     try:
@@ -814,6 +951,34 @@ def _r_list(body, query):
             "skills": list_skills() if alive else []}
 
 
+def _r_channels(body, query):
+    """面板：改某个技能在哪些渠道生效。
+
+    传的是**包名**而不是 FEATURE 键：界面上用户看得见的是包名，
+    让前端自己拼键等于把内部结构漏出去（插件那边也是这个理由）。
+    """
+    pkg = str((body or {}).get("skill") or "").strip()
+    want = (body or {}).get("channels")
+    want = want if isinstance(want, list) else []
+    if not pkg:
+        return {"ok": False, "err": "没说要改哪个（要 skill 字段）"}
+    try:
+        import paths
+        srcs = list(getattr(paths, "CHANNELS", None) or ["app", "wechat"])
+    except Exception:
+        srcs = ["app", "wechat"]
+    bad = [s for s in want if s not in srcs]
+    if bad:
+        return {"ok": False, "err": "不认识的渠道：%s" % ",".join(bad)[:60]}
+    if not set_channels([pkg], srcs, {s: (s in want) for s in srcs}):
+        return {"ok": False, "err": "写配置失败"}
+    # 清单缓存里可能还留着刚关掉的那个包，不清的话 60 秒内她照样看得见。
+    with _cache_lock:
+        _cache["at"] = 0.0
+        _cache["tools"] = []
+    return {"ok": True, "skill": pkg, "channels": channels_of(pkg, srcs)}
+
+
 def _r_reload(body, query):
     """面板：重载宿主（装了新技能后用，不用重启大脑）。"""
     try:
@@ -831,4 +996,5 @@ ROUTES = [("POST", "/api/skill/list", _r_list),
           ("POST", "/api/skill/install", _r_install),
           ("POST", "/api/skill/uninstall", _r_uninstall),
           ("POST", "/api/skill/reload", _r_reload),
+          ("POST", "/api/skill/channels", _r_channels),
           ("POST", "/api/skill/say", _r_say)]

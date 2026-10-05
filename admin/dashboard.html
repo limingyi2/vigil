@@ -314,10 +314,16 @@ table.data .num { text-align:right; }
 .rawta:focus { border-color:var(--brand); }
 .rawhint { font-size:11.5px; color:var(--text-secondary); margin-top:5px; min-height:16px; }
 .rawhint.warn { color:var(--danger); }
-/* 细项区的小标题。写"想分开调也行"是因为多数人只用上面那个框，
- * 这一区是给需要分栏精调的场合 —— 让它看起来像可选项而不是必填项。 */
-.subhead { font-size:11.5px; color:var(--text-muted); margin:4px 0 8px;
-           padding-top:8px; border-top:1px dashed var(--border); }
+/* 细项折叠区。整份人设是唯一的必填入口，这一区默认收起。 */
+.advfold { margin:0 0 12px; border:1px solid var(--border); border-radius:10px;
+           background:var(--bg-sunk); padding:0 12px; }
+.advfold > summary { cursor:pointer; list-style:none; font-size:12px;
+                     color:var(--text-secondary); padding:9px 0; user-select:none; }
+.advfold > summary::-webkit-details-marker { display:none; }
+.advfold > summary::before { content:'▸ '; color:var(--text-muted); }
+.advfold[open] > summary::before { content:'▾ '; }
+.advfold > summary:hover { color:var(--text-primary); }
+.advfold .pgrid { padding-bottom:12px; }
 /* 窄屏（手机上看面板）退回单列，否则两列各剩一百多像素，一个字都放不下 */
 @media (max-width:760px) {
   .modal.wide { width:94vw; }
@@ -563,9 +569,12 @@ const State = {
 };
 
 // 渠道清单。服务端 paths.CHANNELS 是唯一真源，这里只管显示名和说明。
+// hint 只说这两个渠道**分别是谁**，不写「私人对话」这类内部叫法 ——
+// 面板是给人看的，而「谁在用哪套人设」从卡片徽标上已经能看到，
+// 顶栏再念一遍反而像在推销。
 const CHANNELS = [
-  { id: 'app', name: 'App', hint: '知夏·八奈見杏菜·你的私人对话' },
-  { id: 'wechat', name: '微信', hint: '麦麦·群聊人设·独立的记忆和开关' }
+  { id: 'app', name: 'App', hint: '知夏 · 八奈見杏菜' },
+  { id: 'wechat', name: '微信', hint: '麦麦 · 群聊里的她' }
 ];
 
 const PAGE_TITLES = {
@@ -908,11 +917,26 @@ function renderView(view) {
 /* ===== 渠道切换 =====
    App 和微信是两套人设 + 两份记忆 + 两组开关。不分开看的话，
    面板所有接口拿到的都是全局那份（= App 的），微信那边关掉的
-   开关一个都看不见，还以为没生效。 */
+   开关一个都看不见，还以为没生效。
+
+   🔴 这两个页面**不挂**顶栏切换器：
+   插件和技能的渠道开关在**每一行右边**，而且是多选（"两个都开"是常态）。
+   顶栏那个是单选、表达的是"我现在看哪边"，摆在插件页上只有一个害处：
+   看着像"我切到微信了，所以插件只对微信生效"，而它其实对谁都没改。
+   两个控件挨在一起、说的是两件事，用户只会当成一件。
+   —— 这不是把顶栏整个删掉：人格/开关/历史/记忆那些页仍然要看渠道。 */
+const NO_SRC_SWITCH = ['plugins', 'skills'];
+
 function renderSrcSwitch() {
   const box = $('#srcSwitch');
   if (!box) return;
+  const hint = $('#srcHint');
+  const hide = NO_SRC_SWITCH.indexOf(State.currentView) >= 0;
   box.innerHTML = '';
+  if (box.style.display !== 'none') box.style.display = hide ? 'none' : '';
+  if (hint) hint.textContent = hide ? '' :
+    ((CHANNELS.find(x => x.id === State.src) || {}).hint || '');
+  if (hide) return;
   CHANNELS.forEach(ch => {
     const b = el('button', {
       class: State.src === ch.id ? 'on' : '',
@@ -924,17 +948,11 @@ function renderSrcSwitch() {
         // 图表缓存是按旧渠道拿的数据，不清会显示串了的图
         State.cache = {};
         State.charts = {};
-        $('#srcHint').textContent = ch.hint;
         renderView(State.currentView);
       }
     }, ch.name);
     box.appendChild(b);
   });
-  const hint = $('#srcHint');
-  if (hint) {
-    const cur = CHANNELS.find(x => x.id === State.src);
-    hint.textContent = cur ? cur.hint : '';
-  }
 }
 
 // 导航点击
@@ -1560,19 +1578,37 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
         markDirty();
       };
       if (r.name) fill('name', g.name, r.name, '名字');
-      else parts.push('没认出名字 —— 上面「她的名字」那一栏得自己填，否则群里 @ 她她不应');
+      // 🔴 认不出名字**不等于出事了**，只在名字栏真的空着的时候才红。
+      // 原来只要 r.name 为空就报红，可这段人设的名字本来就在「她的名字」
+      // 那一栏里（从别处抄的角色卡经常这样：正文不写自己叫什么）——
+      // 于是每次打开弹窗第一眼就是一句红字，而实际上什么都不缺。
+      // 判据要落在「最后会不会真的出问题」上，不是「有没有认出来」。
+      else if (g.name && g.name.value.trim()) parts.push('名字栏里已经有「'
+               + g.name.value.trim() + '」，正文里没写自己叫什么，不影响');
+      else parts.push('没认出名字 —— 展开下面填一下「她的名字」，否则群里 @ 她她不应');
       if (r.nicknames && r.nicknames.length) fill('nicknames', g.nick, r.nicknames.join('、'), '小名');
+      const missing = !r.name && !(g.name && g.name.value.trim());
       rawHint.textContent = parts.join('，');
-      rawHint.className = 'rawhint' + (r.name ? '' : ' warn');
+      rawHint.className = 'rawhint' + (missing ? ' warn' : '');
     })
     .catch(() => {});
   };
   // 延后一拍再问：inputs 要先建好，上面才绑得到
   setTimeout(checkRaw, 0);
 
+  // 八个细项**默认收起来**。
+  // 原来它们平铺在整份人设下面，弹窗一打开就是一屏九个框 ——
+  // 而真实用法只有一个：粘整份。收起来之后默认只有一个框要填，
+  // 需要分栏精调的人点一下标题展开。
+  //
+  // ⚠️ 收起用 <details> 而不是 display:none：展开状态是浏览器自己的，
+  // 不占我们的状态，也不会在保存/脏检查时被"看不见但有值"坑到。
+  const adv = el('details', {class:'advfold'});
+  const sum = el('summary', {}, '想分开调也行（以下是可选的细项）');
+  adv.appendChild(sum);
   const grid = el('div', {class:'pgrid'});
-  body.appendChild(el('div', {class:'subhead'}, '想分开调也行（以下是可选的细项）'));
-  body.appendChild(grid);
+  adv.appendChild(grid);
+  body.appendChild(adv);
 
   PERSONA_FIELDS.forEach(f => {
     const raw = cur[f.k];
@@ -1644,15 +1680,21 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
 
   // 这段提示**别为了省地方删掉**：里面两句是看代码才知道的坑
   // （关系留空会退回老朋友 / 这套不是当前渠道在用的）。挤成两行是折中。
-  body.appendChild(el('div', {
-    style:'font-size:11.5px;color:var(--text-muted);line-height:1.55;'+
-          'background:var(--bg);padding:8px 10px;border-radius:8px;margin-top:12px'
-  }, '「你们的关系」留空会退回老朋友，真不想要就整段删掉。改完保存立刻生效，不用重启，记忆和聊天记录不受影响。' +
+  // 放在细项折叠区**外面** —— 它说的事（你现在改的是不是她正在用的那套）
+  // 跟细项没关系，藏进折叠区就等于默认没人看。
+  const advHint = el('div', {
+    style:'font-size:11.5px;color:var(--text-secondary);line-height:1.55;'+
+          'background:var(--bg);padding:8px 10px;border-radius:8px;margin-top:10px'
+  }, '改完保存立刻生效，不用重启，记忆和聊天记录不受影响。' +
      //🔴 这句的判据只能用列表接口给的 forThisSrc，**不能读 State.srcPersonaKey**
      // —— State 上根本没这个键，一读就是 undefined，于是这句提醒永远显示，
      // 变成一句一直在说「你这套不是当前在用的」的假话。
      (isForThisSrc ? '' : '注意：这套不是' + ((CHANNELS.find(x=>x.id===State.src)||{}).name || '当前渠道') +
-      '正在用的，改了不影响她现在怎么说话。')));
+      '正在用的，改了不影响她现在怎么说话。'));
+  body.appendChild(advHint);
+  adv.appendChild(el('div', {
+    style:'font-size:11.5px;color:var(--text-muted);line-height:1.55;margin-top:8px'
+  }, '「你们的关系」留空会退回老朋友，真不想要就整段删掉。'));
 
   /* --- 脏检查：关窗前拦住没保存的改动 --- */
   // 🔴 快照要算上「整份人设」那个大框。它不在 PERSONA_FIELDS 里
@@ -1679,6 +1721,11 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   // 初始按内容撑开，**必须等整个表单挂进 DOM 之后**。
   // scrollHeight 在元素还没布局时是 0，那会儿算出来的高度会是 0，框塌成一条线。
   PERSONA_FIELDS.forEach(f => inputs[f.k].fit());
+  // 细项默认是收着的，而收着的元素 scrollHeight 是 0 —— 上面那句 fit()
+  // 全部算成 0，展开时八个框就都是一条线。展开那一刻重算一次。
+  adv.addEventListener('toggle', () => {
+    if (adv.open) PERSONA_FIELDS.forEach(f => inputs[f.k].fit());
+  });
 
   const discard = () => {
     if (dirty && !confirm('有改动没保存，关掉就丢了。确定放弃吗？')) return false;
@@ -1808,6 +1855,78 @@ function fileToB64(file) {
     r.onerror = () => reject(new Error('读文件失败'));
     r.readAsDataURL(file);
   });
+}
+
+/** 一行「生效于 App / 微信」的多选。
+ *  插件和技能共用 —— 同一件事写两遍，两遍会各自漂：有一版忘了把
+ *  "点击那一刻读状态"改对，就会出现「点一下开、再点一下永远关不掉」。
+ *
+ *  opts: {cur, channels, canToggle, onToggle, titleOff}
+ *  cur 是运行时给的渠道状态（唯一真源），onToggle(want[]) 返回 Promise。
+ */
+function chanPicker(opts) {
+  const cur = opts.cur || {};
+  const chans = opts.channels || ['app', 'wechat'];
+  const box = el('div', {class:'chan-picker'}, [
+    el('span', {class:'lab'}, '生效于'), el('div', {class:'row'})
+  ]);
+  const row = box.querySelector('.row');
+  // 🔴 状态缺项一律当**开**。
+  // 反过来（缺项当关）会造出一个最坏的状态：界面两个框都不勾，
+  // 而运行时 features.on() 对不认识的键返回 True —— 实际全开着。
+  // 用户看到「都没勾」就不会去点，功能看着像被关了，其实一直生效，
+  // 而界面上没有任何地方能解释这个矛盾。
+  const known = chans.filter(c => typeof cur[c] === 'boolean');
+  const pending = new Set(known.length
+    ? known.filter(c => cur[c])
+    : chans);
+  const can = opts.canToggle !== false;
+  chans.forEach(cid => {
+    const b = el('label', {
+      class: 'chan-chk' + (pending.has(cid) ? ' on' : '') + (can ? '' : ' off-locked'),
+      title: can ? ('在' + chanName(cid) + '里' + (pending.has(cid) ? '生效' : '不生效'))
+                 : (opts.titleOff || '这个不能按渠道关'),
+    }, [el('input', {type:'checkbox', checked: pending.has(cid) ? 'checked' : null}),
+        chanName(cid)]);
+    if (!can) return;                // 置灰且真的不响应点击，不是只看着灰
+    b.addEventListener('click', async ev => {
+      ev.preventDefault();
+      // 🔴 开没开必须在**点击那一刻**读 pending，不能读渲染时算好的值。
+      // 写成 const on = pending.has(cid) 的话第二次点击还在按第一次的判断走：
+      // 于是"点一下开、再点一下"永远关不掉 —— 而渠道开关最常见的用法
+      // 就是来回改。界面上看着能点、第二次毫无反应。
+      const wasOn = pending.has(cid);
+      if (wasOn) pending.delete(cid); else pending.add(cid);
+      b.classList.toggle('on', pending.has(cid));
+      const want = chans.filter(c => pending.has(c));
+      const r = await opts.onToggle(want);
+      // 🔴 判据必须是 r && r.ok，不是"r 不是 null"。api() 只在 401/404
+      // 和网络失败时给 null；服务端带着理由拒掉时返回的是 {ok:false, err:...}。
+      // 只判 null 的话，拒绝会掉进下面的成功分支 —— 界面显示"生效"，
+      // 背后一个字都没写。这跟"以为关掉了其实还开着"是同一个坑。
+      if (!r || r.ok !== true) {
+        if (wasOn) pending.add(cid); else pending.delete(cid);
+        b.classList.toggle('on', pending.has(cid));
+        toast('没改成：' + ((r && r.err) || explainNetError(State.lastNetError || '服务没回应')),
+          'error');
+        return;
+      }
+      // 用后端回传的为准：界面显示的必须是运行时问的那个值。
+      if (r.channels) {
+        // 同上：回传里缺哪个渠道，哪个就当开，别让它显示成关着。
+        const k2 = Object.keys(r.channels);
+        pending.clear();
+        chans.forEach(c => { if (k2.indexOf(c) < 0 || r.channels[c]) pending.add(c); });
+        [...row.children].forEach((node, i) => {
+          node.classList.toggle('on', pending.has(chans[i]));
+        });
+      }
+      const tip = want.length ? want.map(chanName).join(' + ') : '哪个渠道都不生效';
+      toast((opts.label ? '「' + opts.label + '」' : '') + '现在在 ' + tip + ' 里生效', 'success');
+    });
+    row.appendChild(b);
+  });
+  return box;
 }
 
 Views.plugins = async function(container) {
@@ -1998,57 +2117,21 @@ Views.plugins = async function(container) {
     ]);
 
     // ---- 渠道多选 ----
-    const picker = el('div', {class:'chan-picker'}, [
-      el('span', {class:'lab'}, '生效于'),
-      el('div', {class:'row'})
-    ]);
-    const prow = picker.querySelector('.row');
-    const pending = new Set(Object.keys(ch).filter(k => ch[k]));
-    channels.forEach(cid => {
-      const b = el('label', {
-        class: 'chan-chk' + (pending.has(cid) ? ' on' : '')
-          + (p.channelable ? '' : ' off-locked'),
-        title: p.channelable ? ('在' + chanName(cid) + '里'
-                  + (pending.has(cid) ? '生效' : '不生效'))
-                : '这个插件没声明 FEATURE，不能按渠道关'
-      }, [el('input', {type:'checkbox', checked: pending.has(cid) ? 'checked' : null}),
-          chanName(cid)]);
-      if (!p.channelable) return;      // 置灰且真的不响应点击，不是只看着灰
-      b.addEventListener('click', async ev => {
-        ev.preventDefault();
-        // 🔴 开没开必须在**点击那一刻**读 pending，不能读渲染时算好的值。
-        // 写成 const on = pending.has(cid) 的话第二次点击还在按第一次的判断走：
-        // 于是"点一下开、再点一下"永远关不掉 —— 而渠道开关最常见的用法
-        // 就是来回改。界面上看着能点、第二次毫无反应。
-        const wasOn = pending.has(cid);
-        if (wasOn) pending.delete(cid); else pending.add(cid);
-        b.classList.toggle('on', pending.has(cid));
-        const want = channels.filter(c => pending.has(c));
+    const picker = chanPicker({
+      cur: ch, channels, canToggle: !!p.channelable,
+      label: p.name,
+      titleOff: '这个插件没声明 FEATURE，不能按渠道关',
+      onToggle: async want => {
         const r = await api('/api/plugins/channels',
           {method:'POST', body:{name:p.name, channels:want}});
-        // 🔴 判据必须是 r && r.ok，不是"r 不是 null"。api() 只在 401/404
-        // 和网络失败时给 null；服务端带着理由拒掉时（400 没声明 FEATURE、
-        // 渠道名不认识）返回的是 {ok:false, err:...}。
-        // 只判 null 的话，拒绝会掉进下面的成功分支 —— 界面显示"生效"，
-        // 背后一个字都没写。这跟"以为关掉了其实还开着"是同一个坑。
-        if (!r || r.ok !== true) {
-          // 把勾退回原样，别让界面显示着一个没生效的状态
-          if (wasOn) pending.add(cid); else pending.delete(cid);
-          b.classList.toggle('on', pending.has(cid));
-          toast('没改成：' + ((r && r.err) || explainNetError(State.lastNetError || '服务没回应')),
-            'error');
-          return;
-        }
         // 用后端回传的为准：界面显示的必须是运行时问的那个值，
         // 自己本地改一遍就会出现"界面关了、其实还开着"。
         // 只换 items，不回写 p.channels —— p 是渲染这一行时的旧对象，
         // 已经被上面那行换掉了，往它身上写等于写进没人读的地方。
-        // 勾选状态由 pending 持有，它就是这一行的唯一真源。
-        if (r.manage && r.manage.items) items = r.manage.items;
-        const tip = want.length ? want.map(chanName).join(' + ') : '哪个渠道都不生效';
-        toast('「' + p.name + '」现在在 ' + tip + ' 里生效', 'success');
-      });
-      prow.appendChild(b);
+        // 勾选状态由 chanPicker 内部的 pending 持有，它就是这一行的唯一真源。
+        if (r && r.manage && r.manage.items) items = r.manage.items;
+        return r;
+      }
     });
 
     const del = el('button', {class:'btn sm danger', onclick:async () => {
@@ -2135,13 +2218,15 @@ Views.skills = async function(container) {
 
   const alive = !!st.alive;
   let skills = st.skills || [];
+  const skillChans = st.channels || ['app', 'wechat'];
 
   const wrap = el('div');
 
   // ---- 工具条 ----
   const bar = el('div', {class:'filter-bar'});
   bar.appendChild(el('span', {style:'font-size:12.5px;color:var(--text-secondary)'},
-    '技能是跑在 Node 里的独立程序，跟插件（.py，装进大脑进程）是两码事'));
+    '技能是跑在 Node 里的独立程序，跟插件（.py，装进大脑进程）是两码事。'
+    + '每个技能右边可以单独选在哪些渠道生效。'));
   bar.appendChild(el('span', {style:'flex:1'}));
   bar.appendChild(el('button', {class:'btn sm', onclick:async () => {
     const r = await api('/api/skill/reload', {method:'POST'});
@@ -2352,6 +2437,18 @@ Views.skills = async function(container) {
       tools.map(t => el('span', {class:'skill-tool', title: t.desc || ''},
         (t.title || t.name || '?') + (t.name && t.title ? '（' + t.name + '）' : '')))) : null;
 
+    // ---- 渠道多选 ----
+    // 跟插件那边同一个 chanPicker：技能挂在 Node 宿主上，一个插件里装好几个包，
+    // 每个包单独开关，所以这里也是每行一组。
+    const picker = broken ? null : chanPicker({
+      cur: s.channels || {}, channels: skillChans, label: s.name || s.id,
+      onToggle: async want => {
+        const r = await api('/api/skill/channels',
+          {method:'POST', body:{skill: s.id, channels: want}});
+        return r;
+      }
+    });
+
     const del = el('button', {class:'btn sm danger', onclick:async () => {
       const body = el('div', {style:'font-size:13px;line-height:1.8'}, [
         el('p', {}, '卸掉技能「' + (s.name || s.id) + '」？'),
@@ -2386,7 +2483,7 @@ Views.skills = async function(container) {
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
         '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>'}),
       el('div', {class:'finfo'}, [name, desc, mrow, trow]),
-      el('div', {class:'plug-actions'}, [del])
+      el('div', {class:'plug-actions'}, [picker, del].filter(Boolean))
     ]);
   }
 

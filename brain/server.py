@@ -1496,8 +1496,16 @@ def start_remote_api(brain):
                     _q = parse_qs(urlparse(self.path).query)
                     key = (_q.get("key") or [None])[0]
                     # key 来自查询串，走 basename + isfile双重校验，防路径穿越
-                    cur = os.path.basename(str(key)) if key else \
-                        persona_store.key_from_config(api_config)
+                    if key:
+                        cur = os.path.basename(str(key))
+                    else:
+                        # 不带 key = "读这个渠道正在用的那套"。**必须按 src 解析**：
+                        # 只用 key_from_config 拿到的是全局那份（= App 的），
+                        # 于是面板切到微信、编辑器打开的还是 App 的人设，
+                        # 而弹窗标题还写着编辑麦麦 —— 人设区看着正常，内容全错。
+                        _fsrc = _norm_src((_q.get("src") or [""])[0])
+                        cur = _persona_for_src(_fsrc,
+                                               persona_store.key_from_config(api_config))
                     if not cur or not os.path.isfile(persona_store.path_of(cur)):
                         self._json(200, {"ok": False, "err": "没有这套人设"})
                         return
