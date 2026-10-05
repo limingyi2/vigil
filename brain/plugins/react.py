@@ -216,9 +216,22 @@ def on_reply(ctx, reply, meta=None):
     if not _cfg().get("enabled", False):
         return reply
     src = getattr(ctx, "src", "") or "app"
-    think, tools, rest = parse_react(reply)
+    # think 已经在 brain.draft() 里被 _clean() 之前提取到 self.last_think 了
+    # 这里优先从 brain 读，因为 _clean() 之后回复文本里已经没有 think 了
+    think = ""
+    try:
+        brain = getattr(ctx, "brain", None)
+        if brain is not None:
+            think = getattr(brain, "last_think", "") or ""
+    except Exception:
+        pass
+    # 工具标签和 rest 从回复文本里解析（工具标签没被 _clean 删）
+    # 如果 brain 里没拿到 think（某些路径没走 brain.draft），parse_react 解析的 think 作兜底
+    parsed_think, tools, rest = parse_react(reply)
+    if not think:
+        think = parsed_think
 
-    # 没解析出 think 就原样返回，绝不动内容
+    # 没解析出 think 也没工具就原样返回，绝不动内容
     final = rest if think or tools else (reply or "")
 
     rec = {

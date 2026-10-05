@@ -303,6 +303,7 @@ class Brain:
         self.last_draft = None
         self.last_mode = "API直出"
         self.last_active = None               # 上次对话时间（时间感知用）
+        self.last_think = ""                  # 上一轮 API 输出里的 think（_clean 之前提取，react.on_reply 从这里读）
 
     # --- 渠道 ---
     @property
@@ -752,8 +753,15 @@ class Brain:
                             "out": int(_u.get("completion_tokens") or 0)}
                     except Exception:
                         self.last_usage = None
-                    return _clean(_j["choices"][0]["message"]["content"],
-                                  keep_newlines=True)
+                    raw = _j["choices"][0]["message"]["content"] or ""
+                    # _clean() 会删掉 <think>，先提取出来存到 self.last_think
+                    # react.on_reply 从这里读，因为 _clean() 之后文本里已经没有 think 了
+                    _m = re.search(r"<think>(.*?)</think>", raw, re.S)
+                    self.last_think = (_m.group(1).strip() if _m else "")
+                    # 兜底：被截断的 think（只有 <think> 没有 </think>，被 max_tokens 砍了）
+                    if not self.last_think and "<think>" in raw:
+                        self.last_think = raw.split("<think>", 1)[1].strip()
+                    return _clean(raw, keep_newlines=True)
             except httpx.HTTPStatusError as e:
                 _last_exc = e
                 _c = getattr(e.response, "status_code", 0)
