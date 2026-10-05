@@ -274,7 +274,7 @@ def _snapshot(b):
     """
     hits = getattr(getattr(b, "mem", None), "last_hits", None) or []
     usage = getattr(b, "last_usage", None) or {}
-    return {
+    d = {
         "blocks": getattr(b, "last_sizes", None) or {},
         "mem_hits": len(hits),
         "mem_top": [round(float(s), 2) for s, _t in hits[:3]],
@@ -282,6 +282,24 @@ def _snapshot(b):
         "tok_in": usage.get("in"), "tok_out": usage.get("out"),
         "model": str((API_CFG or {}).get("model") or ""),
     }
+    # 🔴 **顺带抄一份「她这轮实际看到的工具段」**。
+    # 排查"技能装了却不调"时，光看 trace.tool 是空根本分不清三种情况：
+    #   ① 提示词里压根没那个技能名（拼装时就没进来）
+    #   ② 提示词里有，但缓存没刷新（她读的是旧那份）
+    #   ③ 提示词里有、也是新的，模型看见了就是不用
+    # 这三种修法完全不同，而从外面一个都看不出来。
+    # 判据必须落在**运行中这个进程**的 draft_rules 上 —— 另起解释器拼一遍
+    # 没用：它一个插件都没装载（load_plugins 没跑），拼出来必然是空的。
+    try:
+        r = str(b.draft_rules or "")
+        i = r.find("JS 技能")
+        d["rules_len"] = len(r)
+        d["rules_has_skill"] = bool(i >= 0)
+        d["rules_has_fortune"] = "daily-fortune__today" in r
+        d["rules_has_must"] = "必须" in r
+    except Exception:
+        pass
+    return d
 
 
 # 规划/修正 prompt 的指纹。brain.chat 会把喂给它的 prompt 原样记进历史和当日
@@ -1061,6 +1079,11 @@ def start_remote_api(brain):
                                          "model": _snap.get("model")
                                                  or str((API_CFG or {}).get("model") or ""),
                                          "mem_hits": _snap.get("mem_hits", 0),
+                                         # 她这轮实际看到的工具段（排查"装了不调"用）
+                                         "rules_len": _snap.get("rules_len"),
+                                         "rules_has_skill": _snap.get("rules_has_skill"),
+                                         "rules_has_fortune": _snap.get("rules_has_fortune"),
+                                         "rules_has_must": _snap.get("rules_has_must"),
                                      }})
                 elif path == "/api/packages/del":
                     # 删掉就移出监控，她的提醒跟着停（poll 只扫这份存档）
