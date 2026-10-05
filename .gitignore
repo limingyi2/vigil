@@ -169,6 +169,7 @@ admin/_static.js
 admin/_probe.zip
 admin/_*.png
 admin/cdp_result.json
+admin/persona_result.json
 
 # 微信桥接用的独立 venv
 .venv-wx/

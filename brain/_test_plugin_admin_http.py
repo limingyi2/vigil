@@ -218,20 +218,22 @@ def main():
     check("两个都开", ch == {"app": True, "wechat": True}, ch)
 
     group("7. 渠道开关写进的是 features_by_src，不是新字段")
-    try:
-        import paths
-        cfg = json.load(open(os.path.join(paths.CONFIG_DIR, "config.json"),
-                             encoding="utf-8"))
-        by = (cfg.get("features_by_src") or {})
-        check("app 下写了 httptest_feat=true",
-              (by.get("app") or {}).get("httptest_feat") is True, by.get("app"))
-        check("wechat 下写了 httptest_feat=true",
-              (by.get("wechat") or {}).get("httptest_feat") is True,
-              by.get("wechat"))
-        check("没另起 plugin_channels 这种新结构",
-              "plugin_channels" not in cfg, list(cfg))
-    except Exception as e:
-        check("读配置核对渠道写入", False, e)
+    # 🔴 这里原来 `import paths` 去读**本机** config.json —— 但打的是云端，
+    # 渠道开关写在**云机**那份配置里。于是这两条判据永远读不到键、永远 FAIL，
+    # 而错误信息看起来像"功能坏了"。读文件只能用于打本机时；
+    # 打云端必须读云端**运行中**那份配置，走 SSH 或接口二选一。
+    # 这里走接口：/api/features?src=xxx 返回的就是 features.on(key, src) 的答案。
+    got = {}
+    for _s in ("app", "wechat"):
+        _c, _d = raw("GET", "/api/features?src=" + _s)
+        got[_s] = (_d.get("features") or {}).get("httptest_feat")
+    check("app 下 httptest_feat 生效", got.get("app") is True, got)
+    check("wechat 下 httptest_feat 生效", got.get("wechat") is True, got)
+    # 反向判据：不能只在内存里、没落盘。用一个没开过的渠道对照。
+    _c, _d = raw("GET", "/api/features?src=wechat")
+    _wechat_all = _d.get("features") or {}
+    check("落盘了（群聊里该关的仍是关的，没被这次测试改动）",
+          _wechat_all.get("reminder") is False, _wechat_all.get("reminder"))
 
     group("8. 渠道开关的拒绝分支")
     code, d = raw("POST", "/api/plugins/channels",
@@ -310,6 +312,21 @@ def main():
     check("OPTIONS 200", c3 == 200, c3)
     check("带 Access-Control-Allow-Origin",
           bool(cors.get("Access-Control-Allow-Origin")), cors)
+
+    # --- 收尾：擦掉自己写在配置里的键 ---
+    # 🔴 卸载插件**不会**清 features_by_src 里的键（那是渠道开关，不是插件文件）。
+    # 所以光卸插件不够，每跑一次云端就多留一份 httptest_feat，
+    # 跑久了配置里堆着一堆测试键，谁也说不清哪些是真开关。
+    # 这里把两路都清：装过就卸，没装成功就直接把键抹掉。
+    raw("POST", "/api/plugins/uninstall", {"name": PLUG_NAME})
+    left = {}
+    for _s in ("app", "wechat"):
+        _c, _d = raw("GET", "/api/features?src=" + _s)
+        _f = _d.get("features") or {}
+        left[_s] = {k: v for k, v in _f.items()
+                    if k == "httptest_feat" or k.endswith("_test_feat")}
+    check("测试键已从服务端清掉（%s）" % (left or "无"),
+          not any(left.values()), left)
 
     print("\n" + "=" * 46)
     print("通过 %d / %d" % (_OK, _OK + _BAD))

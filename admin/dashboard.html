@@ -480,7 +480,16 @@ function showModal(title, bodyHtml, footerHtml='') {
   $('#modalFooter').innerHTML = footerHtml;
   $('#modalOverlay').classList.add('show');
 }
-function closeModal() { $('#modalOverlay').classList.remove('show'); }
+// 🔴 关窗守卫。返回 false 可拦住关闭（弹窗里有未保存的改动时用）。
+// 做成全局钩子而不是给closeModal 加参数：closeModal 被 overlay 点击、
+// 右上角 × 和各处内联 onclick 调着，挂钩子才能一处拦住所有关闭路径，
+// 不必去改每一个调用点（漏一个就是"从× 能关、从遮罩不能关"）。
+let _modalCloseGuard = null;
+function closeModal() {
+  if (_modalCloseGuard && _modalCloseGuard() === false) return;
+  _modalCloseGuard = null;
+  $('#modalOverlay').classList.remove('show');
+}
 $('#modalOverlay').addEventListener('click', e => { if (e.target === $('#modalOverlay')) closeModal(); });
 
 /* ===== 视图注册表（在各视图定义前声明，避免 TDZ） ===== */
@@ -1143,7 +1152,7 @@ Views.persona = async function(container) {
     toast(r ? '人格已重载' : '重载失败', r?'success':'error');
     if (r) renderView('persona');
   }}, '重载人格'));
-  bar.appendChild(el('button', {class:'btn sm', onclick:()=>toast('新建人格功能开发中','info')}, '新建人格'));
+  bar.appendChild(el('button', {class:'btn sm', onclick:()=>toast('新建人设请在 App 里操作','info')}, '新建人格'));
   bar.appendChild(el('span', {style:'flex:1'}));
   bar.appendChild(el('span', {style:'font-size:12.5px;color:var(--text-secondary)'}, `共 ${personas.length} 个人格`));
   wrap.appendChild(bar);
@@ -1156,6 +1165,9 @@ Views.persona = async function(container) {
     const isCurrent = (p.current === true) || (key && key === current);
     // 渠道视角：微信/App 各自在用哪套人设（persona_by_src）
     const forThisSrc = key && key === data.src_persona_key;
+    // 挂到卡片数据上：编辑器要靠它决定「这句提醒该不该显示」。
+    // 不另开参数一路传下去，是因为中间隔着 forEach 闭包和两次点击回调。
+    p._forThisSrc = !!forThisSrc;
     const chName = (CHANNELS.find(x => x.id === State.src) || {}).name || '';
     const card = el('div', {class:'persona-card '+(isCurrent?'current':'')}, [
       isCurrent ? el('div', {class:'current-badge'}, el('span',{class:'tag brand'},'使用中')) : null,
@@ -1163,18 +1175,21 @@ Views.persona = async function(container) {
       el('div', {class:'pname'}, p.name || p.label || key),
       (p.label && p.label !== p.name) ? el('div', {class:'prelation'}, p.label) : null,
       el('div', {class:'pdesc'}, p.desc || '（无描述）'),
-      el('div', {style:'margin-top:12px;display:flex;gap:8px'}, [
+      el('div', {style:'margin-top:12px;display:flex;gap:8px'},
+        // 使用中的卡片只留「编辑人设」一个按钮：原来「查看详情」和「详情」
+        // 两个按钮调的是同一个函数，文案还不同，像是两个功能其实是一个。
         isCurrent
-          ? el('button', {class:'btn sm', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '查看详情')
-          : el('button', {class:'btn sm primary', onclick:async(e)=>{
-              e.stopPropagation();
-              // 🔴 传 key（不是 file）；带 src 才知道改的是哪个渠道的人设
-              const r = await api('/api/persona/apply', {method:'POST', body:{key:key, file:key, src:State.src}});
-              toast(r && r.ok !== false ? `已切换到 ${p.name || key}` : '切换失败', r && r.ok !== false ?'success':'error');
-              if (r) renderView('persona');
-            }}, '应用'),
-        el('button', {class:'btn sm', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '详情'),
-      ])
+          ? [el('button', {class:'btn sm primary', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '编辑人设')]
+          : [
+              el('button', {class:'btn sm primary', onclick:async(e)=>{
+                e.stopPropagation();
+                // 🔴 传 key（不是 file）；带 src 才知道改的是哪个渠道的人设
+                const r = await api('/api/persona/apply', {method:'POST', body:{key:key, file:key, src:State.src}});
+                toast(r && r.ok !== false ? `已切换到 ${p.name || key}` : '切换失败', r && r.ok !== false ?'success':'error');
+                if (r) renderView('persona');
+              }}, '应用'),
+              el('button', {class:'btn sm', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '编辑人设'),
+            ])
     ]);
     card.addEventListener('click', () => viewPersonaDetail(p));
     grid.appendChild(card);
@@ -1184,31 +1199,154 @@ Views.persona = async function(container) {
   container.appendChild(wrap);
 };
 
+/* ===== 人设字段表（面板与 App 共用同一份文案）=====
+ * 🔴 顺序即显示顺序，也是"她先读到什么"的顺序：名字 → 关系 → 背景 → 现状
+ *   → 性格 → 说话习惯。relation 靠前是有意的 —— 它是"她跟他现在什么关系"
+ *   这个事实，而 CORE_RULES 是无论什么关系都成立的底线，得压在后面。
+ * 改这里之前先看 App 那份（chat.html 的 PERSONA_FIELDS），两边说法不一致时
+ * 模型收到的就是两份矛盾的设定。 */
+const PERSONA_FIELDS = [
+  { k:'name',        t:'她的名字',     h:'叫什么',                                  rows:1 },
+  { k:'nicknames',   t:'小名',         h:'你平时怎么叫她，顿号分开',                rows:1, list:true },
+  { k:'call_user',   t:'她怎么叫你',   h:'留空就不叫',                              rows:1 },
+  { k:'relation',    t:'你们的关系',   h:'写什么都行：十年老友 / 正在追她 / 同居两年。留空会按老朋友处', rows:2 },
+  { k:'background',  t:'你们怎么认识的', h:'一段话。要留空就空着，别靠现编',rows:3 },
+  { k:'scene',       t:'现在的生活状态', h:'在哪、在做什么、你们多久联系一次',       rows:2 },
+  { k:'personality', t:'她的性格',     h:'性格 + 说话习惯写一起，越具体越好用',      rows:4 },
+  { k:'notes',       t:'补充规则',     h:'什么话她不会说、什么腔调不要。多写几条效果很明显', rows:3 },
+  { k:'appearance',  t:'长相',         h:'生图用。年龄、脸型、发型、身高这些',        rows:2 },
+];
+
 function viewPersonaDetail(p) {
   // 🔴 这里才用 /api/persona/full —— 它必须带 ?key=xxx 才有意义。
   // 列表页和这里原来都用它、且都不传 key，是同一个 bug 的两处表现。
+  //
+  // 🔴 返回的字段在 `fields` 里，**不是平铺在顶层**。原来这里写成
+  // `const {ok, err, ...fields} = data`，结果 fields 只剩 {key, fields} 两个键，
+  // 弹窗里显示的是一个叫 "fields" 的原始 JSON 大框 —— 真正的字段一个都没显示，
+  // 而这正是"没法编辑人设"下面藏着的第二个 bug：就算点开也看不到内容。
   const key = p.key || '';
+  const body = el('div');
+  body.appendChild(el('div', {class:'loading'}, '读取中…'));
+  showModal('编辑人设 - ' + (p.name || key), '', '');
+  $('#modalBody').innerHTML = '';
+  $('#modalBody').appendChild(body);
+
   api(key ? '/api/persona/full?key=' + encodeURIComponent(key) : '/api/persona/full')
   .then(data => {
-    let detail = p;
-    if (data && data.ok !== false) {
-      // 接口把人设字段平铺在顶层（外加 ok/err），合并进来
-      const { ok, err, ...fields } = data;
-      if (Object.keys(fields).length) detail = Object.assign({}, p, fields);
+    if (!data || data.ok === false) {
+      body.innerHTML = '';
+      body.appendChild(el('div', {class:'empty'},
+        el('p', {}, (data && data.err) || '读不出来，这套人设可能已经不在了')));
+      return;
     }
-    const skip = ['key','file','label','desc','blank','current','ok','err'];
-    const fields = Object.entries(detail).filter(([k]) => !skip.includes(k));
-    const html = `<div style="display:flex;flex-direction:column;gap:14px">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div style="width:48px;height:48px;border-radius:10px;background:var(--brand-light);display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:20px;font-weight:700">夏</div>
-        <div><div style="font-size:16px;font-weight:600">${detail.name||'-'}</div><div style="font-size:12.5px;color:var(--brand)">${detail.relation||'未设定'}</div></div>
-      </div>
-      ${fields.map(([k,v]) => `<div class="form-group"><label>${k}</label><div style="padding:8px 11px;background:var(--bg);border-radius:6px;font-size:12.5px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">${typeof v === 'object' ? JSON.stringify(v,null,2) : String(v??'-')}</div></div>`).join('')}
-    </div>`;
-    showModal('人格详情 - ' + (detail.name||key), html,
-      '<button class="btn" onclick="closeModal()">关闭</button>'
-    );
+    const cur = data.fields || {};
+    renderPersonaForm(body, key, cur, p._forThisSrc === true);
   });
+}
+
+function renderPersonaForm(body, key, cur, isForThisSrc) {
+  const inputs = {};
+  body.innerHTML = '';
+  const head = el('div', {style:'display:flex;align-items:center;gap:12px;margin-bottom:18px'});
+  head.appendChild(el('div', {
+    style:'width:44px;height:44px;border-radius:10px;background:var(--brand-light);'+
+          'display:flex;align-items:center;justify-content:center;color:var(--brand);'+
+          'font-size:18px;font-weight:700'
+  }, (cur.name || '夏').slice(0, 1)));
+  head.appendChild(el('div', {}, [
+    el('div', {style:'font-size:15px;font-weight:600'}, cur.name || key),
+    el('div', {style:'font-size:12px;color:var(--brand)'}, cur.relation || '关系未设定'),
+  ]));
+  body.appendChild(head);
+
+  PERSONA_FIELDS.forEach(f => {
+    const raw = cur[f.k];
+    const val = Array.isArray(raw) ? raw.join('、') : (raw == null ? '' : String(raw));
+    const g = el('div', {class:'form-group'});
+    // 🔴 提示并进标签行，不再在框下面重复一遍。
+    // 两处都写看着啰嗦；而且框里有值之后 placeholder 就看不见了 ——
+    // 那时侯唯一还看得到的就是标签行那句，所以它才是提示的真正载体。
+    g.appendChild(el('label', {}, [f.t,
+      el('span', {style:'font-weight:400;color:var(--text-muted);margin-left:6px'}, f.h)]));
+    const e = el('textarea', {
+      rows: f.rows || 2, placeholder: f.h,
+      style: f.rows > 1 ? 'min-height:' + (f.rows * 22 + 16) + 'px' : '',
+    });
+    e.value = val;
+    g.appendChild(e);
+    inputs[f.k] = { el: e, list: !!f.list };
+    body.appendChild(g);
+  });
+
+  body.appendChild(el('div', {
+    style:'font-size:11.5px;color:var(--text-muted);line-height:1.7;'+
+          'background:var(--bg);padding:10px 12px;border-radius:8px;margin-top:4px'
+  }, '「你们的关系」留空会退回老朋友，真不想要这条约束就整段删掉。' +
+     '改完点保存立刻生效，不用重启；记忆和聊天记录都不受影响。' +
+     // 🔴 这句的判据只能用列表接口给的 forThisSrc，**不能读 State.srcPersonaKey**
+     // —— State 上根本没这个键，一读就是 undefined，于是这句提醒永远显示，
+     // 变成一句一直在说「你这套不是当前在用的」的假话。
+     (isForThisSrc ? '' : '\n注意：这套不是' + ((CHANNELS.find(x=>x.id===State.src)||{}).name || '当前渠道') +
+      '正在用的，改了不影响她现在怎么说话。')));
+
+  /* --- 脏检查：关窗前拦住没保存的改动 --- */
+  const snapshot = () => PERSONA_FIELDS.map(f => inputs[f.k].el.value).join('\u0001');
+  // 🔴 用 let 不用 const：保存成功后要把快照重置成"已保存的样子"，
+  // 否则接着再改一个字时，基线还是打开弹窗时那份 —— 于是刚存完的改动
+  // 又被算成"相对旧基线有差异"，关窗时对着已经存过的内容问要不要放弃。
+  let base = snapshot();
+  let dirty = false;
+  const markDirty = () => {
+    const now = dirty;
+    dirty = snapshot() !== base;
+    if (dirty === now) return;
+    saveBtn.textContent = dirty ? '保存修改' : '保存';
+    saveBtn.classList.toggle('primary', dirty);
+    body.style.boxShadow = '';
+  };
+  PERSONA_FIELDS.forEach(f => inputs[f.k].el.addEventListener('input', markDirty));
+
+  const discard = () => {
+    if (dirty && !confirm('有改动没保存，关掉就丢了。确定放弃吗？')) return false;
+    return true;
+  };
+  _modalCloseGuard = discard;
+
+  const saveBtn = el('button', {class:'btn sm primary', id:'pSave'}, '保存');
+  saveBtn.addEventListener('click', async () => {
+    const out = {};
+    PERSONA_FIELDS.forEach(f => {
+      const v = (inputs[f.k].el.value || '').trim();
+      // list 字段：小名存成数组。分割符跟 App 一致（顿号/逗号/中文逗号），
+      // 不一致会出现"在 App 里改了名字这边没变"这种双向对不上。
+      out[f.k] = (inputs[f.k].list && v) ? v.split(/[、,，]/).map(x => x.trim()).filter(Boolean) : v;
+    });
+    if (!out.name) return toast('总得有个名字', 'error');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '保存中…';
+    // 🔴 判据必须是 r && r.ok === true。api() 只在 401/404/网络失败时给 null，
+    // 服务端带理由拒绝时返回的是 {ok:false, err} —— 只判 null 的话，
+    // 拒绝会掉进成功分支，弹窗一关，用户以为存上了，其实一个字都没写。
+    const r = await api('/api/persona/save', {method:'POST', body:{key:key, fields:out}});
+    saveBtn.disabled = false;
+    if (!r || r.ok !== true) {
+      saveBtn.textContent = dirty ? '保存修改' : '保存';
+      return toast('没存上：' + ((r && r.err) || explainNetError(State.lastNetError || '服务没回应')), 'error');
+    }
+    _modalCloseGuard = null;
+    base = snapshot(); dirty = false;
+    saveBtn.textContent = '保存';
+    toast('「' + (r.name || out.name) + '」已更新，她马上就是这个设定', 'success');
+    closeModal();
+    renderView('persona');
+  });
+
+  const foot = $('#modalFooter');
+  foot.innerHTML = '';
+  foot.appendChild(el('button', {class:'btn sm', onclick:() => { if (discard()) closeModal(); }}, '放弃修改'));
+  foot.appendChild(el('span', {style:'flex:1'}));
+  foot.appendChild(saveBtn);
 }
 
 /* ===== 视图：功能开关 ===== */

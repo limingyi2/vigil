@@ -175,3 +175,45 @@ def set_features(patch, src=None):
         return out
     except Exception:
         return None
+
+
+def drop(key):
+    """把一个开关整个摘掉：内存里的 DEFAULTS + 配置文件里所有渠道的键。
+
+    插件卸载时调。不摘的话配置里会留一个谁也关不掉的键 ——
+    features.on(key, src) 只看键、不看插件还在不在，
+    于是功能开关页会列出一个已经不存在的功能，谁点都关不掉。
+    返回清掉的处数（0 = 本来就没有）。
+    """
+    key = str(key or "").strip()
+    if not key:
+        return 0
+    n = 0
+    if DEFAULTS.pop(key, None) is not None:
+        n += 1
+    try:
+        cfg = json.load(open(_CFG, encoding="utf-8"))
+    except Exception:
+        cfg = None
+    if isinstance(cfg, dict):
+        dirty = False
+        f = cfg.get("features")
+        if isinstance(f, dict) and key in f:
+            f.pop(key, None)
+            dirty = True
+        by = cfg.get("features_by_src")
+        if isinstance(by, dict):
+            for s in list(by):
+                d = by.get(s)
+                if isinstance(d, dict) and key in d:
+                    d.pop(key, None)
+                    n += 1
+                    dirty = True
+        if dirty:
+            try:
+                with open(_CFG, "w", encoding="utf-8", newline="\n") as fp:
+                    json.dump(cfg, fp, ensure_ascii=False, indent=2)
+            except Exception:
+                return n              # 内存清了、文件没写成，如实返回
+    invalidate()
+    return n

@@ -162,6 +162,25 @@ def channels_of(feature_key, src_names):
     return out
 
 
+def _feature_of(py_path):
+    """从一个插件 .py 里静态读出 FEATURE 键。读不到返回空串。
+
+    为什么用正则而不 import：import 会真的执行插件代码（装卸这种管理动作
+    不该有副作用），而且插件可能正在被另一个线程用着。
+    只取 `FEATURE = "xxx"` 这种字面量，认不出来就返回空 ——
+    大不了渠道开关的键留在配置里，那只是多一个没人用的条目，
+    比猜错了把别人的开关摘掉安全得多。
+    """
+    try:
+        with open(py_path, encoding="utf-8", errors="ignore") as fh:
+            txt = fh.read()
+    except Exception:
+        return ""
+    m = re.search(r'^\s*FEATURE\s*=\s*["\']([A-Za-z0-9_\-]{1,64})["\']',
+                  txt, re.M)
+    return m.group(1) if m else ""
+
+
 def set_channels(feature_key, src_names, on_map):
     """按勾选写 features 段。**只写差异**，不动没勾到的渠道。
 
@@ -476,6 +495,9 @@ def uninstall(name, purge_data=False):
     hit = ""
     f = os.path.join(_PLUG_DIR, name + ".py")
     d = os.path.join(_PLUG_DIR, name)
+    # 🔴 必须在删文件**之前**读出 FEATURE：文件一删就再也读不到了，
+    # 而渠道开关的键（features_by_src.<src>.<FEATURE>）得靠它才能摘掉。
+    feat = _feature_of(f)
     if os.path.isfile(f):
         os.remove(f)
         hit = f
@@ -499,6 +521,19 @@ def uninstall(name, purge_data=False):
     (reg.get("plugins") or {}).pop(name, None)
     write_registry(reg)
     extra = ""
+    # 渠道开关的键一起摘掉。
+    # 🔴 不摘的话：插件没了，features_by_src.<src>.<FEATURE> 还在，
+    # 而 features.on(key, src) 只看这个键、不看插件装没装—— 于是配置里
+    # 挂着一个谁也关不掉的"功能"，功能开关页还会列出一个不存在的条目。
+    # 每装卸一轮测试就多留一份，配置很快就攒出一堆说不清是什么的键。
+    if feat:
+        try:
+            import features as _ft
+            n = _ft.drop(feat)
+            if n:
+                extra += "，渠道开关也清了（%d 处）" % n
+        except Exception as e:
+            print("[插件] 渠道开关没清掉：%s" % str(e)[:60], flush=True)
     if purge_data:
         try:
             import paths

@@ -17,6 +17,7 @@
 不写成"调用不抛异常"这种没信息量的断言。
 """
 import io
+import json
 import os
 import sys
 import tempfile
@@ -300,9 +301,24 @@ def main():
     finally:
         try:
             features.DEFAULTS.pop(feat, None)
+            # 🔴 还得把**写进配置文件的那份**擦掉。set_channels 是真的
+            # set_features 落盘了，只 pop 内存里的 DEFAULTS 是不够的 ——
+            # 于是 po_test_feat 永远留在 features_by_src 里，
+            # 面板上多出一个谁也说不清干什么的开关。
+            # （这条是被第 15 组的残留检查抓出来的，不是猜的。）
+            import json as _json
+            import paths as _paths
+            with open(os.path.join(str(_paths.CONFIG_DIR), "config.json"),
+                      encoding="utf-8") as _f:
+                _cfg = _json.load(_f)
+            for _s in list(_cfg.get("features_by_src") or {}):
+                (_cfg["features_by_src"][_s] or {}).pop(feat, None)
+            with open(os.path.join(str(_paths.CONFIG_DIR), "config.json"),
+                      "w", encoding="utf-8") as _f:
+                _json.dump(_cfg, _f, ensure_ascii=False, indent=2)
             features.invalidate()
-        except Exception:
-            pass
+        except Exception as e:
+            print("        （清 %s 失败：%s）" % (feat, e))
 
     group("13. 不声明 FEATURE 的插件：渠道不可选，但要说明原因")
     ch = po.channels_of("", ["app", "wechat"])
@@ -359,6 +375,94 @@ def main():
         po.write_registry(reg2)
     except Exception:
         pass
+
+    group("15. 测试不许在配置里留下自己的键")
+    # 这条是被真坑出来的：第 12 组往 features_by_src 写过 po_test_feat，
+    # 跑完只清了plugins/ 目录，配置里的键留了下来。后来打开面板，
+    # 多出一个谁也说不清干什么的开关，还以为是谁加的功能。
+    #
+    # 🔴 必须**直接读配置文件**，不能用 features.all_features()：
+    # 它不传 src 时只返回基线那份，features_by_src 里的键一个都看不到 ——
+    # 于是这条判据永远是 PASS，等于没写。（第一版就是这么写的，
+    # 故意塞了个残留键进去它照样报"无"，当场露馅。）
+    try:
+        import paths
+        import features
+        features.invalidate()
+        with open(os.path.join(str(paths.CONFIG_DIR), "config.json"),
+                  encoding="utf-8") as f:
+            cfg = json.load(f)
+        seen = {}
+        for k in (cfg.get("features") or {}):
+            seen[k] = "基线"
+        for s, d in (cfg.get("features_by_src") or {}).items():
+            for k in (d or {}):
+                seen[k] = s
+        # 渠道专有键本来就带下划线分段（weather_alert / rand_img_chat），
+        # 所以只认"以 _test_feat 结尾"和"以 httptest_ 开头"这两种形状
+        leftovers = [("%s(%s)" % (k, v)) for k, v in seen.items()
+                     if k.endswith("_test_feat") or k.startswith("httptest_")]
+        check("配置里没有测试残留的键（%s）" % (leftovers or "无"), not leftovers,
+              leftovers)
+    except Exception as e:
+        check("读配置核对测试残留", False, e)
+
+    group("16. 🔴 卸载必须把渠道开关的键一起摘掉")
+    # 不摘的话：插件没了，features_by_src.<src>.<FEATURE> 还在，
+    # 而 features.on(key, src) 只看键不看插件装没装 —— 配置里挂着一个
+    # 谁也关不掉的"功能"，功能开关页还会列出一个不存在的条目。
+    # 每装卸一轮就多留一份，配置很快攒出一堆说不清是什么的键。
+    feat2 = "wx_plug_t"                # 跟第 14 组那个插件同一个 FEATURE
+    ok, res = po.install(os.path.join(TMP, "wx.zip"))
+    check("重装上了（拿第 14 组那个包）", ok, res)
+    import features as _fe
+    _fe.invalidate()
+    # 🔴 必须先 register 再 set_channels —— features.set_features 有
+    # `k in DEFAULTS` 的白名单，而 DEFAULTS 里的插件键是**装载时**
+    # （plugin_host 调 features.register）才加进来的，安装本身不加。
+    # 跳过register 的话 set_channels 会被静默丢掉，然后这条判据会误报
+    # "没写进配置"，看起来像卸载的锅。
+    _fe.register(feat2, True)
+    po.set_channels(feat2, ["app", "wechat"], {"app": True, "wechat": False})
+
+    def _in_cfg(key):
+        """直接读配置文件看这个键在不在（不能用 all_features，只看得到基线）。"""
+        with open(os.path.join(str(paths.CONFIG_DIR), "config.json"),
+                  encoding="utf-8") as f:
+            c = json.load(f)
+        if key in (c.get("features") or {}):
+            return "基线"
+        for s, d in (c.get("features_by_src") or {}).items():
+            if key in (d or {}):
+                return s
+        return None
+
+    where = _in_cfg(feat2)
+    check("装完渠道开关写进配置了（%s）" % (where or "没写"), where is not None, where)
+    # 🔴 两个渠道都要查。只查"在不在任意一个渠道里"的话，
+    # 只写成功一个渠道也会 PASS —— 而"app 写了 wechat 没写"正是
+    # 最典型的漏渠道现场（界面显示两个都开，微信那边其实没生效）。
+    with open(os.path.join(str(paths.CONFIG_DIR), "config.json"),
+              encoding="utf-8") as f:
+        _c = json.load(f)
+    _by = _c.get("features_by_src") or {}
+    check("app 写了 true", (_by.get("app") or {}).get(feat2) is True,
+          (_by.get("app") or {}).get(feat2))
+    check("wechat 写了 false（取消勾选必须显式写 false）",
+          (_by.get("wechat") or {}).get(feat2) is False,
+          (_by.get("wechat") or {}).get(feat2))
+    check("内存DEFAULTS 里也登记了",
+          feat2 in _fe.all_features(), list(_fe.all_features())[:8])
+
+    ok, res = po.uninstall("wxplug")
+    check("卸载成功", ok, res)
+    check("消息里说了清了渠道开关", "渠道开关" in (res.get("msg") or ""),
+          res.get("msg"))
+    _fe.invalidate()
+    left = _in_cfg(feat2)
+    check("🔴 配置里的键被摘干净了（还剩 %s）" % (left or "无"), left is None, left)
+    check("🔴 内存 DEFAULTS 里也摘了", feat2 not in _fe.all_features(),
+          list(_fe.all_features())[:8])
 
     import shutil
     shutil.rmtree(TMP, ignore_errors=True)
