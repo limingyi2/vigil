@@ -37,6 +37,8 @@ import shutil
 import sys
 import tempfile
 
+import runtime
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -147,11 +149,20 @@ def main():
     check("新白名单下 key 算成 jia（真名）",
           persona_store.key_from_config(new_cfg) == "jia",
           persona_store.key_from_config(new_cfg))
-    # 真源码里也查一遍，别只测复刻的写法
+    # 真源码里也查一遍，别只测复刻的写法。
+    #
+    # 用 AST 读 API_CFG_KEYS 这个元组，不要按字面量切源码。原来这里切的是
+    # `API_CFG = {...}`，runtime.py 早就改成 `API_CFG = api_cfg_subset(...)`
+    # 了，切出来是空串，断言恒假 —— 一个恒假的判据比没有判据更糟，
+    # 它让人以为这块测过了。
     src = open(os.path.join(HERE, "runtime.py"), encoding="utf-8").read()
-    block = src.split("API_CFG = {")[1].split("}")[0] if "API_CFG = {" in src else ""
-    check("真runtime.py 的白名单已含 persona_file",
-          "persona_file" in block, block[:120])
+    keys = runtime.API_CFG_KEYS
+    check("真 runtime.py 的 API_CFG_KEYS 存在且是元组",
+          isinstance(keys, tuple) and keys, str(keys))
+    check("真 runtime.py 的白名单已含 persona_file",
+          "persona_file" in keys, str(keys))
+    check("白名单确实是从源码读出来的（不是复刻）",
+          "API_CFG_KEYS" in src and "persona_file" in src)
 
     group("2. 渠道人设 key 算对（bug#1 的下游）")
     b = B.Brain(api_config=new_cfg)

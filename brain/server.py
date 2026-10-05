@@ -284,6 +284,81 @@ def _snapshot(b):
     }
 
 
+# 规划/修正 prompt 的指纹。brain.chat 会把喂给它的 prompt 原样记进历史和当日
+# 流水，那两条不是用户说的话，事后要认出来删掉（见 _restore_hist）。
+_PLAN_PROMPT_MARK = "（系统提示：你已经按计划完成了以下步骤"
+
+
+def _restore_hist(brain, text, ans):
+    """把这一轮规划塞进历史和当日流水里的临时记录撤掉，换成原话 + 最终回答。
+
+    brain.chat 每调一次就 hist.append 一对 user/assistant，user 那条的内容是
+    喂给它的 prompt（"（系统提示：你已经按计划完成了…"）。留着的话，她下一轮
+    读历史会以为他刚说了这种话。改「最后一条 user」也不够—— 走了检查器修正
+    就是两对，改一条还剩一条。
+
+    按内容认、不按下标切：brain.chat 里有历史截断
+    （hist = [hist[0]] + hist[-turns:]），一下标就可能切错位置。
+    """
+    try:
+        for role in ("user", "assistant"):
+            _drop_turn_log(getattr(brain, "life", None), role, text)
+        keep, drop_next = [], False
+        for m in brain.hist:
+            if drop_next:
+                drop_next = False
+                continue
+            if (m.get("role") == "user"
+                    and _PLAN_PROMPT_MARK in str(m.get("content") or "")):
+                drop_next = True
+                continue
+            keep.append(m)
+        brain.hist = keep
+        stamp = brain._stamp()
+        brain.hist.append({"role": "user", "content": stamp + text})
+        brain.hist.append({"role": "assistant", "content": stamp + (ans or "")})
+    except Exception as e:
+        print("[大脑] 历史修正失败（不影响回复）：%s" % str(e)[:60], flush=True)
+
+
+def _drop_turn_log(life, role, text):
+    """当日流水里那一对临时记录是文件 append，撤不回来 —— 只能重写这个文件。"""
+    if life is None:
+        return
+    path = getattr(life, "_chat_path", None)
+    if not callable(path):
+        return
+    import datetime
+    import json as _json
+    p = path(datetime.date.today().isoformat())
+    if not os.path.isfile(p):
+        return
+    rows = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(_json.loads(line))
+            except Exception:
+                pass
+    out, drop_next = [], False
+    for r in rows:
+        if drop_next:
+            drop_next = False
+            continue
+        if r.get("role") == role and _PLAN_PROMPT_MARK in str(r.get("text") or ""):
+            drop_next = True
+            continue
+        out.append(r)
+    if len(out) == len(rows):
+        return
+    with open(p, "w", encoding="utf-8") as f:
+        for r in out:
+            f.write(_json.dumps(r, ensure_ascii=False) + "\n")
+
+
 def _chat_with_tools(text, img_path, trace_out=None, src=None):
     """聊一轮，带模型自选工具：她写了 [tool:名] 就执行并喂回结果让她重答。
 
@@ -313,6 +388,42 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
         raise
     except Exception:
         pass
+    # Plan-and-Execute：复杂任务先规划步骤再执行，简单任务跳过（零成本判断）
+    try:
+        import planner
+        if planner.should_plan(text):
+            steps = planner.plan(text)
+            if steps:
+                b = _LOCAL["brain"]
+                results = planner.execute_plan(steps)
+                ans, mode = _once(planner.build_final_prompt(text, results))
+                # 结果检查器（轻量监督）：回答有没有用上执行结果、有没有编造。
+                # 最多修一次，防止「修完还不合格 → 再修」成死循环。
+                verify_feedback = planner.verify_result(text, results, ans)
+                revised = False
+                if verify_feedback:
+                    ans, mode = _once(planner.build_revise_prompt(
+                        text, results, ans, verify_feedback))
+                    revised = True
+                    print("[大脑] 检查器发现问题，已修正回答", flush=True)
+                _restore_hist(b, text, ans)
+                if trace_out is not None:
+                    trace_out["plan_steps"] = len(steps)
+                    trace_out["revised"] = revised
+                    _used = [t for _, t, _, _ in results if t]
+                    if _used:
+                        trace_out["tool"] = ",".join(_used)
+                print("[大脑] Plan-and-Execute 完成，%d 步%s" % (
+                    len(steps), "（已修正）" if revised else ""), flush=True)
+                # 清扫不能省：规划prompt说了「别写工具标签」但她未必听，
+                # 而剩下两条出口（features 关、ReAct）都扫了，漏一条就会把
+                # [tool:weather:北京] 直接发给用户。
+                import tools as _t2
+                return _t2.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
+    except _Busy:
+        raise
+    except Exception as e:
+        print("[大脑] Plan-and-Execute 异常，回退 ReAct：%s" % str(e)[:100], flush=True)
     import tools as _tools
     ans, mode, used = _tools.run_chat_with_tools(_once, text)
     if used:

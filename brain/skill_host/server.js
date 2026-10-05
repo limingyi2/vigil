@@ -197,7 +197,18 @@ async function loadOne(name, dir) {
 // 而作者为此写了条兜底「宿主没给档位就不拦」——于是传字符串等于闸门全程失效：
 // 群里没被点名照样给签。原skill 的 `gate()` 实测过这个组合，判据 4 就是这么挂的。
 // 传错格式的代价不是"拦错"，是"完全不拦"，所以宁可多写一个转换。
-const TIER = { private: 0, mentioned: 1, group: 2, keyword: 2, random: 3 }
+// 🔴 档位数字必须跟技能作者看到的一致，也就是 QQ Agent 的 resolveContextTier：
+//   1 = 被 @ / 拍了拍我   2/3 = 群里随便聊   4 = 私聊消息
+//
+// 原来这张表把 private 映射成 0，是错的：它只对下面那行
+// `tierOf(src.tier) === 0 ? 'private' : 'group'` 自洽，而技能那边只判
+// `tier === 1`（被点名放行）、`ctx.kind === 'private'`（私聊放行）。
+// 于是传 private 进来：kind 判成 'group'（因为拿到的是 0，0 !== 0 不成立…
+// 实际是 0 === 0 成立才判 private，但数字 0 又不等于技能认的任何私聊档位），
+// 结果**私聊里调用被当成"群里没被点名"拒掉**，回复是
+// "这次在群里没被点名（档位 0）" —— 私聊里冒出这句话，蠢得没法解释。
+// 实测：tier=4 传进去，回复写"档位 4"并且照样拒绝。
+const TIER = { private: 4, mentioned: 1, group: 2, keyword: 2, random: 3 }
 
 /** python 传tier（字符串），转成 skill 认的数字。认不出来按 2（群里随便聊）算 ——
 //  宁可当成"没被点名"拦下来，也不要当成被点名放出去。 */
@@ -233,7 +244,11 @@ function makeCtx(src) {
     // 这几个字段 skill 会读，缺了会走 undefined 分支。
     // kind 和 session.contextTier 是两套判据，QQ Agent 上两个都给，
     // 这里也两个都给 —— 只给一个的话，换个 skill 换了写法就漏。
-    kind: tierOf(src.tier) === 0 ? 'private' : 'group',
+    // 🔴 私聊是 tier 4（跟着上面 TIER 表的修正）。原来写的是 `=== 0`，
+    // 那只对旧的错误映射自洽；映射改成 4 之后这里会永远判成 group，
+    // 于是连 kind 这条更宽松的判据也一起失效了 —— 技能里
+    // `if (ctx?.kind === 'private') return ''` 就再也走不到。
+    kind: tierOf(src.tier) === 4 ? 'private' : 'group',
     chatKey: src.chatKey || '',
     sender,
     botName: src.botName || '知夏',
@@ -244,6 +259,17 @@ function makeCtx(src) {
       // 它只用在拒答文案里拼接，不影响判断。
       contextReason: '',
     },
+    // 🔴 消息原文必须带上，而且**必须放在最外层**。
+    //
+    // 起因：daily-fortune 要判「群里被点名时，他到底有没有在问运势」——
+    // 「@麦麦 在吗」不该抽签，「@麦麦 今日运势」才该。这个判断只能看原文。
+    // 而 makeCtx 原来只给了 kind / sender / session / _zx，**一个字原文都没有**，
+    // 于是那个判断永远读到空串 → 等于「没问运势」→ 群里被点名也一律不给。
+    //
+    // 放最外层而不是塞进 sender：QQ Agent 的契约里 sender 是"人"（id、名字、
+    // 发消息的方法），原文属于"这一条消息"，混进去会让换 skill 的人找不着。
+    // 常见的几个键名都补上，因为不同 skill 挑的名字不一样。
+    text: src.text || src.message || src.rawText || src.query || '',
     _zx: { src: src.src || 'app', persona: src.persona || '' },
   }
 }
