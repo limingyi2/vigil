@@ -109,7 +109,9 @@ body, .stat-card .value, table.data .num, .num { font-variant-numeric:tabular-nu
 .src-switch button { height:26px; padding:0 14px; border:none; border-radius:5px; background:transparent; color:var(--text-secondary); font-size:12.5px; font-weight:500; cursor:pointer; transition:all .18s var(--ease); font-family:inherit; }
 .src-switch button:hover { color:var(--text); }
 .src-switch button.on { background:#fff; color:var(--text); box-shadow:var(--shadow); }
-.src-hint { font-size:11.5px; color:var(--text-muted); white-space:nowrap; }
+/* 顶栏原来还有一截渠道小字（「知夏 · 八奈見杏菜」这种）。
+   每个页面都挂着、又不提供任何信息（渠道看切换器就够了），已删：
+   连元素带 renderSrcSwitch 里写它的那两行一起。 */
 
 /* 内容区 */
 .content { flex:1; overflow-y:auto; padding:26px 28px 40px; }
@@ -515,7 +517,6 @@ table.data .num { text-align:right; }
     <div class="src-switch" id="srcSwitch" title="App 和微信是两套人设、两份记忆、两组开关">
       <!-- 由 renderSrcSwitch 填 -->
     </div>
-    <div class="src-hint" id="srcHint"></div>
     <div class="spacer"></div>
     <div class="conn-status">
       <span class="dot" id="connDot"></span>
@@ -645,7 +646,7 @@ const Views = {};
 // moments / diary / memory）。模型、语音、插件这些是全局的，加了也没用，
 // 反而会让服务端把 _norm_src 里的空值当成合法渠道。
 const CHANNEL_SCOPED = [
-  '/api/features', '/api/history', '/api/persona', '/api/moments',
+  '/api/features', '/api/chatty', '/api/history', '/api/persona', '/api/moments',
   '/api/diary', '/api/memory', '/api/chat', '/api/gate'
 ];
 
@@ -930,12 +931,14 @@ const NO_SRC_SWITCH = ['plugins', 'skills'];
 function renderSrcSwitch() {
   const box = $('#srcSwitch');
   if (!box) return;
-  const hint = $('#srcHint');
   const hide = NO_SRC_SWITCH.indexOf(State.currentView) >= 0;
   box.innerHTML = '';
-  if (box.style.display !== 'none') box.style.display = hide ? 'none' : '';
-  if (hint) hint.textContent = hide ? '' :
-    ((CHANNELS.find(x => x.id === State.src) || {}).hint || '');
+  // 🔴 **必须无条件赋值**。原来写成 `if (box.style.display !== 'none')`，
+  // 本意是"没被隐藏过才需要设置" —— 实际效果是**一旦隐藏就再也恢复不了**：
+  // 先去一趟插件页把 display 设成 none，之后切到人格/功能开关页时
+  // 这个 if 直接跳过，display 永远是 none。表现是"人格管理的 App/微信
+  // 切换没了"，看着像被人删掉了，而这几页恰恰是靠渠道隔离的。
+  box.style.display = hide ? 'none' : '';
   if (hide) return;
   CHANNELS.forEach(ch => {
     const b = el('button', {
@@ -1519,11 +1522,14 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   const rawWrap = el('div', {class:'rawbox'});
   rawWrap.appendChild(el('label', {}, ['整份人设',
     el('span', {style:'font-weight:400;color:var(--text-muted);margin-left:6px'},
-      '从别处抄来的角色卡整段粘进来就行，不用拆。名字和小名会自己认出来。')]));
+      '从别处抄来的角色卡整段粘进来就行，不用拆。名字和小名会自己认出来。框里可以直接滚轮上下翻。')]));
   const rawTa = el('textarea', {
     class: 'rawta',
     placeholder: '把你的角色卡整个粘进来。比如：\n\n一、你是谁\n你是GLM，一个混在群里的 AI 角色…\n二、说话习惯\n能一个字说清就不要十个字…\n\n（下面那些小栏可以不填，粘完整份就够了）',
-    style: 'overflow:hidden',
+    // 🔴 **不能是 hidden**。原来写 `overflow:hidden`，而高度上限是 620px：
+    // 人设动辄几千字，超出的部分被裁掉，滚轮又滑不到 —— 用户只能
+    // 一段一段删掉才能看到后面，等于没法编辑。改成 auto 让框自己滚。
+    style: 'overflow:auto',
   });
   rawTa.value = cur.notes || '';
   rawWrap.appendChild(rawTa);
@@ -1628,7 +1634,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
     // 🔴 兜底高度**不能写死成 rows*22+14**。那个 22 是行高、14 是上下内边距，
     // 一旦 CSS 里改了 padding 或 line-height，这里就跟上不上了（表现为
     // 空框比预期高一截，白白多出十几像素）。改成从真实样式量出来。
-    const e = el('textarea', { placeholder: f.h, style: 'overflow:hidden' });
+    const e = el('textarea', { placeholder: f.h, style: 'overflow:auto' });
     e.value = val;
     // 🔴 oneRow 必须在**元素已经进DOM 之后**才量。getComputedStyle 对没入
     // DOM 的元素返回空字符串，量出来是 0 —— 于是所有框的兜底高度全变成 0，
@@ -1794,6 +1800,62 @@ Views.features = async function(container) {
   bar.appendChild(el('span', {style:'flex:1'}));
   bar.appendChild(el('button', {class:'btn sm', onclick:()=>renderView('features')}, '刷新'));
   wrap.appendChild(bar);
+
+  // ---- 说话多少（1~10）------------------------------------------
+  // 这是**数值**不是开关，所以单独一张卡，别混进下面那排 toggle 里 ——
+  // 开关扫一眼就知道开没开，滑杆要看到当前值才有意义。
+  // 它按渠道存（群里想让她安静点、App 里随她聊），跟着顶栏那个
+  // App/微信 切换器走：换渠道再进这页，滑杆显示的是那个渠道的值。
+  const chData = await api('/api/chatty');
+  const chLevelOf = s => (chData && chData.levels && chData.levels[s] != null)
+    ? chData.levels[s] : ((chData && chData.level) || 5);
+  const lv = chLevelOf(State.src);
+  const chCard = el('div', {class:'card', style:'margin-bottom:16px'});
+  const chRow = el('div', {style:'display:flex;align-items:center;gap:16px'});
+  const chVal = el('div', {style:'font-size:26px;font-weight:650;min-width:52px;'+
+                                'text-align:center;color:var(--brand-dark);'+
+                                'letter-spacing:-.02em'}, String(lv));
+  const chSlider = el('input', {type:'range', min:'1', max:'10', step:'1',
+                                value:String(lv),
+                                style:'flex:1;accent-color:var(--brand);cursor:pointer'});
+  const chScale = el('div', {style:'display:flex;justify-content:space-between;'+
+                                   'font-size:11.5px;color:var(--text-muted);'+
+                                   'margin-top:6px'},
+    [el('span', {}, '1 · 惜字如金'), el('span', {}, '10 · 最黏人')]);
+  const chName = (CHANNELS.find(x=>x.id===State.src) || {}).name || '';
+  const chLeft = el('div', {style:'flex:1'}, [
+    el('div', {style:'font-size:14px;font-weight:600;margin-bottom:3px'}, '说话多少'),
+    el('div', {style:'font-size:12.5px;color:var(--text-secondary);line-height:1.5'},
+      '她觉得' + (State.src === 'wechat' ? '群里' : '这边') + '太吵就往下拉。' +
+      '改完立刻生效（不用重启），只影响' + chName + '这个渠道。'),
+    el('div', {style:'margin-top:10px;display:flex;align-items:center;gap:12px'},
+      [chSlider, chVal]),
+    chScale
+  ]);
+  chRow.appendChild(el('div', {class:'ficon',
+    style:'background:#fce7f3;color:#ec4899;flex-shrink:0',
+    html:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'}));
+  chRow.appendChild(chLeft);
+  chCard.appendChild(chRow);
+  // 拖动时只更新数字，**松手才发请求** —— 不然拖一次会打 10 个 POST，
+  // 而且每个都改一次配置、清一次规则缓存。
+  chSlider.addEventListener('input', () => { chVal.textContent = chSlider.value; });
+  chSlider.addEventListener('change', async () => {
+    const want = Number(chSlider.value);
+    const r = await api('/api/chatty', {method:'POST', body:{level:want}});
+    // 🔴 判据是 r && r.ok !== false，不是"r 不是 null"。
+    // 而且回读服务端给的值：界面显示的必须是运行时读到的那个数，
+    // 自己本地写一遍就会出现"界面调了、其实没生效"。
+    if (!r || r.ok === false) {
+      toast('没改成：' + ((r && r.err) || explainNetError(State.lastNetError || '服务没回应')), 'error');
+      chSlider.value = String(lv); chVal.textContent = String(lv);
+      return;
+    }
+    const now = (r.levels && r.levels[State.src] != null) ? r.levels[State.src] : r.level;
+    chVal.textContent = String(now);
+    toast(chName + '的说话多少设为 ' + now, 'success');
+  });
+  wrap.appendChild(chCard);
 
   const card = el('div', {class:'card'});
   const list = el('div', {class:'feature-list'});

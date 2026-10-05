@@ -1465,6 +1465,26 @@ def start_remote_api(brain):
                     if cur is None:
                         cur = _feat.all_features(_fsrc)
                     self._json(200, {"features": cur})
+                elif path == "/api/chatty":
+                    # 说话多少（1~10）。跟功能开关一样按渠道存：
+                    # 带 src 改那个渠道，不带改 default。
+                    import chatty as _ch
+                    _c = body if isinstance(body, dict) else {}
+                    _c.pop("token", None)
+                    _csrc = _norm_src(_c.pop("src", "") or "") or None
+                    if "level" in _c:
+                        _ch.set_level(_c.get("level"), _csrc)
+                        # 🔴 **必须清规则缓存**。draft_rules 是按 (人设,渠道)
+                        # 缓存的，不清的话这次改动要等大脑重启才生效 ——
+                        # 而界面会立刻显示新值，"改了没用"就是这么来的。
+                        try:
+                            _b = _LOCAL.get("brain")
+                            if _b is not None:
+                                _b._rules_cache = {}
+                        except Exception:
+                            pass
+                    self._json(200, {"levels": _ch.all_levels(),
+                                     "level": _ch.level(_csrc)})
                 elif path == "/api/moment/like":
                     try:
                         import moments
@@ -1565,20 +1585,18 @@ def start_remote_api(brain):
                     cur = persona_store.key_from_config(api_config)
                 except Exception:
                     pass
+                #🔴 这里**必须用 list_templates**，别再手搓一份。
+                # 原来下面这四行自己读 json 取 `desc`，于是卡片上那句介绍
+                # 只认预设写死的元数据 —— 而编辑器里根本没有这一栏，
+                # 用户把整份人设换掉之后介绍还是老那句，看着像"换了没生效"。
+                # `_card_desc`（从正文现算 + 分栏字段回退）就在 list_templates
+                # 里。手搓一份 = 有两个真源，改一处忘一处。
                 presets = []
                 try:
-                    for key, label in persona_store.list_personas():
-                        meta = {}
-                        try:
-                            meta = json.load(open(
-                                persona_store.path_of(key), encoding="utf-8"))
-                        except Exception:
-                            meta = {}
-                        presets.append({
-                            "key": key,
-                            "label": meta.get("label") or label,
-                            "desc": (meta.get("desc") or "")[:60],
-                        })
+                    for t in (persona_store.list_templates(cur) or []):
+                        presets.append({"key": t.get("key"),
+                                        "label": t.get("label"),
+                                        "desc": t.get("desc")})
                 except Exception:
                     pass
                 # 带 src 时按那个渠道回答：微信和 App 是两套人设，
@@ -1710,6 +1728,19 @@ def start_remote_api(brain):
                     _q = {}
                 _fsrc = _norm_src(_q.get("src") or "") or None
                 self._json(200, {"features": _feat.all_features(_fsrc)})
+            elif path == "/api/chatty":
+                # 说话多少（1~10）。带 src=wechat 读的是那个渠道的值。
+                import chatty as _ch
+                _q = {}
+                try:
+                    from urllib.parse import parse_qs, urlparse
+                    _q = {k: v[0] for k, v in
+                          parse_qs(urlparse(self.path).query).items()}
+                except Exception:
+                    _q = {}
+                _csrc = _norm_src(_q.get("src") or "") or None
+                self._json(200, {"levels": _ch.all_levels(),
+                                 "level": _ch.level(_csrc)})
             elif path == "/api/plugins":
                 # 插件清单 + 管理视图（渠道视图）。微信桥接和 VM 启动器拿这个
                 # 接口当"大脑还活着吗"的探针，只看 200 不看 body ——

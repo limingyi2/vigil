@@ -330,6 +330,106 @@ def is_blank(persona):
     return not str((persona or {}).get("name") or "").strip()
 
 
+def _card_desc(d):
+    """卡片上那句介绍：**按人设正文现算**，不是读写死的元数据。
+
+    🔴 原来直接取 persona json 里的 `desc` 字段。那是预设写死的元数据，
+    面板/App 的编辑器里都没有这一栏（见本文件下面那句"用户不该看见它们"）——
+    于是把整份人设换掉之后，卡片上的介绍还是老那句，
+    看着像"我换了人设但没生效"。用户就是这么报的。
+
+    现在从正文里挑第一句有信息量的话，`desc` 只作为正文提不出东西时的兜底。
+    """
+    # 🔴 顺序有讲究：先看「整份人设」，再退到分栏字段。
+    # 只读 notes 的话，那些内容填在 personality/background 里的老预设
+    # 会一律显示「（无描述）」—— 卡片上一排空白，等于这个功能没做。
+    for field in ("notes", "personality", "background", "scene", "relation"):
+        got = _first_sentence((d or {}).get(field))
+        if got:
+            return got
+    return str((d or {}).get("desc") or "")[:60]
+
+
+def _strip_md(s, mark):
+    """成对剥掉 markdown 标记（`**` 加粗、`` ` `` 代码），保留内容。
+
+    🔴 不用正则的`(.+?)`：`+?` 会跨过中间的内容去找下一个标记，
+    `**软是底色**，嘴硬是保护色` 会被吃成「软是底色**，嘴硬是保护色」。
+    """
+    if mark not in s:
+        return s
+    # 语义是「去掉这一种标记，其余正文全留」，**不是**「只保留标记里的内容」。
+    # markdown 修饰是行内嵌在正文中的（`**软**、嘴硬`），标记之外还有正文；
+    # 只取"一对标记之内"会把 `\`code\` 和 **bold**` 剥成 `bold` —— 前半句凭空消失。
+    #
+    # 做法：按标记切成 [前, 内, 间, 内, ..., 后]，**丢掉所有标记本身**
+    # （即奇数下标的内段也在标记内所以要留下，偶数下标全是正文）。
+    # 真正要丢的只有 parts[1::2] 里那些**成对标记之间的内容**？—— 不，
+    # 那些也是正文。**唯一该丢的就是标记字符，而 split 已经把它们去掉了，
+    # 所以答案就是把所有段拼起来**。落单的标记无法用split 表达，
+    # 因此只在标记数为**偶数**（全部成对）时才拼，否则整体不动。
+    parts = s.split(mark)
+    if len(parts) % 2 == 0:            # 标记数是奇数，有落单，无法判定，整体不动
+        return s
+    return "".join(parts)
+
+
+def _first_sentence(text):
+    """从一段（可能是 markdown 的）文本里挑第一句有信息量的话。"""
+    notes = str(text or "").strip()
+    for raw in notes.splitlines():
+        s = raw.strip()
+        # 标题行、"---" 分隔线都不是"介绍"
+        if not s or s.startswith("#") or set(s) <= set("-—=*· \t"):
+            continue
+        # 🔴 中文小标题也要跳：`【你的日常】`、`【一、你是谁】`、`〔…〕`、
+        # `《…》`。只认 `#` 的话，卡片上会出现「【你的日常】」当介绍 ——
+        # 用户看到的是一个人设章节名，不是一句话。
+        #
+        # ⚠️ 判据是「**整行被一对符号包住**」，不是「含书名号」：
+        # 「他说【笑】了一声」含 `【】` 但是正常句子，剥掉就变成
+        # 「他说笑了一声」，语义被改坏了 —— 那该留原样。
+        #
+        # 🔴 `continue` 写在下面那个 for 里只会跳**内层**（下一对符号），
+        # 不是外层的行循环 —— 循环只有一次时等于没跳。所以要靠标志。
+        _is_head = False
+        for a, b in (("【", "】"), ("〔", "〕"), ("［", "］"),
+                     ("《", "》"), ("〈", "〉")):
+            if len(s) > len(a) + len(b) and s.startswith(a) and s.endswith(b):
+                _is_head = True
+                break
+        if _is_head:
+            continue
+        # 🔴 「【你在群里的作用】两件事：…」这种**以【开头、但后面还有正文**
+        # 的也要去掉前半截 —— 它同样是人设自己写的章节名，
+        # 卡片上显示出来像内部叫法。只认"整行包住"会漏掉这一类。
+        #判据用**长度差**：括号那段超过 20 字基本就是小标题（"【日常】"只有4 个），
+        # 而"【笑】"这种行内语气词永远很短。
+        m = re.match(r"^[【〔［]([^】〕］]{4,24})[】〕］]\s*[，,：:、]?\s*", s)
+        if m and len(m.group(1)) >= 4:
+            s = s[m.end():].strip()
+        # 对半的（英文 <title>、Markdown 里混进来的）只剥不跳
+        if s.startswith("<") and s.endswith(">") and len(s) > 2:
+            s = s[1:-1].strip()
+        s = s.lstrip("-*•> ").strip()
+        # 去markdown 修饰。
+        #🔴 不能用 `re.sub(r"\*\*(.+?)\*\*")`：`.+?` 会跨过逗号去找下一个
+        # `**`，于是 `**软是底色**，嘴硬是保护色` 被吃成「软是底色**，嘴硬是保护色」
+        # —— 反而更难看。改成**成对剥**：从左往右逐个 `**` 找配对，
+        # 配不上就当它是普通星号留着（人设里本来就有`3*2` 这种）。
+        s = _strip_md(s, "**")
+        s = _strip_md(s, "`")
+        # 以冒号结尾的多半是小标题（"三条铁律："），不是介绍 —— 用**形状**
+        # 判断，而不是卡长度。原来写 `len(s) < 6` 跳过，结果
+        # "很安静。" 这种短但有效的描述被当成标题扔掉了。
+        if not s or s.endswith("：") or s.endswith(":"):
+            continue
+        if len(s) < 4:
+            continue
+        return s[:52]
+    return ""
+
+
 def list_templates(current_key=None):
     """列出当人设模板，返回 [{key,label,desc,name,blank,current}]，按展示顺序排。
 
@@ -343,9 +443,12 @@ def list_templates(current_key=None):
         except Exception:
             current_key = None
     out = []
-    if not os.path.isdir(PERSONA_DIR):
-        return out
-    for fn in sorted(os.listdir(PERSONA_DIR)):
+    # ⚠️ 目录不存在**不能**提前 return：下面那条"空目录给新建项"的兜底
+    # 在循环之后。写成 `if not os.path.isdir(...): return out` 时，
+    # 「目录不存在」会绕过兜底返回空列表 —— 而"没有 personas 目录"
+    # 恰恰是最需要那条新建入口的情况（第一次跑、部署漏了目录）。
+    for fn in (sorted(os.listdir(PERSONA_DIR))
+               if os.path.isdir(PERSONA_DIR) else []):
         if not fn.endswith(".json"):
             continue
         key = fn[:-5]
@@ -363,11 +466,19 @@ def list_templates(current_key=None):
             "key": key,
             "label": (d.get("label") or d.get("name") or
                       ("（未设置）" if blank else key)),
-            "desc": (d.get("desc") or "")[:60],
+            "desc": _card_desc(d),
             "name": d.get("name") or "",
             "blank": blank,
             "current": key == current_key,
         })
+    # 目录里一个 json 都没有（仓库里就是这个状态）时给一条新建入口，
+    # 不然界面是一张卡都没有，用户不知道该点哪儿。
+    # 这条兜底原先在 list_personas 里，/api/persona 换到本函数后一并搬过来 ——
+    # 少了它，「目录空」会从"显示新建项"退化成"空白列表"。
+    if not out:
+        out.append({"key": DEFAULT_KEY, "label": "（未设置 · 点这里新建）",
+                    "desc": "", "name": "", "blank": True,
+                    "current": current_key == DEFAULT_KEY})
     # 当前生效的排最前，其余按名字排 —— 空白兜底沉到末尾，别占着第一位
     out.sort(key=lambda x: (not x["current"], x["blank"],
                             x["label"]))

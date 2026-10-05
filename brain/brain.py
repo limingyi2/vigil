@@ -404,12 +404,25 @@ class Brain:
         cache = getattr(self, "_rules_cache", None)
         if cache is None:
             cache = self._rules_cache = {}
-        if key not in cache:
+        # 🔴 缓存键必须带上渠道，不能只用 persona key。
+        # 「说话多少」是按渠道存的（群里想让她安静点、App 里随她聊），
+        # 两个渠道碰巧用同一套人设时（key 相同），只按 key 缓存
+        # 就会把 App 的密度用到微信上 —— 而这个错"看着一切正常"。
+        ck = (key, str(src or "app"))
+        if ck not in cache:
             try:
-                cache[key] = build_draft_rules(load_persona(key) or {})
+                base = build_draft_rules(load_persona(key) or {})
             except Exception:
-                cache[key] = ""
-        return cache[key]
+                base = ""
+            # 旋钮那段拼在规则尾部：它管的是"说多少"，跟工具规则互不干扰，
+            # 而这个位置紧挨着模型的输出约束，不会被前面的长文淹掉。
+            try:
+                import chatty
+                base = (base or "") + chatty.rule_for(src)
+            except Exception:
+                pass
+            cache[ck] = base
+        return cache[ck]
 
     # 🔴 persona_text / draft_rules 走**当前渠道**，不再是一份全局的。
     # 原来它们在 reload_persona 里按全局 persona_file 生成，而聊天主链路
