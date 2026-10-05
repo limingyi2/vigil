@@ -168,6 +168,17 @@ wechat_bridge/**/pkgs/
 wechat_bridge/**/wxbridge.local.json*
 wechat_bridge/**/config.json
 
+#===== JS 技能宿主 =====
+# 技能包是别人写的代码，不进仓库：要装直接从面板/面板上传，云端有自己的一份。
+# 只留 README 说明目录结构。
+# 只排除里面的东西，**不要排除目录本身** —— 写成 `skills/` 的话
+# 后面那条 `!.gitkeep` 例外就永远不生效（父目录被整条排除，子文件也全被排除，
+# 这是 gitignore 的老规矩，README 里那句"不要写父级通配"就是同一个坑）。
+brain/skill_host/skills/*
+!brain/skill_host/skills/.gitkeep
+brain/skill_host/node_modules/
+brain/skill_host/package-lock.json
+
 #===== 浏览器验收的临时产物 =====
 # _cdp_*.js / _static.js 是用真实 Edge(CDP) 验面板的工具，不入库：
 # 它们依赖本机 Edge 路径和固定的探针端口，换台机器就跑不了。
