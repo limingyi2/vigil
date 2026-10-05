@@ -27,6 +27,7 @@ AstrBot / dify 那类框架都假设「LLM 是一次性无状态调用」，自�
      也就不会来回抢你微信的焦点。这是本脚本 `sticky` 模式的由来。
 """
 
+import base64
 import json
 import os
 import random
@@ -78,6 +79,40 @@ DEFAULT_CFG = {
 # 非文本消息在微信里的占位文本 —— 这些不值得拿去问她
 MEDIA_PLACEHOLDERS = ("[图片]", "[动画表情]", "[视频]", "[文件]", "[语音]",
                       "[聊天记录]", "[链接]", "[音乐]", "[表情]")
+
+# 图片消息的占位符。微信发图时content 就是这个（可能后面还跟着用户
+# 自己打的字），所以判断"带不带说明"要**剥掉它**，而不是看它存不存在。
+IMG_PLACEHOLDER = "[图片]"
+
+
+def _looks_like_image(m, content):
+    """这条消息是不是一张图片？
+
+    🔴 要**两路都看**，缺一不可：
+      · msg.type == 'image'  是 wxauto 的正规做法
+      · content 带 [图片]     是退路 —— 有些版本 type 不可靠/是空的
+    只认 type：遇到 type 空的版本就还是丢图，而且日志里什么都不显示。
+    只认 content：表情包之类会被当图片试着下载，白折腾一轮。
+    取"或"，宁可多试一次下载（失败也只是打一行日志）。
+    """
+    t = str(getattr(m, "type", "") or "").strip().lower()
+    if t == "image":
+        return True
+    return IMG_PLACEHOLDER in (content or "")
+
+
+def _strip_img_placeholder(content):
+    """从消息里把 [图片] 占位符剥掉，留下用户自己打的那句话。
+
+    🔴 踩过：原来写的是 `content if not content.startswith("[图片]") else ""`——
+    意思是"只要开头是 [图片] 就把**整句**丢掉"。于是「[图片]这个啥意思」
+    这条变成了空字符串，用户真正问的那半句被一起扔了。
+    她收到一张图、但不知道他问的是什么，只能瞎猜。
+    """
+    if not content:
+        return ""
+    return content.replace(IMG_PLACEHOLDER, "").strip()
+
 
 
 def load_cfg():
@@ -150,12 +185,19 @@ class Brain(object):
         print("")
         return False
 
-    def ask(self, text):
-        """问一次。返回她说的话；出错返回 None（不抛，抛了群里就刷错误）。"""
+    def ask(self, text, img_b64=None):
+        """问一次。返回她说的话；出错返回 None（不抛，抛了群里就刷错误）。
+
+        img_b64：这一轮带的图片（纯 base64，不带 data: 前缀）。
+        云端 server.ask_with_retry 会把它交给**独立的视觉模型**
+        （config里 vision 那段），主模型换不换得看图能力都不影响。
+        """
         if not self.picked:
             return None
-        body = json.dumps({"text": text, "src": "wechat"},
-                          ensure_ascii=False).encode("utf-8")
+        payload = {"text": text, "src": "wechat"}
+        if img_b64:
+            payload["img"] = img_b64
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         url = self.picked + "/api/chat"
         if self.token:
             url += "?token=" + urllib.parse.quote(self.token)
@@ -368,7 +410,17 @@ class Bridge(object):
 
     @staticmethod
     def _fp(item):
-        return "%s|%s" % (item[0], item[1])
+        # 🔴 图的指纹**不能拿整段base64**（几十万字，拼一次就够呛），
+        # 取长度 + 头尾一小段就够了 —— 目的是"两张不同的图不被当成同一条"，
+        # 不是密码学上的抗碰撞。
+        # 不加图这一维的后果很具体：连着发两张图，第一张处理完，
+        # 第二张的指纹因为"sender 和文字都空"跟第一张一样被判成重复，
+        # 于是**第二张图永远不处理**，而日志里一条错都不报。
+        img = item[2] if len(item) > 2 else ""
+        tag = ""
+        if img:
+            tag = "#img%d:%s" % (len(img), img[:24])
+        return "%s|%s%s" % (item[0], item[1], tag)
 
     def _foreground_is_wechat(self):
         """当前前台窗口是不是微信。
@@ -425,14 +477,103 @@ class Bridge(object):
                 content = str(getattr(m, "content", "") or "").strip()
             except Exception:
                 continue
-            if not content or content in MEDIA_PLACEHOLDERS:
+            # 🔴 图片原来在这里被直接丢掉：content 是 "[图片]" 占位符，
+            # 命中 MEDIA_PLACEHOLDERS 就 continue。所以她**在微信里一直看不见图**
+            # —— 不是模型不支持，是桥接压根没把图传过去。
+            # 现在：认出图片消息就下载转 base64，随消息一起送云端。
+            img_b64 = ""
+            if self._is_image(m, content):
+                content, img_b64 = self._grab_image(m, content, sender)
+                if not img_b64:
+                    # 下不到图就别把这句 "[图片]" 送上去 —— 让她对着占位符
+                    # 瞎猜，比不理人更奇怪。
+                    continue
+            if not content and not img_b64:
+                continue
+            if content and content in MEDIA_PLACEHOLDERS:
+                content = ""
+            if not content and not img_b64:
                 continue
             # 微信把自己发的消息标成 'self'（实测）。换成昵称，
             # 免得下游把它当成一个叫 self 的陌生人拼进给大脑的话里。
             if sender.lower() in self.SELF_MARKERS:
                 sender = self.my_name or "我"
-            items.append((sender, content))
+            items.append((sender, content, img_b64))
         return items
+
+    # --- 图片 ------------------------------------------------------
+    def _is_image(self, m, content):
+        return _looks_like_image(m, content)
+
+    # 能收多大的图。微信里发的大图（十几MB）转 base64 后更大，
+    # 8788 那个口本来是给文字消息用的，塞一坨几十MB 的东西会把请求拖死。
+    # 走 vision 前一般也会缩，所以这里卡一道：超限就缩，缩不了就放弃。
+    IMG_MAX_BYTES = 4 * 1024 * 1024
+
+    def _grab_image(self, m, content, sender):
+        """把图片消息变成 (文字说明, base64)。
+
+        返回 (text, img_b64)：
+          · 纯图片（没有文字）→ text 留空。云端那边会自己加"（他发的图：…）"，
+            **不要**在这儿编一句"我看到一张图了"—— 那是抢模型的活，
+            而且她还没描述就宣称看到了，等于骗人。
+          · 图 + 一句话 → 两样都留着，那句话通常是"这个啥意思"之类。
+          · 下不到 → 返回空，调用方整条丢掉。
+        """
+        path = None
+        try:
+            dl = getattr(m, "download", None)
+            if callable(dl):
+                path = dl()
+        except Exception as e:
+            print("[微信] 下载图片失败（%s）：%s" % (sender or "?", e))
+        if not path:
+            print("[微信] 这条图片拿不到文件（%s），跳过" % (sender or "?"))
+            return "", ""
+        try:
+            data = self._shrink(str(path))
+            if not data:
+                return "", ""
+            return _strip_img_placeholder(content), \
+                base64.b64encode(data).decode("ascii")
+        except Exception as e:
+            print("[微信] 读图片出错（%s）：%s" % (sender or "?", e))
+            return "", ""
+        finally:
+            # 下载的临时文件不留着 —— 微信默认会往桌面上堆，
+            # 跑一晚上就是几百张。删不掉就算了，但一定要试。
+            try:
+                if path and os.path.exists(str(path)):
+                    os.remove(str(path))
+            except Exception:
+                pass
+
+    def _shrink(self, path):
+        """读图片，超大就等比缩到 IMG_MAX_BYTES 以内。返回字节。"""
+        with open(path, "rb") as f:
+            data = f.read()
+        if len(data) <= self.IMG_MAX_BYTES:
+            return data
+        try:
+            import io
+            from PIL import Image
+            im = Image.open(io.BytesIO(data))
+            im = im.convert("RGB")
+            # 每次砍一半直到够大。上限 20 次：再小就只剩色块了，
+            # 与其传一张看不出什么的图，不如老实放弃。
+            for _ in range(20):
+                im.thumbnail((im.width // 2, im.height // 2))
+                if not im.width or not im.height:
+                    return None
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=80)
+                data = buf.getvalue()
+                if len(data) <= self.IMG_MAX_BYTES:
+                    return data
+            return None
+        except Exception as e:
+            print("[微信] 缩图失败（%s），这条图不送了" % e)
+            return None
 
     def _diff(self, items):
         """比对出这一轮新增的消息。
@@ -637,7 +778,7 @@ class Bridge(object):
             self._paused = 0
         items = self._snapshot()
         new = self._diff(items)
-        for sender, content in new:
+        for sender, content, img_b64 in new:
             if self._is_mine(sender, content):
                 continue
             self._last_active = time.time()
@@ -645,13 +786,23 @@ class Bridge(object):
             # 下一轮冷场重新掷 —— 否则一次冷场就把随机值用完了，
             # 之后每一轮都是同一个时间，等于退回固定值。
             self._idle_target = None
+            # 🔴 群里没点名就不回 —— **图片也守这条**。
+            # 群里有人随手扔张图就把她叫起来，太吵了；
+            # 而且看图要花钱（视觉模型另一次调用），不能被随便触发。
             if not self._should_reply(content):
-                print("[跳过] %s：%s" % (sender or "?", content[:40]))
+                print("[跳过] %s：%s" % (sender or "?", (content[:40] or ("[图片]" if img_b64 else ""))))
                 continue
             # 她需要知道是谁在说话，否则三个人说话她分不清
-            text = ("%s：%s" % (sender, content)) if sender else content
-            print("[收到] %s" % text[:100])
-            answer = self.brain.ask(text)
+            if sender and content:
+                text = "%s：%s" % (sender, content)
+            elif content:
+                text = content
+            else:
+                # 纯图片：告诉她是**谁**发的图，但别替她说"我看到图了"——
+                # 描述是视觉模型的活，桥接只负责把图送到。
+                text = ("%s：（发来一张图）" % sender) if sender else "（发来一张图）"
+            print("[收到] %s%s" % (text[:100], "  [带图]" if img_b64 else ""))
+            answer = self.brain.ask(text, img_b64 or None)
             if not answer:
                 continue
             self._send(answer)
