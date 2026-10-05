@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 PASS = [0]
+ALL_CH = ["app", "wechat"]   # 模块级：两个测试入口共用
 FAIL = []
 
 
@@ -248,13 +249,35 @@ def main_http():
               and s2[0]["channels"].get("app") is False,
               s2[0] if s2 else None)
     finally:
-        want = [k for k, v in was.items() if v]
-        post("/api/skill/channels", {"skill": pkg, "channels": want})
+        # 🔴 **恢复这步必须自己断言**。原来只是 post 一下、不看回包：
+        # 失败也照样往下走，于是「改坏→恢复失败→留下坏状态」全程零报错。
+        # 2026-10-06 就真撞上了：四个技能被留在 `["wechat"]`，
+        # App 端问运势一律得到「这个技能在 App 里不开放」，
+        # 而测试当时是 7 项全绿。
+        #
+        # 🔴 **`was` 不能拿来当基准**。它是"读到的当前值"：
+        # 如果进来时状态已经是坏的，`was` 就是坏的，恢复成坏值
+        # 然后拿 `was` 一比 —— 完美自洽，永远发现不了问题。
+        # 基准必须是"两个渠道都开"这个已知的期望值。
+        want = list(ALL_CH)
+        rr = post("/api/skill/channels", {"skill": pkg, "channels": want})
+        check("恢复请求本身成功", rr.get("ok") is True, rr)
+        check("恢复后两个渠道都开着",
+              (rr.get("channels") or {}).get("app") is True
+              and (rr.get("channels") or {}).get("wechat") is True, rr)
     print("[H3] 恢复原状读回")
     st3 = post("/api/skill/status", {})
     s3 = [x for x in (st3.get("skills") or []) if x.get("id") == pkg]
-    check("恢复成功", bool(s3) and s3[0]["channels"] == was,
-          (s3[0]["channels"] if s3 else None, was))
+    expect = {c: True for c in ALL_CH}
+    check("恢复成功（对的是「都开着」，不是对 was）",
+          bool(s3) and s3[0]["channels"] == expect,
+          (s3[0]["channels"] if s3 else None, expect))
+    # 顺手把**所有**技能都查一遍：只盯着第一个包，
+    # 其它包被谁改歪了没人知道（这次就是四个全被改成只微信）。
+    st4 = post("/api/skill/status", {})
+    bad = [x.get("id") for x in (st4.get("skills") or [])
+           if not all((x.get("channels") or {}).get(c) for c in ALL_CH)]
+    check("没有别的技能被留在「部分渠道开」的状态", not bad, bad)
 
     print("\n== %d pass / %d fail ==" % (PASS[0], len(FAIL)))
     for f in FAIL:
