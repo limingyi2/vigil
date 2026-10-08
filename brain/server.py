@@ -683,7 +683,9 @@ def start_remote_api(brain):
     同一时间只允许一个进程养她。
     """
     tok = BRAIN_TOKEN
-    port = 8788
+    # 8788 是云端默认；sidecar（PyInstaller 打包的本地大脑）由 server_launch
+    # 选好空闲端口后经 VIGIL_PORT 注入 —— 云端不设这个变量，行为不变。
+    port = int(os.environ.get("VIGIL_PORT") or 8788)
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def _check(self):
@@ -1596,6 +1598,13 @@ def start_remote_api(brain):
                     pass
 
         def _do_GET(self):
+            # 🔴 /api/health 在鉴权之前放行：sidecar 的启动壳（server_launch）
+            # 和 Electron 壳靠它做就绪探测 —— 此时可能还没配 token，
+            # 走鉴权就永远探测不到。只回存活信息，不吐任何配置。
+            if self.path.split("?")[0] == "/api/health":
+                self._json(200, {"ok": True, "pid": os.getpid(),
+                                 "frozen": bool(getattr(sys, "frozen", False))})
+                return
             # 🔴 取连接配置这个接口必须**在鉴权之前**处理。
             # 它存在的意义就是"本地没有 token"，走正常鉴权必然 401 ——
             # 死锁，一次都拿不到。放行条件是回环地址，见该分支内的说明。

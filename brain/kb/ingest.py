@@ -9,7 +9,7 @@
 删除某个文档后，旧块仍在库里，需要手动按 source 删（见 --remove）。
 """
 import os, re, hashlib, argparse
-from kb_core import embed, get_collection, DOC_DIR, CHROMA_PATH
+from .kb_core import embed, get_collection, DOC_DIR, CHROMA_PATH
 
 CHUNK_SIZE = 800      # bge-m3 支持 8192 token，块可以放大到 800 字
 OVERLAP = 80           # 块间重叠，防止语义被切断

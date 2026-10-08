@@ -7,7 +7,7 @@
     python search.py --stats             # 看向量库有多少条
 """
 import sys
-from kb_core import embed, get_collection, stats
+from .kb_core import embed, get_collection, stats
 
 
 def search(query, top_k=5):

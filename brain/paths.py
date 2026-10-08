@@ -12,8 +12,19 @@ data/    memory 记忆库、her_life 经历流、summary 历史摘要、
 logs/watchdog.log 看门狗日志        archive/ 备份与旧数据
 """
 import os
+import sys
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+# --- 冻结模式（PyInstaller sidecar）---
+# 打包成 exe 后：代码与只读资源被解到 sys._MEIPASS（每次启动的临时目录），
+# 而她的家 —— config/ data/ logs/ 这些要**活得比进程久**的东西 ——
+# 必须落在 exe 旁边。所以冻结时 ROOT 指向 exe 所在目录；
+# 非冻结（云端/本机源码跑）行为一字不变。
+# 注意：全项目其余地方的 `os.path.dirname(__file__)` 都只是"单独跑某个
+# 文件"的兜底分支，正常都走本文件的常量 —— 所以改这一处就够。
+if getattr(sys, "frozen", False):
+    ROOT = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # --- 四个大类 ---
 CONFIG_DIR = os.path.join(ROOT, "config")
