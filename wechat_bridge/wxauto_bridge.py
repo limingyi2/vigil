@@ -16,7 +16,7 @@ AstrBot / dify 那类框架都假设「LLM 是一次性无状态调用」，自�
 知夏的大脑在云端已经管好了人设和记忆，再叠一层 session 会让她被两套记忆
 同时驱动 —— 表现是"群里说的话记到别处去了"。所以这里刻意做得很薄。
 
-## 关于免费版 wxauto4 的两个实测结论（重要）
+## 关于免费版 wxauto4 的两个结论（重要）
 
 1. `AddListenChat` **能建子窗口，但回调不触发**（实测 6 秒 0 次）。
    文档标它是 Plus 专属 —— 建窗口那步没拦，推送那步拦了。
@@ -32,26 +32,55 @@ import json
 import os
 import random
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+# --- 控制台/agent 执行层（本地执行，不走云端人设） ---
+# 2026-10-08 从桥接机版移植进仓库（那两个文件之前只存在于机器上、没进过 git）。
+#   agent_console：! 前缀指令直接在本机执行（截图/命令），主人鉴权后放行
+#   agent_llm    ：自然语言 → GLM 自主调工具 → 本机执行 → 回传
+try:
+    from agent_console import Console
+except Exception:
+    Console = None
+try:
+    from agent_llm import LLMAgent
+except Exception:
+    LLMAgent = None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-BRAIN_CFG = os.path.normpath(os.path.join(HERE, "..", "config", "config.json"))
+# token 兜底文件：运行位在 brain/wechat_bot 时，../config 就是 brain/config；
+# 源码位在 wechat_bridge 时，大脑配置在 ../brain/config —— 两处都试
+_BRAIN_CFGS = (
+    os.path.normpath(os.path.join(HERE, "..", "config", "config.json")),
+    os.path.normpath(os.path.join(HERE, "..", "brain", "config", "config.json")),
+)
 LOCAL_CFG = os.path.join(HERE, "wxbridge.local.json")
 
 DEFAULT_CFG = {
     # 微信群名（微信里显示的名字，要一字不差）
+    # 要盯的会话。**可以是字符串（单个）或数组（多个）** —— 见 chat_names。
+    # 2026-10-08：桥接机搬上云端后"不抢窗口"这个约束没了（那台机器没人用微信），
+    # 于是去掉 listen/sticky 那一套，改成多会话分时轮询。
     "chat_name": "",
-    # 🔴 安全护栏：这里填知夏小号的 wxid（不是微信号，是 GetMyInfo 里的 id）。
+    # 私聊怎么触发。群要 @ 才好接话，私聊不用 —— 这一栏是"这段会话的规则"，
+    # 覆盖 group_reply_mode。取值同上：mention / gate / all
+    "private_reply_mode": "all",
+    # 🔴 哪些会话是**私聊**（2026-10-08）。不在这个名单里的都当群。
+    # 为什么必须显式配：配置里写的是群名/昵称，不是 wxid ——
+    # 拿 "@chatroom" 去判会把每个会话都判成私聊，于是群里她接住每一句话。
+    "private_chats": [],
+    # 安全护栏：这里填知夏小号的 wxid（不是微信号，是 GetMyInfo 里的 id）。
     # 桥接连上微信后会核对，对不上就**拒绝运行**，一条消息都不发。
     # 第一次跑先看 [微信] 那行打印的真实 id，填进来。
     "expected_wxid": "",
     # 黑名单（forbidden_wxids）已移除：桥接机登的是专用小号，
     # 环境里不存在大号会登录的路径。白名单（expected_wxid）已经拦住
     # 「不是小号的任何号」，黑名单在功能上是冗余的第二道闸。
-    # ⚠️ 如果哪天这台机器上装了第二个微信、或者 expected_wxid 被误填，
+    # 如果哪天这台机器上装了第二个微信、或者 expected_wxid 被误填，
     #   就少了一道兜底 —— 那时把这几行加回来。
     # 她在群里的昵称，用来判断有没有被 @。可以填多个
     "bot_nicknames": ["知夏"],
@@ -71,8 +100,11 @@ DEFAULT_CFG = {
     "quiet_to": 7,
     # 轮询间隔（秒）
     "poll_seconds": 3,
-    # 云端大脑地址。隧道优先，不通就走公网
-    "brain_urls": ["http://127.0.0.1:18787", "http://203.0.113.10:8788"],
+    # 云端大脑地址。隧道优先。
+    # 🔴 这里**只留隧道**，公网直连那条要写进 wxbridge.local.json（被 gitignore 挡着）。
+        # 默认值里不要写死云机公网 IP —— 那是把服务器地址印在公开仓库里，
+    # 而且会让人以为"公网直连是正常路径"（其实它慢且常超时，只该当兜底）。
+    "brain_urls": ["http://127.0.0.1:18787"],
     "brain_token": "",
     "timeout": 180,
     # 一条回复最多发多少字（太长群里刷屏）
@@ -107,7 +139,7 @@ def _looks_like_image(m, content):
 def _strip_img_placeholder(content):
     """从消息里把 [图片] 占位符剥掉，留下用户自己打的那句话。
 
-    🔴 踩过：原来写的是 `content if not content.startswith("[图片]") else ""`——
+    🔴 已知失效写法：`content if not content.startswith("[图片]") else ""`——
     意思是"只要开头是 [图片] 就把**整句**丢掉"。于是「[图片]这个啥意思」
     这条变成了空字符串，用户真正问的那半句被一起扔了。
     她收到一张图、但不知道他问的是什么，只能瞎猜。
@@ -117,7 +149,7 @@ def _strip_img_placeholder(content):
     return content.replace(IMG_PLACEHOLDER, "").strip()
 
 
-# 🔴 图片在 items 里延迟下载时要用的占位对象。
+# 图片在 items 里延迟下载时要用的占位对象。
 # 它只是"这里有一条图片消息，图片还没下载"的记号 —— 真正的内容
 # 要等 _diff 确认这条是新消息之后才去拉。
 # 为什么要有这个东西：以前 _snapshot 每轮都会对窗口里**所有**图片调
@@ -149,11 +181,15 @@ def load_cfg():
             print("[配置] 读本地配置失败，用默认值：%s" % e)
     if not cfg.get("brain_token"):
         # token 不在桥接配置里，就从大脑配置拿 —— 别把口令抄两份
-        try:
-            with open(BRAIN_CFG, encoding="utf-8") as f:
-                cfg["brain_token"] = json.load(f).get("brain_token") or ""
-        except Exception:
-            pass
+        for _bc in _BRAIN_CFGS:
+            try:
+                with open(_bc, encoding="utf-8") as f:
+                    _tok = json.load(f).get("brain_token") or ""
+            except Exception:
+                _tok = ""
+            if _tok:
+                cfg["brain_token"] = _tok
+                break
     return cfg
 
 
@@ -172,27 +208,61 @@ class Brain(object):
         # 本机有代理，urllib 会去撞它，显式禁掉
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def pick(self):
-        """启动时探一次哪个地址能用，之后固定用它。"""
+    def pick(self, force=False):
+        """探一次哪个地址能用。
+
+        force=True 时**不管当前选中的是谁，重新探一遍全部地址**。
+        为什么要有这个：隧道会断（本机的 SSH 通道一关，127.0.0.1:18787
+        就没人听），而 brain_urls 里那个**公网兜底地址**通常是好的。
+        原来的写法是"启动时探一次、之后固定用它" —— 隧道一断，ask() 每次
+        都失败、只打印一行 `[大脑] 出错`，**永远不会切到公网**。
+        症状是"群里她突然哑了，重启桥接就好"，而隧道明明没理由不通。
+        主循环每 30 轮拿 force=True 调一次：探活，顺便切到还活着那个。
+
+        🔴 注释里不写具体 IP —— 这个仓库是公开的，真地址会跟着推上
+        GitHub。真值放被 .gitignore 挡住的 wxbridge.local.json 里。
+        """
         why = []
         for u in self.urls:
+            # 已经选中的先跳过（除非 force —— 它可能正是断掉的那个）
+            if not force and self.picked and u.rstrip("/") == self.picked:
+                return True
             try:
                 url = u.rstrip("/") + "/api/plugins"
                 if self.token:
                     url += "?token=" + urllib.parse.quote(self.token)
                 with self._opener.open(
-                        urllib.request.Request(url, headers={"User-Agent": "zhixia"}),
+                        urllib.request.Request(url, headers={"User-Agent": "vigil"}),
                         timeout=8) as r:
                     r.read(200)
+                if self.picked and u.rstrip("/") != self.picked:
+                    print("[大脑] 切到 %s（原地址 %s 已不可用）"
+                          % (u.rstrip("/"), self.picked))
                 self.picked = u.rstrip("/")
-                print("[大脑] 用 %s" % self.picked)
+                if not force:
+                    print("[大脑] 用 %s" % self.picked)
                 return True
             except Exception as e:
                 why.append("%s -> %s" % (u.rstrip("/"), str(e)[:60]))
                 continue
-        # 🔴 连不上大脑 = 桥接毫无意义：每条消息都会走到 ask() 然后拿不到
+        if not force:
+            # 启动时连不上：把失败原因留住，交给 pick_report 打那段排错提示
+            self._pick_why = list(why)
+            return False
+        # force=True 且全都不通：保留原来那个（_brain_errs 会继续计数并触发退出）
+        return bool(self.picked)
+
+    def pick_report(self, why=None):
+        """启动时连不上大脑才打的那一大段排错提示。
+
+        2026-10-08：原本这段直接跟在 pick() 的 for 循环后面。现在 pick() 多了
+        force 参数、会在运行中被反复调用（探活 + 切到还活着那个地址），
+        所以提示挪到这里，由**启动那一次**显式调用 —— 否则每 30 轮刷一次
+        "连不上大脑，桥接无法工作"，而它其实还能用（已切到公网地址）。
+        """
+        # 连不上大脑 = 桥接毫无意义：每条消息都会走到 ask() 然后拿不到
         # 任何回复，群里表现就是"她一声不吭"。必须说清楚为什么、怎么修，
-        # 静默退出让人只能盯着不发火的窗口干瞪眼（这个坑踩过一次）。
+        # 静默退出时用户只能盯着不发火的窗口干瞪眼。
         print("")
         print("=" * 62)
         print("连不上大脑，桥接无法工作（每条消息都会石沉大海）")
@@ -202,23 +272,36 @@ class Brain(object):
         print("最常见的原因：SSH 隧道没开。云端的 %s 端口**不对公网开放**"
               % (self.urls[-1].rsplit(":", 1)[-1] if ":" in self.urls[-1] else "API"))
         print("（22端口的 SSH 能连上不代表 API 端口也能连，这个坑查过一次）")
-        print("先开隧道：双击 知夏自测.bat（新版本会自动开隧道并等它就绪）")
-        print("或者手动：ssh -N -L 18787:127.0.0.1:8788 "
-              "administrator@203.0.113.10")
+        print("先开隧道：双击 VigilSelfTest.bat（新版本会自动开隧道并等它就绪）")
+                # 不要把云机地址和 SSH 用户名写死在提示里 —— 一句"帮人排错"的
+        # 文案，把服务器地址印进了公开仓库。改成从**你自己配的**地址里取：
+        # 取到了就显示，取不到（只配了隧道）就让他照模板填。
+        _pub = [u for u in self.urls if "127.0.0.1" not in u and "localhost" not in u]
+        if _pub:
+            _h = _pub[-1].split("//")[-1].split("/")[0].rsplit(":", 1)[0]
+            print("或者手动：ssh -N -L 18787:127.0.0.1:8788 <你的SSH用户>@%s" % _h)
+        else:
+            print("或者手动：ssh -N -L 18787:127.0.0.1:8788 <你的SSH用户>@<你的云机IP>")
+            print("（公网兜底地址在 wxbridge.local.json 的 brain_urls 里配）")
         print("=" * 62)
         print("")
         return False
 
-    def ask(self, text, img_b64=None):
+    def ask(self, text, img_b64=None, src="wechat"):
         """问一次。返回她说的话；出错返回 None（不抛，抛了群里就刷错误）。
 
         img_b64：这一轮带的图片（纯 base64，不带 data: 前缀）。
         云端 server.ask_with_retry 会把它交给**独立的视觉模型**
         （config里 vision 那段），主模型换不换得看图能力都不影响。
+
+        src：渠道，决定云端按哪份人设 / 记忆 / 历史回答。
+        🔴 群和私聊**必须**分开（2026-10-08 多会话改造）—— 合在一起，
+        她会把她在群里的反应拿去回答私聊（或者反过来），说话方式会串，
+        而且两边的记忆会互相污染。
         """
         if not self.picked:
             return None
-        payload = {"text": text, "src": "wechat"}
+        payload = {"text": text, "src": src}
         if img_b64:
             payload["img"] = img_b64
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -252,12 +335,49 @@ class Brain(object):
 class Bridge(object):
     def __init__(self, cfg):
         self.cfg = cfg
-        self.chat_name = cfg["chat_name"]
+        # 一个还是多个会话，都归一成列表。兼容三种写法：
+        #   "群名"  /  ["群名"]  /  ["群名", "某人"]
+        _raw = cfg.get("chat_names")
+        if not _raw:
+            _raw = cfg.get("chat_name")
+        if isinstance(_raw, str):
+            _raw = [_raw] if _raw.strip() else []
+        self.chat_names = [str(x).strip() for x in (_raw or []) if str(x).strip()]
+        # 兼容老代码/老日志：chat_name 仍然指"当前轮到的那个"
+        self.chat_name = self.chat_names[0] if self.chat_names else ""
+        # 控制台/agent：本地执行层。命中前缀的指令直接在本机执行并回传，
+        # 完全绕过云端大脑（无人设/无闸门/无记忆）。
+        self.console = None
+        try:
+            if Console is not None:
+                _cc = dict(cfg.get("console") or {})
+                if _cc.get("enabled", True):
+                    self.console = Console(_cc)
+                    print("[console] ready prefix=%r owner=%r danger=%s"
+                          % (self.console.prefix, self.console.owner or "(any)",
+                             self.console.allow_danger))
+        except Exception as _e:
+            print("[console] init failed: %s" % _e)
+        # LLM 驱动 agent：自然语言 → 模型自主调工具 → 本机执行 → 回传
+        self.agent = None
+        try:
+            if LLMAgent is not None:
+                _ac = dict(cfg.get("agent") or {})
+                if _ac.get("enabled", True):
+                    self.agent = LLMAgent(_ac)
+                    print("[agent] ready model=%r trigger=%r"
+                          % (self.agent.model, self.agent.trigger))
+        except Exception as _e:
+            print("[agent] init failed: %s" % _e)
         self.brain = Brain(cfg["brain_urls"], cfg["brain_token"],
                            int(cfg.get("timeout") or 180))
         self.wx = None
-        self._prev = []          # 上一轮看到的消息指纹
-        self._synced = False     # 第一次轮询只记不看
+        # 🔴 去重状态**按会话分开**（2026-10-08 多会话改造）。
+        # 原来是一条扁平列表：混进两个会话的消息后，"前缀相同"这个判据立刻失效
+        # （A 群最后一条 + B 群最后一条拼起来不可能是上一轮的前缀），
+        # 于是每轮都判成"有新增"→ 把整个历史重新问一遍大脑，又慢又贵。
+        self._prev = {}           # {会话名: [消息指纹, ...]}
+        self._synced = {}         # {会话名: bool} 第一次轮询该会话只记不看
         # 读消息卡死的保护（见 _read_all）
         self._read_busy = False      # 还有个卡住的读线程在跑
         self._read_stuck_until = 0.0  # 冷却到什么时候为止（时间戳）
@@ -275,10 +395,13 @@ class Bridge(object):
         # 监听模式：用 AddListenChat 把对话拆成独立子窗口，读写都在子窗口里，
         # **不用占主窗口前台**。轮询模式必须让微信一直停在目标对话上，
         # 所以会跟你抢窗口（用户反馈过）。
+        # 云端机器上没人用微信 → 固定用主窗口 + ChatWith 切会话。
+        # 留 listen 只是为了旧配置能读；它已不生效（真要走子窗口得改 _snapshot/_send
+        # 那一整套，见 git log 2026-10-08 之前的版本）。
         self.listen = bool(cfg.get("listen", True))
-        # 你在用别的软件时暂停的轮数（只为打印"让路/回来"用）
-        self._paused = 0
-        self._sub = None          # AddListenChat 建的子窗口（不抢主窗口）
+        self._sub = None          # AddListenChat 建的子窗口（云端不用了，留着兼容）
+        # 轮转游标：每轮处理一个会话，下一轮换下一个
+        self._rr = 0
 
     # --- 监听模式 ---------------------------------------------------
 
@@ -288,15 +411,15 @@ class Bridge(object):
         from wxauto4 import WeChat
         # ads=False：默认会打印一段广告，没必要
         #
-        # 🔴 这里**不能**靠传参指定连哪个微信 —— 实测传了不报错但完全无效：
+                # 这里**不能**靠传参指定连哪个微信 —— 传了不报错但完全无效：
         #   WeChat(ads=False, path=r'D:\Weixin418\Weixin.exe')
         #     -> wx.path 仍是 C:\Program Files\Tencent\Weixin\Weixin.exe
         #        wx.dir  仍是 C:\Program Files\Tencent\Weixin\203.0.113.10
         # 选窗口的逻辑在 .pyd 二进制里（读不到源码），两个实例并存时
         # 它连哪一个没有保证。所以只能靠下面的身份硬闸。
         #
-        # 🔴 构造**会抛**，不是返回 False：微信 4.x 的控件树没被唤醒时它直接
-        # 抛「未找到已登录的客户端主窗口」。原来这里没有 try，异常一路穿到
+        # 构造**会抛**，不是返回 False：微信 4.x 的控件树没被唤醒时它直接
+                # 抛「未找到已登录的客户端主窗口」。这里没有 try 时异常一路穿到
         # main()，表现是桥接在十一秒后静默退出、控制台只剩一个裸 traceback，
         # 而 launcher.log 只记「exited with code 1」——说不出原因。所以这里
         # 接住并说人话，返回 False 让上层按"连不上"处理。
@@ -324,8 +447,8 @@ class Bridge(object):
             pass
         self.my_name = (my.get("display_name") or "").strip()
         self.my_id = (my.get("id") or "").strip()
-        # 这两个属性实测能读到（pyd 里的 uWeChat.path / uWeChat.dir），
-        # 拿它可以在比对 wxid 之前就发现「连到别的实例去了」
+                        # 这两个属性能读到（pyd 里的 uWeChat.path / uWeChat.dir），
+                        # 拿它可以在比对 wxid 之前就发现「连到别的实例去了」
         self.wx_path = str(getattr(self.wx, "path", "") or "")
         self.wx_dir = str(getattr(self.wx, "dir", "") or "")
         print("[微信] 已连上：昵称=%r wxid=%r 地区=%r"
@@ -336,18 +459,46 @@ class Bridge(object):
         if not self._identity_ok():
             return False
 
+        # 🔴 把主窗口拉到接近全屏（2026-10-08 多会话改造配套）。
+        # 微信 4.x 只把**当前可见**的那部分消息注册进控件树 —— 默认大小的
+        # 窗口只有几条的容量，轮转切走再切回来，可见集合就变了，_diff 的
+        # 锚点直接丢失，多会话会永远卡在"窗口内容对不上"。窗口越大，
+        # 可见容量越大，锚点丢失就变成罕见事件。
+        try:
+            import win32gui
+
+            def _enum(h, acc):
+                if win32gui.IsWindowVisible(h):
+                    if (win32gui.GetWindowText(h) or "").strip() == "微信":
+                        acc.append(h)
+                return True
+
+            acc = []
+            win32gui.EnumWindows(_enum, acc)
+            if acc:
+                win32gui.MoveWindow(acc[0], 0, 0, 1920, 1040, True)
+                print("[微信] 主窗口已放大到 1920x1040（提高可见消息容量）")
+            else:
+                print("[微信] 没找到主窗口句柄，跳过放大（不影响其余功能）")
+        except Exception as e:
+            print("[微信] 窗口放大失败（不影响运行）：%s" % str(e)[:90])
+
         if not self.brain.pick():
+            self.brain.pick_report()      # 启动时连不上：打那段排错提示
             return False
 
-        if self.chat_name:
+        # 云端模式：不建子窗口，靠 _switch_to 每轮切。
+        # 原来这里 listen=True 会 AddListenChat 建子窗口 —— 桥接机在云端、
+        # 那台机器没人用微信，子窗口只带来"回调不触发"和一层没用的复杂度。
+        if False and self.chat_name:
             try:
                 # 用**子窗口**而不是主窗口。
                 #
-                # 为什么不走 AddListenChat 的回调：实测 4.1.8 + wxauto4 41.1.7
+                                # 为什么不走 AddListenChat 的回调：4.1.8 + wxauto4 41.1.7
                 # 下回调**根本不触发**（子窗口能读到消息，但 fired 一直是 0）。
                 # 所以改成"子窗口 + 轮询" —— 子窗口是独立出来的对话，
                 # 读它**不会把主微信窗口切走**，也就不抢你正在用的窗口。
-                # 这是"不抢窗口 + 可靠"唯一实测成立的组合。
+                                # 这是"不抢窗口 + 可靠"唯一成立的组合。
                 if self.listen:
                     sub = None
                     try:
@@ -389,8 +540,8 @@ class Bridge(object):
         #   banned = set(self.cfg.get("forbidden_wxids") or [])
         #   if self.my_id and self.my_id in banned: ... 拒绝运行
 
-        # 实例路径对不上：还没比 wxid 就先发现了「连的不是那一份微信」。
-        # 微信 4.x 跨安装目录单实例（D 盘那份实测 15 秒就把启动请求
+                # 实例路径对不上：还没比 wxid 就能发现「连的不是那一份微信」。
+                # 微信 4.x 跨安装目录单实例（D 盘那份 15 秒就把启动请求
         # 转交给 C 盘那份然后自己退出），所以最常见的错不是登错号，
         # 是另一个微信还开着、桥接连上了它 —— 这条能在最早的地方拦住。
         want_dir = (self.cfg.get("bot_weixin_dir") or "").strip()
@@ -436,10 +587,10 @@ class Bridge(object):
     # 下一轮读到的列表不是上一次的延长线 → _diff 找不到锚点 →
     # 却把 _prev 更新成图窗的内容 → 回到聊天窗前缀彻底对不上 →
     # 那条图被当成新消息 → 又 download() 一次、又开一次窗。
-    # 🔴 症状是微信窗口里那张图被反复打开，而真正的文字消息
+    # 症状是微信窗口里那张图被反复打开，而真正的文字消息
     #    （"哎久等了"）之后再也没被处理过。
     #
-    # 🔴 但**光靠这道闸修不好**：闸在下载之后，而死循环的副作用
+    # 但**光靠这道闸修不好**：闸在下载之后，而死循环的副作用
     # （右键、开窗、抢焦点）发生在下载**之中**。闸拦得住"重复送云端"，
     # 拦不住"反复操作微信"。真正解决问题的是**位置** —— 现在图片在
     # _diff 判出新增之后才下载（见 _snapshot / _resolve_img），
@@ -469,7 +620,7 @@ class Bridge(object):
 
     @staticmethod
     def _fp(item):
-        # 🔴 图的指纹**不能拿整段base64**（几十万字，拼一次就够呛），
+        # 图的指纹**不能拿整段base64**（几十万字，拼一次就够呛），
         # 取长度 + 头尾一小段就够了 —— 目的是"两张不同的图不被当成同一条"，
         # 不是密码学上的抗碰撞。
         # 不加图这一维的后果很具体：连着发两张图，第一张处理完，
@@ -483,40 +634,6 @@ class Bridge(object):
         elif img:
             tag = "#img%d:%s" % (len(img), img[:24])
         return "%s|%s%s" % (item[0], item[1], tag)
-
-    def _foreground_is_wechat(self):
-        """当前前台窗口是不是微信。
-
-        为什么需要：wxauto 读消息靠操作微信界面，而切窗口/读消息都会把微信
-        顶到前台。用户反馈"他抢窗口我怎么用电脑" —— 这是这套接入方式的
-        硬限制，调不掉，只能**让开**：你在认真用别的软件时就别动微信。
-
-        读不到（权限/窗口句柄拿不到）一律当"不是微信" → 继续干活。
-        判错的后果是她偶尔晚点回一句，不是不回。
-        """
-        try:
-            import ctypes
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
-            if not hwnd:
-                return False
-            buf = ctypes.create_unicode_buffer(256)
-            ctypes.windll.user32.GetWindowTextW(hwnd, buf, 256)
-            title = buf.value or ""
-            if self.my_name and self.my_name in title:
-                return True
-            return "微信" in title or "WeChat" in title
-        except Exception:
-            return False
-
-    def _should_pause_for_user(self):
-        """你在用别的软件吗？是就这一轮不碰微信。
-
-        只看"前台是不是微信"这一条，不猜你在干什么。
-        开着 `pause_when_away` 时才生效。
-        """
-        if not self.cfg.get("pause_when_away", True):
-            return False
-        return not self._foreground_is_wechat()
 
     def _snapshot(self):
         """读当前窗口里的消息，返回 [(发送者, 内容, 图片), ...]。
@@ -544,7 +661,17 @@ class Bridge(object):
                 content = str(getattr(m, "content", "") or "").strip()
             except Exception:
                 continue
-            # 🔴 图片原来在这里被直接丢掉：content 是 "[图片]" 占位符，
+            # 时间分隔线 / 系统提示不是真人消息，必须从源头剔掉：
+            # 微信聊天窗口里消息之间的灰色时间戳（"18:44"）会被读成
+            # sender='system' 的伪消息，"XX 撤回了一条消息"这类是 type=sys。
+            # 不拦的话她会把"18:44"当成你发的梗去找半天
+            # （2026-10-08 实测：白烧一次大脑调用，她还困惑）。
+            mtype = str(getattr(m, "type", "") or "").strip().lower()
+            if mtype in ("time", "sys", "system", "systemmsg", "notice"):
+                continue
+            if sender.lower() in ("system", "sys", "系统消息"):
+                continue
+                        # 图片要在这里被直接丢掉：content 是 "[图片]" 占位符，
             # 命中 MEDIA_PLACEHOLDERS 就 continue。所以她**在微信里一直看不见图**
             # —— 不是模型不支持，是桥接压根没把图传过去。
             # 现在：认出图片消息就登记下来，等确认是新增消息再下载转 base64。
@@ -558,12 +685,15 @@ class Bridge(object):
                 content = ""
             if not content and not img:
                 continue
-            # 微信把自己发的消息标成 'self'（实测）。换成昵称，
+                            # 微信把自己发的消息标成 'self'。换成昵称，
             # 免得下游把它当成一个叫 self 的陌生人拼进给大脑的话里。
             if sender.lower() in self.SELF_MARKERS:
                 sender = self.my_name or "我"
             img = self._tag_img(img, idx)
-            items.append((sender, content, img))
+            # 第 4 位带原始消息对象：agent/console 鉴权要从它身上拿
+            # sender_info().id（=发送者微信号）。指纹（_fp）只看前三位，
+            # 多这一位不影响去重。
+            items.append((sender, content, img, m))
         return items
 
     # --- 图片 ------------------------------------------------------
@@ -660,7 +790,7 @@ class Bridge(object):
         界面就会一直停在奇怪的状态，下一次读又卡。
 
         🔴 为什么按 Esc 而不是去点窗口按钮：点窗口需要目标窗口是前台，
-        而这套接入的前提就是「不要抢前台」（pause_when_away）。
+        而这套接入的前提就是「不要抢前台」。
         Esc 是给当前前台窗口的 —— 只在微信本来就是前台时才生效，
         抢不到就跳过，不做任何窗口切换。
 
@@ -746,7 +876,7 @@ class Bridge(object):
           · 下不到 → 返回空，调用方整条丢掉。
         """
         path = None
-        # 🔴 下载前先把可能残留的图片查看窗关掉。
+        # 下载前先把可能残留的图片查看窗关掉。
         # 微信4.x 的 download() 内部是"右键头像 → 在新窗口里打开图"，
         # 那个窗关不掉就一直留在顶层：下一轮 GetAllMessage() 读到的是它，
         # 前缀跟聊天窗的内容对不上（见 _diff），于是那条图被当成新消息，
@@ -873,6 +1003,67 @@ class Bridge(object):
             print("[微信] 缩图失败（%s），这条图不送了" % e)
             return None
 
+    # --- 多会话：切窗口 + 规则分流 -----------------------------------
+
+    def _switch_to(self, name):
+        """切到指定会话。成功返回 True。
+
+        切不过去**不抛异常也不重试** —— 返回 False 让调用方跳过这一轮。
+        为什么这么克制：ChatWith 失败的原因通常是这个会话不存在/已解散/
+        名字改了，反复重试只会一直操作界面（实测会表现成"疯狂点击"）。
+        """
+        if getattr(self, "_cur_chat", None) == name:
+            return True
+        try:
+            self.wx.ChatWith(name, exact=True)
+        except Exception as e:
+            print("[微信] 切不到「%s」：%s（这一轮跳过）" % (name, str(e)[:60]))
+            return False
+        self._cur_chat = name
+        self.chat_name = name
+        # 切换后给界面一点时间落地。GetAllMessage 紧接着调的时候
+        # 偶尔会读到上一个人的尾巴 —— 不是等几秒能根治的，但能少一些。
+        time.sleep(0.8)
+        return True
+
+    def _chat_kind(self, chat):
+        """这个会话是群还是私聊 → "group" / "private" / None（不知道）。
+
+        🔴 **不能靠名字判断**（2026-10-08 踩过）：配置里写的是群名和昵称
+        （"PRIVATE_CHAT_REMOVED"、"张三"），不是 wxid；只有 wxid 才带 @chatroom
+        后缀。所以拿 @chatroom 去判，**每个会话都会被判成私聊** ——
+        群里的消息于是走 private_reply_mode=all，她会接住群里每一句话。
+
+        所以改成显式声明：配置里写 private_chats（私聊名单），
+        不在名单里的就是群。名单为空时保守按"全部当群"——
+        宁可少回（群规则更严），也别在群里乱接话。
+        """
+        name = str(chat or "").strip()
+        if not name:
+            return None
+        # 兜底：万一有人直接写了 wxid
+        if "@chatroom" in name.lower():
+            return "group"
+        for p in (self.cfg.get("private_chats") or []):
+            if p and str(p).strip() == name:
+                return "private"
+        # 不在私聊名单里 → 当群。名单为空时也走这里（全部按群，最保守）。
+        return "group"
+
+    def _mode_for(self, chat):
+        """这个会话该用哪套触发规则。
+
+        群和私聊不能用同一套：群里 @ 她才接话（不然太吵、每条都要花钱问大脑），
+        私聊是专门找她的，默认直接回。判断走 _chat_kind（靠配置里的
+        private_chats 名单，不靠名字 —— 详见那里）。
+        """
+        if self._chat_kind(chat) == "private":
+            return self.cfg.get("private_reply_mode") or "all"
+        return self.cfg.get("group_reply_mode") or "mention"
+
+    def _is_private(self, chat):
+        return self._chat_kind(chat) == "private"
+
     def _diff(self, items):
         """比对出这一轮新增的消息。
 
@@ -881,27 +1072,54 @@ class Bridge(object):
         用"最后一条"当锚点。两种都认不出来就保守返回空（宁可漏一句，
         也别把几百条旧消息当成新消息全问一遍）。
         """
+        # 按会话各存一份去重状态（多会话改造）。self._cur_chat 由 _switch_to 设好。
+        ck = getattr(self, "_cur_chat", None) or self.chat_name or "?"
+        prev = self._prev.get(ck)
         now = [self._fp(x) for x in items]
-        if not self._synced:
-            self._prev = now
-            self._synced = True
-            print("[微信] 已同步 %d 条历史，之后只处理新消息" % len(now))
+        if not self._synced.get(ck):
+            self._prev[ck] = now
+            self._synced[ck] = True
+            print("[微信] 已同步「%s」%d 条历史，之后只处理新消息"
+                  % (ck, len(now)))
             return []
-        if now == self._prev:
+        self._prev[ck] = now
+        if prev is None:
             return []
-        if len(now) > len(self._prev) and now[:len(self._prev)] == self._prev:
-            new = items[len(self._prev):]
+        if now == prev:
+            return []
+        if len(now) > len(prev) and now[:len(prev)] == prev:
+            new = items[len(prev):]
         else:
-            anchor = self._prev[-1] if self._prev else None
+            anchor = prev[-1] if prev else None
             idx = -1
             for i in range(len(now) - 1, -1, -1):
                 if now[i] == anchor:
                     idx = i
                     break
             if idx < 0:
-                # 🔴 认不出锚点时**不要更新 _prev**。
-                # 原来这里是 new=[] 然后照样 self._prev = now，于是
-                # 上一轮的图片查看窗口里的内容被当成了新的基线。
+                # 认不出锚点时先别急着放弃 —— 多会话轮转切回一个会话时，
+                # 微信只重新渲染**最近的一段**消息：快照比上一轮短、甚至
+                # 整体"上移"（老消息从控件树顶部掉出去）。这时用 prev 的
+                # 尾段去对齐 now 的头部：对得上就说明只是可见窗口滑动，
+                # 新增可以精确算出；对不上才走下面的保守路径。
+                # （2026-10-08 桥接机实测：小窗口 + 轮转，锚点丢失是常态
+                # 而不是偶发，桥接会永远卡在"窗口内容对不上"。）
+                aligned = None
+                for trim in range(1, len(prev)):
+                    tail = prev[trim:]
+                    if len(now) >= len(tail) and now[:len(tail)] == tail:
+                        aligned = len(tail)      # now 头部被对齐掉的条数
+                        break
+                if aligned is not None:
+                    new = items[aligned:]
+                    self._prev[ck] = now
+                    if new:
+                        print("[微信] 「%s」顶部滑出 %d 条，已按尾对齐接续，新增 %d 条"
+                              % (ck, aligned, len(new)))
+                    return new
+                # 认不出锚点时**不要更新 _prev**。
+                                # 若这里是 new=[] 然后照样 self._prev = now，于是
+                                # 上一条的图片查看窗口里的内容会被当成新的基线。
                 # 回到聊天窗后前缀跟这个基线永远对不上，那条图就被
                 # 重新认成新消息 → 再 download() → 再开一次窗 → 死循环。
                 # 不更新基线的代价：下一轮还会认不出来、还是返回空，
@@ -911,14 +1129,35 @@ class Bridge(object):
                       "这一轮先不处理，等它稳定")
                 return []
             new = items[idx + 1:]
-        self._prev = now
+        # 2026-10-08 多会话改造：基线按会话存（开头已经 self._prev[ck] = now 过，
+        # 这里那个裸赋值会把整个 dict 覆盖成一条 list —— 后面别的会话读 _prev.get()
+        # 就变成了 list.get()，直接 AttributeError）。
+        self._prev[ck] = now
         return new
 
     # --- 要不要回 ---------------------------------------------------
 
     # 微信里"我自己发的"这条消息，sender 字段是这些值之一
-    # （实测文件传输助手发给自己时就是 'self'，不是昵称）
+        # （文件传输助手发给自己时就是 'self'，不是昵称）
     SELF_MARKERS = ("self", "我", "自己")
+
+    # 🔴 2026-10-08：微信 4.x 的 group 消息里 sender 可能是 wxid 而不是昵称
+    # （尤其私聊）。self_wxid 是小号的 wxid，桥接启动时核对过身份用的就是它 ——
+    # 之前只拿它做"启动时校验"，从没在过滤里用上，于是她回复之后，
+    # 自己那条消息又作为事件回到轮询里，被当成对方的话再问一遍大脑。
+    # 症状是"她自己在跟自己说话"，而且会一直说下去。
+    #
+    # 下面两处（_is_mine 开头 + 这里）都判一次：昵称和 wxid 两条路都堵上。
+    def _is_my_wxid(self, sender):
+        # 🔴 属性名是 my_id（connect() 里从 GetMyInfo 拿的，也是身份校验用的那个）。
+        # 这里原先写成 self_wxid —— 那个属性**根本不存在**，getattr 永远返回 ""，
+        # 于是这个函数恒为 False、自己发的话永远过滤不掉（她自言自语），
+        # 而且不报错 —— 静默失效最难查。
+        want = str(getattr(self, "my_id", "") or "").strip()
+        if not want:
+            return False
+        s2 = str(sender or "").strip().lower()
+        return bool(s2) and (s2 == want.lower() or s2.startswith(want.lower()))
 
     def _is_mine(self, sender, content):
         """这条消息是不是她自己发的？
@@ -944,6 +1183,13 @@ class Bridge(object):
         # 最可靠：微信自己标的 self
         if s.lower() in self.SELF_MARKERS:
             return True
+        # 🔴 wxid 这条路（2026-10-08 补）。桥接启动时用 expected_wxid 核对过
+        # 身份，那个值存在 self.my_id —— 但它**从没在过滤里用上过**。
+        # 微信 4.x 的 group/私聊消息里 sender 常常是 wxid 而不是昵称，
+        # 于是她回复之后、自己那条消息又作为事件回到轮询里，
+        # 被当成对方的话再问一遍大脑 → 她在跟自己说话，而且停不下来。
+        if self._is_my_wxid(s):
+            return True
         hit = bool(content) and content.strip() in self._my_recent
         if self.my_name and s == self.my_name:
             if not self._my_recent:
@@ -951,7 +1197,7 @@ class Bridge(object):
             return hit               # 有历史了：只认内容
         return hit                   # 发送者为空等情况，同上
 
-    def _should_reply(self, content):
+    def _should_reply(self, content, chat=None):
         """本机快筛：这条消息值不值得拿去问大脑。
 
         **这里必须是纯本地判断，不能调云端** —— 轮询每 3 秒一次，
@@ -964,7 +1210,12 @@ class Bridge(object):
                    （要配这个，先把插件的 FEATURE gate 打开）
           all      全回。容易刷屏，调试用
         """
-        mode = self.cfg.get("group_reply_mode") or "mention"
+        # 群/私聊分流：私聊是专门找她的，不用 @ 就回；群仍走 group_reply_mode。
+        # 2026-10-08 多会话改造。chat=None 时退回原行为（老调用方兼容）。
+        if chat is None:
+            mode = self.cfg.get("group_reply_mode") or "mention"
+        else:
+            mode = self._mode_for(chat)
         if mode == "all":
             return True
         for nick in self.cfg.get("bot_nicknames") or []:
@@ -1025,7 +1276,7 @@ class Bridge(object):
         self._last_lurk = time.time()
         print("[冷场] 安静了 %.0f 分钟（这次掷到 %.0f 分钟），问她要不要说点什么"
               % (idle_sec / 60, self._idle_target / 60))
-        # 不问"你要不要说话"，那类措辞她会当成可以聊的内容（踩过）
+        # 不问"你要不要说话" —— 那类措辞她会当成可以聊的内容
         text = self.brain.ask("[系统] 群里已经很久没人说话了")
         if text:
             self._send(text)
@@ -1042,7 +1293,7 @@ class Bridge(object):
         cap = int(self.cfg.get("max_reply_chars") or 400)
         if len(text) > cap:
             text = text[:cap] + "…"
-        # 🔴 发出去之前的最后一道闸。
+                # 发出去之前的最后一道闸。
         # 从「读到消息」到「把字打进输入框」之间隔着问云端大脑的时间
         # （可能几十秒），这段时间里微信完全可能掉线重连到了别的号。
         # 所以**每一条要发出去的消息，都在这个瞬间重新确认一次身份** ——
@@ -1051,9 +1302,20 @@ class Bridge(object):
             print("[发送] 已拦下：身份不符，这条没有发出去。")
             return False
         try:
-            # 子窗口模式：发到子窗口，主微信窗口不用动（不抢你正在用的窗口）。
-            # 主窗口模式：不带 who，发给当前聊天（就是那个群），这样不用切窗口。
-            target = chat if chat is not None else self._sub
+            # 🔴 多会话模式（2026-10-08）：step() 传进来的 chat 是会话**名字**。
+            # 曾经直接 `target = chat` 然后调 target.SendMsg →
+            # 'str' object has no attribute 'SendMsg'，一条都发不出去。
+            # 正确做法：按名字切回去再发 —— 问大脑可能几十秒，期间窗口
+            # 可能被别的东西动过，**不能靠"当前窗口"发**；
+            # 切不回去就放弃这条，绝不发到别人那儿去。
+            # 子窗口模式（单会话老路）：发到子窗口，主微信窗口不用动。
+            if isinstance(chat, str):
+                if not self._switch_to(chat):
+                    print("[发送] 已放弃：切不回会话 %r，这条没有发出去。" % chat)
+                    return False
+                target = self._sub
+            else:
+                target = chat if chat is not None else self._sub
             r = target.SendMsg(text) if target is not None else self.wx.SendMsg(text)
             ok = bool(getattr(r, "is_success", True))
             if ok:
@@ -1184,27 +1446,149 @@ class Bridge(object):
             print("[诊断] 图 %s" % l)
         print("[诊断] ===== 结束 =====")
 
-    def step(self):
-        # 🔴 你正在用别的软件吗？是就这一轮完全不碰微信。
-        # 这套接入靠界面操作，不这么做就会不停把微信顶到前台抢你窗口。
-        # **这一轮直接返回、不读消息** —— 所以回来时那些消息还在窗口里，
-        # 会被下一轮读到，不会丢。
-        if self._should_pause_for_user():
-            self._paused += 1
-            if self._paused == 1:
-                print("[让路] 你在用别的软件，这一轮不碰微信（不会丢消息）")
-            return
-        if self._paused:
-            print("[让路] 回到微信了，继续读（暂停了 %d 轮）" % self._paused)
-            self._paused = 0
+    # 🔴 后台线程版清道夫（2026-10-08 教训：原版在每轮循环末尾跑，
+    # 结果主线程被卡死的菜单楔住时**它也跟着永远轮不到** —— 死锁闭环：
+    # 菜单卡死 → UIA 调用不返回 → 主循环卡住 → 清道夫不跑 → 菜单继续卡死。
+    # 所以清道夫必须独立于主循环，在自己的守护线程里巡检。）
+    def _janitor_loop(self):
+        seen = {}                     # hwnd -> 第一次见到它的时间
+        while True:
+            time.sleep(4)
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                CB = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                        ctypes.c_void_p)
+                found = []
+
+                def _cb(h, _l):
+                    try:
+                        if not user32.IsWindowVisible(h):
+                            return 1
+                        c = ctypes.create_unicode_buffer(96)
+                        user32.GetClassNameW(h, c, 96)
+                        cn = c.value or ""
+                        # 认「Qt*ToolSaveBits」这个瞬态弹窗类
+                        # （主窗口是 Qt*QWindowIcon，不会误伤）。
+                        # wxauto4 读消息每 ~0.7s 就弹一个这种菜单又关掉，
+                        # 偶尔残留成死菜单 —— 残留会挡住微信 UI 线程，
+                        # 进而把桥接的 UIA 调用楔死（实测定罪）。
+                        if cn.startswith("Qt") and cn.endswith("ToolSaveBits"):
+                            found.append(int(h) & 0xFFFFFFFF)
+                    except Exception:
+                        pass
+                    return 1
+
+                _ref = CB(_cb)
+                user32.EnumWindows(_ref, 0)
+                now = time.time()
+                seen = {h: ts for h, ts in seen.items() if h in found}
+                for h in found:
+                    if h in seen and now - seen[h] >= 8.0:
+                        # 活了 ≥8 秒 = 残留死菜单（正常菜单一闪而过）。
+                        # 只有它自己是前台时才 Esc（菜单开着时焦点在它上），
+                        # 避免把 Esc 打到别的窗口里去。
+                        fg = user32.GetForegroundWindow()
+                        fg = (int(fg) & 0xFFFFFFFF) if fg else 0
+                        if fg == h:
+                            user32.keybd_event(0x1B, 0, 0, 0)
+                            user32.keybd_event(0x1B, 0, 2, 0)
+                            print("[清道夫] 关掉了残留的弹出菜单 (h=%08x)"
+                                  % h, flush=True)
+                        seen.pop(h, None)
+                    elif h not in seen:
+                        seen[h] = now
+            except Exception:
+                pass                  # 清道夫是纯补救，任何失败都不许闹事
+
+    def _watchdog_loop(self):
+        """心跳看门狗：主循环静默超过 6 分钟 = 卡死（UIA 挂起/HTTP 无超时）。
+
+        先把所有线程栈转储到 stderr（→ launcher.log，留验尸报告），
+        然后硬退出自己 —— launcher 侧的重启循环会拉起新的桥接。
+        为什么不用 dump_traceback_later：实测卡死时它没转储（原因不明），
+        自建心跳线程 + os._exit 是不依赖任何前提的最后保命绳。
+        """
+        while True:
+            time.sleep(30)
+            try:
+                beat = getattr(self, "_beat", 0)
+                if beat and time.time() - beat > 360:
+                    print("[看门狗] 主循环静默 %.0f 秒 —— 判定卡死，"
+                          "转储堆栈后自尽，等 launcher 重生"
+                          % (time.time() - beat), flush=True)
+                    try:
+                        import faulthandler
+                        faulthandler.dump_traceback()
+                    except Exception:
+                        pass
+                    time.sleep(3)
+                    os._exit(9)
+            except Exception:
+                pass
+
+    def _sender_ident(self, m):
+        """从消息对象取发送者身份（微信号）——硬鉴权用。
+
+        微信 4.x：群成员消息带 sender_info()，返回含 'id'（=对方微信号，
+        即 agent 配置 owner_ids 里填的那个值，不随昵称变）。取不到就返回 {}，
+        下游按"无身份"拒绝，绝不会误放行。
+        """
+        try:
+            si = getattr(m, "sender_info", None)
+            if callable(si):
+                info = si() or {}
+                if isinstance(info, dict):
+                    return {"wxid": str(info.get("id") or "").strip(),
+                            "display_name": str(info.get("display_name") or "").strip()}
+        except Exception:
+            pass
+        return {}
+
+    def _owner_ok(self, sender, content="", ident=None):
+        """身份验证：只有主人能下指令。
+
+        判定优先级（配了哪道就用哪道，两道都配则都要过）：
+          · owner_ids/owner_wxids → 发送者微信号/内部id 在名单里（最不可伪造）
+          · owner_names  → 发送者显示名在名单里
+          · owner_token  → 消息里带口令（身份之外的第二道锁）
+        三道都没配 → 一律拒绝（宁可不干活，也不让陌生人指挥本机）。
+        """
+        ag = getattr(self, "agent", None)
+        if ag is not None:
+            try:
+                return bool(ag.auth_ok(sender or "", content or "", ident))
+            except Exception:
+                pass
+        names = [(n or "").strip() for n in (self.cfg.get("owner_names") or [])]
+        tok = (self.cfg.get("owner_token") or "").strip()
+        ok_name = (sender or "").strip() in names if names else False
+        ok_tok = bool(tok) and (tok in (content or ""))
+        if names and tok:
+            return ok_name and ok_tok
+        if names:
+            return ok_name
+        if tok:
+            return ok_tok
+        return False
+
+    def step(self, chat=None):
+        """处理**一个**会话这一轮（多会话轮转）。
+
+        chat=None 时用 self.chat_name（老行为，自测 --with 走这条路）。
+        """
         self._diag_once()
+        if chat is None:
+            chat = self.chat_name
+        if not self._switch_to(chat):
+            return
         items = self._snapshot()
         new = self._diff(items)
-        for sender, content, img in new:
-            # 🔴 图片**这一轮才算真正下载** —— _snapshot 里只登记，
-            # 是因为它跑在 _diff 之前、对的是全部历史消息而不是新增的那些。
+        for sender, content, img, mobj in new:
+            # 图片**这一轮才算真正下载** —— _snapshot 里只登记，
+                        # 是因为它跑在 _diff 之前、对的是全部历史消息而不是新增的那些。
             #
-            # 🔴 顺序也重要：下载放在 _is_mine / _should_reply **之后**。
+            # 顺序也重要：下载放在 _is_mine / _should_reply **之后**。
             # 她自己发的图、群里没点名她的图，根本不必下载 ——
             # 每下一张图就是一次右键 + 开窗 + 关窗，还会抢前台窗口。
             # 判断"要不要理他"只需要 sender 和 content，不需要图本身。
@@ -1215,11 +1599,50 @@ class Bridge(object):
             # 下一轮冷场重新掷 —— 否则一次冷场就把随机值用完了，
             # 之后每一轮都是同一个时间，等于退回固定值。
             self._idle_target = None
-            # 🔴 群里没点名就不回 —— **图片也守这条**。
+            # 这一对话属于哪个渠道：agent/console 和 _should_reply 都要用。
+            _src = "wechat" if self._is_private(chat) else "wechat_group"
+            # --- 控制台指令分流：命中前缀就地执行，绝不送云端（不受 @ 限制）---
+            _ctext = (content or "").strip()
+            _ident = self._sender_ident(mobj)
+            if (getattr(self, "console", None) is not None
+                    and _src == "wechat_group"
+                    and self.console.is_command(_ctext)):
+                if not self._owner_ok(sender or "", _ctext, _ident):
+                    print("[console] 非主人指令，忽略 from=%r" % (sender or "?"))
+                    continue
+                _rep, _ipath = self.console.dispatch(_ctext, sender or "")
+                print("[console] cmd=%r len=%s img=%s" % (_ctext[:60], len(_rep or ""), bool(_ipath)))
+                if _rep:
+                    self._send(_rep.replace("\r\n", " | ").replace("\n", " | "), chat=chat)
+                if _ipath:
+                    try:
+                        _tgt = self._sub if getattr(self, "_sub", None) is not None else self.wx
+                        _tgt.SendFiles(_ipath)
+                        print("[console] screenshot sent")
+                    except Exception as _e:
+                        print("[console] send file failed: %s" % _e)
+                continue
+            # --- LLM 驱动 agent 分流：自然语言交给本机大脑，模型自主选工具执行，不经云端人设 ---
+            _atext = (content or "").strip()
+            if getattr(self, "agent", None) is not None and self.agent.accepts(sender or "", _atext, _src, _ident):
+                _clean = self.agent.clean_text(_atext)
+                _arep, _aimg = self.agent.handle(_clean, sender or "", img if isinstance(img, str) else None)
+                print("[agent] from=%r in=%d out=%s img=%s" % (sender, len(_clean), len(_arep or ""), bool(_aimg)))
+                if _arep:
+                    self._send(_arep, chat=chat)
+                if _aimg:
+                    try:
+                        _tgt = self._sub if getattr(self, "_sub", None) is not None else self.wx
+                        _tgt.SendFiles(_aimg)
+                    except Exception as _e:
+                        print("[agent] send file failed: %s" % _e)
+                continue
+            # 群里没点名就不回 —— **图片也守这条**。
             # 群里有人随手扔张图就把她叫起来，太吵了；
             # 而且看图要花钱（视觉模型另一次调用），不能被随便触发。
-            if not self._should_reply(content):
-                print("[跳过] %s：%s" % (sender or "?", (content[:40] or "[图片]")))
+            if not self._should_reply(content, chat):
+                print("[跳过][%s] %s：%s" % (chat, sender or "?",
+                                          (content[:40] or "[图片]")))
                 continue
             if isinstance(img, _PendingImg):
                 img = self._resolve_img(img)
@@ -1234,11 +1657,25 @@ class Bridge(object):
                 # 纯图片：告诉她是**谁**发的图，但别替她说"我看到图了"——
                 # 描述是视觉模型的活，桥接只负责把图送到。
                 text = ("%s：（发来一张图）" % sender) if sender else "（发来一张图）"
-            print("[收到] %s%s" % (text[:100], "  [带图]" if img else ""))
-            answer = self.brain.ask(text, img or None)
+            print("[收到][%s] %s%s" % (chat, text[:100],
+                                     "  [带图]" if img else ""))
+            # 会话名一起送上去：云端那边 memories/chat_history 按渠道分区，
+            # 群里的对话和私聊**必须**分开存 —— 合在一起她会把她在群里的
+            # 反应拿去回答私聊（或反过来），说话方式会串。
+            answer = self.brain.ask(text, img or None,
+                                   src=("wechat" if self._is_private(chat)
+                                        else "wechat_group"))
             if not answer:
+                # 🔴 空回复必须留痕（2026-10-08 教训：云端闸门插件把私聊
+                # 全判成 PASS 返回空 reply，这里静默 continue，
+                # 排查时"消息明明收到却什么都没发生"耗了一小时）。
+                print("[大脑] %s 的这轮回复是空的（可能被云端闸门/风控拦下）"
+                      % chat, flush=True)
                 continue
-            self._send(answer)
+            # 明确指定发给哪个会话：问大脑可能几十秒，期间窗口没动过，
+            # 但也**不能靠"当前窗口"发** —— 万一中间有别的东西切了窗口，
+            # 消息就发到别人那儿去了。
+            self._send(answer, chat=chat)
         if new:
             self._last_active = time.time()
         self._maybe_lurk()
@@ -1288,7 +1725,7 @@ class Bridge(object):
         """
         import importlib.util
         sw = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "..", "..", ".workbuddy", "scripts", "_zhixia_switch.py")
+                          "..", "..", ".workbuddy", "scripts", "_vigil_switch.py")
         sw = os.path.normpath(sw)
         if not os.path.exists(sw):
             return False
@@ -1310,18 +1747,35 @@ class Bridge(object):
         gap = float(self.cfg.get("poll_seconds") or 3)
         # 身份多久复查一次。比轮询稀一点 —— 它要调一次 UI，成本比读消息高。
         recheck_every = max(1, int(round(15.0 / max(gap, 0.5))))
-        if getattr(self, "_sub", None) is not None:
-            print("[运行] 每 %.1f 秒读一次子窗口「%s」（**不抢主微信窗口**），"
-                  "每 %d 轮复查一次身份，Ctrl+C 退出"
-                  % (gap, self.chat_name, recheck_every))
+        if len(self.chat_names) > 1:
+            print("[运行] 每 %.1f 秒轮询 %d 个会话：%s"
+                  % (gap, len(self.chat_names), "、".join(self.chat_names)))
         else:
-            print("[运行] 每 %.1f 秒看一次群「%s」，每 %d 轮复查一次身份，"
-                  "Ctrl+C 退出（**会占微信前台**）"
-                  % (gap, self.chat_name, recheck_every))
+            print("[运行] 每 %.1f 秒看一次「%s」"
+                  % (gap, self.chat_names[0] if self.chat_names else "?"))
+        print("       桥接机在云端（那台机器没人用微信），会切窗口；"
+              "每 %d 轮复查一次身份，Ctrl+C 退出" % recheck_every)
         n = 0
         try:
+            # 🔴 卡死看门狗（2026-10-08 桥接机实测定罪用的，留着当保命绳）。
+            # wxauto4 的 UIA 调用偶尔会在 pyd 里**无限挂起**（无超时、无异常，
+            # 外层 try/except 拦不住），整轮静默冻结。这里每轮重新武装一个
+            # 120 秒的 traceback 转储：一旦超时，把**所有线程正在执行的行号**
+            # 打到 stderr（→ bridge.log），看得见卡在哪一行。repeat=True：
+            # 持续挂起就每 120 秒喊一次，进程本身不杀。
+            import faulthandler
+            faulthandler.enable()
+            faulthandler.dump_traceback_later(120, repeat=True)
+            # 后台保命线程：清道夫（独立于主循环，专治卡死菜单）+ 心跳看门狗
+            self._beat = time.time()
+            threading.Thread(target=self._janitor_loop, daemon=True,
+                             name="janitor").start()
+            threading.Thread(target=self._watchdog_loop, daemon=True,
+                             name="watchdog").start()
             while True:
                 n += 1
+                # 每轮重新武装：上一轮 120 秒内没走完的话，说明卡住了
+                faulthandler.dump_traceback_later(120, repeat=True)
                 if self._switch_off():
                     print("\n[运行] 你把知夏停用了 —— 退出。")
                     return 3
@@ -1330,19 +1784,42 @@ class Bridge(object):
                     return 2
                 # 隧道/网络断了要重新探活，不然会一直安静地不发。
                 # 每30 轮（默认 90 秒）试一次，别每轮都去敲网络。
+                #
+                # 2026-10-08：原来只在 _brain_errs>=3（已经连挂 3 次）时才 pick()，
+                # 而 pick() 当时"选中就返回" —— 断掉的那个地址正被选中，
+                # 于是永远探不到还活着的公网地址，她一直哑。现在无条件
+                # force=True 重新探一遍全部地址：探活 + 自动切走死掉那个。
                 if n % max(1, int(round(30.0 / max(gap, 0.5)))) == 0:
-                    self.brain._brain_errs = getattr(self.brain, "_brain_errs", 0)
-                    if self.brain._brain_errs >= 3:
-                        print("[大脑] 连不上，重试一次…")
-                        if self.brain.pick():
-                            print("[大脑] 恢复了：%s" % self.brain.picked)
-                # 两种模式都轮询：主窗口读会抢你正在用的微信窗口，
-                # 子窗口读不会。回调那条路实测不触发，不考虑。
+                    was = self.brain.picked
+                    self.brain._brain_errs = 0
+                    self.brain.pick(force=True)
+                    if self.brain.picked != was:
+                        print("[大脑] 已切到 %s" % self.brain.picked)
+                # 多会话轮转：每轮只处理**一个**，不是并行。
+                #
+                # 为什么串行不并行：GetAllMessage() 会**自己操作界面**
+                # （展开艾特卡片、滚动到新消息、定位控件），卡住时线程会
+                # 带着界面操作继续跑 —— 并行等于把这个风险乘以会话数。
+                # 串行时最坏情况是"这个会话卡住"，下一个会话照旧。
                 try:
-                    self.step()
+                    names = self.chat_names
+                    if names:
+                        nm = names[self._rr % len(names)]
+                        self._rr += 1
+                        self.step(chat=nm)
                 except Exception as e:
                     # 单轮出错不能让整个桥接死掉
                     print("[运行] 这一轮出错：%s" % e)
+                # 心跳：给看门狗报"我还活着"（清道夫已是后台线程，无需每轮跑）
+                self._beat = time.time()
+                # 进程外验尸官（vm/coroner.py）靠这个文件的 mtime 判断
+                # 主循环死活 —— GIL 被卡死的原生调用持有时，进程内所有
+                # 线程（含看门狗线程）都会冻结，只有文件 mtime 这类
+                # "循环是否前进"的外部证据可信。写失败不影响运行。
+                try:
+                    open(r"C:\zx\hb.stamp", "w").close()
+                except OSError:
+                    pass
                 time.sleep(gap)
         except KeyboardInterrupt:
             print("\n[运行] 退出")
@@ -1361,7 +1838,7 @@ def main():
 
     # --with <对话名>：不进群也能先测。
     #
-    # 建群之前的自测：让桥接盯着任意一个对话窗口（一般是「文件传输助手」），
+        # 建群之前的自测：让桥接盯着任意一个对话窗口（一般是「文件传输助手」），
     # 链路一样能跑通。
     #
     # 为什么安全：桥接从头到尾连的是知夏小号（expected_wxid 核对），

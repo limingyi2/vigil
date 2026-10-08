@@ -83,7 +83,7 @@ LOG = os.path.join(HERE, "launcher.log")
 BRIDGE_LOG = os.path.join(HERE, "bridge.log")
 STATUS = os.path.join(HERE, "_launch.json")
 LOCAL_CFG = os.path.join(HERE, "wxbridge.local.json")
-TUNNEL_TASK = "ZhiXiaTunnel"
+TUNNEL_TASK = "VigilTunnel"
 TUNNEL_PORT = 18787
 BRAIN = "http://127.0.0.1:%d" % TUNNEL_PORT
 PYTHON = sys.executable
@@ -543,7 +543,7 @@ def main():
     st = {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "pid": os.getpid(),
           "session": None, "argv": argv}
     say("=" * 62)
-    say("  ZhiXia  <>  Maimai WeChat bridge")
+    say("  Vigil  <>  Maimai WeChat bridge")
     say("=" * 62)
 
     try:
@@ -562,36 +562,63 @@ def main():
 
     wake_uia(st)
 
-    wc = probe(st)
-    if wc is None:
-        save(st)
-        return 4
-
+    # 🔴 2026-10-08：launcher 自己**绝不持有** wxauto4 实例去拉桥接。
+    # 为什么：WeChat() 一创建就自动启动 UIA 事件监听线程，launcher 进程
+    # 若带着它存活，桥接进程就是第二个 UIA 事件订阅者 —— 两边打架，
+    # 实测表现是桥接从第 3 轮起 ChatWith 全部 Find Control Timeout
+    # （搜索框控件消失），最终把微信的无障碍子系统搞崩、微信整个进程
+    # 退出。老版单会话桥接启动后不再搜索，所以从来没暴露。
+    # 身份校验交给桥接自己做：它 connect() 里会核对 expected_wxid，
+    # 对不上直接拒绝运行，安全性与 launcher 侧校验等价。
+    # probe()/attach 只在需要列会话（--list 或未配置群名）时发生 ——
+    # 那条路跑完就退出，不会和桥接共存。
     cfg = load_cfg()
     group = (cfg.get("chat_name") or "").strip()
 
     if not group or "--list" in argv:
-        # No group configured, or the operator asked to see them. Listing them
-        # is how the config gets a name that matches WeChat exactly - a name
-        # typed by hand is a name that will not match.
-        list_sessions(wc, st)
-        save(st)
-        if not group:
-            say("")
-            say("      No group is configured yet (chat_name is empty), so the")
-            say("      bridge deliberately does not start. Copy the exact group")
-            say("      name from the list above into")
-            say("        %s" % LOCAL_CFG)
-            say("      then start this launcher again.")
-            say("")
-            say("      (type 'wxid' alone to re-check the account)")
-            return 5
-        return 0
+        wc = probe(st)
+        if wc is None:
+            save(st)
+            return 4
+
+        if not group or "--list" in argv:
+            # No group configured, or the operator asked to see them. Listing them
+            # is how the config gets a name that matches WeChat exactly - a name
+            # typed by hand is a name that will not match.
+            list_sessions(wc, st)
+            save(st)
+            if not group:
+                say("")
+                say("      No group is configured yet (chat_name is empty), so the")
+                say("      bridge deliberately does not start. Copy the exact group")
+                say("      name from the list above into")
+                say("        %s" % LOCAL_CFG)
+                say("      then start this launcher again.")
+                say("")
+                say("      (type 'wxid' alone to re-check the account)")
+                return 5
+            return 0
 
     say("")
     say("      configured group: %s" % group)
+    say("      (launcher does not attach to WeChat; the bridge verifies the")
+    say("       account itself before it will send anything)")
     save(st)
-    return run_bridge(cfg, None)
+    # 🔴 自动重生（2026-10-08）：桥接侧看门狗会在主循环静默 6 分钟后
+    # dump + 自尽（exit 9）—— UIA 偶尔把桥接楔死，重启是最可靠的解法。
+    # 这里负责把它拉起来：每小时最多 5 次，超过就放弃（防死循环刷日志）。
+    restarts = []                     # 本 launcher 存活期内每次拉起的时间
+    while True:
+        rc = run_bridge(cfg, None)
+        now = time.time()
+        restarts = [t for t in restarts if now - t < 3600] + [now]
+        if len(restarts) > 5:
+            say("      [X] bridge restarted >5 times in an hour, giving up"
+                " (go find the root cause)")
+            return rc
+        say("      bridge exited (code %s) -- relaunching in 20s (%d/5 hourly)"
+            % (rc, len(restarts)))
+        time.sleep(20)
 
 
 if __name__ == "__main__":
