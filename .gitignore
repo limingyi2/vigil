@@ -233,3 +233,6 @@ _removed_*/
 _split/
 vigil-client_backup_*/
 deepseek-harness/
+
+# persona 同步账本：运行时状态（seq/墓碑），每台机器各自推进，不入库
+brain/config/persona_sync.json

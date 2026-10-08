@@ -24,7 +24,10 @@ import sys
 if getattr(sys, "frozen", False):
     ROOT = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    ROOT = os.path.dirname(os.path.abspath(__file__))
+    # VIGIL_HOME：测试/多实例场景把整个家（config/ data/ logs/）挪到别处。
+    # 源码跑的默认行为一字不变 —— 不设这个变量就还是 brain/ 目录。
+    ROOT = os.environ.get("VIGIL_HOME") or os.path.dirname(
+        os.path.abspath(__file__))
 
 # --- 四个大类 ---
 CONFIG_DIR = os.path.join(ROOT, "config")

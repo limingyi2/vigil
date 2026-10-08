@@ -674,6 +674,161 @@ def _cloud_history(limit=60, src="app"):
     return items[-n:]
 
 
+def reload_plugins_now():
+    """重扫 plugins/ 并重拼提示词。返回 (插件数, 是否需要重启大脑)。
+
+    装/卸/改开关之后都要走这里 —— 少走一步就会出现
+    "界面显示装上了、实际那轮对话里没有它"。
+    模块级函数：路由和同步客户端（sync_client 拉到行为配置/人设变化后）
+    两个入口共用，别留两份实现。
+    """
+    try:
+        n = load_plugins(verbose=True)
+    except Exception:
+        n = 0
+    need = False
+    try:
+        import plugin_host as _ph
+        need = any(callable(p.hook("start"))
+                   for p in _ph.all_plugins().values())
+    except Exception:
+        pass
+    b = _LOCAL.get("brain")
+    # 提示词里的工具清单是构造时拼的，重装后得重拼
+    if b is not None:
+        try:
+            b.reload_persona()
+        except Exception:
+            pass
+    return n, need
+
+
+def _sync_route_get(path, qp):
+    """同步 GET 路由（manifest / 记忆增量 / 人设清单 / 行为段）。
+
+    拆成独立函数而不是塞进 handler 分支链：本地 exe 也开这套接口，
+    e2e 对两个实例做断言时用的是同一段代码，口径一致。
+    """
+    import memory_store_v2 as ms
+    if path == "/api/sync/manifest":
+        import persona_store
+        import sync_client
+        stores = []
+        for name in ms.list_store_names():
+            st = ms.open_store_by_name(name)
+            if st is None:
+                continue
+            try:
+                stores.append(st.ledger())
+            except Exception:
+                continue
+        beh = sync_client.behavior_snapshot()
+        return 200, {"ok": True, "stores": stores,
+                     "personas": persona_store.sync_snapshot(),
+                     "behavior": {"version": sync_client.behavior_version(beh)}}
+    if path == "/api/sync/memories":
+        st = ms.open_store_by_name(qp.get("store"))
+        if st is None:
+            return 400, {"ok": False, "err": "store 不合法"}
+        try:
+            after = int(qp.get("after_seq") or 0)
+        except (TypeError, ValueError):
+            after = 0
+        try:
+            limit = int(qp.get("limit") or 500)
+        except (TypeError, ValueError):
+            limit = 500
+        d = st.changes_after(after, limit=max(1, min(limit, 5000)))
+        d["ok"] = True
+        return 200, d
+    if path == "/api/sync/personas":
+        import persona_store
+        d = persona_store.sync_snapshot()
+        d["ok"] = True
+        return 200, d
+    if path == "/api/sync/status":
+        import sync_client
+        d = sync_client.status()
+        d["ok"] = True
+        return 200, d
+    if path == "/api/sync/behavior":
+        import sync_client
+        data = sync_client.behavior_snapshot()
+        return 200, {"ok": True, "version": sync_client.behavior_version(data),
+                     "data": data}
+    return None
+
+
+def _sync_route_post(path, body):
+    """同步 POST 路由（推送：记忆批量 / 人设 / 人设删除 / 行为段）。全部幂等。
+
+    🔴 权威源语义：这几条是"本地 → 云端"的推入口，云端自己**不开**同步
+    客户端（sync_client.cloud() 在云端是 None），所以这里收到什么就按
+    账本规则应用什么，不会再转发出去 —— 没有回声环。
+    """
+    import memory_store_v2 as ms
+    if path == "/api/sync/memories":
+        st = ms.open_store_by_name((body or {}).get("store"))
+        if st is None:
+            return 400, {"ok": False, "err": "store 不合法"}
+        items = (body or {}).get("items") or []
+        deletes = (body or {}).get("deletes") or []
+        if not isinstance(items, list) or not isinstance(deletes, list):
+            return 400, {"ok": False, "err": "items/deletes 必须是数组"}
+        # 单笔上限：一次推几万条不是同步，是攻击
+        if len(items) > 2000 or len(deletes) > 2000:
+            return 413, {"ok": False, "err": "批量太大，分批推"}
+        stats = st.upsert_many(items, deletes)
+        stats["ok"] = True
+        stats["store"] = st.name
+        stats["last_seq"] = st.ledger()["last_seq"]
+        return 200, stats
+    if path == "/api/sync/personas":
+        import persona_store
+        status, ver = persona_store.push_apply((body or {}).get("key"),
+                                               (body or {}).get("fields"),
+                                               (body or {}).get("version"))
+        return 200, {"ok": status in ("applied", "same"), "status": status,
+                     "version": ver}
+    if path == "/api/sync/personas/del":
+        import persona_store
+        k = str((body or {}).get("key") or "")
+        try:
+            v = int((body or {}).get("version") or 0)
+        except (TypeError, ValueError):
+            v = 0
+        if not k or v <= 0:
+            return 400, {"ok": False, "err": "key/version 必填"}
+        cur = int(persona_store.deleted_versions().get(k) or 0)
+        if v < cur:
+            return 200, {"ok": True, "status": "same", "version": cur}
+        persona_store.record_deleted(k, v)
+        try:
+            os.remove(persona_store.path_of(k))
+        except OSError:
+            pass
+        return 200, {"ok": True, "status": "applied", "version": v}
+    if path == "/api/sync/behavior":
+        import sync_client
+        data = (body or {}).get("data")
+        if not isinstance(data, dict):
+            return 400, {"ok": False, "err": "data 必须是对象"}
+        cur = sync_client.behavior_version(sync_client.behavior_snapshot())
+        incoming = sync_client.behavior_version(data)
+        if incoming == cur:
+            return 200, {"ok": True, "status": "same",
+                         "version": cur}       # 重推：内容一样，什么都不做
+        if not sync_client.behavior_apply(data):
+            return 500, {"ok": False, "err": "写配置失败"}
+        # 行为变了，本进程的插件开关缓存/提示词跟着刷新（2.4 的 reload 钩子）
+        try:
+            reload_plugins_now()
+        except Exception:
+            pass
+        return 200, {"ok": True, "status": "applied", "version": incoming}
+    return None
+
+
 def start_remote_api(brain):
     """给"远程桌宠"和手机 App 开的门：客户端是薄壳，经隧道/直连用云上的大脑
     聊天 —— 记忆 / 人设只有云上一份，天然同步。
@@ -752,30 +907,7 @@ def start_remote_api(brain):
             self.end_headers()
 
         def _plugin_reload_now(self):
-            """重扫 plugins/ 并重拼提示词。返回 (插件数, 是否需要重启大脑)。
-
-            装/卸/改开关之后都要走这里 —— 少走一步就会出现
-            "界面显示装上了、实际那轮对话里没有它"。
-            """
-            try:
-                n = load_plugins(verbose=True)
-            except Exception:
-                n = 0
-            need = False
-            try:
-                import plugin_host as _ph
-                need = any(callable(p.hook("start"))
-                           for p in _ph.all_plugins().values())
-            except Exception:
-                pass
-            b = _LOCAL.get("brain")
-            # 提示词里的工具清单是构造时拼的，重装后得重拼
-            if b is not None:
-                try:
-                    b.reload_persona()
-                except Exception:
-                    pass
-            return n, need
+            return reload_plugins_now()
 
         def _plugin_admin(self, method, path, body):
             """插件管理面：装/卸/渠道开关/清单。命中返回 True（已回包）。
@@ -980,6 +1112,14 @@ def start_remote_api(brain):
             except Exception:
                 body = {}
             path = self.path.split("?")[0]
+            # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
+            # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
+            # 会全写进 app 覆盖 —— 渠道错乱。
+            try:
+                from urllib.parse import parse_qs as _pqs, urlparse as _up
+                qp = {k: v[0] for k, v in _pqs(_up(self.path).query).items()}
+            except Exception:
+                qp = {}
             try:
                 if path == "/api/device/register":
                     # 只能用"主人钥匙"注册：设备 token 不能自己给自己发新设备，
@@ -1537,7 +1677,11 @@ def start_remote_api(brain):
                     import features as _feat
                     patch = body if isinstance(body, dict) else {}
                     patch.pop("token", None)
-                    _fsrc = _norm_src(patch.pop("src", "") or "") or None
+                    # 渠道取值优先级：body 显式给的 > query 里的（Electron 放
+                    # query）> 都没有 = 全局那一份。🔴 不能用 _norm_src("") 兜
+                    # 底 —— 它把空串归成 "app"，"不带 src 改全局"就永远走不到。
+                    _raw = str(patch.pop("src", "") or qp.get("src") or "").strip()
+                    _fsrc = _norm_src(_raw) if _raw else None
                     cur = _feat.set_features(patch, _fsrc) if patch else None
                     if cur is None:
                         cur = _feat.all_features(_fsrc)
@@ -1548,7 +1692,9 @@ def start_remote_api(brain):
                     import chatty as _ch
                     _c = body if isinstance(body, dict) else {}
                     _c.pop("token", None)
-                    _csrc = _norm_src(_c.pop("src", "") or "") or None
+                    # 同 /api/features：body > query > 都没有 = default 档位
+                    _craw = str(_c.pop("src", "") or qp.get("src") or "").strip()
+                    _csrc = _norm_src(_craw) if _craw else None
                     if "level" in _c:
                         _ch.set_level(_c.get("level"), _csrc)
                         # 🔴 **必须清规则缓存**。draft_rules 是按 (人设,渠道)
@@ -1562,6 +1708,14 @@ def start_remote_api(brain):
                             pass
                     self._json(200, {"levels": _ch.all_levels(),
                                      "level": _ch.level(_csrc)})
+                elif path.startswith("/api/sync/"):
+                    # 同步推送（本地 → 权威源）：全部按账本幂等应用
+                    r = _sync_route_post(path, body if isinstance(body, dict)
+                                         else {})
+                    if r:
+                        self._json(r[0], r[1])
+                    elif not self._plugin_route("POST", path, body):
+                        self._json(404, {"err": "no such sync api"})
                 else:
                     # 插件管理面（装/卸/渠道开关）优先于插件自带路由：
                     # 前者只在 /api/plugins* 这一小片里，前缀不重叠。
@@ -1831,7 +1985,10 @@ def start_remote_api(brain):
                           parse_qs(urlparse(self.path).query).items()}
                 except Exception:
                     _q = {}
-                _fsrc = _norm_src(_q.get("src") or "") or None
+                # 不带 src 读全局视角（_norm_src 会把空串兜成 "app"，别让它
+                # 混进来 —— 渠道视角只在明确带了 src 时才生效）
+                _fsrc = (_norm_src(_q.get("src"))
+                         if (_q.get("src") or "").strip() else None)
                 self._json(200, {"features": _feat.all_features(_fsrc)})
             elif path == "/api/chatty":
                 # 说话多少（1~10）。带 src=wechat 读的是那个渠道的值。
@@ -1843,7 +2000,8 @@ def start_remote_api(brain):
                           parse_qs(urlparse(self.path).query).items()}
                 except Exception:
                     _q = {}
-                _csrc = _norm_src(_q.get("src") or "") or None
+                _csrc = (_norm_src(_q.get("src"))
+                         if (_q.get("src") or "").strip() else None)
                 self._json(200, {"levels": _ch.all_levels(),
                                  "level": _ch.level(_csrc)})
             elif path == "/api/plugins":
@@ -1936,6 +2094,21 @@ def start_remote_api(brain):
                 self.end_headers()
                 self.wfile.write(blob)
                 return
+            elif path.startswith("/api/sync/"):
+                # 同步拉取（权威源 → 本地）。只读接口，设备 token 也能用：
+                # 本地大脑拿的是主人钥匙，但将来别的只读端可能拿设备 token
+                qp = {}
+                try:
+                    from urllib.parse import parse_qs, urlparse
+                    qp = {k: v[0] for k, v in
+                          parse_qs(urlparse(self.path).query).items()}
+                except Exception:
+                    qp = {}
+                r = _sync_route_get(path, qp)
+                if r:
+                    self._json(r[0], r[1])
+                elif not self._plugin_route("GET", path, {}):
+                    self._json(404, {"err": "no such sync api"})
             else:
                 if not self._plugin_route("GET", path, {}):
                     self._json(404, {"err": "no such api"})
@@ -1998,6 +2171,16 @@ def run_server():
             plugin_host.start_all(_LOCAL["brain"])
         except Exception as e:
             print("[插件] 启动失败（不影响聊天）：%s" % str(e)[:120],
+                  flush=True)
+        # 本地优先同步（M2）：云端是记忆/人设/行为配置的权威源。
+        # 云端自己的 config 没有 sync 段 → cloud() 返回 None → 纯 no-op。
+        # 只有本地大脑（sidecar / 本机源码家）会真正起同步线程。
+        try:
+            import sync_client as _sync
+            _sync.set_reload_hook(lambda: reload_plugins_now())
+            _sync.start()
+        except Exception as e:
+            print("[同步] 启动失败（不影响聊天）：%s" % str(e)[:120],
                   flush=True)
 
     print("=" * 58, flush=True)

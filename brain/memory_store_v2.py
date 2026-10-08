@@ -20,6 +20,14 @@ import threading
 import numpy as np
 import httpx
 
+# 同步 outbox：本地优先架构里，本地新写的记忆要最终上云（云端是权威源）。
+# 记忆写入点是全项目唯一的漏斗口，钩子挂在这里，抽取/编辑/删除的产物都跑不掉。
+# sync_outbox 没启用时 record() 是 no-op，云端（权威源自己）零开销。
+try:
+    import sync_outbox
+except Exception:            # 打包环境万一缺模块，绝不能拖累记忆主链路
+    sync_outbox = None
+
 # 云端嵌入模型（1024 维）。改这里会自动触发索引重建，不用手工删向量文件
 EMBED_API_MODEL = os.environ.get("EMBED_API_MODEL", "BAAI/bge-m3")
 # 本地兜底模型（要能连 HuggingFace 才用得上）
@@ -685,6 +693,33 @@ def get_default_store(persona_key=None, src="app"):
     return _cached_store(p)
 
 
+def list_store_names():
+    """枚举全部记忆分区名（同步协议用）。主库叫 "memory"，分区带渠道前缀。"""
+    d = configured_mem_dir()
+    names = []
+    try:
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".json"):
+                continue
+            stem = fn[:-5]
+            if MemoryStore.sanitize_name(stem):
+                names.append(stem)
+    except OSError:
+        pass
+    return names
+
+
+def open_store_by_name(name):
+    """按分区名打开记忆库（服务端同步路由用）。名字不合法返回 None。
+
+    🔴 名字来自 HTTP 请求，必须过 sanitize_name 白名单，否则路径穿越。
+    """
+    n = MemoryStore.sanitize_name(name)
+    if not n:
+        return None
+    return _cached_store(os.path.join(configured_mem_dir(), n + ".json"))
+
+
 def _embed_dir_for(path):
     """每个记忆分区一个**独立**的向量索引目录。
 
@@ -780,6 +815,9 @@ class MemoryStore:
         self._lock = threading.RLock()      # 先于 _load()：读盘也要在锁里
         self._readonly = False              # 原文件坏了又留不了档时置位（见 _load）
         self.path = path
+        # 分区名（去掉 .json）：同步协议里用 "memory" / "linzhixia.app.memory"
+        # 这种名字指代一份记忆库，两端必须算出同一个名字
+        self.name = os.path.splitext(os.path.basename(path))[0]
         self.embed_dir = embed_dir or os.path.dirname(os.path.abspath(path))
         self.data = {"items": [], "meta": {"created": time.strftime("%Y-%m-%d %H:%M")}}
         self._load()
@@ -1065,8 +1103,16 @@ class MemoryStore:
                 item["src"] = src
             if chan:
                 item["chan"] = chan
+            # 同步账本号：本地优先架构里增量拉取靠它断点续传（after_seq）。
+            # 必须单调递增、写盘持久化，重启不能回退
+            item["seq"] = self._next_seq()
             self.data["items"].append(item)
             self.save()
+            # 本地新写的记忆 → outbox（上云）。拉取落盘的写入不经过 add()，
+            # 不会在这里产生回声
+            if sync_outbox is not None:
+                sync_outbox.record("memory_add",
+                                   {"store": self.name, "item": dict(item)})
             # 向量化并追加到内存索引
             self._load_index()
             if item["id"] in self._imap:
@@ -1087,8 +1133,19 @@ class MemoryStore:
 
     @_synchronized
     def delete(self, item_id):
+        existed = any(i["id"] == item_id for i in self.data["items"])
         self.data["items"] = [i for i in self.data["items"] if i["id"] != item_id]
+        if existed:
+            # 墓碑：删除也要进账本，否则增量拉取的一方永远不知道这条没了，
+            # 下一次全量对账还会把它复活
+            self.data["meta"].setdefault("del", []).append(
+                {"id": item_id, "seq": self._next_seq()})
+            # 墓碑只增不减会把 memory.json 撑大，留最近 2000 条足够对账
+            del self.data["meta"]["del"][:-2000]
         self.save()
+        if existed and sync_outbox is not None:
+            sync_outbox.record("memory_del",
+                               {"store": self.name, "id": item_id})
         self._load_index()
         if item_id in self._imap:
             self._imap.pop(item_id)
@@ -1102,6 +1159,244 @@ class MemoryStore:
     @_synchronized
     def list_items(self):
         return list(self.data["items"])
+
+    # ========================================================================
+    # 同步账本（M2 云端权威源）：seq 单调递增 + 墓碑 + 幂等 upsert
+    # ========================================================================
+    # 本地侧（sidecar）启动时问云端"seq > 我见过的最大值"拿增量；反过来
+    # 本地新写的记忆按 id 推上云（重推无副作用）。删除走墓碑，不丢。
+
+    def _next_seq(self):
+        """下一个账本号。必须在 self._lock 里调。"""
+        meta = self.data.setdefault("meta", {})
+        n = int(meta.get("seq") or 0) + 1
+        meta["seq"] = n
+        return n
+
+    def _bump_seq_to(self, n):
+        """把账本号推到至少 n（拉下来的条目带着云端的号，本地计数器不能倒退）。"""
+        meta = self.data.setdefault("meta", {})
+        if int(meta.get("seq") or 0) < int(n):
+            meta["seq"] = int(n)
+
+    def _drop_vec(self, item_id):
+        """把某条的向量从内存索引里摘掉（文本改了/条目没了，旧向量作废）。"""
+        if not self._index_loaded:
+            return
+        r = self._imap.pop(item_id, None)
+        if r is None:
+            return
+        keep = [k for k, i in enumerate(self._ids) if i != item_id]
+        self._rows = [self._rows[k] for k in keep]
+        self._ids = [self._ids[k] for k in keep]
+        self._imap = {i: k for k, i in enumerate(self._ids)}
+        self._mat = None
+
+    def _upsert_locked(self, item, seq=None):
+        """按 id 幂等写入一条。返回 'added' / 'updated' / 'same'。
+
+        seq 给了就用给的那号（拉取场景：保留云端的账本号，本地计数器跟着抬），
+        没给就现发一个（推送场景：云端作为权威源自己记账）。
+        同 id 同文本 = no-op —— 重推不重复就靠这一条。
+        """
+        iid = str(item.get("id") or "").strip()
+        text = str(item.get("text") or "").strip()
+        if not iid or not text:
+            return "same"
+        for it in self.data["items"]:
+            if it["id"] == iid:
+                if (it.get("text") or "").strip() == text:
+                    self._bump_seq_to(int(seq or it.get("seq") or 0))
+                    return "same"
+                it["text"] = text
+                for k in ("type", "time", "src", "chan"):
+                    if item.get(k):
+                        it[k] = item[k]
+                it["seq"] = int(seq) if seq is not None else self._next_seq()
+                self._drop_vec(iid)          # 旧向量按新文本重算（_backfill 懒加载）
+                return "updated"
+        new = {"id": iid, "type": item.get("type") or "event",
+               "text": text, "time": item.get("time") or "",
+               "seq": int(seq) if seq is not None else self._next_seq()}
+        if item.get("src"):
+            new["src"] = item["src"]
+        if item.get("chan"):
+            new["chan"] = item["chan"]
+        self._bump_seq_to(new["seq"])
+        self.data["items"].append(new)
+        return "added"
+
+    @staticmethod
+    def sanitize_name(name):
+        """分区名白名单：只允许 main 名 "memory" 或 "<scope>.memory" 形态。
+
+        名字要拼文件路径，绝不能让请求侧构造 "../../x" 出来。
+        """
+        n = str(name or "").strip()
+        if not n or len(n) > 80:
+            return None
+        if n == "memory" or (n.endswith(".memory")
+                             and all(ch.isalnum() or ch in "_-."
+                                     for ch in n)):
+            if ".." in n:
+                return None
+            return n
+        return None
+
+    def _ensure_seqs(self):
+        """给没有 seq 的老条目补账本号（只发生一次）。
+
+        不补的话，存量记忆（云端那几百条）永远不会出现在增量里 ——
+        "本地开机能看到微信产生的记忆"就落空了。补完落盘，之后零开销。
+        """
+        changed = False
+        for it in self.data["items"]:
+            if not it.get("seq"):
+                it["seq"] = self._next_seq()
+                changed = True
+        if changed:
+            self.save()
+        return changed
+
+    @_synchronized
+    def ledger(self):
+        """账本概况（manifest 用）：断点号 + 条数 + 墓碑数。顺带补齐老条目 seq。"""
+        self._ensure_seqs()
+        return {"store": self.name,
+                "last_seq": int(self.data["meta"].get("seq") or 0),
+                "total": len(self.data["items"]),
+                "deleted": len(self.data["meta"].get("del") or [])}
+
+    @_synchronized
+    def changes_after(self, after_seq, limit=500):
+        """增量：seq > after_seq 的条目 + 墓碑。last_seq 给下一次当断点。"""
+        self._ensure_seqs()
+        after = int(after_seq or 0)
+        items = sorted(
+            (it for it in self.data["items"]
+             if int(it.get("seq") or 0) > after),
+            key=lambda x: int(x.get("seq") or 0))
+        if limit and limit > 0:
+            items = items[:int(limit)]
+        dels = [d for d in (self.data["meta"].get("del") or [])
+                if int(d.get("seq") or 0) > after]
+        return {"store": self.name,
+                "last_seq": int(self.data["meta"].get("seq") or 0),
+                "items": items, "deleted": dels,
+                "total": len(self.data["items"])}
+
+    @_synchronized
+    def upsert_many(self, items, deletes=None):
+        """推送入口（本地 → 云端）：按 id 幂等写，删除记墓碑。
+
+        不走 add()：推上来的已经是别的库里的正式记忆，
+        过滤器/近义去重会把同样的东西拦出不同的结果，反而制造分歧。
+        """
+        self._ensure_seqs()
+        stats = {"added": 0, "updated": 0, "same": 0, "deleted": 0}
+        for it in (items or []):
+            r = self._upsert_locked(it if isinstance(it, dict) else {})
+            stats[r] = stats.get(r, 0) + 1
+        for iid in (deletes or []):
+            iid = str(iid or "").strip()
+            if not iid or not any(i["id"] == iid for i in self.data["items"]):
+                continue
+            self.data["items"] = [i for i in self.data["items"]
+                                  if i["id"] != iid]
+            self.data["meta"].setdefault("del", []).append(
+                {"id": iid, "seq": self._next_seq()})
+            stats["deleted"] = stats.get("deleted", 0) + 1
+            self._drop_vec(iid)
+        self.save()
+        # 推上来的新条目还没有向量。回填要调云端 embedding（网络调用），
+        # 不能在锁里做 —— 丢给后台线程，别把检索堵住
+        if stats.get("added") or stats.get("updated"):
+            threading.Thread(target=self._backfill_bg, daemon=True).start()
+        return stats
+
+    def _backfill_bg(self):
+        """upsert/pull 之后的向量回填，后台线程版。
+
+        🔴 必须**两段式**：算缺额、落索引要进锁，但 embed_texts 是网络调用
+        （云端 embedding 或本地 fastembed 首次下载，都可能几十秒）——
+        绝不能抱着锁等网络，否则同步循环/检索全被堵死。
+        """
+        try:
+            with self._lock:
+                self._load_index()
+                missing = [it for it in self.data["items"]
+                           if it["id"] not in self._imap]
+            if not missing:
+                return
+            vecs = embed_texts([it["text"] for it in missing])
+            if not vecs:
+                return                      # 嵌入不可用：下次检索时再补
+            with self._lock:
+                changed = False
+                for it, v in zip(missing, vecs):
+                    if it["id"] in self._imap:
+                        continue
+                    self._imap[it["id"]] = len(self._rows)
+                    self._ids.append(it["id"])
+                    self._rows.append(v)
+                    changed = True
+                if changed:
+                    self._mat = None
+                    self._dim = self._rows[0].shape[0] if self._rows else 0
+                    self._save_index()
+        except Exception:
+            pass
+
+    @_synchronized
+    def apply_pull(self, items, deleted=None):
+        """拉取入口（云端 → 本地）：原样落盘，带云端的账本号。
+
+        必须在 sync_outbox.suppress() 里调 —— 落盘本身会触发存储钩子，
+        不抑制的话拉下来的增量又被记进 outbox 推回云端，死循环。
+        """
+        self._ensure_seqs()
+        stats = {"added": 0, "updated": 0, "same": 0, "deleted": 0}
+        for it in (items or []):
+            if not isinstance(it, dict):
+                continue
+            r = self._upsert_locked(it, seq=int(it.get("seq") or 0) or None)
+            stats[r] = stats.get(r, 0) + 1
+        for d in (deleted or []):
+            iid = str((d if isinstance(d, dict) else {}).get("id") or d or "").strip()
+            if not iid or not any(i["id"] == iid for i in self.data["items"]):
+                continue
+            self.data["items"] = [i for i in self.data["items"]
+                                  if i["id"] != iid]
+            self.data["meta"].setdefault("del", []).append(
+                {"id": iid, "seq": self._next_seq()})
+            stats["deleted"] += 1
+            self._drop_vec(iid)
+        self.save()
+        # 🔴 绝不在这里同步触发 _backfill：那是网络调用（嵌入），会把同步
+        # 循环堵死几十秒（实测本地 fastembed 首次下载就这样）。丢给后台
+        # 两段式回填（_backfill_bg），检索本身的懒回填路径照旧。
+        if stats["added"] or stats["updated"]:
+            threading.Thread(target=self._backfill_bg, daemon=True).start()
+        return stats
+
+    @_synchronized
+    def edit(self, item_id, new_text):
+        """改一条记忆的文本（UI 用）。文本变了旧向量作废，backfill 懒重算。"""
+        new_text = str(new_text or "").strip()
+        if not new_text:
+            return None
+        for it in self.data["items"]:
+            if it["id"] == item_id:
+                it["text"] = new_text
+                it["seq"] = self._next_seq()
+                self.save()
+                self._drop_vec(item_id)
+                if sync_outbox is not None:
+                    sync_outbox.record("memory_edit",
+                                       {"store": self.name,
+                                        "item": dict(it)})
+                return dict(it)
+        return None
 
     # --- 向量检索 ---
     @_synchronized

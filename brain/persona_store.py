@@ -16,6 +16,14 @@ import re
 import time
 import random
 
+# 同步 outbox：本地改的人设要最终上云（云端权威源）。
+# 没启用同步时 record() 是 no-op；拉取落盘走 write_pull，不经过 save()，
+# 所以这里不会产生回声
+try:
+    import sync_outbox
+except Exception:
+    sync_outbox = None
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE, "config", "config.json")
 try:
@@ -25,6 +33,102 @@ try:
 except Exception:
     PERSONA_DIR = os.path.join(BASE, "config", "personas")
 DEFAULT_KEY = "default"
+
+# 人设同步账本：每套人设一个单调 version + 删除墓碑。
+# 放 config/（personas 目录外）—— 放里面会被 list_templates 当成一套人设
+PERSONA_SYNC_PATH = os.path.join(os.path.dirname(PERSONA_DIR),
+                                 "persona_sync.json")
+
+_sync_lock = None      # 惰性建锁（模块级建线程锁在冻结首启播种场景下没必要）
+
+
+def _sync_meta():
+    """读同步账本。读不到/读坏一律当空 —— 账本坏了不能挡人设读写。"""
+    global _sync_lock
+    if _sync_lock is None:
+        import threading
+        _sync_lock = threading.RLock()
+    try:
+        with open(PERSONA_SYNC_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return {"versions": dict(d.get("versions") or {}),
+                    "deleted": dict(d.get("deleted") or {})}
+    except Exception:
+        pass
+    return {"versions": {}, "deleted": {}}
+
+
+def _write_sync_meta(d):
+    try:
+        os.makedirs(os.path.dirname(PERSONA_SYNC_PATH), exist_ok=True)
+        tmp = "%s.tmp%d" % (PERSONA_SYNC_PATH, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, PERSONA_SYNC_PATH)
+        return True
+    except Exception:
+        return False
+
+
+def version_of(key):
+    """这套人设当前的同步版本（没登记过 = 0）。"""
+    return int(_sync_meta()["versions"].get(str(key or "")) or 0)
+
+
+def versions():
+    with _sync_lock or _ensure_lock():
+        return dict(_sync_meta()["versions"])
+
+
+def _ensure_lock():
+    global _sync_lock
+    if _sync_lock is None:
+        import threading
+        _sync_lock = threading.RLock()
+    return _sync_lock
+
+
+def deleted_versions():
+    """已删除人设的墓碑 {key: version}。拉取方按它清掉本地文件。"""
+    with _ensure_lock():
+        return dict(_sync_meta()["deleted"])
+
+
+def record_version(key, version=None):
+    """登记一次修改。version=None 自动 +1；给了就只升不降（幂等应用）。"""
+    key = str(key or "")
+    if not key:
+        return 0
+    with _ensure_lock():
+        m = _sync_meta()
+        cur = int(m["versions"].get(key) or 0)
+        v = (cur + 1) if version is None else max(cur, int(version))
+        m["versions"][key] = v
+        m["deleted"].pop(key, None)      # 复活（同名重建）时清掉墓碑
+        _write_sync_meta(m)
+        return v
+
+
+def record_deleted(key, version=None):
+    """登记删除墓碑：版本号接着活着的版本往上走，拉取方才看得出"有变化"。
+
+    version 给了就取 max（推送应用场景：直接抄推送方账本上的号，不自己涨）。
+    """
+    key = str(key or "")
+    if not key:
+        return 0
+    with _ensure_lock():
+        m = _sync_meta()
+        if version is None:
+            v = int(m["versions"].pop(key, 0) or 0) + 1
+        else:
+            v = max(int(version),
+                    int(m["deleted"].get(key) or 0))
+            m["versions"].pop(key, None)
+        m["deleted"][key] = v
+        _write_sync_meta(m)
+        return v
 
 # 兜底人设，personas/ 下读不到文件时才用到。基线是"老朋友"，不写恋爱框架。
 # 留空是有意的：仓库不预置具体角色，用户自己填 config/personas/*.json。
@@ -613,6 +717,13 @@ def remove(key, current_key=None):
         os.remove(p)
     except Exception as e:
         return False, "删不掉：%s" % str(e)[:60]
+    # 删除也进账本：不记的话另一端永远不知道这套没了
+    try:
+        if sync_outbox is not None:
+            sync_outbox.record("persona_del",
+                               {"key": key, "version": record_deleted(key)})
+    except Exception:
+        pass
     return True, ""
 
 
@@ -690,7 +801,91 @@ def save(data, key):
             clean[k] = old.get(k, DEFAULT_PERSONA.get(k))
     with open(p, "w", encoding="utf-8") as f:
         json.dump(clean, f, ensure_ascii=False, indent=2)
+    # 同步账本：谁改了人设都得记账，否则另一端永远拉不到这次修改
+    try:
+        _v = record_version(key)
+        if sync_outbox is not None:
+            sync_outbox.record("persona", {"key": key, "version": _v})
+    except Exception:
+        pass
     return p
+
+
+def read_fields(key):
+    """读一套人设的全部字段（推送用）。文件不在返回 None —— 和 load() 的
+    "缺了就给空白模板" 不同：推送不能拿空白模板把云端那份好的覆盖掉。"""
+    p = path_of(str(key or ""))
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return {k: d.get(k, DEFAULT_PERSONA.get(k)) for k in FIELDS}
+    except Exception:
+        pass
+    return None
+
+
+def write_pull(data, key, version):
+    """拉取落盘：原样写一份人设并登记**云端给的**版本号（不自动 +1）。
+
+    与 save() 的区别就一点：版本号是别人账本上的，照抄，不自己再涨一格 ——
+    否则每拉一次版本就虚涨一次，对不上账。
+    调用方必须包在 sync_outbox.suppress() 里。
+    """
+    data = data if isinstance(data, dict) else {}
+    os.makedirs(PERSONA_DIR, exist_ok=True)
+    p = path_of(str(key or ""))
+    clean = {}
+    for k in FIELDS:
+        if k in data:
+            clean[k] = data[k]
+        else:
+            clean[k] = DEFAULT_PERSONA.get(k)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(clean, f, ensure_ascii=False, indent=2)
+    record_version(key, version)
+    return p
+
+
+def push_apply(key, fields, version):
+    """推送入口（本地 → 云端）：按版本号幂等应用。
+
+    返回 (status, version)：status ∈ applied / same / conflict。
+    conflict = 云端已有更高版本（云端是权威源，两边都改过时云端赢），
+    推送方收到 conflict 应该重新拉一遍再决定怎么办。
+    """
+    key = str(key or "")
+    try:
+        version = int(version or 0)
+    except (TypeError, ValueError):
+        version = 0
+    if not key or version <= 0:
+        return "bad", version_of(key)
+    cur = version_of(key)
+    if version == cur:
+        return "same", cur            # 重推：已经应用过，什么都不做
+    if version < cur:
+        return "conflict", cur        # 云端有更新的，谁后推谁吃 conflict
+    write_pull(fields if isinstance(fields, dict) else {}, key, version)
+    return "applied", version
+
+
+def sync_snapshot():
+    """同步总账：全部人设（含字段）+ 版本 + 删除墓碑。给 /api/sync 用。"""
+    out = []
+    with _ensure_lock():
+        vers = _sync_meta()
+    for t in list_templates():
+        if t.get("blank") and not read_fields(t.get("key")):
+            continue                  # 空白兜底模板不进同步（不是真实人设）
+        k = t.get("key")
+        out.append({"key": k, "version": version_of(k),
+                    "fields": read_fields(k) or {}})
+    return {"personas": out,
+            "versions": vers.get("versions") or {},
+            "deleted": vers.get("deleted") or {}}
 
 
 def build_system_text(p, src="app"):

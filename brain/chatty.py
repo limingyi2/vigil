@@ -87,6 +87,12 @@ def set_level(n, src=None):
             json.dump(cfg, fp, ensure_ascii=False, indent=2)
     except Exception:
         return all_levels()
+    # 行为配置改动 → 同步 outbox（云端权威源要拉得到这次修改）
+    try:
+        import sync_outbox as _so
+        _so.record("behavior", {"seg": "chatty"})
+    except Exception:
+        pass
     return all_levels()
 
 
