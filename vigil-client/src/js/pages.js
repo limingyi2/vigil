@@ -1737,6 +1737,33 @@
 
       const res = v.querySelector('#sRes');
       const ares = v.querySelector('#sAutoRes');
+
+      // ── 本地大脑（sidecar）卡片：状态读数 + 重启 ──────────────
+      // 只在 Electron 里有（网页 harness 没有 window.vigil.sidecar）
+      if (global.vigil && global.vigil.sidecar) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.style.marginBottom = '14px';
+        v.insertBefore(card, v.querySelector('#autoCard'));
+        const drawSc = (s) => {
+          const tag = { ready: '✓ 运行中', starting: '… 启动中', failed: '✗ 放弃重启', stopped: '— 未启用' }[s.status] || s.status;
+          const tail = (s.logTail || []).slice(-3).map((l) => esc(l.slice(0, 80))).join('<br>');
+          card.innerHTML =
+            '<div class="sec" style="margin-top:0">本地大脑（sidecar）</div>' +
+            '<div class="kv"><span>状态</span><b>' + tag + (s.port ? ' · 端口 ' + s.port : '') + '</b></div>' +
+            '<div class="kv"><span>重启</span><b>' + (s.restarts || 0) + ' / 3</b></div>' +
+            (s.exe ? '<div class="kv"><span>程序</span><b class="mono" style="font-size:11px">' + esc(s.exe) + '</b></div>' : '') +
+            (tail ? '<div class="muted mono" style="font-size:10.5px;margin-top:6px;line-height:1.5">' + tail + '</div>' : '') +
+            '<div style="margin-top:8px"><button class="btn oline" id="scRestart">重启大脑</button></div>';
+          card.querySelector('#scRestart').addEventListener('click', async () => {
+            toast('正在重启本地大脑…');
+            await global.vigil.sidecar.restart();
+          });
+        };
+        global.vigil.sidecar.status().then(drawSc);
+        global.vigil.sidecar.onState(drawSc);   // 启动/崩溃/重启实时刷新
+      }
+
       v.querySelector('#sAuto').addEventListener('click', async () => {
         ares.textContent = '探测中…';
         const r = await global.vigil.autoConnect();
@@ -1911,6 +1938,15 @@
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[k] && draw[k]();
     });
+    // 首启向导引导：app.js 检测到"本地大脑在跑但还没配模型 key"时，
+    // 把 state.settingsSub 指到 'model'，进来就直接是填 key 的表单
+    const want = state.settingsSub;
+    state.settingsSub = '';
+    if (want && draw[want]) {
+      ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x.dataset.k === want));
+      draw[want]();
+      return;
+    }
     conn();
   }
 

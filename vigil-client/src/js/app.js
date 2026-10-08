@@ -180,6 +180,7 @@
       setStatus();
       refreshStats();
       if (state.page === 'chat') go('chat');
+      maybeWizard();
     });
 
     // 心跳：30 秒一轮 ping + 状态读数刷新
@@ -189,6 +190,29 @@
       refreshStats();
     }, 30000);
     refreshStats();
+  }
+
+  // ── 首启向导（填 key 即用）─────────────────────────────────
+  // 本地大脑跑着、连接正常、但一个模型 key 都没配 → 直接把人领到
+  // "模型与服务商"表单前。配过一次（wizard_done）就再也不弹。
+  async function maybeWizard() {
+    try {
+      if (!window.vigil || !window.vigil.sidecar || !state.conn.ok) return;
+      const cfg = await window.vigil.cfg.get();
+      if (cfg && cfg.wizard_done) return;
+      const sc = await window.vigil.sidecar.status();
+      if (!sc || sc.status !== 'ready' || !sc.port) return;
+      const r = await get('/api/models');
+      if (r && r.ok && r.json && r.json.current && !r.json.current.api_key_set) {
+        // 顶级页是分组（04 连接与系统 = 'system'），具体表单在组内的
+        // 「模型与服务商」子页 —— settingsSub 让 renderSettings 直接切过去
+        state.settingsSub = 'model';
+        go('system');
+        toast('填好模型 API key 就能聊了');
+      } else {
+        window.vigil.cfg.set({ wizard_done: true });
+      }
+    } catch (e) { /* 向导是锦上添花，任何异常都不该挡住启动 */ }
   }
 
   // boot 失败必须看得见：异常打进状态栏和 __bootErr，不许无声黑屏

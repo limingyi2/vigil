@@ -17,6 +17,11 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 
+// 这个客户端就是表单+列表+聊天气泡，用不上 GPU 合成。禁掉硬件加速：
+// ① 核显/驱动有毛病的机器（GPU 进程反复崩溃会把整个渲染进程拖死）
+// ② 无 GPU 的远程/虚拟机环境 —— 都能正常开窗。
+app.disableHardwareAcceleration();
+
 const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App 直连换这个地址
 // 客户端自己的渠道：独立于手机 App / 微信，聊天、历史、记忆都落在 pc 分区。
 // 不是可选项 —— 这个客户端就是一台控制台，不顶替任何别的渠道。
@@ -69,10 +74,18 @@ async function getToken() {
   // 设备模式：用设备 token（存在 token.json），不用 keytar 里的 brain token
   if (cfg.token_kind === 'device' && cfg.device_id) {
     try {
-      return JSON.parse(fs.readFileSync(tokenFile(), 'utf8')).token || '';
-    } catch (e) {
-      return '';
+      const j = JSON.parse(fs.readFileSync(tokenFile(), 'utf8'));
+      if (j.token) return j.token;
+    } catch (e) { /* 文件没有/坏了，往下走钥匙串兜底 */ }
+    // 🔴 setToken 在 keytar 可用时把设备 token 写进了钥匙串（同一个槽位），
+    // 这边却只翻文件 —— keytar 一正常，设备模式就拿空 token、全部 401。
+    // 所以两条路都得能读：文件优先（老习惯），没有再看钥匙串。
+    if (keytar) {
+      try {
+        return (await keytar.getPassword(KEY_SERVICE, KEY_ACCOUNT)) || '';
+      } catch (e) { /* 读不到就算了 */ }
     }
+    return '';
   }
   if (keytar) {
     try {
@@ -258,7 +271,11 @@ function createWindow() {
 const os = require('os');
 const localtool = require('./localtool');
 const oplog = require('./oplog');
+const sidecar = require('./sidecar');
 const PROBE = ['http://127.0.0.1:18787', 'http://127.0.0.1:8788'];
+
+// 本地大脑（sidecar）一起步就养上；找不到 exe 时它自己会保持 stopped
+sidecar.init(app, readCfg);
 
 async function registerThisDevice(base, brainToken) {
   const cfg = readCfg();
@@ -282,6 +299,20 @@ async function registerThisDevice(base, brainToken) {
 async function autoConnect() {
   const cfg = readCfg();
   const cands = [];
+  // 本地大脑优先：exe 在、没被关掉，就等它就绪（最多 30s，首启要解包/下模型）
+  if (cfg.sidecar !== false) {
+    const st = sidecar.status();
+    if (st.exe) {
+      if (!st.enabled) sidecar.maybeStart(cfg);
+      const deadline = Date.now() + 30000;
+      while (!sidecar.ready() && Date.now() < deadline) {
+        const s = sidecar.status();
+        if (s.status === 'failed' || s.status === 'stopped') break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      if (sidecar.ready()) cands.push(sidecar.base());
+    }
+  }
   if (cfg.base) cands.push(cfg.base);              // 你填过就先试它
   PROBE.forEach((b) => { if (!cands.includes(b)) cands.push(b); });
   const tried = [];
@@ -509,6 +540,25 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
 ipcMain.handle('cfg:get', () => readCfg());
 ipcMain.handle('cfg:set', (_e, patch) => writeCfg(patch));
 
+// ── 本地大脑（sidecar）────────────────────────────────────────────
+ipcMain.handle('sidecar:status', () => sidecar.status());
+ipcMain.handle('sidecar:restart', () => { sidecar.restart(readCfg()); return { ok: true }; });
+// 向导的"填 key 即用"：走大脑现成的 /api/models/apply —— 它会落盘 + 热加载，
+// 内存/磁盘两边一起到位，不用重启 sidecar
+ipcMain.handle('sidecar:apply-model', async (_e, patch) => {
+  if (!sidecar.ready()) return { ok: false, err: '本地大脑没在运行' };
+  const tok = await getToken();
+  const r = await request('POST', sidecar.base() + '/api/models/apply', patch || {}, tok);
+  return r.ok ? { ok: true, json: r.json } : { ok: false, err: r.err || ('HTTP ' + r.status), json: r.json };
+});
+// 向导拿服务商清单：让大脑自己报（PROVIDERS 在它那边，别在客户端抄一份）
+ipcMain.handle('sidecar:providers', async () => {
+  if (!sidecar.ready()) return { ok: false, err: '本地大脑没在运行' };
+  const tok = await getToken();
+  const r = await request('GET', sidecar.base() + '/api/models', null, tok);
+  return r.ok ? { ok: true, json: r.json } : { ok: false, err: r.err || ('HTTP ' + r.status) };
+});
+
 // ── 设备管理 ─────────────────────────────────────────────────────
 // 列表/吊销都走 brain 的 /api/device/*：设备 token 只能解绑自己（服务端把关），
 // 这里不再做权限判断 —— 权限只在一个地方判，才不会两边不一致。
@@ -564,6 +614,8 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);   // 自绘标题栏，不要系统菜单
     oplog.init(app.getPath('userData'));
+    sidecar.maybeStart(readCfg());   // 本地大脑先跑起来，窗口同时开
+    sidecar.onState((s) => send('sidecar:state', s));
     createWindow();
     startPolling();                  // 本地操控的活从这儿进来
     app.on('activate', () => {

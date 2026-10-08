@@ -38,6 +38,14 @@ const SHOT = path.join(CLIENT, '_shots', 'e2e.png');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** electron.exe 必须以 GUI 模式跑：有些环境全局设了 ELECTRON_RUN_AS_NODE=1，
+ *  不删掉它所有 electron 子进程都会变成纯 Node（窗口永远起不来）。 */
+function guiEnv(extra) {
+  const e = { ...process.env, ...(extra || {}) };
+  delete e.ELECTRON_RUN_AS_NODE;
+  return e;
+}
+
 function get(url) {
   return new Promise((resolve, reject) => {
     const req = http.get(url, (res) => {
@@ -81,7 +89,7 @@ function copyDir(src, dst) {
 function clearToken() {
   return new Promise((resolve) => {
     const p = spawn(ELECTRON, [path.join('tools', 'clear-token.js')], {
-      cwd: CLIENT, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: CLIENT, stdio: ['ignore', 'pipe', 'pipe'], env: guiEnv(),
     });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -105,6 +113,14 @@ function cdp(wsUrl) {
     const i = ++id;
     waiters.set(i, res);
     ws.send(JSON.stringify({ id: i, method, params: params || {} }));
+    // 渲染进程崩了（GPU/沙箱环境很常见）evaluate 会永远等不到回包，
+    // 挂死整个 e2e 还不如让它带着错误信息失败
+    setTimeout(() => {
+      if (waiters.has(i)) {
+        waiters.delete(i);
+        res({ result: { result: { value: undefined, description: 'CDP 超时：' + method } } });
+      }
+    }, 15000);
   });
   return new Promise((res, rej) => {
     ws.on('open', () => res({ send, close: () => ws.close() }));
@@ -131,6 +147,9 @@ function cdp(wsUrl) {
     // ── 1. 把 brain 拷到临时目录 ──
     console.log('\n[1] 准备隔离环境：' + tmp);
     copyDir(path.join(ROOT, 'brain'), path.join(tmp, 'brain'));
+    // 设备表绝不能跟着拷过去：里面可能有上次测试留下的 revoked 记录，
+    // 注册按机器名去重会把 revoked 状态带回来，之后每次 verify 都 401
+    try { fs.unlinkSync(path.join(tmp, 'brain', 'data', 'devices.json')); } catch (e) {}
     ok('brain 拷到临时目录（真实 data/ 不动）', fs.existsSync(path.join(tmp, 'brain', 'server.py')));
 
     // ── 2. 起 brain ──
@@ -168,9 +187,14 @@ function cdp(wsUrl) {
       roots: [path.join(tmp, 'sandbox')],
       localRisky: ['local_file_write', 'local_process_kill'],
     }), 'utf8');
-    app = spawn(ELECTRON, ['.', '--user-data-dir=' + profile, '--remote-debugging-port=' + CDP_PORT], {
+    app = spawn(ELECTRON, ['.', '--user-data-dir=' + profile,
+                           '--remote-debugging-port=' + CDP_PORT,
+                           '--disable-gpu', '--no-sandbox'], {
       cwd: CLIENT,
       stdio: ['ignore', elog, elog],
+      // 这个 e2e 验的是"连源码版 brain"的老链路；sidecar exe 在 dist/ 里
+      // 会被自动找到并抢连接，所以这里显式关掉（sidecar 有自己的 e2e）
+      env: guiEnv({ VIGIL_SIDECAR_DISABLE: '1' }),
     });
 
     let target = null;
@@ -187,7 +211,6 @@ function cdp(wsUrl) {
     c = await cdp(target.webSocketDebuggerUrl);
     await c.send('Page.enable');
     await sleep(6000);        // 等自动探测 + 注册 + 首屏渲染走完
-
     // ── 4. 看界面到底是什么状态 ──
     console.log('\n[4] 检查界面');
     const ev = async (expr) => {
@@ -196,10 +219,18 @@ function cdp(wsUrl) {
     };
     // 测试窗口是会弹到前台的，旁边有人动鼠标就可能点到左侧导航。
     // 所以先显式切回对话页，别让"当前在哪一页"变成一个随机因素。
-    await ev("document.querySelector('.rbtn[data-page=\"chat\"]').click()");
-    await sleep(2000);
-    const page = await ev("(document.querySelector('.rbtn.on')||{}).dataset ? document.querySelector('.rbtn.on').dataset.page : ''");
-    const status = await ev("document.getElementById('status').innerText.replace(/\\s+/g,' ')");
+    // （导航改版后按钮类名从 .rbtn 变成了 .gbtn/.li，改按 data-page 找，
+    //   再也别把选择器写死在某一版布局上。）
+    await ev("(document.querySelector('[data-page=\"chat\"]')||{click(){}}).click()");
+    // 软件渲染环境（无 GPU 的虚拟机/沙箱）首启慢得多，固定 6+2 秒会误报
+    // 未连接 —— 改成轮询状态栏，最多再等 45 秒。
+    let status = '';
+    for (let i = 0; i < 45; i++) {
+      await sleep(1000);
+      status = await ev("document.getElementById('status').innerText.replace(/\\s+/g,' ')");
+      if (/已连接/.test(status || '')) break;
+    }
+    const page = await ev("(document.querySelector('.gbtn.on')||document.querySelector('[data-page].on')||{}).dataset ? (document.querySelector('.gbtn.on')||document.querySelector('[data-page].on')).dataset.page : ''");
     const title = await ev("(document.querySelector('.topbar h1')||{}).textContent || ''");
     const turns = await ev("document.querySelectorAll('.turn').length");
     const firstMsg = await ev("(document.querySelector('.turn .txt')||{}).textContent || ''");
@@ -207,10 +238,25 @@ function cdp(wsUrl) {
     console.log('   状态栏: ' + status);
     ok('自动连上并进了聊天页', page === 'chat', 'page=' + page);
     ok('状态栏显示已连接', /已连接/.test(status || ''), status);
+    if (!/已连接/.test(status || '')) {
+      // 诊断：主进程那边注册是成功的（上面设备表 OK），这里看渲染层缺什么。
+      // 注意 await 表达式必须配 awaitPromise:true，否则永远回 undefined
+      const ev2 = async (expr) => {
+        const r = await c.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+        return r.result && r.result.result && r.result.result.value;
+      };
+      const d0 = await ev("document.querySelectorAll('.rbtn').length + '/' + document.querySelectorAll('.gbtn').length");
+      const d1 = await ev2("window.vigil ? 'has-vigil' : 'no-vigil'");
+      const d2 = await ev2("window.vigil ? (await window.vigil.token.has()) || '(empty)' : '-'");
+      const d3 = await ev2("window.vigil ? JSON.stringify(await window.vigil.api('GET','/api/persona')).slice(0,160) : '-'");
+      console.log('   [诊断] rbtn/gbtn=' + d0 + ' vigil=' + d1 + ' token=' + d2);
+      console.log('   [诊断] persona=' + d3);
+    }
 
     // 历史条数跟接口对账 —— 别假设"一定有记录"：
     // 聊天存档是**按人设分区**的，当前人设没聊过就是空，这是设计不是故障。
-    const apiHist = await get2(BASE + '/api/history?src=app&limit=300', brainToken);
+    // 客户端渠道早已固定 src=pc（本机控制台），对账要用同一个渠道
+    const apiHist = await get2(BASE + '/api/history?src=pc&limit=300', brainToken);
     const want = (JSON.parse(apiHist.body).items || []).length;
     const emptyShown = await ev("((document.querySelector('.sysline')||{}).textContent||'').indexOf('还没有聊过') >= 0");
     ok('聊天记录显示与服务端一致', Number(turns) === want && (want > 0 || emptyShown),
@@ -261,7 +307,11 @@ function cdp(wsUrl) {
     // 这是唯一能证明"客户端真的会执行本地操作"的地方：之前那段只能靠
     // 发一句话触发模型，那要花钱、还会往她的记忆里写东西。
     console.log('\n[7] 本地操作');
-    await ev("document.querySelector('.rbtn[data-page=\"tools\"]').click()");
+    // 工具页不是顶栏按钮了：顶栏是「03 能力与扩展」分组，工具页是组内的
+    // 一个 .li 项 —— 两级都要点。
+    await ev("(document.querySelector('[data-page=\"ability\"]')||{click(){}}).click()");
+    await sleep(800);
+    await ev("(document.querySelector('.li[data-k=\"tools\"]')||{click(){}}).click()");
     await sleep(1500);
     const clientTools = await ev(
       "[...document.querySelectorAll('#tList .li[data-k]')].map(function(n){return n.dataset.k})");

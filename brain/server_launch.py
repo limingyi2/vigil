@@ -60,9 +60,12 @@ def _pick_port():
         except (ValueError, IndexError):
             pass
     try:
-        return int(os.environ.get("VIGIL_PORT") or 0)
+        env_port = int(os.environ.get("VIGIL_PORT") or 0)
+        if env_port > 0:
+            return env_port
     except ValueError:
         pass
+    # 没给端口（或给了 0/非法值）就让系统挑一个空闲的
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(("127.0.0.1", 0))
