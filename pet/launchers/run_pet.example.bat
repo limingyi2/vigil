@@ -4,7 +4,7 @@ rem TEMPLATE ONLY: copy this file to run_pet.bat, then fill in the values below.
 rem run_pet.bat is gitignored on purpose (it holds your server IP and key path).
 
 rem ---- Fill these in for your own machine ----
-set PROJECT_DIR=C:\path\to\your\zhixia
+set PROJECT_DIR=C:\path\to\your\vigil
 set PYTHONW=%PROJECT_DIR%\venv\Scripts\pythonw.exe
 set CLOUD_HOST=your.server.ip
 set CLOUD_USER=your_ssh_user

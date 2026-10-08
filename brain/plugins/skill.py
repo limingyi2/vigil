@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""skill 桥：把 Node 侧宿主上的 JS 技能，接进知夏的工具清单。
+"""skill 桥：把 Node 侧宿主上的 JS 技能，接进大脑的工具清单。
 
 ## 为什么要有这一层
 
-知夏自己的插件是纯 Python（`plugins/*.py`），直接 import 进大脑进程。
+Python 插件（`plugins/*.py`）是直接 import 进大脑进程的。
 但外面能下到的 skill 大多是 JS + skill.json，契约是这样：
 
     export function setup(api) {
@@ -72,7 +72,7 @@ def _host():
 
 # --- 按渠道开关 --------------------------------------------------------------
 #
-# 🔴 **不能复用 plugin_ops.channels_of / set_channels。**
+# **不能复用 plugin_ops.channels_of / set_channels。**
 # 那套是「一个插件 = 一个 FEATURE 键」，而技能是一个插件里装着好几个包：
 # 每个包要能单独开关。硬塞进 features 段就得给每个包造一个动态键，
 # 而 features.set_features 只认 DEFAULTS 里的白名单键 ——
@@ -167,7 +167,7 @@ _CACHE_TTL = 60                 # 工具清单缓存秒数。别每次对话都�
                                 # 一次 HTTP 不贵，但一轮对话可能调好几种技能，
                                 # 乘起来就没必要了。60 秒的延迟换不到任何好处。
 
-_cache = {"at": 0.0, "tools": []}
+_cache = {"at": 0.0, "tools": [], "src": None}
 _cache_lock = threading.Lock()
 
 
@@ -230,13 +230,13 @@ def list_skills(timeout=8):
         return [{"id": "", "name": "连不上 skill 宿主（%s）" % str(e)[:60], "tools": []}]
 
 
-def _tools_now():
-    """宿主上的全部工具（已按当前渠道过滤），拉平：{全名: {...}}。"""
+def _tools_now(src=None):
+    """宿主上的全部工具（按渠道过滤），拉平：{全名: {...}}。"""
     out = {}
     for s in list_skills():
-        # 🔴 清单本身就要按渠道过滤：被关掉的技能连名字都不该出现在
+        # 清单本身就要按渠道过滤：被关掉的技能连名字都不该出现在
         # skill_list 的输出里 —— 出现了模型就会去调，调用时再拒是白跑一轮。
-        if not _skill_on(s.get("id") or ""):
+        if not _skill_on(s.get("id") or "", src):
             continue
         for t in (s.get("tools") or []):
             n = str(t.get("name") or "")
@@ -259,16 +259,27 @@ def _all_tools_now():
     return out
 
 
-def tools():
-    """给模型看/ 调的工具表。带 60 秒缓存。"""
+def tools(src=None):
+    """给模型看/ 调的工具表。带 60 秒缓存。
+
+    🔴 **缓存必须按渠道分开。**
+    `_tools_now()` 拉出来的清单**已经是按渠道过滤过的**，而缓存原来是一个
+    单槽（不看 src）。于是：App 那一轮先把"App 可见"的清单算出来缓存住，
+    60 秒内来一条微信消息 → 缓存命中 → **把 App 的技能清单喂给微信**，
+    模型就会去调一个你明确给微信关掉的技能。反过来一样。
+    （原来 _dynamic_tool_array 收下了 src 却没往这里传，所以连"谁在问"都
+    不知道 —— 两边一起修。）
+    """
     now = time.time()
     with _cache_lock:
-        if now - _cache["at"] < _CACHE_TTL and _cache["tools"]:
+        if (now - _cache["at"] < _CACHE_TTL and _cache["tools"]
+                and _cache.get("src") == src):
             return dict(_cache["tools"])
-    got = _tools_now()
+    got = _tools_now(src)
     with _cache_lock:
         _cache["at"] = now
         _cache["tools"] = got
+        _cache["src"] = src
     return dict(got)
 
 
@@ -321,10 +332,10 @@ def _tier_for(ctx):
             return "mentioned"
     except Exception:
         pass
-    #🔴 最后一层兜底：**从消息里直接找 @ 开头的名字**。
+    #最后一层兜底：**从消息里直接找 @ 开头的名字**。
     # 为什么需要：上面那条判据依赖 gate 读人设昵称，而人设有多个来源
     # （配置 / persona.nicknames / 换过的人设），任何一环读空都会让它返回
-    # "没人喊她"。实测踩到过：ctx.brain 为空时昵称列表是空的，
+    # "没人喊她"。已知问题：ctx.brain 为空时昵称列表是空的，
     # 于是 "@知夏" 明明在场也被判成"没被点名" —— 表现是"她被点名了却不理我"。
     # 群里被@ 是明摆着的事，从文本里直接看最可靠，也不需要任何配置。
     try:
@@ -348,7 +359,7 @@ def call(name, args, ctx=None):
     """
     ts = tools()
     if name not in ts:
-        # 🔴 名字对但这个渠道关着，要说清楚是**渠道**关的。
+        # 名字对但这个渠道关着，要说清楚是**渠道**关的。
         # 清单是按渠道过滤过的（tools() 里 _tools_now 跳过关掉的包），
         # 所以这里拿到「没有」有两种可能，得分开回话：
         # 回一句「没有这个技能工具」会让她以为是自己记错了名字，然后改口道歉 ——
@@ -365,12 +376,12 @@ def call(name, args, ctx=None):
                     "content": "这个技能在%s里不开放，当没这件事就行。"
                                % ("微信" if _cur == "wechat" else "App")}
         return {"ok": False, "content": "没有这个技能工具：%s" % name}
-    # 🔴 拿她的名字**不能写 getattr(brain, 'bot_name', ...)**：Brain 上没有这个
+    # 拿她的名字**不能写 getattr(brain, 'bot_name', ...)**：Brain 上没有这个
     # 属性（只有 persona 里的 nicknames），getattr 恒返回默认值 —— 于是技能
     # 每次拿到的都是硬编码的名字，而"看起来能正常跑"，只是叫错了。
     # 走 persona 读，跟 gate.py 的 _nicknames 同源。
     #
-    # 🔴 变量必须叫 bot_name，**不能复用 name**：name 是传进来的技能工具名，
+    # 变量必须叫 bot_name，**不能复用 name**：name 是传进来的技能工具名，
     # 这里一赋值就把它冲掉了，症状是"调什么工具都报『没有这个技能工具：知夏』"。
     bot_name = "知夏"
     try:
@@ -510,11 +521,30 @@ def invoke_tool(name, arg="", ctx=None):
 TOOLS = {"skill_list": lambda ctx: skill_list(ctx),
          "skill_call": skill_call}
 
-# 🔴 TOOL_HELP 里**要列具体技能名**。
-# 原来只说"先 skill_list 看看有什么" —— 那个设计是为了躲
+# 原生 function calling 规格。skill_call 是多参数工具（name + args），
+# 标记 multi_args=True，invoke_spec 会把整个 args dict 传给 plugin_host，
+# 而不是按 arg_param 还原成单字符串（旧链路只有一个字符串参数）。
+TOOL_SPECS = {
+    "skill_list": {
+        "desc": "列出服务器上当前可用的JS技能工具。无参数。",
+        "params": [], "arg_param": None,
+    },
+    "skill_call": {
+        "desc": "调用一个JS技能工具。先用 skill_list 看有哪些可用，再用这个调具体的。",
+        "params": [
+            ("name", "技能工具名（从 skill_list 的结果里选）", True),
+            ("args", "参数JSON字符串，如 {\"who\":\"小明\"}；无参数留空", False),
+        ],
+        "arg_param": None,
+        "multi_args": True,
+    },
+}
+
+# TOOL_HELP 里**要列具体技能名**。
+# 只说"先 skill_list 看看有什么"是不够的 —— 那样写是为了躲
 # 「构造时快照 + 宿主晚起」的时序坑，**但代价太大**：
 # 提示词里一个技能名都没有，模型就没有任何理由发起那第一轮 `skill_list`，
-# 于是她自己编了一个运势交差。实测：问"今日运势"她答"宜吃甜品，忌饿肚子"，
+# 于是她自己编了一个运势交差。例：问"今日运势"她答"宜吃甜品，忌饿肚子"，
 # 而技能真跑出来是"大吉★★★★★· 综合98分 / 宜：吃顿好的、摸鱼、学个新词"。
 # 这跟"工具全通但她就是不用"是同一个病，而那次栽在**提示词没给她入口**。
 #
@@ -523,11 +553,11 @@ TOOLS = {"skill_list": lambda ctx: skill_list(ctx),
 # 真正会变的是"宿主现在活着吗" —— 那是 `skill_call` 自己的事：
 # 调不通它会回一句能直接喂给模型的话（见 call() 末尾）。
 #
-# ⚠️ 技能名写死在这里 = 装了新技能要回来加一行。这是刻意的：
+# 技能名写死在这里 = 装了新技能要回来加一行。这是刻意的：
 # 提示词里的技能清单必须**跟宿主里装的**对得上，而宿主是云端独立进程、
 # 本机看不见 —— 靠自动同步只会得到一个"看着全对、实际漏了一半"的清单。
 # 面板的技能页能一眼看到该加哪一行。
-TOOL_HELP = """## JS 技能
+_HELP_LIST = """## JS 技能
 服务器上装着这些技能，**它们能给出真实结果，不要自己编**：
 
 - `daily-fortune__today` 今日运势。抽签给签位（大吉/中吉…）、综合分、
@@ -539,7 +569,10 @@ TOOL_HELP = """## JS 技能
 - `reply-meme__find_meme` 找表情包。要发表情包时用它。
 - `valorant-match__recent_schedule` 无畏契约近期赛程。
 - `valorant-match__recent_results` 无畏契约近期战绩。
+"""
 
+# 标签版说明（给还没迁到原生 function calling 的链路）
+_HOWTO_TAG = """
 怎么调 —— **跟天气、搜索一模一样的写法**，括号里直接写参数：
 
     [tool:daily-fortune__today:{"who": "小明"}]
@@ -551,11 +584,105 @@ TOOL_HELP = """## JS 技能
 
 上面没列出的、**后来新装的**技能，调 `[tool:skill_list]` 能看到；
 空列表或调不通都当没有，别提它。
+"""
+
+# 原生版：工具名就是 schema 里的名字，直接调用。
+# 🔴 线上走的是这条。上面那套标签在这条链路上**没有任何人执行**，
+# 写了就是没查（详见 persona_store.build_draft_rules 的 native 说明）。
+_HOWTO_NATIVE = """
+怎么调 —— 上面每个名字就是它的**工具名**，直接调用就行：
+
+    daily-fortune__today    参数 {"who": "小明"}
+    hot-trends__hot_brief   不用参数
+    reply-meme__find_meme   参数 {"mood": "无语"}
+
+不用先查清单，也不用在外面再包一层。**不确定参数叫什么就一个都不写**
+（像第二行那样），工具自己会用默认值，比填错强。
+
+上面没列出的、**后来新装的**技能，调 `skill_list` 工具能看到；
+空列表或调不通都当没有，别提它。
+"""
+
+_HELP_TAIL = """
 
 🔴 **拿到结果别照抄，也别改数字。** 签位、分数、宜忌、幸运色这些都是
 工具给的原文，你用自己的话说，语气像平时说话就行；但**不许自己另编一个**。
 工具调不动时它会直接告诉你原因（比如"这个技能在微信里不开放"），
 那就当没这件事，正常聊天，**不要解释、不要追问、也不要提"技能"这三个字**。"""
+
+# 清单和尾部规则**只有一份**，两种协议只在"怎么调"那段分叉。
+# 技能名或判据要改的话改一次就够，不会出现"标签版改了、原生版忘了"。
+TOOL_HELP = _HELP_LIST + _HOWTO_TAG + _HELP_TAIL
+TOOL_HELP_NATIVE = _HELP_LIST + _HOWTO_NATIVE + _HELP_TAIL
+
+
+def _live_skill_lines(max_tools=24, desc_chars=56):
+    """**实时**渲染技能清单（从宿主读，走 tools() 的 60 秒缓存）。
+
+    ## 为什么不能写死
+
+    原来那份 `_HELP_LIST` 是写死的，只列了 daily-fortune / hot-trends /
+    reply-meme / valorant-match —— 后来从面板装的 **agent-reach 不在里面**。
+    于是"B站搜一下""读一下这个网页"这类需求，她**压根不知道有这个工具**：
+    实测技能工具命中 **0/9**，而核心工具 6/6。
+
+    原来那份文案自己写着"上面没列出的、后来新装的技能，调 `skill_list` 能看到"
+    —— **指望模型主动去查太弱了**，它不会。
+
+    ## 为什么要截断
+
+    这是每轮都挂着的提示词。宿主上 5 个技能 21 个工具，描述全展开能把
+    这段撑到两倍长，反而更难挑。所以每个工具只留**第一句**（到第一个句号），
+    并封顶条数。
+
+    ## 读不到就回落
+
+    宿主没起来/超时都回落到写死的 `_HELP_LIST`：少几个新技能可以忍，
+    **提示词拼不出来 = 她一句话都说不出**。
+    """
+    try:
+        getter = globals().get("tools")
+        table = getter() if callable(getter) else {}
+        if not isinstance(table, dict) or not table:
+            return _HELP_LIST
+        by_skill = {}
+        for full, meta in table.items():
+            sk = str((meta or {}).get("skill") or "?")
+            by_skill.setdefault(sk, []).append((str(full), str((meta or {}).get("desc") or "")))
+        if not by_skill:
+            return _HELP_LIST
+        out = ["## JS 技能",
+               "服务器上装着这些技能，**它们能给出真实结果，不要自己编**"
+               "（这份清单是实时读的）：", ""]
+        n = 0
+        for sk in sorted(by_skill):
+            out.append("### %s" % sk)
+            for full, desc in sorted(by_skill[sk]):
+                if n >= max_tools:
+                    break
+                d = desc.strip().split("。")[0].replace("\n", " ")
+                if len(d) > desc_chars:
+                    d = d[:desc_chars] + "…"
+                out.append("- `%s` %s" % (full, d))
+                n += 1
+            out.append("")
+        if n == 0:
+            return _HELP_LIST
+        return "\n".join(out)
+    except Exception:
+        return _HELP_LIST
+
+
+def TOOL_HELP_FN(native=False):
+    """给 plugin_host 的**动态**说明入口（见 plugin_host._help_text）。
+
+    清单实时生成，"怎么调"和尾部规则复用同一份常量 —— 不然又是两个真源。
+    """
+    try:
+        live = _live_skill_lines()
+    except Exception:
+        live = _HELP_LIST
+    return live + (_HOWTO_NATIVE if native else _HOWTO_TAG) + _HELP_TAIL
 
 
 def prompt(ctx=None):
@@ -609,15 +736,15 @@ def _r_say(body, query):
                     "请你自己把这段话说出来，不要复述也不要解释。"}
 
 
-# 🔴 这两个 dict 会被 reload 清空，所以里面只能放「本轮/本次」的东西。
+# 这两个 dict 会被 reload 清空，所以里面只能放「本轮/本次」的东西。
 # start() 存下来的 brain 不属于这里，见下面 _PERSIST。
 _turn_ref = {"t": None}          # 本轮的 Turn。只在 skills 调用期间有效。
 
-# 🔴 brain 必须住在**模块之外**。
+# brain 必须住在**模块之外**。
 #
 # plugin_host.load() 每次热重载都重新 exec 一遍这个文件（模块名 zxplug_skill），
 # 于是模块级变量全部换成全新的：`_brain_ref = {"b": None}` 重新绑定，
-# 之前 start(brain) 存进去的 brain 随旧模块对象一起被丢掉。
+# start(brain) 里存进去的 brain 会随旧模块对象一起被丢掉。
 # 而 start_all() 只在开机时调一次 —— 所以面板点一次「重载」、或者装/卸
 # 一次技能（install/uninstall 内部会打宿主 /reload 并清工具缓存），
 # 就把 say 通道永久打瞎，而且**不会自己恢复**。
@@ -655,7 +782,7 @@ SKILL_EXT = (".js", ".mjs", ".cjs", ".json", ".md")
 
 # 复用 plugin_ops 的安全上限，不另设一套 —— 两边的风险是同一个
 # （上传来的 zip 都可能带 ../ 跳目录、可能是炸弹、可能是加密包）。
-# 🔴 别复制一份数字过来：改一处漏一处，出问题时更难查。
+# 别复制一份数字过来：改一处漏一处，出问题时更难查。
 try:
     from plugin_ops import (MAX_ZIP_BYTES, MAX_UNPACKED, MAX_FILE_BYTES,
                             MAX_FILES, _norm_entry)
@@ -687,7 +814,7 @@ def _skill_dir():
     if env:
         return env
     # runtime.HERE 即 brain/ 目录（runtime.py 与 skill_host/ 同级）。
-    # 🔴 原来写 `from runtime import ROOT` —— runtime 没有 ROOT，恒 ImportError，
+        # 写 `from runtime import ROOT` 是错的 —— runtime 没有 ROOT，恒 ImportError，
     # 每次都静默走下面的兜底分支（兜底路径恰好正确，所以功能没坏）。改用 HERE。
     try:
         from runtime import HERE
@@ -808,7 +935,7 @@ def _install_zip(raw, note=""):
         # 宿主 server.js 的 resolveEntry() 认这种形状，所以这里要**剥到内层**，
         # 否则装进去的目录结构跟外面下的对不上。
         #
-        # 🔴 入口判断要用 `endswith("index.js")` 而不是
+        # 入口判断要用 `endswith("index.js")` 而不是
         # `endswith("/index.js")` —— 后者是精确后缀匹配，
         # 而实际路径是 `包名/index.js`，前面还有目录名，永远匹配不上，
         # 结果是**所有合法包都被判成「没入口」**。
@@ -826,7 +953,7 @@ def _install_zip(raw, note=""):
         root = None
         if len(tops) == 1 and len(tops[0]) > 0:
             top = tops[0]
-            # 🔴 双层的判据必须是「**内层目录跟顶层同名**」，不能只看
+            # 双层的判据必须是「**内层目录跟顶层同名**」，不能只看
             # 「顶层里面还有一层」。少了这个前提，`solo/index.js` 这种
             # **单层**包会被误判成双层（内层 rels = ["index.js"] 也算“有入口”），
             # root 拼成 "solo/solo"，后面切 rels 切出空列表，
@@ -912,6 +1039,32 @@ def _install_zip(raw, note=""):
         except Exception as e:
             reload_err = str(e)[:100]
 
+        # --- 7) 🔴 验一下宿主**到底认没认这个包** ---
+                # 只要"文件搬进去了 + /reload 没抛异常"就报 ok:True 是不够的 —— /reload
+        # **重扫整个目录**：别的技能装载成功它照样返回成功，新装的这个失败与否
+                # 不管。于是"安装成功"和"列表里没有"能同时成立 —— 例如：
+        #
+        #     agent-reach 的文件都在磁盘上，宿主日志写着
+        #     「装载 agent-reach 失败：这个包没有 setup(api)，不是 skill」
+        #     而面板弹的是「已装上「agent-reach」（3 个文件）」
+        #
+        # 用户看到的是"提示安装成功了，但下面列表里没有" —— 属于这一整轮
+        # 反复出现的那个形状：**失败不报错**。所以这里必须回读宿主的清单来确认。
+        sid = str((meta or {}).get("id") or pkg)
+        loaded = None
+        try:
+            ids = [str(s.get("id") or "") for s in list_skills()]
+            loaded = (sid in ids) or (pkg in ids)
+        except Exception:
+            loaded = None                      # 问不到就不下结论，别误报失败
+        if loaded is False:
+            return {"ok": False, "skill": pkg, "name": sid,
+                    "err": "文件装好了，但技能宿主不认这个包（没被装载）。"
+                           "多半是包本身不符合契约：入口要导出 "
+                           "setup(api)（或 QQ Agent 的 register(api)）。"
+                           "宿主日志里有具体原因："
+                           r"C:\vigil\logs\skill_host.log 搜「装载 %s 失败」" % pkg}
+
         return {"ok": True, "skill": pkg,
                 "name": str(meta.get("name") or pkg)[:60],
                 "files": len(rels), "reloaded": reloaded,
@@ -934,11 +1087,11 @@ def _uninstall(pkg):
     final = os.path.join(sk_dir, pkg)
     if not os.path.isdir(final):
         return {"ok": False, "err": "没这个技能：%s" % pkg}
-    bak = _backup_path(final)
-    if bak is None:
-        return {"ok": False, "err": "备份名取不到了，没敢删"}
+    # 真删。以前是先改名成 <pkg>.bak_<时间戳> 留一手，但那样每卸一次就在技能目录里
+    # 攒一个残留目录，装装删删几轮后目录里全是 .bak_ 垃圾、还容易被重新扫描到。
+    # 现在前端只弹一道确认窗口，确认即整目录删除（数据仍不碰，见上面的说明）。
     try:
-        os.rename(final, bak)
+        shutil.rmtree(final)
     except Exception as e:
         return {"ok": False, "err": "删不掉：%s" % str(e)[:80]}
     try:
@@ -948,12 +1101,11 @@ def _uninstall(pkg):
             _cache["tools"] = []
     except Exception:
         pass                # 卸载已经成功了，宿主重载失败只影响「马上生效」
-    # 🔴 顺手摘掉它的渠道配置。不摘的话配置里留一个指向已删包的键，
+    # 顺手摘掉它的渠道配置。不摘的话配置里留一个指向已删包的键，
     # 而 channels_of 只看键在不在 → 那个包再装回来时会**继承卸载前的渠道开关**，
     # 界面（默认全开）和实际（全关）不一致，还很难联想到是卸载留下的。
     _drop_channels(pkg)
-    return {"ok": True, "skill": pkg,
-            "warn": "已挪到 %s.bak_<时间戳>，确认没问题可以自己删" % pkg}
+    return {"ok": True, "skill": pkg, "msg": "已卸载"}
 
 
 # --- 面板接口 ---------------------------------------------------------------

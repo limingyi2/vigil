@@ -49,7 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DASH = os.path.normpath(os.path.join(HERE, "..", "admin", "dashboard.html"))
 # 🔴 单反斜杠。这里的常量是写进 Python 源码的，不经过 cmd，
 # 但仍要跟仓库里其它脚本一致 —— 写成双反斜杠会在 Windows 上被当 UNC。
-VENV_PY = os.path.normpath("F:/Vigil/venv/Scripts/python.exe")
+VENV_PY = os.path.normpath("F:/vigil/venv/Scripts/python.exe")
 
 ARGS = sys.argv[1:]
 WITH_HOST = "--with-host" in ARGS

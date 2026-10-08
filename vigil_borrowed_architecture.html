@@ -1,0 +1,91 @@
+<html style="margin:0;padding:0;">
+<title>Vigil 借鉴架构图（Claude Code / Codex）</title>
+<div style="width:100%;box-sizing:border-box;padding:20px;background:#050508;font-family:'IBM Plex Sans',sans-serif;">
+
+  <div style="text-align:center;margin-bottom:18px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:#E8EAF0;">Vigil 新架构 · 借鉴映射</div>
+    <div style="font-size:12px;color:#64748B;margin-top:4px;">推理/执行分离 · 统一 Loop · deny-first 权限 · 上下文压缩</div>
+  </div>
+
+  <!-- 多端入口 -->
+  <div style="display:flex;gap:12px;justify-content:center;margin-bottom:8px;">
+    <div style="flex:1;max-width:260px;background:#12121A;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px;text-align:center;">
+      <div style="font-size:16px;">🖥️</div>
+      <div style="font-size:13px;color:#E8EAF0;font-weight:600;">桌面客户端</div>
+      <div style="font-size:10px;color:#64748B;">Electron · 代行/观测</div>
+    </div>
+    <div style="flex:1;max-width:260px;background:#12121A;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px;text-align:center;">
+      <div style="font-size:16px;">📱</div>
+      <div style="font-size:13px;color:#E8EAF0;font-weight:600;">Android App</div>
+      <div style="font-size:10px;color:#64748B;">移动端</div>
+    </div>
+    <div style="flex:1;max-width:260px;background:#12121A;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px;text-align:center;">
+      <div style="font-size:16px;">💬</div>
+      <div style="font-size:13px;color:#E8EAF0;font-weight:600;">微信机器人</div>
+      <div style="font-size:10px;color:#64748B;">腾讯云</div>
+    </div>
+  </div>
+
+  <!-- 箭头 -->
+  <div style="text-align:center;color:#3B82F6;font-size:18px;">↓ &nbsp; <span style="font-size:10px;color:#64748B;">无状态请求 + 设备 Token 身份认证</span></div>
+
+  <!-- 云端大脑 -->
+  <div style="background:linear-gradient(135deg,rgba(59,130,246,0.12),rgba(6,182,212,0.08));border:1px solid rgba(59,130,246,0.35);border-radius:12px;padding:14px;margin-bottom:8px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#60A5FA;margin-bottom:10px;">☁️ 云端大脑 Brain（统一 Agent Loop · 多端共用）</div>
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;background:#0C0C12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#E8EAF0;font-weight:600;">🧠 模型推理</div>
+        <div style="font-size:10px;color:#94A3B8;margin-top:4px;line-height:1.5;">只产出结构化工具请求<br>+ 思维链/正文分流</div>
+        <div style="font-size:9px;color:#06B6D4;margin-top:6px;">借鉴 Codex SSE 分流</div>
+      </div>
+      <div style="flex:1;background:#0C0C12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#E8EAF0;font-weight:600;">📋 update_plan</div>
+        <div style="font-size:10px;color:#94A3B8;margin-top:4px;line-height:1.5;">显式维护步骤清单<br>轻量替代完整 P&E</div>
+        <div style="font-size:9px;color:#06B6D4;margin-top:6px;">借鉴 Codex 计划工具</div>
+      </div>
+      <div style="flex:1;background:#0C0C12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#E8EAF0;font-weight:600;">🗜️ 上下文压缩</div>
+        <div style="font-size:10px;color:#94A3B8;margin-top:4px;line-height:1.5;">工具输出截断<br>+ 长历史摘要（2层）</div>
+        <div style="font-size:9px;color:#06B6D4;margin-top:6px;">简化自 CC 五层管道</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 推理/执行分离边界 -->
+  <div style="text-align:center;margin:6px 0;">
+    <div style="display:inline-block;border:1px dashed #F59E0B;border-radius:20px;padding:3px 14px;font-size:10px;color:#F59E0B;font-family:'JetBrains Mono',monospace;">══ 推理 / 执行 分离边界（模型无法越过）══</div>
+  </div>
+  <div style="text-align:center;color:#F59E0B;font-size:16px;margin-bottom:6px;">↓ &nbsp; <span style="font-size:10px;color:#64748B;">工具请求先过权限门，验证后才执行</span></div>
+
+  <!-- 客户端 Harness -->
+  <div style="background:linear-gradient(135deg,rgba(16,185,129,0.1),rgba(59,130,246,0.08));border:1px solid rgba(16,185,129,0.3);border-radius:12px;padding:14px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:#34D399;margin-bottom:10px;">🛡️ 客户端 Harness（执行层 · 本地）</div>
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;background:#0C0C12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#E8EAF0;font-weight:600;">🚪 deny-first 权限门</div>
+        <div style="font-size:10px;color:#94A3B8;margin-top:4px;line-height:1.5;">deny &gt; ask &gt; allow<br>未识别 → 上报用户</div>
+        <div style="font-size:9px;color:#34D399;margin-top:6px;">借鉴 CC 权限系统</div>
+      </div>
+      <div style="flex:1;background:#0C0C12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#E8EAF0;font-weight:600;">🔧 工具执行</div>
+        <div style="font-size:10px;color:#94A3B8;margin-top:4px;line-height:1.5;">文件/Shell/截图/GUI<br>路径白名单+黑名单</div>
+        <div style="font-size:9px;color:#34D399;margin-top:6px;">Windows 务实沙箱</div>
+      </div>
+      <div style="flex:1;background:#0C0C12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#E8EAF0;font-weight:600;">📡 monitor 子代理</div>
+        <div style="font-size:10px;color:#94A3B8;margin-top:4px;line-height:1.5;">只读盯状态/日志/token<br>隔离上下文只回摘要</div>
+        <div style="font-size:9px;color:#34D399;margin-top:6px;">借鉴 Codex monitor</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图例 -->
+  <div style="margin-top:14px;display:flex;gap:16px;justify-content:center;font-size:10px;color:#64748B;flex-wrap:wrap;">
+    <span><span style="color:#60A5FA;">■</span> 云端（推理）</span>
+    <span><span style="color:#34D399;">■</span> 本地（执行）</span>
+    <span><span style="color:#F59E0B;">┄</span> 安全边界</span>
+    <span style="color:#64748B;">CC = Claude Code</span>
+  </div>
+
+</div>
+</html>

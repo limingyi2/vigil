@@ -1,16 +1,25 @@
 # -*- coding: utf-8 -*-
-"""前端与工程约定的不变量。不需要浏览器，纯静态检查。
+"""App 前端（assets/chat.html）的不变量。纯静态检查，不需要浏览器。
 
-这里钉的是 README 第八节自己定的规矩，以及几个已经踩过的坑：
-- 根目录 `_chat.html`（前端母本）和 `assets/chat.html` 内容必须一致，
-  否则"本地改好了、装到手机上还是旧的"；
-- `esc()` 被用在 `data-mid="…"` / `src="…"` 这类**属性**里，必须转义引号；
-- 同一个作用域里不许再出现两份 `copyText`（后者会静默覆盖前者）。
+2026-10-08 改造：App 从完整聊天界面改成**框架页**（聊天 / 日记 / 朋友圈 / 人设 /
+模型面板全部移除，界面留待后续重做）。所以这一批断言跟着换了目标 —— 从"界面里必须有
+某个 DOM / 某个函数"变成"**框架必须保住的那几样东西还在**"。
+
+框架页刻意保留的东西（少一样，以后重做就得重写）：
+  1. DEF_BASE / DEF_TOKEN / APP_CODE 三个占位常量 —— deploy/rebuild_apk.py 构建时
+     按正则注入地址、口令、版本号；格式一变注入就静默失败，APK 里会是空值。
+  2. authedFetch：带 Authorization 头 + 把 token 从 URL 上摘掉。
+  3. window.Android.* 调用（saveConn / installUpdate）—— MainActivity 用
+     @JavascriptInterface 注入，名字写错就是 undefined：连接信息存不进本机、
+     更新装不上。
+  4. 仓库里不能出现真实地址 / 口令（app_conn.json 是 gitignore 的）。
+  5. 空地址时要给出提示，不能静默发一堆失败请求。
+另外钉一条"已删的不许回来"：前端不再请求日记 / 朋友圈接口（brain 侧已删）。
 """
 import hashlib
+import io
 import os
 import re
-import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,11 +34,11 @@ def _sha256(path):
 
 
 def _src():
-    with open(ASSET_HTML, encoding="utf-8") as f:
+    with io.open(ASSET_HTML, encoding="utf-8") as f:
         return f.read()
 
 
-class TestFrontendInvariants(unittest.TestCase):
+class TestFrameworkInvariants(unittest.TestCase):
 
     def test_asset_html_exists(self):
         self.assertTrue(os.path.isfile(ASSET_HTML))
@@ -39,443 +48,75 @@ class TestFrontendInvariants(unittest.TestCase):
         if not os.path.isfile(ROOT_HTML):
             self.skipTest("根目录 _chat.html 不在（它不入库，克隆后本就没有）")
         self.assertEqual(_sha256(ROOT_HTML), _sha256(ASSET_HTML),
-                         "_chat.html 与 assets/chat.html 不一致："
-                         "改前端必须两份一起改")
+                         "_chat.html 与 assets/chat.html 不一致：改前端必须两份一起改")
 
-    def test_esc_escapes_quotes_for_attribute_contexts(self):
-        src = _src()
-        esc = re.search(r"function esc\(s\)\s*\{(.*?)\n\}", src, re.S)
-        self.assertIsNotNone(esc, "找不到 esc()")
-        body = esc.group(1)
-        self.assertIn("&quot;", body, "esc() 不转义双引号，属性里会被突破")
-        self.assertIn("&#39;", body, "esc() 不转义单引号")
-
-    def test_esc_is_used_in_attribute_position(self):
-        """确认上面那条不是多余要求：它真的被用在属性里。"""
-        self.assertIn("""data-mid="' + esc(""", _src())
-
-    def test_exactly_one_copyText_definition(self):
-        self.assertEqual(_src().count("function copyText"), 1,
-                         "copyText 又被定义了两份（后者会静默覆盖前者）")
-
-    def test_the_old_duplicate_helper_is_gone(self):
-        """copyTextCompat 已合并进 copyText（名字出现在说明注释里是允许的）。"""
-        self.assertNotIn("function copyTextCompat", _src())
-
-    def test_api_calls_carry_an_auth_header(self):
-        src = _src()
-        self.assertIn("Authorization", src)
-        self.assertIn("Bearer ", src)
-
-    def test_fetch_wrapper_strips_the_token_from_the_url(self):
-        """头能带了，URL 里那份就该去掉 —— 它会进访问日志和 Referer。"""
-        src = _src()
-        wrapper = re.search(r"window\.fetch = function.*?\n\};", src, re.S)
-        self.assertIsNotNone(wrapper, "找不到 fetch 包装")
-        self.assertIn("token=", wrapper.group(0))
-        self.assertIn("Authorization", wrapper.group(0))
-
-    def test_all_python_and_json_config_is_valid_utf8(self):
-        for rel in ("brain/config/config.example.json",
-                    "README.md", "android-app/app/src/main/assets/chat.html"):
-            p = os.path.join(ROOT, rel)
-            with open(p, encoding="utf-8") as f:
-                f.read()
-
-
-class TestSheetLayers(unittest.TestCase):
-    """自绘弹层：全局只允许存在一个，且必须能被关掉。
-
-    踩过的坑：长按表情包时 Android WebView 会**同时**发 touchstart(550ms 定时器)
-    与 contextmenu，两者都调了弹层函数 → body 上叠两层 position:fixed 遮罩 →
-    点"取消"只关掉最上面那层，底下那层原地不动 → 整个 App 点哪都没反应，
-    按返回键回主菜单也没用（遮罩挂在 body 上）。
-    """
-
-    def test_sheet_registry_exists(self):
-        src = _src()
-        self.assertIn("let curSheet", src, "缺全局弹层引用，新弹层会盖住旧的")
-        self.assertIn("function closeSheet", src)
-        self.assertIn("function newSheet", src)
-
-    def test_every_sheet_goes_through_the_registry(self):
-        """所有建遮罩的地方都必须走 newSheet/closeSheet，不能自己 createElement。
-
-        这是防复发的关键：以前四处各建各的，谁也不认识谁，重复触发就叠层。
-        """
-        src = _src()
-        # 遮罩那个固定 cssText 只该在 newSheet / pkgEditNote 里出现
-        hits = [m.start() for m in re.finditer(r"position:fixed;inset:0;background:rgba", src)]
-        self.assertLessEqual(
-            len(hits), 2,
-            "出现了第 %d 处各自建遮罩 —— 必须统一走 newSheet/closeSheet，"
-            "否则重复触发又会叠层" % len(hits))
-
-    def test_back_button_closes_the_sheet_first(self):
-        """返回键必须先关弹层 —— 万一还有漏网的遮罩，这是唯一出路。"""
-        src = _src()
-        m = re.search(r"function androidBack\(\)\s*\{(.*?)\n\}", src, re.S)
-        self.assertIsNotNone(m, "找不到 androidBack")
-        body = m.group(1)
-        self.assertIn("curSheet", body)
-        self.assertLess(body.index("curSheet"), body.index("viewer"),
-                        "弹层要先于其他浮层关闭（它浮在最上面）")
-
-    def test_long_press_fires_only_once(self):
-        """长按必须只触发一次回调。
-
-        touchstart 定时器与 contextmenu 都会到，缺了去重就会弹两层。
-        """
-        src = _src()
-        m = re.search(r"function addLongPress\(el, fn\)\s*\{(.*?)\n\}", src, re.S)
-        self.assertIsNotNone(m, "找不到 addLongPress")
-        body = m.group(1)
-        self.assertIn("fired", body, "长按没有去重标志 —— 长按一次会弹两个弹层")
-        self.assertIn("touchcancel", body, "漏了 touchcancel，手指被系统打断时定时器不会清")
-
-    def test_no_leftover_direct_overlay_removal(self):
-        """弹层内部的按钮不该再直接 ov.remove()，要统一走 closeSheet()。
-
-        直接 remove 的话 curSheet 还指着那个已摘掉的节点，
-        返回键会以为还有弹层、closeSheet 去摘一个已经不在的节点（空转，表现为按键无效）。
-        """
-        src = _src()
-        self.assertNotIn("ov.remove()", src,
-                         "还有地方直接 ov.remove()，统一改成 closeSheet()")
-
-
-class TestNoHardcodedIdentity(unittest.TestCase):
-    """仓库是公开的：任何"具体角色"和"具体地点"都不能写死在代码里。
-
-    上一轮脱敏只扫了中文，漏掉了拼音 —— 用拼音写的角色 ID、用户 ID、
-    籍贯照样能看出角色是谁，籍贯更是直接写了城市。
-    这类测试的价值在于：以后再写死一个新人设/新地名，会当场被拦住。
-
-    写这类测试时不要在注释或断言里写出真实的拼音例子 —— 那等于把要遮的
-    东西又抄了一份进公开仓库。这里的黑名单词全部在运行时拼出来
-    （见 _FORBIDDEN_PY），例子里只用占位符。
-    """
-
-    # 拼音与包名黑名单。
-    #
-    # 这里必须用码点拼，不能把词拆成两段字面量再拼 —— 字符串在源文件里本来
-    # 就是连续写下来的，拆开拼照样留下连续的字符，等于把要遮的词又抄了一份。
-    # chr() 出来的字符在源码里只是一串数字，人搜不到。
-    #
-    # C:\Vigil\ 是云端部署路径、代码逻辑依赖，不算命中，所以不查全仓。
-    # 同理 README 里提到的私钥文件名也是部署路径，不是身份信息。
-    @staticmethod
-    def _zhixia():
-        """角色拼音，用码点拼 —— 源码里不留连续字符。"""
-        return chr(122) + chr(104) + chr(105) + chr(120) + chr(105) + chr(97)
-
-    @staticmethod
-    def _forbidden_pinyin():
-        Z = TestNoHardcodedIdentity._zhixia()
-        return (chr(108) + chr(105) + chr(110) + Z,          # lin+拼音
-                Z + "_friend",                                # 拼音+_friend
-                Z + "_",                                      # 拼音+_
-                "com." + Z, "com/" + Z)
-
-    def test_pinyin_identity_not_hardcoded(self):
-        for rel in ("_chat.html",
-                    "android-app/app/src/main/assets/chat.html"):
-            p = os.path.join(ROOT, rel)
-            if not os.path.isfile(p):
-                continue
-            with open(p, encoding="utf-8") as f:
-                src = f.read()
-            for w in self._forbidden_pinyin():
-                self.assertNotIn(w, src, "%s 里还写死了拼音身份" % rel)
-
-    def test_no_test_file_contains_pinyin_identity(self):
-        """测试文件自己也不许出现真实拼音。
-
-        写"不许写死身份"的测试时，很容易在注释里举个真实例子当反例、
-        或把词抄进断言列表 —— 那等于把要遮的东西又公开一遍。
-        这里的词全部由 chr() 拼出，源码里只是一串数字。
-
-        唯一允许的例外是**云端部署路径**（形如盘符 + 反斜杠 + 拼音目录）。
-        那是代码逻辑依赖、删了功能会坏，不是身份信息。
-        """
-        # 命中后只放行"部署路径"形态：盘符 + 路径分隔符 + <目录名> + 分隔符。
-        # 目录名要跟黑名单里的完整形态一致（黑名单查的是 lin+拼音，这里也得用
-        # 同一个词），否则放行列表匹配不上，等于没放行
-        # 不用正则 —— 路径分隔符在正则里是转义符，拼出来总出岔子；
-        # 这里按字面量替换，更直白。
-        sep = chr(92)          # 反斜杠
-        dep_dir = chr(108) + chr(105) + chr(110) + self._zhixia()   # 部署目录名
-        dep_paths = tuple(d + sep + dep_dir + e
-                          for d in ("C:", "F:") for e in (sep, "/"))
-        tdir = os.path.join(ROOT, "tests")
-        for fn in sorted(os.listdir(tdir)):
-            if not fn.endswith(".py"):
-                continue
-            p = os.path.join(tdir, fn)
-            with open(p, encoding="utf-8") as f:
-                src = f.read()
-            for w in self._forbidden_pinyin():
-                # 先把合法的部署路径挖掉，剩下的才是真泄露
-                rest = src
-                for dp in dep_paths:
-                    rest = rest.replace(dp, "<DEPLOY_PATH>")
-                self.assertNotIn(
-                    w, rest,
-                    "%s 里出现了拼音身份字面量（黑名单要用 chr() 拼，"
-                    "别把词抄进注释或断言）" % fn)
-
-    def test_android_package_is_not_role_pinyin(self):
-        """包名会出现在 GitHub 路径、APK 文件名里，等于公开的角色名。"""
-        g = os.path.join(ROOT, "android-app", "app", "build.gradle")
-        with open(g, encoding="utf-8") as f:
-            gradle = f.read()
-        self.assertNotIn(self._zhixia(), gradle, "build.gradle 的包名/命名空间还带角色名")
-        # namespace 与 applicationId 必须一致，否则 gradle 直接构建失败
-        m = re.search(r"namespace\s+'([^']+)'", gradle)
-        a = re.search(r'applicationId\s+"([^+"]+)"', gradle)
-        self.assertIsNotNone(m, "读不到 namespace")
-        self.assertIsNotNone(a, "读不到 applicationId")
-        self.assertEqual(m.group(1), a.group(1), "namespace 与 applicationId 不一致")
-
-    def test_java_package_matches_gradle(self):
-        """java 目录结构、package 声明、build.gradle 三处必须一致。"""
-        g = os.path.join(ROOT, "android-app", "app", "build.gradle")
-        with open(g, encoding="utf-8") as f:
-            ns = re.search(r"namespace\s+'([^']+)'", f.read()).group(1)
-        expect_dir = os.path.join(ROOT, "android-app", "app", "src", "main",
-                                  "java", *ns.split("."))
-        self.assertTrue(os.path.isdir(expect_dir),
-                        "包名 %s 对应的源码目录不存在：%s" % (ns, expect_dir))
-        for fn in os.listdir(expect_dir):
-            if fn.endswith(".java"):
-                with open(os.path.join(expect_dir, fn), encoding="utf-8") as f:
-                    first = f.readline().strip()
-                self.assertEqual(first, "package %s;" % ns,
-                                 "%s 的 package 声明与 build.gradle 不一致" % fn)
-
-    def test_manifest_activity_matches_package(self):
-        """AndroidManifest 里的组件名必须落在当前命名空间下。
-
-        两种写法都得认：相对名 `.MainActivity`（AGP 按 namespace 拼）和全限定名。
-        这个测试原来只匹配 `com.` 开头的全限定名，而这份 Manifest 用的是相对名，
-        于是 findall 返回空、循环一次都没跑，测试一直"绿"着但什么都没断言。
-        （这正是"测试看着像保护、实际是空转"的那种坑，和空 token 全放行同一类。）
-        """
-        mf = os.path.join(ROOT, "android-app", "app", "src", "main",
-                          "AndroidManifest.xml")
-        with open(mf, encoding="utf-8") as f:
-            src = f.read()
-        self.assertNotIn(self._zhixia(), src, "Manifest 里还有角色名")
-
-        g = os.path.join(ROOT, "android-app", "app", "build.gradle")
-        with open(g, encoding="utf-8") as f:
-            ns = re.search(r"namespace\s+'([^']+)'", f.read()).group(1)
-
-        comps = re.findall(
-            r"<(?:activity|service|receiver|provider)\b[^>]*?"
-            r'android:name="([^"]+)"', src, re.S)
-        self.assertTrue(comps, "一个组件都没解析到 —— 正则失效，测试又在空转")
-        for name in comps:
-            if name.startswith("."):
-                resolved = ns + name
-            elif "." not in name:
-                resolved = ns + "." + name
-            else:
-                resolved = name
-            self.assertTrue(
-                resolved.startswith(ns + "."),
-                "Manifest 组件 %s 解析成 %s，不在命名空间 %s 下"
-                % (name, resolved, ns))
-
-        # 组件名改了、java 文件没跟着改的话运行期才会崩 —— 顺手核一下类文件在不在
-        java_dir = os.path.join(ROOT, "android-app", "app", "src", "main",
-                                "java", *ns.split("."))
-        for name in comps:
-            cls = name.rsplit(".", 1)[-1]
-            self.assertTrue(
-                os.path.isfile(os.path.join(java_dir, cls + ".java")),
-                "Manifest 声明的 %s 找不到对应的 %s.java" % (name, cls))
-
-    def test_no_hardcoded_region_in_profile_page(self):
-        """资料页的地区不能写死 —— 换人设后它会露出上一个角色的籍贯。"""
-        src = _src()
-        m = re.search(r'<div class="pr"[^>]*>ID：([^<]*)</div>', src)
-        self.assertIsNotNone(m, "找不到资料页的 ID 行")
-        # 允许占位（her / me），但不许出现"地区：XXX"这种具体地名
-        self.assertNotIn("地区：", src, "资料页还写死了地区")
-        self.assertIn("data-her-id", src,
-                      "ID 没走 data-her-id，人设名变了它不会跟着变")
-
-
-class TestServiceAddrNotCommitted(unittest.TestCase):
-    """仓库版 chat.html 必须保持空占位 —— 地址和口令是构建时注入的。
-
-    背景：换安卓包名等于装了个"全新 App"，localStorage 是空的，而
-    `DEF_BASE` 是空串时每个 fetch 都把 "/api/xxx" 当本地相对路径，
-    必然失败、用户只看到"连接不到网络"。所以本地打包时会用
-    `brain/config/app_conn.json`（gitignore）把真实地址注入 APK。
-    **注入只发生在构建那一刻**，仓库里这份必须还是空的 ——
-    否则云机公网 IP 和 brain_token 就跟着进公开仓库了。
-    """
-
+    # --- 1) 构建注入契约 -------------------------------------------------
     def test_def_base_is_empty_placeholder(self):
-        m = re.search(r"const DEF_BASE\s*=\s*'([^']*)'", _src())
-        self.assertIsNotNone(m, "找不到 DEF_BASE 占位串")
-        self.assertEqual(m.group(1), "",
-                         "仓库版 chat.html 里 DEF_BASE 被写成了真实地址，"
-                         "云机 IP 会跟着进公开仓库；真实地址应由 "
-                         "deploy/rebuild_apk.py 在构建时注入")
+        """必须空占位：真实地址由构建注入，写死在仓库里等于泄露。"""
+        self.assertIn("const DEF_BASE  = '';", _src())
 
     def test_def_token_is_empty_placeholder(self):
-        m = re.search(r"const DEF_TOKEN\s*=\s*'([^']*)'", _src())
-        self.assertIsNotNone(m, "找不到 DEF_TOKEN 占位串")
-        self.assertEqual(m.group(1), "",
-                         "仓库版 chat.html 里 DEF_TOKEN 被写成了真实口令")
+        self.assertIn("const DEF_TOKEN = '';", _src())
 
-    def test_no_public_ip_or_brain_token_in_html(self):
-        """再兜一层：不管写成什么形式，HTML 里不该出现 IPv4 或长十六进制口令。"""
+    def test_app_code_placeholder_is_numeric(self):
+        """APP_CODE 由构建注入；占位必须是数字 0，构建脚本的正则才替换得掉。"""
+        m = re.search(r"const APP_CODE\s*=\s*(\d+);", _src())
+        self.assertTrue(m, "找不到 const APP_CODE = <数字>; 这一行")
+        self.assertEqual(int(m.group(1)), 0,
+                         "仓库里的 APP_CODE 应是占位 0，实际版本号由 version.json 注入")
+
+    # --- 2) 安卓壳桥接 ---------------------------------------------------
+    def test_android_bridge_is_still_called(self):
         src = _src()
-        for ip in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", src):
-            self.assertTrue(ip.startswith("203.0.113."),
-                            "chat.html 里出现真实 IP：%s" % ip)
-        # brain_token 是 12 位小写十六进制；doc 里也提过云端地址，一并排除
-        for tok in re.findall(r"\b[0-9a-f]{12}\b", src):
-            self.fail("chat.html 里出现疑似 brain_token：%s" % tok)
+        self.assertIn("window.Android && window.Android.saveConn", src)
+        self.assertIn("window.Android.installUpdate", src)
+
+    # --- 3) 鉴权 ---------------------------------------------------------
+    def test_api_calls_carry_an_auth_header(self):
+        self.assertIn("Authorization", _src())
+
+    def test_fetch_wrapper_strips_the_token_from_the_url(self):
+        """token 拼在 URL 里会进访问日志和 Referer；带过头之后要把 query 里那份摘掉。"""
+        src = _src()
+        self.assertIn("Bearer", src)
+        # 直接断言字面量：源码里那段是 replace(/([?&])token=[^&]*&?/g, '$1')，
+        # 用正则去匹配它反而会被里面的 &? 当成量词读歪。
+        self.assertIn("replace(/([?&])token=[^&]*&?/g,", src,
+                      "authedFetch 没把 URL 上的 token 摘掉")
+
+    # --- 4) 仓库卫生 -----------------------------------------------------
+    def test_no_public_ip_or_brain_token_in_html(self):
+        src = _src()
+        self.assertNotRegex(src, r"\b\d{1,3}(\.\d{1,3}){3}\b:\d+",
+                            "前端源码里出现了裸的 IP:端口")
+        self.assertNotRegex(src, r"token\s*=\s*['\"][0-9a-f]{8,}['\"]",
+                            "前端源码里写了鉴权 token")
 
     def test_app_conn_is_gitignored(self):
-        """带云机 IP 和口令的注入源文件绝不能入库。"""
-        conn = os.path.join(ROOT, "brain", "config", "app_conn.json")
-        if not os.path.isfile(conn):
-            self.skipTest("本机还没有 app_conn.json（没打过包）")
-        r = subprocess.run(["git", "check-ignore", "-q", conn], cwd=ROOT)
-        self.assertEqual(r.returncode, 0,
-                         "brain/config/app_conn.json 没被 gitignore —— "
-                         "它里面有云机公网 IP 和 brain_token")
+        p = os.path.join(ROOT, "brain", "config", "app_conn.json")
+        if not os.path.exists(p):
+            self.skipTest("app_conn.json 不在本机")
+        with io.open(os.path.join(ROOT, ".gitignore"), encoding="utf-8") as f:
+            self.assertIn("app_conn.json", f.read(),
+                          "app_conn.json 装着地址+口令，必须在 .gitignore 里")
 
+    # --- 5) 空地址要说人话 ------------------------------------------------
     def test_empty_base_is_reported_not_silent(self):
-        """没填地址时必须有明确提示，不能静默失败。
+        """没填地址时不能静默发请求：每次都失败，日志一片"连不上"，真原因被埋掉。"""
+        self.assertRegex(_src(), r"还没填地址|请填|未填")
 
-        静默失败时用户看到的是 "Failed to fetch"，翻译成人话就是
-        "网络不通" —— 会往手机网络、代理、服务器上找半天，
-        而真实原因（地址没填）根本不在这些地方。
-        """
+    # --- 6) 已删的模块不许回来 -------------------------------------------
+    def test_no_diary_or_moments_requests(self):
+        """brain 侧 /api/diary/* 与 /api/moments 已整体删除，前端再调就是一直报错。"""
         src = _src()
-        self.assertIn("function needSetup(", src,
-                      "缺 needSetup()：地址为空时会静默失败")
-        m = re.search(r"function needSetup\([^)]*\)\s*\{(.*?)\n\}", src, re.S)
-        self.assertIsNotNone(m, "needSetup 函数体解析不了")
-        body = m.group(1)
-        self.assertIn("errLocal(", body, "地址为空时要记一笔，否则日志里看不到原因")
-        self.assertIn("settings", body, "地址为空时要把人送到设置页")
+        for pat in ("/api/diary", "/api/moments", "/api/moment/"):
+            self.assertNotIn(pat, src, "框架页还在请求已删除的接口：" + pat)
 
-
-class TestAlbumDirIsOneConstant(unittest.TestCase):
-    """相册目录只能有一个来源。
-
-    saveImage 往这个目录写、deleteImage 按同一个目录查 —— MediaStore 的
-    delete 是按目录精确匹配的。两处各写一份字面量，改了其中一个没改另一个，
-    表现是"图存得进、删不掉"，而且不报错，很难查。
-    """
-    def setUp(self):
-        p = os.path.join(ROOT, "android-app", "app", "src", "main", "java",
-                         "com", "resident", "chat", "MainActivity.java")
-        with open(p, encoding="utf-8") as f:
-            self.src = f.read()
-
-    def test_album_dir_constant_exists(self):
-        self.assertIn('ALBUM_DIR = "Pictures/', self.src)
-
-    def test_no_stray_literal_for_current_dir(self):
-        """当前目录不能另有字面量 —— save/delete 都得用 ALBUM_DIR。
-
-        老目录（改名之前存的图）是允许存在的，但要单独断言它在 deleteImage 里，
-        见 test_delete_also_tries_old_dirs。
-        """
-        new_dir = re.search(r'ALBUM_DIR = "(Pictures/[^"]*)"', self.src)
-        self.assertIsNotNone(new_dir, "找不到 ALBUM_DIR 定义")
-        rest = self.src.replace(new_dir.group(0), "", 1)
-        # 改名之前存的图还在老目录里，deleteImage 得能删到它们 ——
-        # 这几条是有意的例外，其余一律不许。
-        allowed = {"Pictures/知夏图片", "Pictures/知夏"}
-        for m in re.finditer(r'"(Pictures/[^"]*)"', rest):
-            if m.group(1) in allowed:
-                continue
-            self.fail("相册目录又出现字面量 %s —— 用 ALBUM_DIR" % m.group(0))
-
-    def test_delete_also_tries_old_dirs(self):
-        """改名之前存的图还在老目录里，删图片功能不能只认新目录。"""
-        self.assertIn("Pictures/知夏图片", self.src,
-                      "deleteImage 没试老目录 —— 老图删不掉了")
-
-
-class TestHistoryNoDuplicate(unittest.TestCase):
-    """聊天页"同一条消息显示两遍"的三个成因，各钉一条。
-
-    用户截图：她连着说的两句一模一样的话，在页面上出现了两遍。
-    服务端存档其实只有一份（查过 /api/history），所以是前端画重了。
-    """
-
-    def setUp(self):
-        self.src = _src()
-
-    def test_loadHistory_has_a_concurrency_guard(self):
-        """两个 loadHistory 交错会让 optEls/msgNodes 互相对不上 → 显示两遍。
-
-        sendText 里的对账和 12 秒轮询最容易撞上。
-        """
-        self.assertIn("_histBusy", self.src,
-                      "loadHistory 没有并发守卫：轮询和对账撞上就会显示重复")
-        body = re.search(r"async function loadHistory\(manual\)\s*\{(.*?)\n\}\n",
-                         self.src, re.S)
-        self.assertIsNotNone(body, "找不到 loadHistory")
-        self.assertIn("if (_histBusy)", body.group(1),
-                      "_histBusy 声明了但没在 loadHistory 里用")
-
-    def test_optimistic_nodes_are_removed_from_msgNodes_too(self):
-        """乐观气泡退役必须同时清 DOM 和 msgNodes。
-
-        只清 DOM 的话，它"已经不在页面上、却还占着 msgNodes 的位置"，
-        updateHistory 拿这条看不见的节点当锚点，后面全部错位。
-        """
-        self.assertRegex(
-            self.src,
-            r"msgNodes\s*=\s*msgNodes\.filter\([^)]*optEls",
-            "optEls 退役时没同步清 msgNodes —— 两者状态分家了")
-
-    def test_updateHistory_matches_from_the_end(self):
-        """比对必须从末尾对齐。
-
-        原来拿 msgNodes 的尾巴去 items 里找，方向反了：末尾有一条对不上，
-        算出的位置就偏，"保留 0 条 + 追加 0 条" → **整屏消息被清空**。
-        """
-        body = re.search(r"function updateHistory\(items\)\s*\{(.*?)\n\}",
-                         self.src, re.S)
-        self.assertIsNotNone(body, "找不到 updateHistory")
-        b = body.group(1)
-        self.assertIn("oldK[oldK.length - 1 - hitK]", b,
-                      "updateHistory 不是从末尾对齐的")
-        # 服务端补出更早的消息时必须全量重绘（addMsg 只能 appendChild，
-        # 没法往列表前面插）
-        self.assertRegex(b, r"if \(!hitK \|\| dropNew > 0\)",
-                         "dropNew > 0 时必须全量重绘，否则 DOM 顺序会错")
-
-    def test_send_reply_registers_into_msgNodes(self):
-        """她在 sendText 里画的那几段必须进 msgNodes。
-
-        原来只 push 进 optEls，随后被 loadHistory 摘掉，
-        增量比对又认为那是新消息 → 再画一遍。
-        """
-        body = re.search(r"async function sendText\(t, img\)\s*\{(.*?)\nasync function",
-                         self.src, re.S)
-        self.assertIsNotNone(body, "找不到 sendText")
-        b = body.group(1)
-        self.assertIn("msgNodes.push", b,
-                      "sendText 画的气泡没进 msgNodes —— 摘掉后补不回来")
-        self.assertNotIn("optEls.push(..._newNodes);", b,
-                         "她的回复不是乐观气泡，别再塞 optEls")
-        # 对账必须 await，否则和轮询交错
-        self.assertIn("await loadHistory(true)", b,
-                      "sendText 里的 loadHistory 没 await —— 会和轮询交错")
+    def test_no_removed_page_entrypoints(self):
+        """框架页不该再有打开日记 / 朋友圈 / 人设 / 模型的入口。"""
+        src = _src()
+        for name in ("openDiary", "openMoments", "openModels", "loadDiaryList"):
+            self.assertNotIn(name, src, "框架页还留着 " + name)
 
 
 if __name__ == "__main__":

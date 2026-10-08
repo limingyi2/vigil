@@ -7,7 +7,7 @@ rem is full of it. CRLF line endings for the same reason: the copy that shipped
 rem LF-only and cmd was none too happy about it.
 rem
 rem Paths are derived from this file's own location so the same bat works in
-rem the repo and on the box. Hardcoding C:\Vigil meant the local copy could
+rem the repo and on the box. Hardcoding C:\vigil meant the local copy could
 rem never be used to test anything.
 rem
 rem Restart the host when server.js is NEWER than the running one.
@@ -41,7 +41,7 @@ if "%ZX_SKILL_DIR:~-1%"=="\" set "ZX_SKILL_DIR=%ZX_SKILL_DIR:~0,-1%"
 cd /d "%~dp0"
 
 if not exist "%ZX_SKILL_DIR%" mkdir "%ZX_SKILL_DIR%"
-if not exist "C:\Vigil\logs" mkdir "C:\Vigil\logs" 2>NUL
+if not exist "C:\vigil\logs" mkdir "C:\vigil\logs" 2>NUL
 
 set "ZX_PORT=8790"
 set "ZX_STAMP=%~dp0.host_started"
@@ -86,6 +86,6 @@ echo started> "%ZX_STAMP%"
 
 rem Detached on purpose: the brain's launcher must not wait on this, and if the
 rem brain is restarted the host has to survive independently of it.
-start "" /b "C:\Program Files\nodejs\node.exe" server.js >> "C:\Vigil\logs\skill_host.log" 2>&1
+start "" /b "C:\Program Files\nodejs\node.exe" server.js >> "C:\vigil\logs\skill_host.log" 2>&1
 echo [skill-host] started
 exit /b 0

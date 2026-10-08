@@ -160,17 +160,59 @@ class TestMemoryStore(unittest.TestCase):
         st = self._store()
         errors = []
 
+        # 这条测的是**并发写的完整性**（不丢写、id 唯一、矩阵对得上），
+        # 不是近义去重。所以先把去重关掉：测试里的 embedder 判不出语义差别
+        # （"线程0的第0条"和"线程4的第0条"、乃至几段完全不同的中文都会被判成
+        # 近义重复），开着去重的话 24 条会被吃掉一半，红的是数据不是代码。
+        # 去重本身另有专门测试盯着。
+        orig_near_dup = ms.MemoryStore._near_dup
+        ms.MemoryStore._near_dup = lambda self, vec, mtype=None, chan=None, thresh=None: None
+        self.addCleanup(setattr, ms.MemoryStore, "_near_dup", orig_near_dup)
+
+        # 每条内容也换成人写的整句，语义差别更大，读起来也知道在测什么。
+        # 原来这里写的是"线程%d的第%d条"，
+        # 6 个线程 × 4 条只差一个数字 —— 记忆库的近义去重把它们判成重复
+        # （日志："不入库（近义重复 ≈「线程0的第0条」）"），24 条只剩 4 条，
+        # 测试红的是数据不是代码。用互不相似的整句，各线程各说各的。
+        SEED = [
+            # 24 句互不相同的话：6 线程 × 4 条正好用完，不重不漏
+            "今天陪他去楼下吃了碗牛肉面",
+            "他说考研英语真题只剩两周了",
+            "宿舍空调坏了三台，热得整晚没睡",
+            "帮他把毕业设计的参考文献格式改了",
+            "他在王者打了三把都输了",
+            "药店买了感冒药和喉糖",
+            "导师让他周三前交第一版初稿",
+            "食堂新出了酸汤肥牛的窗口",
+            "晚上跑了八公里，配速比上周快",
+            "他把家里的旧台灯搬到了宿舍",
+            "论文查重率降到百分之九点八",
+            "周末打算去图书馆占个位子",
+            "同门师兄说答辩大概要五轮",
+            "她其实挺想吃那家的烤鱼",
+            "高铁票买好了，动车 14:20 发",
+            "他把伞落在了自习室",
+            "实验室的咖啡机终于修好了",
+            "她翻出前年拍的那张雪景",
+            "课题组周报改成了每周五交",
+            "快递柜里有个生鲜包裹没人领",
+            "他去参加了学校的数学建模赛",
+            "她把围巾织了一半又拆了",
+            "室友的猫又偷吃了她的酸奶",
+            "复习到十一点，窗外下起了小雨",
+        ]
+
         def writer(k):
             try:
                 for i in range(4):
-                    st.add("线程%d的第%d条" % (k, i))
+                    st.add(SEED[k * 4 + i])
             except Exception as e:            # pragma: no cover
                 errors.append("writer %d: %r" % (k, e))
 
         def reader():
             try:
                 for _ in range(15):
-                    st.retrieve("线程0", top_k=3, min_score=-1)
+                    st.retrieve("牛肉面", top_k=3, min_score=-1)
             except Exception as e:            # pragma: no cover
                 errors.append("reader: %r" % (e,))
 

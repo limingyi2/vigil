@@ -125,25 +125,6 @@ class TestBrainWiring(unittest.TestCase):
         self.assertIn("def clear_src_history(self", self.src)
 
 
-class TestServerWiring(unittest.TestCase):
-
-    def setUp(self):
-        with open(os.path.join(ROOT, "brain", "server.py"),
-                  encoding="utf-8") as f:
-            self.src = f.read()
-
-    def test_生活引擎按人设分区(self):
-        """经历流和日记也要分区 —— 换了人就是换了个人。"""
-        body = re_search(self.src, r"def _attach_life_engine\(.*?\n    return None")
-        self.assertIsNotNone(body, "找不到 _attach_life_engine")
-        self.assertIn("her_life.", body,
-                      "生活引擎没按人设分区（home=）")
-
-    def test_生活引擎传了home(self):
-        body = re_search(self.src, r"def _attach_life_engine\(.*?\n    return None")
-        self.assertIn("home=home", body, "LifeEngine 没传 home，新旧人设共用一份日常")
-
-
 def re_search(src, pattern):
     import re
     m = re.search(pattern, src, re.S)

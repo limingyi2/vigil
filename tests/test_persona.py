@@ -46,13 +46,25 @@ class TestShippedTemplateIsConsistent(unittest.TestCase):
             % (persona_store.DEFAULT_KEY, os.path.basename(p)))
 
     def test_every_shipped_persona_parses_and_uses_known_fields(self):
-        """目录里每个 .json 都要能解析，字段只能落在白名单里（防手写打错）。"""
-        files = [n for n in os.listdir(persona_store.PERSONA_DIR)
-                 if n.endswith(".json")]
-        self.assertTrue(files, "personas/ 下一个 .json 都没有")
-        for n in files:
-            with open(os.path.join(persona_store.PERSONA_DIR, n),
-                      encoding="utf-8") as f:
+        """**入库的**每个 .json 都要能解析，字段只能落在白名单里（防手写打错）。
+
+        只看入库清单，不扫工作目录：本机放着的本地人设（真实角色、实验模板）
+        没入库，扫目录会拿它们报红 —— 本机红、CI 绿，方向反了。
+        """
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            r = subprocess.run(["git", "ls-files", "brain/config/personas"],
+                               cwd=root, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+        except Exception:
+            self.skipTest("没有 git，看不到入库清单")
+        files = [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
+        if not files:
+            self.skipTest("不在 git 工作区（或 personas/ 没入库）")
+        for rel in files:
+            n = os.path.basename(rel)
+            with open(os.path.join(root, rel), encoding="utf-8") as f:
                 raw = json.load(f)                     # 解析不了就红
             self.assertIsInstance(raw, dict, n)
             unknown = [k for k in raw

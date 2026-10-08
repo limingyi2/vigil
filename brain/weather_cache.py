@@ -15,8 +15,8 @@ try:
     _CACHE = os.path.join(str(paths.DATA_DIR), "weather.json")
     _ALERT = os.path.join(str(paths.DATA_DIR), "weather_alert.json")
 except Exception:
-    _CACHE = r"C:\Vigil\data\weather.json"
-    _ALERT = r"C:\Vigil\data\weather_alert.json"
+    _CACHE = r"C:\vigil\data\weather.json"
+    _ALERT = r"C:\vigil\data\weather_alert.json"
 
 # 缓存超过 6 小时就当没有（宁可她不提天气，别把前天的雨说成今天的）
 MAX_AGE = 6 * 3600

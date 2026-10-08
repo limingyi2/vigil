@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""随机图（UAPI 图库）：她甩表情包 / 朋友圈配图都用它。"""
+"""随机图（UAPI 图库）：她甩表情包 / 自拍配图都用它。"""
 import os
 import re
 import time
@@ -11,7 +11,7 @@ RAND_TAG_RE = re.compile(r"\[rand[:：]\s*([^\]]+?)\s*\]")
 # 她那边成了"啥也没发"。而她手上没有菜单以外的任何信息，选错是必然的。
 # 现在改成黑名单：她看到的分类说明（persona_store.py）就是接口真有的，
 # 提示词加一类不用回来改这里。
-# furry 图库真实存在（实测 302），用户明令屏蔽，必须留在挡的这边。
+# furry 图库真实存在（返回 302），用户明令屏蔽，必须留在挡的这边。
 _RAND_BLOCK = ("furry",)
 # 壁纸只在他点名"壁纸"时才给 —— 他不说就是不要
 _RAND_WALLPAPER = ("pc_wallpaper", "mobile_wallpaper")
@@ -40,6 +40,7 @@ def _cloud_random_image(category):
 
 
 def resolve_rand_tags(text, user_text=""):
+
     """[rand:分类] → 从图库拉一张现成图，换成 [img:文件名]。
 
     三种"发不出"要分开对待（用户看到的体感完全不同）：
@@ -117,8 +118,8 @@ def drop_missing_imgs(text):
         if name.startswith("rand_") or name.startswith("gen_"):
             return m.group(0)
         # 表情包库文件名固定是 时间戳_md5.ext。**其余形态一律放过** ——
-        # 模型偶尔会把描述写成文件名（实测 [img:无语.jpg]），但宁可放过也不
-        # 误删：她要是发现发图总被吞，下次就不发了。
+        # 模型偶尔会把描述写成文件名（如 [img:无语.jpg]），但宁可放过也不
+        # 误删：她要是发现发图总被吞，之后就不发了。
         if not re.match(r"^\d{8}_\d{6}_[0-9a-f]{8}\.\w+$", name):
             return m.group(0)
         try:

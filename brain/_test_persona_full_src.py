@@ -12,7 +12,7 @@
 只有「切到微信 + 不带 key 打开编辑器」这一条路径会错。所以判据必须是
 **同一个进程里两个渠道读出来的 fields 不一样**，而不是「改完了没报错」。
 
-用法：F:/Vigil/venv/Scripts/python.exe _test_persona_full_src.py
+用法：F:/vigil/venv/Scripts/python.exe _test_persona_full_src.py
 """
 import io
 import json

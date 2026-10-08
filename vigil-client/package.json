@@ -1,0 +1,47 @@
+{
+  "name": "vigil-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vigil 桌面客户端：聊天 + 管理面板 + 本地操控（骨架阶段）",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "demo": "node tools/make-harness.js",
+    "e2e": "node tools/e2e.js",
+    "agent": "electron tools/agent-dryrun.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.vigil.client",
+    "productName": "Vigil",
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "electron/**",
+      "src/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/keytar/**"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
+  "dependencies": {
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  }
+}

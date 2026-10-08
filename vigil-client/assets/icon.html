@@ -1,0 +1,11 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+/* 应用图标：近黑圆角方块 + 白色 V，跟客户端标题栏左上角那个标记一致。
+   body 透明，出图后带 alpha（用 Chrome 的 --default-background-color=00000000）。 */
+html,body{margin:0;padding:0;width:256px;height:256px;background:transparent}
+.box{width:256px;height:256px;border-radius:56px;background:#0f1115;
+     display:grid;place-items:center;font-family:"Segoe UI",system-ui,sans-serif}
+.v{color:#fff;font-size:150px;font-weight:700;line-height:1;letter-spacing:-.04em;
+   transform:translateY(-6px)}
+</style></head>
+<body><div class="box"><span class="v">V</span></div></body></html>

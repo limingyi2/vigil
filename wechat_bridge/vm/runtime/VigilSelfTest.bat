@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================
-REM  Zhixia self-test: talk in the small account before adding to a group.
-REM  Requires the tunnel to be up (run ZhixiaTunnel.bat first, in
+REM  Vigil self-test: talk in the small account before adding to a group.
+REM  Requires the tunnel to be up (run VigilTunnel.bat first, in
 REM  another window, and leave it open).
 REM
 REM  Keep the small-account WeChat logged in (the 4.1.8 one on D:).
@@ -11,14 +11,14 @@ REM  NOTE: this file must stay pure ASCII. The Chinese chat name is
 REM  built here with chr() instead of typed inline -- a non-ASCII
 REM  byte in a .bat breaks the structure under GBK.
 REM ============================================================
-cd /d "F:\Vigil"
+cd /d "F:\vigil"
 
 REM ---- 1. is the tunnel up? ----
 .venv-wx\Scripts\python.exe -c "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',18787))==0 else 1)"
 if errorlevel 1 (
   echo.
   echo   The tunnel is NOT up, so the brain is unreachable and she will
-  echo   never reply. Open  ZhixiaTunnel.bat  in another window first,
+  echo   never reply. Open  VigilTunnel.bat  in another window first,
   echo   wait until it says "Tunnel is up", then come back here.
   echo.
   pause

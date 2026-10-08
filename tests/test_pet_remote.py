@@ -2,9 +2,13 @@
 """桌宠的远程大脑接口契约。
 
 这里钉的是一个真实踩过的坑：pet.py 会直接调 `brain.read_history()` /
-`clear_history()` / `life.catch_up()` / `life.write_diary()`，而远程大脑上
-**少了哪个方法就被 except 吞成静默失效** —— 表现是"聊天窗每次启动都是空的"、
-"清了记录其实没清"、"让她现在写篇日记"永远失败。所以用接口契约 + 源码断言钉住。
+`clear_history()` / `life.catch_up()`，而远程大脑上**少了哪个方法就被 except
+吞成静默失效** —— 表现是"聊天窗每次启动都是空的"、"清了记录其实没清"。
+所以用接口契约 + 源码断言钉住。
+
+2026-10-08：日记模块整体移除，RemoteLife 只剩 catch_up。原来这里还钉着
+list_diaries / read_diary / write_diary 三个 —— 它们打的 /api/diary/* 已经在
+brain 侧删掉，留着就是个"永远静默失败"的假方法（右键"她的日记"开空窗口）。
 
 不构造 RemoteBrain / RemoteLife 实例（它们的 __init__ 会去连网络）。
 """
@@ -26,7 +30,7 @@ class TestRemoteBrainInterface(unittest.TestCase):
 
     BRAIN_METHODS = ["chat", "speak_on_scene", "reset", "reload_persona",
                      "seed_history", "read_history", "clear_history"]
-    LIFE_METHODS = ["list_diaries", "read_diary", "catch_up", "write_diary"]
+    LIFE_METHODS = ["catch_up"]
 
     def test_remote_brain_exposes_every_method_pet_calls(self):
         for name in self.BRAIN_METHODS:
@@ -47,12 +51,24 @@ class TestRemoteBrainInterface(unittest.TestCase):
         src = inspect.getsource(remote_brain.RemoteBrain.clear_history)
         self.assertIn("/api/history/clear", src)
 
-    def test_life_catch_up_and_write_diary_are_not_no_ops(self):
-        for fn in (remote_brain.RemoteLife.catch_up,
-                   remote_brain.RemoteLife.write_diary):
-            src = inspect.getsource(fn)
-            self.assertIn("_post", src, fn.__name__)
-            self.assertIn("/api/", src, fn.__name__)
+    def test_life_catch_up_is_not_a_no_op(self):
+        """空操作过的写法：LifeWorker 每次开机都空转一趟，托盘里的按钮永远失败。"""
+        src = inspect.getsource(remote_brain.RemoteLife.catch_up)
+        self.assertIn("_post", src)
+        self.assertIn("/api/", src)
+
+    def test_日记方法已彻底移除(self):
+        """钉住"删干净了" —— 别把打 404 接口的假方法加回来。
+
+        /api/diary/* 在 brain 侧已经不存在（server.py 里没有这条路由），
+        RemoteLife 里留着同名方法只会 except 吞掉 404 静默失败：
+        右键点"她的日记"打开一个空窗口、"让她现在写篇日记"永远报失败，
+        看起来像"她今天没什么好写的"，实际是功能早就没了。
+        """
+        for name in ("list_diaries", "read_diary", "write_diary"):
+            self.assertFalse(hasattr(remote_brain.RemoteLife, name),
+                             "RemoteLife 又有了 %s —— 它打的 /api/diary/* "
+                             "服务端已删除，只会成为静默失败的假方法" % name)
 
 
 class TestTokenHandling(unittest.TestCase):
@@ -71,7 +87,7 @@ class TestTokenHandling(unittest.TestCase):
         self.assertNotIn('"token=" +', src)
 
     def test_get_also_uses_the_header(self):
-        """_get 走的是 /api/persona、/api/history、/api/diary/* 这类纯 JSON 接口，
+        """_get 走的是 /api/persona、/api/history 这类纯 JSON 接口，
         全都能带请求头 —— token 不该再出现在 URL 上。"""
         src = inspect.getsource(remote_brain.RemoteBrain._get)
         self.assertIn("Authorization", src)

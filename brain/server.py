@@ -2,10 +2,10 @@
 """云端大脑服务（组装与路由层）。
 
 远程大脑 API（端口 8788）：手机 App 与桌宠都连它聊天，记忆/人设/上下文
-只有云上这一份；生活补算、日记、朋友圈、主动搭话也都在这个进程里跑。
+只有云上这一份；历史摘要、主动搭话也都在这个进程里跑。
 
 模块分工：runtime 共享配置｜reply 回复后处理｜randimg 随机图｜selfie 自拍｜
-imggen 生图锁脸｜proactive 主动搭话｜moment_flow 朋友圈｜jobs 后台循环。
+imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环。
 本文件只管装配大脑、聊天管线、HTTP 路由、启动。用法：python server.py
 """
 import os
@@ -51,9 +51,7 @@ from proactive import (PROACTIVE_RULES, note_client_ip, _his_ip,
                        _proactive_interval_multiplier, _proactive_used_today,
                        _proactive_count_up, _recent_her_texts, _norm_text,
                        _is_repeat_of_recent, _cloud_append_assistant)
-from moment_flow import (try_post_moment, _SEEDED_AT, _seed_initial_moment,
-                         _add_moment_from_answer, _moment_img_ok)
-from jobs import catch_up_life_local, start_background
+from jobs import start_background
 
 # re-export 给外部脚本用（worldgen.py 与 _test_* 仍从 server 取这些名字）
 __all__ = [
@@ -69,9 +67,7 @@ __all__ = [
     "_proactive_note_sent", "_proactive_note_user",
     "_proactive_interval_multiplier", "_proactive_used_today",
     "_proactive_count_up", "_recent_her_texts", "_norm_text",
-    "_is_repeat_of_recent", "_cloud_append_assistant", "try_post_moment",
-    "_SEEDED_AT", "_seed_initial_moment", "_add_moment_from_answer",
-    "_moment_img_ok", "catch_up_life_local", "start_background",
+    "_is_repeat_of_recent", "_cloud_append_assistant", "start_background",
     "build_local_brain", "ask_with_retry", "start_remote_api", "run_server",
 ]
 
@@ -87,7 +83,7 @@ def build_local_brain(verbose=True):
     from memory_store_v2 import get_default_store
     from brain import Brain
 
-    # 插件必须在 Brain() **之前**装载：人设里的"工具"清单是构造时拼进
+    # 插件必须在 Brain() **之前**装载：人设里的"工具"清单在构造时拼进
     # draft_rules 的（persona_store._plugin_tools），晚于构造再装载，
     # 她就少了新插件的工具说明 —— 提示词不会自己补，得重跑 reload_persona
     load_plugins(verbose=verbose)
@@ -115,8 +111,6 @@ def build_local_brain(verbose=True):
         if verbose:
             print(f"[大脑] 聊天记录没读回来（不影响聊天）：{e}", flush=True)
 
-    _attach_life_engine(b, api_config, verbose=verbose)
-
     return b
 
 
@@ -139,38 +133,6 @@ def load_plugins(verbose=False):
     except Exception as e:
         print(f"[插件] 装载出错（不影响聊天）：{e}", flush=True)
         return 0
-
-
-def _attach_life_engine(b, api_config, verbose=False):
-    """给她装上生活引擎。换人设后要重跑一次——引擎在构造时把名字和
-    world.json 读进去了，不重建的话她还用着上一套人设的日常。"""
-    try:
-        from life_engine import LifeEngine
-        from persona_store import key_from_config
-        pk = key_from_config(api_config)
-        # 经历流和日记也按人设分区：换了人就是换了个人，她过去那阵子过的
-        # 是另一个人的日子。不分区的话新人设会继承旧人设的日常 ——
-        # 名字换了、说话方式换了，但"她昨天去了哪儿"还是另一个人的记忆。
-        home = None
-        try:
-            import paths
-            if paths.scope_name(pk, "app"):
-                home = os.path.join(paths.DATA_DIR, "her_life.%s" % pk)
-        except Exception:
-            home = None
-        eng = LifeEngine(api_config,
-                         name=(b.persona.get("name") or ""),
-                         persona=pk, home=home)
-        if eng.enabled:
-            b.life = eng
-            if verbose:
-                print("[大脑] 生活引擎就绪%s"
-                      % ("（人设分区 %s）" % pk if home else ""), flush=True)
-            return eng
-    except Exception as e:
-        if verbose:
-            print(f"[大脑] 生活引擎没起来（不影响聊天）：{e}", flush=True)
-    return None
 
 
 # 聊天锁的等待上限（秒），算出来的不是拍的：
@@ -281,6 +243,9 @@ def _snapshot(b):
         "ms": getattr(b, "last_ms", None),
         "tok_in": usage.get("in"), "tok_out": usage.get("out"),
         "model": str((API_CFG or {}).get("model") or ""),
+        # 思考过程：推理模型返回的 reasoning_content（MiMo/DeepSeek 等），
+        # 客户端可以折叠显示，排查"她为啥这么答"时用。
+        "think": getattr(b, "last_think", "") or "",
     }
     # 🔴 **顺带抄一份「她这轮实际看到的工具段」**。
     # 排查"技能装了却不调"时，光看 trace.tool 是空根本分不清三种情况：
@@ -307,7 +272,7 @@ def _snapshot(b):
 _PLAN_PROMPT_MARK = "（系统提示：你已经按计划完成了以下步骤"
 
 
-def _restore_hist(brain, text, ans):
+def _restore_hist(brain, text, ans, mode=None):
     """把这一轮规划塞进历史和当日流水里的临时记录撤掉，换成原话 + 最终回答。
 
     brain.chat 每调一次就 hist.append 一对 user/assistant，user 那条的内容是
@@ -317,10 +282,14 @@ def _restore_hist(brain, text, ans):
 
     按内容认、不按下标切：brain.chat 里有历史截断
     （hist = [hist[0]] + hist[-turns:]），一下标就可能切错位置。
+
+    🔴 **失败的兜底话不能写回历史。**
+    上游挂了的时候 brain.chat 故意不 append（它自己判 _failed），而这里原来
+    **无条件** append —— 于是那句"……我脑子有点转不动"被当成她说过的话存进
+    历史。这正是 brain.chat 注释里记的那次事故（欠费那阵攒了 97 条一模一样的
+    兜底话，重启灌回上下文后历史里全是同一句），在规划这条链路上原样复现。
     """
     try:
-        for role in ("user", "assistant"):
-            _drop_turn_log(getattr(brain, "life", None), role, text)
         keep, drop_next = [], False
         for m in brain.hist:
             if drop_next:
@@ -332,128 +301,153 @@ def _restore_hist(brain, text, ans):
                 continue
             keep.append(m)
         brain.hist = keep
+        # 失败/空回答：临时记录照撤，但**不补**那一对（跟 brain.chat 一致）
+        if mode == "API失败" or not (ans or "").strip():
+            return
         stamp = brain._stamp()
         brain.hist.append({"role": "user", "content": stamp + text})
-        brain.hist.append({"role": "assistant", "content": stamp + (ans or "")})
+        brain.hist.append({"role": "assistant", "content": stamp + ans})
     except Exception as e:
         print("[大脑] 历史修正失败（不影响回复）：%s" % str(e)[:60], flush=True)
 
 
-def _drop_turn_log(life, role, text):
-    """当日流水里那一对临时记录是文件 append，撤不回来 —— 只能重写这个文件。"""
-    if life is None:
-        return
-    path = getattr(life, "_chat_path", None)
-    if not callable(path):
-        return
-    import datetime
-    import json as _json
-    p = path(datetime.date.today().isoformat())
-    if not os.path.isfile(p):
-        return
-    rows = []
-    with open(p, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(_json.loads(line))
-            except Exception:
-                pass
-    out, drop_next = [], False
-    for r in rows:
-        if drop_next:
-            drop_next = False
-            continue
-        if r.get("role") == role and _PLAN_PROMPT_MARK in str(r.get("text") or ""):
-            drop_next = True
-            continue
-        out.append(r)
-    if len(out) == len(rows):
-        return
-    with open(p, "w", encoding="utf-8") as f:
-        for r in out:
-            f.write(_json.dumps(r, ensure_ascii=False) + "\n")
-
-
 def _chat_with_tools(text, img_path, trace_out=None, src=None):
-    """聊一轮，带模型自选工具：她写了 [tool:名] 就执行并喂回结果让她重答。
+    """聊一轮。工具调用走大脑**内部的原生 function calling 循环**（见
+    brain.draft_native）：模型在响应的 tool_calls 字段请求工具，结果在同一
+    条 messages 链上以 role:tool 回灌，直到她给出最终回复，不靠正文标签。
 
-    开关 tools 关了就走普通聊天。锁在每轮 chat 里拿 —— 工具查询本身不碰
-    大脑，别抱着锁去等 UAPI 的网络超时。
+    本函数只负责：加锁调大脑、可选的 Plan-and-Execute 前置规划、trace 记录、
+    以及末尾对残留标签的兜底清扫。
+
+    features.tools 的总开关**由 tools.all_specs() 判**（工具表的唯一出口）——
+    这里不再单独分支。放在 all_specs 里，换哪条起草链路都盖得住。
     """
-    def _once(t):
+    def _once(t, no_tools=False):
         with _chat_lock():
             b = _LOCAL["brain"]
-            ans, mode = b.chat(t, img=img_path, log=False, src=src)
-            # trace 字段长在共享的大脑对象上，得趁锁还在手里抄。出了锁再读，
-            # 并发那一轮会把它覆盖掉。
-            # 每轮都覆盖：工具调用走两轮 chat，用户看到的是最后一轮的结果。
+            ans, mode = b.chat(t, img=img_path, log=False, src=src,
+                               no_tools=no_tools)
+            # trace 字段长在共享的大脑对象上，得趁锁还在手里抄，出了锁并发
+            # 那一轮会把它覆盖掉。
             if trace_out is not None:
                 trace_out.update(_snapshot(b))
+                # 原生 FC 用到的工具也记进 trace（供事后追"这轮为啥这么答"）
+                _used = getattr(b, "last_tools_used", None)
+                if _used:
+                    trace_out["tool"] = ",".join(_used)
             return ans, mode
 
-    try:
-        import features as _feat
-        if not _feat.on("tools"):
-            # 开关关了不执行查询，但 prompt 是拼好的，模型仍可能写工具标签，
-            # 照样清扫一遍
-            import tools as _tools
-            ans, mode = _once(text)
-            return _tools.TOOL_TAG_ANY_RE.sub("", ans).strip(), mode
-    except _Busy:
-        raise
-    except Exception:
-        pass
     # Plan-and-Execute：复杂任务先规划步骤再执行，简单任务跳过（零成本判断）
+    #
+    # 🔴 **这一节在观察期**（见 planner.note/stats）：将来判它"删还是留"要靠数据，
+    # 所以三种结果**都必须能在 trace 里看见**。只给"成功"那种留痕
+    # （plan_steps/revised），下面这两种只打一行日志、trace 里什么都没有：
+    #   * 判要规划、但 plan() 一步都没解析出来 → 悄悄回退直答
+    #   * 规划途中抛异常 → 悄悄回退直答
+    # 结果就是"面板上看着像没走规划分支"，白花的那几次调用查不出来。
+    _plan_why = ""
+    _plan_t0 = time.time()
+    _plan_calls = 0
     try:
         import planner
-        if planner.should_plan(text):
+        _yes, _plan_why = planner.plan_decision(text)
+        # 🔴 **关掉之后要单独记一笔，不能当成"规划失败"。**
+        # `plan()` 自己在 enabled=false 时返回 None，于是 server 会走下面
+        # "判要规划但没解析出步骤"那条分支、写 `plan: "empty"` ——
+        # 那样"配置关了"会被记成"它失败了"，观测数据直接废掉。
+        # 所以这里先判开关：关着就只记 `would`（本来会触发多少次），
+        # 那个数就是"将来要不要重开"的依据。
+        if _yes and not planner.enabled():
+            planner.note(would=1, why=_plan_why)
+            if trace_out is not None:
+                trace_out["plan"] = "off"
+                trace_out["plan_why"] = _plan_why
+            _yes = False
+        if _yes:
+            planner.note(decided=1, why=_plan_why)
+            if trace_out is not None:
+                trace_out["plan_why"] = _plan_why
+        if _yes:
             steps = planner.plan(text)
+            _plan_calls += 1
             if steps:
                 b = _LOCAL["brain"]
                 results = planner.execute_plan(steps)
-                ans, mode = _once(planner.build_final_prompt(text, results))
+                # no_tools=True：工具在 planner.execute_plan 那一步已经查过了，
+                # 收尾这步再挂一遍工具表，主模型会拿同样的参数再查一次 ——
+                # 同一条消息两次执行、两次计费（路由模式没有这个问题，
+                # 因为那时候主模型本来就不挂工具）。
+                ans, mode = _once(planner.build_final_prompt(text, results),
+                                  no_tools=True)
+                _plan_calls += 1
                 # 结果检查器（轻量监督）：回答有没有用上执行结果、有没有编造。
                 # 最多修一次，防止「修完还不合格 → 再修」成死循环。
                 verify_feedback = planner.verify_result(text, results, ans)
+                _plan_calls += 1
                 revised = False
                 if verify_feedback:
                     ans, mode = _once(planner.build_revise_prompt(
-                        text, results, ans, verify_feedback))
+                        text, results, ans, verify_feedback),
+                                      no_tools=True)
+                    _plan_calls += 1
                     revised = True
                     print("[大脑] 检查器发现问题，已修正回答", flush=True)
-                _restore_hist(b, text, ans)
+                _restore_hist(b, text, ans, mode)
+                _plan_ms = int((time.time() - _plan_t0) * 1000)
+                planner.note(ok=1, steps_total=len(steps), ms_total=_plan_ms,
+                             calls_total=_plan_calls,
+                             revised=1 if revised else 0,
+                             kind="ok")
                 if trace_out is not None:
                     trace_out["plan_steps"] = len(steps)
                     trace_out["revised"] = revised
+                    # `plan_final_no_tools`：收尾那一步是**不挂工具表**的。
+                    # 这是规划路径已知的短板（收尾时想再调一次工具也调不了），
+                    # 记下来才能数"有多少轮其实收尾还需要工具"。
+                    trace_out["plan_final_no_tools"] = True
+                    trace_out["plan_ms"] = _plan_ms
+                    trace_out["plan_calls"] = _plan_calls
                     _used = [t for _, t, _, _ in results if t]
                     if _used:
                         trace_out["tool"] = ",".join(_used)
                 print("[大脑] Plan-and-Execute 完成，%d 步%s" % (
                     len(steps), "（已修正）" if revised else ""), flush=True)
-                # 清扫不能省：规划prompt说了「别写工具标签」但她未必听，
-                # 而剩下两条出口（features 关、ReAct）都扫了，漏一条就会把
-                # [tool:weather:北京] 直接发给用户。
                 import tools as _t2
                 return _t2.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
+            # 判要规划，但一步都没解析出来 —— 回退直答。**必须留痕**
+            _plan_ms = int((time.time() - _plan_t0) * 1000)
+            planner.note(empty=1, ms_total=_plan_ms, calls_total=_plan_calls,
+                         kind="empty")
+            if trace_out is not None:
+                trace_out["plan"] = "empty"
+                trace_out["plan_ms"] = _plan_ms
+                trace_out["plan_calls"] = _plan_calls
+            print("[大脑] 规划没解析出步骤，回退直答", flush=True)
     except _Busy:
         raise
     except Exception as e:
-        print("[大脑] Plan-and-Execute 异常，回退 ReAct：%s" % str(e)[:100], flush=True)
-    import tools as _tools
-    ans, mode, used = _tools.run_chat_with_tools(_once, text)
-    if used:
-        print("[大脑] 她调用了工具 %s" % "、".join(used), flush=True)
-        # 用过的工具要进 trace，否则重启后没法追"这轮为什么答成那样"。
-        # 一轮可能调多个，用逗号连开 —— trace 是给人读的，列表字面量不好扫
+        _plan_ms = int((time.time() - _plan_t0) * 1000)
+        try:
+            planner.note(error=1, ms_total=_plan_ms, calls_total=_plan_calls,
+                         kind="error", err=str(e)[:80])
+        except Exception:
+            pass
         if trace_out is not None:
-            trace_out["tool"] = ",".join(used)
-    return ans, mode
+            trace_out["plan"] = "error"
+            trace_out["plan_ms"] = _plan_ms
+            trace_out["plan_calls"] = _plan_calls
+        print("[大脑] Plan-and-Execute 异常，回退直答：%s" % str(e)[:100],
+              flush=True)
 
 
-def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None):
+    # 默认 ReAct：大脑内部原生 FC 循环一次搞定，外层不再跑标签解析
+    ans, mode = _once(text)
+    import tools as _tools
+    return _tools.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
+
+
+def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
+                   dry_run=False):
     """让她回一句话。
 
     img_b64：这一轮带的图片（base64），交给视觉模型让她"看见"。
@@ -461,9 +455,15 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None):
     trace_out：可选 dict；填上就在**持锁时**抄下这轮的 trace 字段（见 _snapshot）。
     src：渠道（app / wechat）。决定读哪份人设、哪份对话历史、哪个记忆分区 ——
     不传就是主渠道（手机 App / 桌宠）。
-    返回 (她的话, 模式标签, 错误信息) —— 不抛异常，调用方好写。
+    dry_run：**不写聊天存档、也不改历史**。给"用 API 打探测句"用。
 
-    server.py 只有一种形态：本进程自带大脑，不再转发给桌宠。
+    🔴 **dry_run 是踩了坑才加的。** 我调试时用 `/api/chat` 直接打了一串探测句
+    （"嘉豪""我买了新键盘""哈基米到底什么梗"…），它们**全进了她的正式聊天记录**。
+    于是她"最近在聊什么"看到的是我的一串测试题 —— 群里真有人说话时，
+    她答的是上一条测试句（实测同一句"嘉豪"六次里有一次回的是"新键盘？啥轴的"）。
+    用户看到的现象是"她回复一点都不对、答非所问"。清了两遍记录才恢复。
+
+    所以：**任何从接口打进去的探测句都会污染她的上下文。** 要测就带 dry_run。
     """
     orig_text = text if display is None else display
     # 她就在本进程里，直接问，不走网络
@@ -478,6 +478,16 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None):
                     if desc:
                         text = (text + " " if text else "") + \
                             f"（他发的图：{desc}）"
+                    else:
+                        # 🔴 看不了图也要**说一声**，不能什么都不加。
+                        # 人设规则里明确分了两档：带"（他发的图：…）"就是看到了，
+                        # 写着"没看清"就是真看不到 —— 让她老实说看不到、别编。
+                        # desc 为空时若直接跳过，提示词里既没有描述也没有
+                        # "没看清"，她**根本不知道他发过图**，只会当没这回事；
+                        # 而线上一次日志都不打，看起来像"她看不懂图"。
+                        text = (text + " " if text else "") + "（他发了张图片，没看清）"
+                        print("[大脑] 看图失败（视觉模型没返回描述），已按"
+                              "'没看清'告诉她", flush=True)
                 except Exception as e:
                     print(f"[大脑] 独立模式看图失败（不影响回复）：{e}", flush=True)
                 # 把原图存档：聊天记录里留路径，App 重新进来还能看到图
@@ -489,6 +499,14 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None):
                         d, "u_" + time.strftime("%Y%m%d_%H%M%S") + ".jpg")
                     with open(img_path, "wb") as f:
                         f.write(base64.b64decode(img_b64))
+                    # 收藏群聊表情包：入站图片顺手入库（仅微信群渠道）
+                    try:
+                        if src and str(src).startswith("wechat"):
+                            import stickers as _stk
+                            _stk.save_bytes(base64.b64decode(img_b64), desc="",
+                                            src=str(src))
+                    except Exception:
+                        pass
                 except Exception as e:
                     print(f"[大脑] 图片存档失败（不影响回复）：{e}", flush=True)
             # 他要自拍：不指望模型"只打字不发图"，直接按她此刻的时间和地点
@@ -503,11 +521,12 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None):
                                              size="768x1024")
                     if name:
                         ans = _selfie_caption(place) + "\n[img:" + name + "]"
-                        try:
-                            _b._log_turn(orig_text, ans, img=None)
-                        except Exception as e:
-                            print(f"[大脑] 自拍存档失败（不影响回复）：{e}",
-                                  flush=True)
+                        if not dry_run:          # 探测轮不写存档（见 ask_with_retry）
+                            try:
+                                _b._log_turn(orig_text, ans, img=None)
+                            except Exception as e:
+                                print(f"[大脑] 自拍存档失败（不影响回复）：{e}",
+                                      flush=True)
                         return ans, "本地自拍", ""
             except Exception as e:
                 print(f"[大脑] 自拍生成失败，回退正常对话：{e}", flush=True)
@@ -532,10 +551,13 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None):
                 print(f"[插件] on_reply 跳过（不影响回复）：{e}", flush=True)
             # 存档记处理后的正文（带 [img:gen_xxx.png]，App 能直接显示）。
             # 用户侧只存他真正说的话，看图描述和快递提示别进他的气泡
-            try:
-                _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None)
-            except Exception as e:
-                print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
+            # dry_run 时**不存** —— 探测句混进她的聊天记录会污染她的上下文，
+            # 症状是"她答的是上一条测试句"（见 ask_with_retry 的说明）。
+            if not dry_run:
+                try:
+                    _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None)
+                except Exception as e:
+                    print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
             return ans, mode, ""
         except _Busy:
             # 排队超时：明确说出来，别让调用方无限期等
@@ -592,40 +614,8 @@ def _stats_today():
     return out
 
 
-def _cloud_diary_list():
-    """云机 journal 目录里的日记日期列表（YYYY-MM-DD，升序）。"""
-    import re
-    try:
-        from paths import JOURNAL_DIR
-        d = str(JOURNAL_DIR)
-    except Exception:
-        d = r"C:\Vigil\data\journal"
-    try:
-        return sorted(n[:-3] for n in os.listdir(d)
-                      if re.match(r"^\d{4}-\d{2}-\d{2}\.md$", n))
-    except Exception:
-        return []
 
 
-def _cloud_diary_read(date_str):
-    """读一篇日记的正文（剥掉存盘时的日期标题行），没有就返回空串。"""
-    import re
-    if not date_str or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str or ""):
-        return ""
-    try:
-        from paths import JOURNAL_DIR
-        d = str(JOURNAL_DIR)
-    except Exception:
-        d = r"C:\Vigil\data\journal"
-    p = os.path.join(d, date_str + ".md")
-    try:
-        raw = open(p, encoding="utf-8").read()
-    except OSError:
-        return ""
-    lines = raw.splitlines()
-    if lines and lines[0].startswith("#"):
-        lines = lines[1:]
-    return "\n".join(lines).strip()
 
 
 def _cloud_history(limit=60, src="app"):
@@ -651,7 +641,7 @@ def _cloud_history(limit=60, src="app"):
         p = data_file("chat_history.jsonl"
                       if _norm_src(src) == "app" else
                       "chat_history.%s.jsonl" % _norm_src(src),
-                      r"C:\Vigil\data\chat_history.jsonl")
+                      r"C:\vigil\data\chat_history.jsonl")
     items = []
     try:
         with open(p, encoding="utf-8") as f:
@@ -671,12 +661,22 @@ def _cloud_history(limit=60, src="app"):
                               "img": img})
     except OSError:
         return []
-    return items[-int(limit or 60):]
+    # 🔴 入参必须夹紧。直接 int(limit) 的写法：
+    #   limit=abc → ValueError 冒到 do_GET，而 do_GET 没有兜底 except →
+    #               连接直接断掉，**客户端收不到任何响应**（只有一个 traceback）
+    #   limit=0   → items[-0:] 等于 items[0:]，**把整个存档全返回**
+    #   负数      → 从开头切，同样不是调用方想要的
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        n = 60
+    n = max(1, min(n, 1000))
+    return items[-n:]
 
 
 def start_remote_api(brain):
     """给"远程桌宠"和手机 App 开的门：客户端是薄壳，经隧道/直连用云上的大脑
-    聊天 —— 记忆 / 人设 / 生活只有云上一份，天然同步。
+    聊天 —— 记忆 / 人设只有云上一份，天然同步。
 
     只绑 127.0.0.1 是默认值（公网碰不到）；要让手机直连得显式配
     bind_host: "0.0.0.0"，那时必须配 brain_token（没配就拒绝启动，见函数末尾）。
@@ -687,15 +687,40 @@ def start_remote_api(brain):
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def _check(self):
-            """鉴权（判定逻辑见模块级 _auth_ok：那边是纯函数，有测试盯着）。"""
+            """鉴权（判定逻辑见模块级 _auth_ok：那边是纯函数，有测试盯着）。
+
+            设备 token 是**叠加**上来的一条通道：先按老规矩比 brain_token，
+            不匹配再当设备 token 查设备表 —— 老客户端一行都不用改。
+            通过后记下 `self._who`，因为有的接口要区分
+            "主人钥匙"（能管所有设备）和"某台设备"（只能解绑自己）。
+            """
             try:
                 from urllib.parse import urlparse, parse_qs
                 q = parse_qs(urlparse(self.path).query)
                 qtok = (q.get("token") or [""])[0]
             except Exception:
                 qtok = ""
-            return _auth_ok(self.headers.get("Authorization") or "",
-                            qtok, tok, self.client_address[0])
+            auth = self.headers.get("Authorization") or ""
+            if _auth_ok(auth, qtok, tok, self.client_address[0]):
+                self._who = ("brain", "")
+                return True
+            got = str(auth or "")
+            if got.startswith("Bearer "):
+                got = got[7:]
+            if not got:
+                got = str(qtok or "")
+            d = None
+            if got.startswith("dt_"):
+                try:
+                    import devices
+                    d = devices.verify(got, self.client_address[0])
+                except Exception:
+                    d = None
+            if d:
+                self._who = ("device", d.get("device_id", ""))
+                return True
+            self._who = ("", "")
+            return False
 
         def _cors(self):
             """跨域头：管理仪表盘从 file:// 或其他源访问时需要。
@@ -954,6 +979,46 @@ def start_remote_api(brain):
                 body = {}
             path = self.path.split("?")[0]
             try:
+                if path == "/api/device/register":
+                    # 只能用"主人钥匙"注册：设备 token 不能自己给自己发新设备，
+                    # 否则丢一台等于丢全部。回环 + 没配 token 的情况算主人。
+                    if getattr(self, "_who", ("", ""))[0] != "brain":
+                        self._json(403, {"ok": False,
+                                         "err": "注册需要用 brain_token，不能用设备 token"})
+                        return
+                    import devices
+                    out = devices.register(body.get("device_name"),
+                                           body.get("device_type") or "desktop",
+                                           self.client_address[0],
+                                           body.get("capabilities"))
+                    print("[设备] 新绑定：%s（%s）" % (out["device_name"], out["device_id"]),
+                          flush=True)
+                    out["ok"] = True
+                    self._json(200, out)
+                    return
+                if path == "/api/device/list":
+                    import devices
+                    me = getattr(self, "_who", ("", ""))
+                    self._json(200, {"ok": True, "items": devices.list_all(),
+                                     "me": me[1] if me[0] == "device" else "",
+                                     "who": me[0]})
+                    return
+                if path == "/api/device/revoke":
+                    import devices
+                    did = str(body.get("device_id") or "").strip()
+                    who, mine = getattr(self, "_who", ("", ""))
+                    if not did:
+                        self._json(400, {"ok": False, "err": "没给 device_id"})
+                        return
+                    # 主人能吊销任何一台；设备只能吊销**自己**（解绑本机）。
+                    # 否则任意一台设备就能踢掉其它设备 —— 那是提权。
+                    if who != "brain" and did != mine:
+                        self._json(403, {"ok": False, "err": "只能解绑本机"})
+                        return
+                    ok = devices.revoke(did)
+                    self._json(200 if ok else 404,
+                               {"ok": ok, "err": "" if ok else "没有这台设备"})
+                    return
                 if path == "/api/chat":
                     _in_text = str(body.get("text") or "")
                     _disp = _in_text          # 存档用原文，注入的系统提示不带
@@ -995,7 +1060,7 @@ def start_remote_api(brain):
                     # 拼在系统提示里而不是塞进 _in_text —— 后者会被当他说的话存档。
                     #
                     # 🔴 **否决靠 ctx.veto() 显式声明，不靠返回值**。
-                    # 试过"on_turn_in 返回空串 = 否决"，看着省事实际立刻炸：
+                    # 不能用"on_turn_in 返回空串 = 否决"，看着省事实际立刻炸：
                     # reminder 插件"没有提醒要注入"返回的也是空串，
                     # 而"所有插件都放行"时 join([]) 同样是空串 ——
                     # 三种情况在返回值上一模一样，于是"她一句话都说不出来"，
@@ -1022,7 +1087,11 @@ def start_remote_api(brain):
                     _snap = {}
                     ans, mode, err = ask_with_retry(
                         _in_text, body.get("img") or None, display=_disp,
-                        trace_out=_snap, src=_src)
+                        trace_out=_snap, src=_src,
+                        # 带 dry_run=true 的一轮**不写聊天存档**。
+                        # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
+                        # 她会开始答那些测试句（症状："她回复一点都不对"）。
+                        dry_run=bool(body.get("dry_run")))
                     # 出错就留一行（欠费 402、模型名写错、地址变了都在这儿现形）
                     if err:
                         try:
@@ -1055,12 +1124,27 @@ def start_remote_api(brain):
                             "tool": _snap.get("tool") or "",
                             "mode": mode,
                             "fallback": 1 if err or mode == "API失败" else 0,
+                            # 🔴 规划分支的观测字段**必须显式列出来**。
+                            # 字段是白名单式的（上面每一条都得手写），所以
+                            # trace_out 里塞了不等于落进 trace 文件 ——
+                            # plan_steps 在 reply.trace 里看得见、
+                            # 在 /api/trace 里却没有，就是因为漏了这一行。
+                            # 不列出来的话，"判要规划但没解析出步骤""规划抛异常"
+                            # 这两种回退在长期数据里永远查不到，而这正是
+                            # 判定它"删还是留"要看的东西。
+                            "plan_why": _snap.get("plan_why") or "",
+                            "plan": _snap.get("plan") or (
+                                "ok" if _snap.get("plan_steps") else ""),
+                            "plan_steps": _snap.get("plan_steps"),
+                            "plan_ms": _snap.get("plan_ms"),
+                            "plan_calls": _snap.get("plan_calls"),
+                            "revised": 1 if _snap.get("revised") else 0,
                         })
                     except Exception:
                         pass
                     # reply 整段保留给旧版 App；messages 按她的换行拆好段，
                     # 新版 App 逐条渲染成连发气泡，存档也按这个粒度拆
-                    # 🔴 **trace 必须回给客户端**。原来只把 _snap 写进落盘日志，
+                    # 🔴 **trace 必须回给客户端**。只把 _snap 写进落盘日志，
                     # 返回体里一个 trace 键都没有 —— 于是前端
                     # `d.trace.plan_steps` 恒为 undefined。
                     # 症状特别有欺骗性：日志里明明打了
@@ -1079,12 +1163,41 @@ def start_remote_api(brain):
                                          "model": _snap.get("model")
                                                  or str((API_CFG or {}).get("model") or ""),
                                          "mem_hits": _snap.get("mem_hits", 0),
+                                         # 思考过程：推理模型的 reasoning_content，客户端折叠显示
+                                         "think": _snap.get("think") or "",
                                          # 她这轮实际看到的工具段（排查"装了不调"用）
                                          "rules_len": _snap.get("rules_len"),
                                          "rules_has_skill": _snap.get("rules_has_skill"),
                                          "rules_has_fortune": _snap.get("rules_has_fortune"),
                                          "rules_has_must": _snap.get("rules_has_must"),
                                      }})
+                elif path == "/api/chat/stream":
+                    # 🔴 流式聊天：SSE 实时推送思考过程和正文。
+                    # 客户端用 EventSource 或 fetch + ReadableStream 接收。
+                    # 事件格式：data: {"type":"think"/"text"/"done"/"error", ...}\n\n
+                    _in_text = str(body.get("text") or "")
+                    _src = _norm_src(body.get("src"))
+                    try:
+                        import features as _feat
+                        _feat.set_current_src(_src)
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
+                    try:
+                        with _chat_lock():
+                            for evt in _LOCAL["brain"].stream_chat(_in_text, src=_src):
+                                self.wfile.write(("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                                self.wfile.flush()
+                    except _Busy:
+                        self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "她正忙着，等会儿再说"}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    except Exception as e:
+                        self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "%s: %s" % (type(e).__name__, str(e)[:120])}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    return
                 elif path == "/api/packages/del":
                     # 删掉就移出监控，她的提醒跟着停（poll 只扫这份存档）
                     import packages as _pkg
@@ -1135,33 +1248,6 @@ def start_remote_api(brain):
                     except Exception as e:
                         print(f"[大脑] 清内存历史失败：{e}", flush=True)
                     self._json(200, {"ok": ok})
-                elif path == "/api/life/catchup":
-                    # 会调模型，慢，客户端放在后台线程里等
-                    try:
-                        life = getattr(brain, "life", None)
-                        if life is None:
-                            self._json(200, {"ok": False, "events": 0,
-                                             "diary": 0, "err": "生活引擎没开"})
-                            return
-                        res = life.catch_up(force=bool(body.get("force"))) or {}
-                        self._json(200, {"ok": True,
-                                         "events": int(res.get("events") or 0),
-                                         "diary": int(res.get("diary") or 0),
-                                         "skip": res.get("skip") or ""})
-                    except Exception as e:
-                        self._json(200, {"ok": False, "events": 0, "diary": 0,
-                                         "err": str(e)[:80]})
-                elif path == "/api/diary/write":
-                    try:
-                        life = getattr(brain, "life", None)
-                        ds = str(body.get("date") or "") \
-                            or time.strftime("%Y-%m-%d")
-                        txt = life.write_diary(ds) if life is not None else ""
-                        self._json(200, {"ok": bool(txt), "date": ds,
-                                         "body": txt or ""})
-                    except Exception as e:
-                        self._json(200, {"ok": False, "date": "",
-                                         "body": "", "err": str(e)[:80]})
                 elif path == "/api/reload_persona":
                     try:
                         with _chat_lock():
@@ -1194,8 +1280,17 @@ def start_remote_api(brain):
                     # 落盘 + 热重载两处都要，只改一处会出现"界面变了、她没变"
                     try:
                         import persona_store
+                        # 🔴 判据要用**这个渠道**当前那套人设，不是全局那份。
+                        # 不能拿 key_from_config（= App 的 key）当判据：编辑
+                        # 微信人设时 key 对不上，被当成"你在编辑别的模板"
+                        # 故意不重载 —— 接口回 ok、界面弹"她马上就是这个设定"，
+                        # 只有她不换。/api/persona/apply（切模板）那条已经按
+                        # src 取了，save 这条还停在老逻辑上。
+                        _ssrc = _norm_src(body.get("src") or "")
+                        _skey = _persona_for_src(
+                            _ssrc, persona_store.key_from_config(api_config))
                         key = os.path.basename(str(body.get("key") or "")
-                                               or persona_store.key_from_config(api_config))
+                                               or _skey)
                         if not key or not os.path.isfile(persona_store.path_of(key)):
                             self._json(200, {"ok": False, "err": "没有这套人设"})
                             return
@@ -1208,13 +1303,19 @@ def start_remote_api(brain):
                             self._json(200, {"ok": False, "err": "总得有个名字"})
                             return
                         persona_store.save(fields, key)
-                        # 只有改的是当前那套才热重载：编辑别的模板不该动她
-                        if key == persona_store.key_from_config(api_config):
+                        # 只有改的是这个渠道正在用的那套才热重载：
+                        # 编辑别的模板不该动她
+                        reloaded = (key == _skey)
+                        if reloaded:
                             with _chat_lock():
                                 brain.reload_persona()
-                        print("[大脑] 人设已更新：%s（%s）" % (name, key),
+                        print("[大脑] 人设已更新：%s（%s，渠道 %s%s）"
+                              % (name, key, _ssrc,
+                                 "，已热重载" if reloaded else "，非当前渠道"),
                               flush=True)
-                        self._json(200, {"ok": True, "name": name, "key": key})
+                        self._json(200, {"ok": True, "name": name,
+                                         "key": key, "src": _ssrc,
+                                         "reloaded": reloaded})
                     except Exception as e:
                         errlog.log_exc("api/persona/save", e)
                         self._json(200, {"ok": False, "err": str(e)[:120]})
@@ -1254,41 +1355,16 @@ def start_remote_api(brain):
                             api_config.setdefault("persona_by_src", {})[_asrc] = key
                         with _chat_lock():
                             brain.reload_persona()
-                            # 生活引擎在构造时读了名字和 world.json，不重建她
-                            # 还会用旧人设的日常；重建后顺便报一下旧生活还在不在
-                            _attach_life_engine(brain, api_config)
-                            stale = bool(getattr(brain, "life", None)
-                                         and brain.life.is_stale())
                         her = ""
                         try:
                             her = brain.persona.get("name") or ""
                         except Exception:
                             pass
-                        print(f"[大脑] 人设已切换为 {key}（{her}）"
-                              f"{'｜她的日常还是旧的' if stale else ''}",
+                        print(f"[大脑] 人设已切换为 {key}（{her}）",
                               flush=True)
-                        self._json(200, {"ok": True, "name": her,
-                                         "stale_life": stale})
+                        self._json(200, {"ok": True, "name": her})
                     except Exception as e:
                         self._json(200, {"ok": False, "err": str(e)[:80]})
-                elif path == "/api/persona/reset_life":
-                    # 换完人设把她的日常、朋友圈、日记清掉重新长。
-                    # 记忆库和聊天存档默认留着——换人设不等于失忆。
-                    try:
-                        eng = getattr(brain, "life", None)
-                        if not eng:
-                            self._json(200, {"ok": False, "err": "生活引擎没起来"})
-                            return
-                        with _chat_lock():
-                            r = eng.reset_life(keep_chat=bool(body.get("keep_chat", True)))
-                        print("[大脑] 生活已重置：清掉 %s，备份在 %s"
-                              % ("、".join(r.get("cleared") or []), r.get("backup")),
-                              flush=True)
-                        self._json(200, {"ok": True, "backup": r.get("backup"),
-                                         "cleared": r.get("cleared")})
-                    except Exception as e:
-                        errlog.log_exc("api/persona/reset_life", e)
-                        self._json(200, {"ok": False, "err": str(e)[:120]})
                 elif path == "/api/persona/new":
                     # 新建一套人设模板（不自动切过去，省得她换脸换名字你还没看仔细）
                     try:
@@ -1397,8 +1473,7 @@ def start_remote_api(brain):
                             try:
                                 API_CFG.clear()
                                 # 🔴 这里**不能重抄一份白名单**。
-                                # 原来写的是 ("api_base","api_key","model","vision") 四个，
-                                # 比 runtime.API_CFG 少了 voice / uapi / persona_file ——
+                                # 比如漏掉 voice / uapi / persona_file ——
                                 # update 是**整体替换**，少一个键那个键就当場消失。
                                 # 后果：换一次模型，语音配置和 uapi 静默失效；
                                 # 最要命的是 persona_file —— Brain 只认 API_CFG 里的它，
@@ -1485,44 +1560,6 @@ def start_remote_api(brain):
                             pass
                     self._json(200, {"levels": _ch.all_levels(),
                                      "level": _ch.level(_csrc)})
-                elif path == "/api/moment/like":
-                    try:
-                        import moments
-                        m = moments.add_comment(str(body.get("id") or ""), "__like__", "")
-                        self._json(200, {"ok": m is not None})
-                    except Exception as e:
-                        self._json(200, {"ok": False, "err": str(e)[:80]})
-                elif path == "/api/moment/comment":
-                    # 他评论她的朋友圈 -> 存下来，并让她回一句
-                    # who 由 App 传（显示用，"我"/昵称），不再写死"他"
-                    try:
-                        import moments
-                        mid = str(body.get("id") or "")
-                        text = str(body.get("text") or "").strip()
-                        who = str(body.get("who") or "").strip() or "我"
-                        hit = moments.add_comment(mid, who, text)
-                        her = ""
-                        if hit:
-                            her = moments.reply_to_comment(brain, hit, text)
-                            if her:
-                                moments.add_comment(mid, "她", her)
-                        self._json(200, {"ok": hit is not None, "reply": her})
-                    except Exception as e:
-                        self._json(200, {"ok": False, "reply": "", "err": str(e)[:80]})
-                elif path == "/api/moment_now":
-                    # 手动催她"现在想想要不要发朋友圈"（验证 / 演示 / 用户点一下）。
-                    # 她仍然自己决定发不发 —— 这里只是挑时间，不替她写。
-                    try:
-                        raw, posted = try_post_moment(brain)
-                        items = []
-                        if posted:
-                            import moments as _m
-                            items = _m.list_moments(1)
-                        self._json(200, {"posted": posted,
-                                         "raw": raw[:300], "items": items})
-                    except Exception as e:
-                        self._json(200, {"posted": False, "raw": "",
-                                         "items": [], "err": str(e)[:120]})
                 else:
                     # 插件管理面（装/卸/渠道开关）优先于插件自带路由：
                     # 前者只在 /api/plugins* 这一小片里，前缀不重叠。
@@ -1542,11 +1579,59 @@ def start_remote_api(brain):
                 self._json(500, {"err": f"{type(e).__name__}: {e}"})
 
         def do_GET(self):
+            """兜底包一层再进真正的处理。
+
+            do_POST 一直有 catch-all，do_GET 没有 —— 于是一个坏入参就能让处理
+            线程带着 traceback 死掉，**客户端什么响应都收不到**（连接直接断），
+            比返回 500 更难排查。典型触发：?last=abc、?limit=abc。
+            """
+            try:
+                self._do_GET()
+            except (BrokenPipeError, ConnectionResetError):
+                pass                      # 客户端先走了，正常的
+            except Exception as e:
+                try:
+                    self._json(500, {"err": f"{type(e).__name__}: {e}"})
+                except Exception:
+                    pass
+
+        def _do_GET(self):
+            # 🔴 取连接配置这个接口必须**在鉴权之前**处理。
+            # 它存在的意义就是"本地没有 token"，走正常鉴权必然 401 ——
+            # 死锁，一次都拿不到。放行条件是回环地址，见该分支内的说明。
+            _p0 = self.path.split("?")[0]
+            if _p0 == "/api/panel/connect-config":
+                if not _is_loopback(self.client_address[0]):
+                    self._json(403, {"ok": False,
+                                     "err": "只能从本机取连接配置"})
+                    return
+                _tok = str(api_config.get("brain_token") or BRAIN_TOKEN or "")
+                if not _tok:
+                    self._json(200, {"ok": False, "token": "",
+                                     "err": "服务端没配 brain_token"})
+                    return
+                # 地址回本机能连上的那个，且用 Host 头反推端口
+                # （`port` 是 run_remote_api 的局部变量，这里取不到；
+                #   硬写常量会在换端口后静默指错）。
+                # 不能把公网 IP 或隧道端口塞回去 —— 那等于把基础设施信息
+                # 写进会落到浏览器存储里的东西。
+                _host = (self.headers.get("Host") or "").strip()
+                _port = _host.rsplit(":", 1)[-1] if ":" in _host else "8788"
+                self._json(200, {"ok": True, "token": _tok,
+                                 "server": "http://127.0.0.1:%s" % _port})
+                return
             if not self._check():
                 self._json(401, {"err": "bad token"})
                 return
             note_client_ip(self.client_address[0])
             path = self.path.split("?")[0]
+            if path == "/api/device/list":
+                import devices
+                me = getattr(self, "_who", ("", ""))
+                self._json(200, {"ok": True, "items": devices.list_all(),
+                                 "me": me[1] if me[0] == "device" else "",
+                                 "who": me[0]})
+                return
             if path == "/api/persona/full":
                 # 给人设编辑器用：读人设的全部字段（不是摘要）。
                 # 放GET 分支：编辑器只是读，POST 那条路留给 save。
@@ -1586,7 +1671,7 @@ def start_remote_api(brain):
                 except Exception:
                     pass
                 #🔴 这里**必须用 list_templates**，别再手搓一份。
-                # 原来下面这四行自己读 json 取 `desc`，于是卡片上那句介绍
+                # 下面这四行若自己读 json 取 `desc`，卡片上那句介绍
                 # 只认预设写死的元数据 —— 而编辑器里根本没有这一栏，
                 # 用户把整份人设换掉之后介绍还是老那句，看着像"换了没生效"。
                 # `_card_desc`（从正文现算 + 分栏字段回退）就在 list_templates
@@ -1646,9 +1731,23 @@ def start_remote_api(brain):
                                      "current": "", "items": []})
             elif path == "/api/models":
                 # force=1 = 用户点了"重新拉取"，不用缓存（换 key 之后必须这样拉一次）
+                #
+                # 🔴 **preview 参数是"按我刚填的地址和密钥试拉"，不读当前配置。**
+                # 不这么做的话，前端点"硅基流动"只改了输入框里的文字，
+                # 服务端照样拿**小米那把 key** 去拉 —— 界面显示"硅基流动"，
+                # 列表里全是 mimo，看着像分类错了。
+                # 缓存在 model_hub 里按 base 分键，所以切地址本来就能拿到各自的列表，
+                # 缺的只是"用请求里的参数而不是配置里的参数"这一条路。
+                #
+                # 密钥留空时回落到当前那把：用户可能只想换个地址、key 沿用现有的。
                 try:
                     force = str(_query_param(self.path, "force") or "") == "1"
+                    p_base = str(_query_param(self.path, "base") or "").strip()
+                    p_key = str(_query_param(self.path, "key") or "").strip()
                     cur = model_hub.current(api_config)
+                    if p_base:
+                        cur = dict(cur, api_base=p_base,
+                                   api_key=p_key or cur.get("api_key") or "")
                     lst = model_hub.list_models(cur["api_base"],
                                                 cur["api_key"], force=force)
                     # 回客户端用脱敏版：cur 里的真 key 只留在这一次调用里
@@ -1688,9 +1787,6 @@ def start_remote_api(brain):
                     errlog.log_exc("api/logs", e)
                     self._json(200, {"ok": False, "items": [],
                                      "err": str(e)[:120]})
-            elif path == "/api/diary/list":
-                days = _cloud_diary_list()
-                self._json(200, {"days": days})
             elif path == "/api/stats":
                 # 用量与状态：App 设置页拿它显示"今天聊了多少轮、花了多少 token"
                 out = _stats_today()
@@ -1699,23 +1795,23 @@ def start_remote_api(brain):
                     out["agenda"] = agenda.stats()
                 except Exception:
                     pass
+                # 规划分支的观测（进程内累计，重启归零）。
+                # 放这儿是因为它**本来就在观察期**：要判"删还是留"，
+                # 先得能一眼看到"触发多少次、成不成、平均几步、多花多少毫秒"。
+                # 进程重启会清零，所以长期数据还得靠 trace 里那几条 per-turn 字段。
+                try:
+                    import planner
+                    out["plan"] = planner.stats()
+                except Exception:
+                    pass
                 self._json(200, out)
             elif path == "/api/trace":
                 n = _query_param(self.path, "last") or 20
                 self._json(200, {"items": _trace_tail(n)})
-            elif path == "/api/diary/read":
-                ds = _query_param(self.path, "date")
-                self._json(200, {"body": _cloud_diary_read(ds)})
             elif path == "/api/history":
                 lim = _query_param(self.path, "limit") or 60
                 self._json(200, {"items": _cloud_history(
                     lim, _query_param(self.path, "src") or "app")})
-            elif path == "/api/moments":
-                try:
-                    import moments
-                    self._json(200, {"items": moments.list_moments(30)})
-                except Exception as e:
-                    self._json(200, {"items": [], "err": str(e)[:80]})
             elif path == "/api/features":
                 # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。
                 import features as _feat
@@ -1751,12 +1847,12 @@ def start_remote_api(brain):
             elif path == "/api/app/version":
                 # App 内置更新检查：读版本文件（发布新 APK 时一起更新）
                 try:
-                    vf = r"C:\Vigil\app\version.json"
+                    vf = r"C:\vigil\app\version.json"
                     self._json(200, json.load(open(vf, encoding="utf-8")))
                 except Exception as e:
                     self._json(200, {"code": 0, "err": str(e)[:60]})
             elif path == "/api/app.apk":
-                apk = r"C:\Vigil\app\zhixia.apk"
+                apk = r"C:\vigil\app\vigil.apk"
                 try:
                     blob = open(apk, "rb").read()
                     self.send_response(200)
@@ -1862,8 +1958,20 @@ def start_remote_api(brain):
 
 def run_server():
     base = None
+    # 🔴 把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。
+    # 不做的话界面会把每一家都显示成"还没存密钥"，
+    # 于是"点一下就切换"永远切不动 —— 而实际有一家正拿着它在用。
+    # 只在缺失时写、幂等，写完落盘所以重启后状态一致。
+    try:
+        import model_hub as _mh
+        if _mh.adopt_current_key(api_config):
+            _mh.save(api_config)
+            print("[模型] 密钥已登记到当前服务商名下", flush=True)
+    except Exception as e:
+        print("[模型] 密钥登记跳过（不影响聊天）：%s" % str(e)[:100],
+              flush=True)
     if not base and _LOCAL["brain"] is None:
-        # 云服务器 / 没开桌宠的场景：本进程自己养一个她（记忆、人设、生活全带）
+        # 云服务器 / 没开桌宠的场景：本进程自己养一个她（记忆、人设全带）
         print("[大脑] 没找到桌宠 —— 切换独立模式（本进程自带大脑）", flush=True)
         _LOCAL["brain"] = build_local_brain()
     if _LOCAL["brain"] is not None:
@@ -1873,7 +1981,7 @@ def run_server():
         except Exception as e:
             print(f"[大脑] 远程大脑 API 没起来（不影响主服务）：{e}",
                   flush=True)
-        # 她的全部"生活"：生活补算 / 历史摘要 / 朋友圈 / 主动搭话 / 事件提醒
+        # 她的全部后台循环：历史摘要 / 主动搭话 / 事件提醒
         start_background(_LOCAL["brain"])
         # 插件（plugins/）：装完就起后台线程。装载失败只少几个功能，不影响主服务
         try:
@@ -1885,7 +1993,7 @@ def run_server():
 
     print("=" * 58, flush=True)
     print(" 云端大脑", flush=True)
-    print(" 远程 API / 生活 / 朋友圈 / 主动搭话 照常运行。", flush=True)
+    print(" 远程 API / 历史摘要 / 主动搭话 照常运行。", flush=True)
     print("=" * 58, flush=True)
     try:
         while True:
@@ -1905,7 +2013,7 @@ if __name__ == "__main__":
         import ctypes
         kernel32 = ctypes.windll.kernel32
         mtx_name = os.environ.get(
-            "BRAIN_MUTEX", "Global\\LinZhixiaBrainSingleInstance")
+            "BRAIN_MUTEX", "Global\\VigilBrainSingleInstance")
         mutex = kernel32.CreateMutexW(None, False, mtx_name)
         if kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
             print("[大脑] 已在运行，本实例退出。", flush=True)

@@ -2,18 +2,18 @@
 """桌面立绘（纯客户端）
 
 她是**薄客户端**：只有立绘、气泡、聊天窗，没有任何本地模型、没有本地 HTTP 服务、
-也不在本地存记忆 —— 脑子（记忆 / 人设 / 生活 / 日记）只有云上一份，走 SSH 隧道连过去。
+也不在本地存记忆 —— 脑子（记忆 / 人设 / 生活）只有云上一份，走 SSH 隧道连过去。
 这样两台进程不会各养一个"她"互相覆盖记忆。
 
 - 透明窗口、置顶（原生钩子 + 定期保活，见 _TopMostGuard）、可拖拽、双击立绘打开聊天
 - 大脑：remote_brain.RemoteBrain -> config.json 的 brain_remote
 - 感知：watcher.ActivityWatcher，只读前台窗口标题 / 进程名，不截屏、不用视觉模型
-- 右键菜单：聊天 / 置顶窗口 / 全屏时自动让开 / 设置 / 她的日记 / 主动说一句 / 清空 / 退出
+- 右键菜单：聊天 / 置顶窗口 / 全屏时自动让开 / 设置 / 主动说一句 / 清空 / 退出
 
 历史（别再往回加）：本地 4B 离线兜底、截屏 + 视觉模型"看你的屏幕"、
 本地大脑兜底 + 局域网 HTTP 接口，分别已移除。
 
-运行：F:/Vigil/venv/Scripts/python.exe pet.py
+运行：F:/vigil/venv/Scripts/python.exe pet.py
 """
 import sys, os, json, time, datetime, traceback, threading
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "brain"))  # 云端大�
 _INSTANCE_MUTEX = None
 
 
-def ensure_single_instance(name="LinZhixiaPet"):
+def ensure_single_instance(name="VigilPet"):
     """返回 True 表示这是第一个实例；False 表示已有实例在跑，调用方应退出。
     非 Windows 或拿锁失败都返回 True（不阻塞启动）。"""
     global _INSTANCE_MUTEX
@@ -65,7 +65,7 @@ try:
     CFG_PATH = paths.CONFIG_PATH         # config/config.json
     paths.ensure()                       # 顺手把该有的目录建出来
 except Exception:
-    CFG_PATH = r"F:\Vigil\brain\config\config.json"
+    CFG_PATH = r"F:\vigil\brain\config\config.json"
 # 立绘实际在 brain/assets/ 下（pet/assets/ 里从来没过这些图）。只认一处的话
 # 三张图全读不到，窗口只显示「立绘读不到」几个字，所以两个位置都认
 _ASSETS_SELF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
@@ -221,24 +221,6 @@ class LifeWorker(QThread):
             self.done.emit({"ok": False})
 
 
-class DiaryWorker(QThread):
-    """立刻让她写一篇今天的日记（不等晚上）。测试 / 尝鲜用。"""
-    done = pyqtSignal(bool, str)
-
-    def __init__(self, life):
-        super().__init__()
-        self.life = life
-
-    def run(self):
-        try:
-            self.life.catch_up(force=True)
-            ds = datetime.date.today().isoformat()
-            body = self.life.write_diary(ds)
-            self.done.emit(bool(body), ds)
-        except Exception:
-            self.done.emit(False, "")
-
-
 # --- 气泡（独立顶层窗口） ---
 class Bubble(QWidget):
     """独立窗口的气泡。
@@ -303,11 +285,11 @@ AVATAR = 34                           # 头像边长
 BUBBLE_PAD_X = 13                     # 气泡左右内边距（与下面的样式表保持一致）
 BUBBLE_MAX_FRAC = 0.68                # 气泡最大宽度占消息区比例
 
-QSS_BUBBLE_ZHIXIA = ("background:#ffffff; color:#1a1a1a; border:0;"
+QSS_BUBBLE_VIGIL = ("background:#ffffff; color:#1a1a1a; border:0;"
                      " border-radius:6px; padding:9px 13px;")
 QSS_BUBBLE_ME = ("background:#95ec69; color:#1a1a1a; border:0;"
                  " border-radius:6px; padding:9px 13px;")
-COLOR_ZHIXIA = "#ffffff"
+COLOR_VIGIL = "#ffffff"
 COLOR_ME = "#95ec69"
 
 
@@ -352,25 +334,25 @@ class Avatar(QLabel):
 class BubbleRow(QWidget):
     """一行消息：头像 + 气泡（+ 可选小字），带微信那种小尖角。
 
-    who="zhixia" 靠左白气泡，who="me" 靠右绿气泡。
+    who="vigil" 靠左白气泡，who="me" 靠右绿气泡。
     """
     def __init__(self, text, who, sub=""):
         super().__init__()
         self._me = (who == "me")
-        color = COLOR_ME if self._me else COLOR_ZHIXIA
+        color = COLOR_ME if self._me else COLOR_VIGIL
 
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(9)
 
         av = Avatar(os.path.join(ASSETS_DIR, "user_avatar.png" if self._me
-                                 else "zhixia_avatar.png"),
+                                 else "vigil_avatar.png"),
                     "你" if self._me else "夏")
 
         self.bubble = QLabel(text)
         self.bubble.setWordWrap(True)
         self.bubble.setFont(bubble_font())
-        self.bubble.setStyleSheet(QSS_BUBBLE_ME if self._me else QSS_BUBBLE_ZHIXIA)
+        self.bubble.setStyleSheet(QSS_BUBBLE_ME if self._me else QSS_BUBBLE_VIGIL)
         self.bubble.setFixedWidth(self._measure(self.bubble, text))
 
         col = QVBoxLayout()
@@ -415,7 +397,7 @@ class BubbleRow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(COLOR_ME if self._me else COLOR_ZHIXIA))
+        p.setBrush(QColor(COLOR_ME if self._me else COLOR_VIGIL))
         path = QPainterPath()
         y = g.top() + 11
         if self._me:
@@ -628,7 +610,7 @@ class ChatDialog(QDialog):
         bar.setValue(bar.maximum())
 
     def _greet(self):
-        self._add_bubble("在呢～想聊点什么？", "zhixia")
+        self._add_bubble("在呢～想聊点什么？", "vigil")
 
     # —— 重启后把聊天记录填回来 ——
     def restore(self, records):
@@ -644,7 +626,7 @@ class ChatDialog(QDialog):
                 self._add_sep(self._sep_label(when))
             if when:
                 prev = when
-            who = "me" if m.get("role") == "user" else "zhixia"
+            who = "me" if m.get("role") == "user" else "vigil"
             self.body_lay.addWidget(BubbleRow(m.get("text", ""), who, ""))
         self._last_ts = time.time()
         QTimer.singleShot(0, self._scroll_bottom)
@@ -685,7 +667,7 @@ class ChatDialog(QDialog):
         self.inp.clear()
         self._add_bubble(q, "me")
         if not self.pet.ready:
-            self._add_bubble("我还在准备，稍等一下下～", "zhixia")
+            self._add_bubble("我还在准备，稍等一下下～", "vigil")
             return
         self.show_typing()
         self.pet.chat(q, self)
@@ -695,7 +677,7 @@ class ChatDialog(QDialog):
         if not text:
             text = "……我走神了，你再说一遍？"
         sub = f"· {mode}" if mode else ""
-        self._add_bubble(text, "zhixia", sub)
+        self._add_bubble(text, "vigil", sub)
         self.inp.setFocus()
 
 
@@ -832,8 +814,8 @@ class PetWindow(QLabel):
                    or (api_config.get("mobile") or {}).get("token") or "")
         self.mem = None
         self.brain = RemoteBrain({"base": self._remote_base, "token": _tok})
-        # 生活/日记的远程视图：都打到云上（读日记 / 触发补算 / 让她现在写日记），
-        # 本地不落任何数据 —— 生活只有云上那一份在过，两边写就会分叉
+        # 生活的远程视图：打到云上触发补算，本地不落任何数据
+        # —— 生活只有云上那一份在过，两边写就会分叉
         self.life = RemoteLife(self._remote_base, _tok)
         self.ready = True
         print(f"[桌宠] 远程大脑模式：{self._remote_base}"
@@ -877,9 +859,8 @@ class PetWindow(QLabel):
         w = LifeWorker(self.life, force=force)
 
         def on_done(res):
-            if res.get("events") or res.get("diary"):
-                print(f"[生活] 补算 {res.get('events', 0)} 条经历、"
-                      f"{res.get('diary', 0)} 篇日记", flush=True)
+            if res.get("events"):
+                print(f"[生活] 补算 {res.get('events', 0)} 条经历", flush=True)
             if then:
                 try:
                     then()
@@ -889,47 +870,6 @@ class PetWindow(QLabel):
         w.done.connect(on_done)
         w.start()
         self._life_workers = getattr(self, "_life_workers", []) + [w]
-
-    def open_diary(self):
-        """打开日记本。先把生活补到当前，免得看到的日记是旧的。"""
-        if getattr(self, "life", None) is None:
-            self.show_bubble("我还不会写日记…")
-            return
-        from diary_dialog import DiaryDialog
-        if getattr(self, "diary", None) is None:
-            self.diary = DiaryDialog(self.life)
-        self.diary.refresh()
-        self.diary.show()
-        self.diary.raise_()
-        self.diary.activateWindow()
-        cur = self.diary.days[self.diary.idx] if self.diary.days else None
-        self._catch_up_life(then=lambda: self._refresh_diary(cur))
-
-    def _refresh_diary(self, keep_date=None):
-        try:
-            if getattr(self, "diary", None) is not None:
-                self.diary.refresh(keep_date=keep_date)
-        except Exception:
-            pass
-
-    def write_diary_now(self):
-        """不等晚上，立刻补算 + 写一篇今天的日记（测试用）"""
-        if getattr(self, "life", None) is None:
-            return
-        self.show_bubble("我记一下今天…")
-        w = DiaryWorker(self.life)
-
-        def on_done(ok, ds):
-            if ok:
-                self.show_bubble("写好啦，去「她的日记」看看～")
-                self._refresh_diary(ds)
-                QTimer.singleShot(400, self.open_diary)
-            else:
-                self.show_bubble("今天还没什么好写的…")
-
-        w.done.connect(on_done)
-        w.start()
-        self._diary_workers = getattr(self, "_diary_workers", []) + [w]
 
     def _setup_watcher(self):
         """启动活动感知线程（只看窗口标题/进程名，不截屏、不用视觉模型）。"""
@@ -1020,9 +960,9 @@ class PetWindow(QLabel):
     def _load_pixmaps(self):
         """把三张立绘读进来并立刻显示，不依赖模型加载"""
         H = 230
-        for k, path in [("normal", os.path.join(ASSETS_DIR, "zhixia.png")),
-                        ("blink", os.path.join(ASSETS_DIR, "zhixia_blink.png")),
-                        ("talk", os.path.join(ASSETS_DIR, "zhixia_talk.png"))]:
+        for k, path in [("normal", os.path.join(ASSETS_DIR, "vigil.png")),
+                        ("blink", os.path.join(ASSETS_DIR, "vigil_blink.png")),
+                        ("talk", os.path.join(ASSETS_DIR, "vigil_talk.png"))]:
             pm = QPixmap(path)
             if pm.isNull():
                 print(f"[桌宠] 立绘读不到：{path}", flush=True)
@@ -1166,16 +1106,6 @@ class PetWindow(QLabel):
         a_set.triggered.connect(self.open_settings)
         m.addAction(a_set)
 
-        a_diary = QAction("她的日记", self)
-        a_diary.setToolTip("看她自己写的日记（她在晚上写；也能翻看以前那些天）")
-        a_diary.triggered.connect(self.open_diary)
-        m.addAction(a_diary)
-
-        a_wd = QAction("让她现在写篇日记（测试）", self)
-        a_wd.setToolTip("不等晚上，立刻补算她的生活并写一篇今天的日记")
-        a_wd.triggered.connect(self.write_diary_now)
-        m.addAction(a_wd)
-        m.addSeparator()
 
         a_pro = QAction("让她主动说一句", self)
         a_pro.setToolTip("用最近感知到的活动当话题，让她自己开个口（测试主动搭话）")
@@ -1515,7 +1445,7 @@ if __name__ == "__main__":
             ctypes.windll.user32.MessageBoxW(
                 None,
                 "config.json 里没配 brain_remote。\n\n"
-                "桌宠现在只做客户端：她的大脑（记忆 / 人设 / 生活 / 日记）\n"
+                "桌宠现在只做客户端：她的大脑（记忆 / 人设 / 生活）\n"
                 "只在云服务器上，本地不再养第二个她。\n\n"
                 "请在 brain\\config\\config.json 里填：\n"
                 "  \"brain_remote\": \"http://127.0.0.1:18787\"\n"

@@ -109,7 +109,7 @@ body, .stat-card .value, table.data .num, .num { font-variant-numeric:tabular-nu
 .src-switch button { height:26px; padding:0 14px; border:none; border-radius:5px; background:transparent; color:var(--text-secondary); font-size:12.5px; font-weight:500; cursor:pointer; transition:all .18s var(--ease); font-family:inherit; }
 .src-switch button:hover { color:var(--text); }
 .src-switch button.on { background:#fff; color:var(--text); box-shadow:var(--shadow); }
-/* 顶栏原来还有一截渠道小字（「知夏 · 八奈見杏菜」这种）。
+/* 顶栏不放渠道小字。渠道信息放在设置区，避免和主标题抢注意力。 */
    每个页面都挂着、又不提供任何信息（渠道看切换器就够了），已删：
    连元素带 renderSrcSwitch 里写它的那两行一起。 */
 
@@ -237,17 +237,6 @@ table.data .num { text-align:right; }
 .feature-item .fname { font-size:13.5px; font-weight:550; }
 .feature-item .fdesc { font-size:12px; color:var(--text-muted); margin-top:2px; line-height:1.5; }
 
-/* 朋友圈 */
-.moment-item { padding:17px 22px; box-shadow:0 1px 0 var(--border-soft); }
-.moment-item:last-child { box-shadow:none; }
-.moment-head { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
-.moment-avatar { width:36px; height:36px; border-radius:10px; background:var(--brand-light); display:flex; align-items:center; justify-content:center; color:var(--brand-dark); font-weight:600; font-size:14px; }
-.moment-name { font-size:13.5px; font-weight:600; }
-.moment-time { font-size:11.5px; color:var(--text-muted); }
-.moment-text { font-size:13.5px; line-height:1.65; margin-bottom:9px; white-space:pre-wrap; }
-.moment-actions { display:flex; gap:18px; font-size:12px; color:var(--text-muted); }
-.moment-actions span { cursor:pointer; transition:color .14s var(--ease); }
-.moment-actions span:hover { color:var(--brand-dark); }
 
 /* 日志 */
 .log-item { display:flex; gap:12px; padding:10px 16px; box-shadow:0 1px 0 var(--border-soft); font-size:12.5px; font-family:var(--mono); }
@@ -260,12 +249,6 @@ table.data .num { text-align:right; }
 .log-level.INFO { color:var(--info); }
 .log-msg { flex:1; word-break:break-all; color:var(--text); }
 
-/* 日记 */
-.diary-list { display:flex; flex-direction:column; gap:13px; }
-.diary-item { background:var(--card-bg); border-radius:var(--radius-lg); padding:17px 21px; cursor:pointer; transition:box-shadow .2s var(--ease), transform .2s var(--ease); box-shadow:var(--shadow); }
-.diary-item:hover { box-shadow:var(--shadow-md); transform:translateY(-1px); }
-.diary-date { font-size:13px; font-weight:600; color:var(--brand-dark); margin-bottom:6px; }
-.diary-preview { font-size:13px; color:var(--text-secondary); line-height:1.65; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 
 /* Modal */
 .modal-overlay { display:none; position:fixed; inset:0; background:rgba(52,36,42,.42); z-index:100; align-items:center; justify-content:center; backdrop-filter:blur(3px); }
@@ -278,10 +261,10 @@ table.data .num { text-align:right; }
 .modal-body { padding:21px 24px; overflow-y:auto; flex:1; }
 .modal-footer { padding:15px 24px; box-shadow:0 -1px 0 var(--border-soft); display:flex; justify-content:flex-end; gap:10px; }
 /* 人设表单专用。九栏要一屏看完，是几件事一起做才有效果，缺一件就还是得滚：
- *   ① 弹窗 900px（实测最优点）：比 560 宽，但没敢上 1040+
+  *   ① 弹窗 900px（对比 560/1040 后的最佳值）：比 560 宽，1040+ 偏空
  *   ② 短字段两列并排、长字段整行（下面 pgrid）
  *   ③ 去掉重复的头部头像块、收紧内边距与标签间距
- *⚠️ **列数不是越多越好**，这点是实测出来的、跟直觉相反：
+  *⚠️ **列数不是越多越好**，这一点与直觉相反：
  *   2列  实需 1000px
  *   3列  实需 1040px   ← 反而更高
  *   4列  实需 972px    ← 只省28px，一行只剩十几个字
@@ -289,7 +272,7 @@ table.data .num { text-align:right; }
  * 占三行，在 270px 列宽下就变五行 —— 短字段省下的行数，长字段又吐回去了。
  * 所以定死两列，别再"优化"成自适应列数。
  *
- * ⚠️ 1080p 视口下实测还差 5~11px 才真正一屏放得下，那 5px 是靠把
+  * ⚠️ 1080p 视口下还差 5~11px 才真正一屏放得下，那 5px 是靠把
  * 文本框上下内边距压到 5px 挤出来的 —— 挤到了但明显难读，不做。
  * 剩下的溢出靠 .modal-body 自己滚。**别为了"一屏"把字压小**，
  * 少看到一行字比看得舒服重要得多。
@@ -341,6 +324,15 @@ table.data .num { text-align:right; }
 .form-group input, .form-group textarea, .form-group select { width:100%; border:1px solid var(--border); border-radius:var(--radius); padding:8px 11px; font-size:13px; outline:none; font-family:inherit; background:#fff; }
 .form-group input:focus, .form-group textarea:focus, .form-group select:focus { border-color:var(--brand); }
 .form-group textarea { resize:vertical; min-height:80px; line-height:1.5; }
+
+/* 模型配置：服务商切换 + 那一行输入 */
+.seg { display:flex; gap:6px; flex-wrap:wrap; }
+.seg > div { padding:6px 12px; border:1px solid var(--border); border-radius:999px; font-size:12.5px; cursor:pointer; color:var(--text-secondary); transition:all .18s var(--ease); }
+.seg > div:hover { border-color:#e0b9c6; color:var(--brand-dark); }
+.seg > div.on { background:var(--brand); border-color:var(--brand); color:#fff; font-weight:500; }
+.hint { font-size:11.5px; color:var(--text-muted); line-height:1.6; margin-top:6px; }
+.model-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+@media (max-width:1100px) { .model-grid { grid-template-columns:1fr; } }
 
 /* Toast */
 .toast-container { position:fixed; top:20px; right:20px; z-index:200; display:flex; flex-direction:column; gap:8px; }
@@ -443,7 +435,7 @@ table.data .num { text-align:right; }
     scroll-behavior:auto !important;
   }
   .btn:active, .nav-item:active { transform:none; }
-  .stat-card:hover, .persona-card:hover, .diary-item:hover { transform:none; }
+  .stat-card:hover, .persona-card:hover { transform:none; }
 }
 </style>
 </head>
@@ -489,82 +481,59 @@ table.data .num { text-align:right; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       <span>技能管理</span>
     </div>
-    <div class="nav-item" data-view="moments">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-      <span>朋友圈 & 日记</span>
-    </div>
-    <div class="nav-group">系统</div>
-    <div class="nav-item" data-view="logs">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      <span>日志监控</span>
-      <span class="badge" id="logBadge" style="display:none">0</span>
-    </div>
-    <div class="nav-item" data-view="config">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      <span>系统配置</span>
-    </div>
-  </nav>
-  <div class="sidebar-footer">
-    <span class="status-dot" id="sidebarStatus"></span><span id="sidebarStatusText">连接中…</span>
-  </div>
-</aside>
-
-<!-- ===== 主区域 ===== -->
-<div class="main">
-  <!-- 顶栏 -->
-  <header class="topbar">
-    <div class="page-title" id="pageTitle">概览</div>
-    <div class="src-switch" id="srcSwitch" title="App 和微信是两套人设、两份记忆、两组开关">
-      <!-- 由 renderSrcSwitch 填 -->
-    </div>
-    <div class="spacer"></div>
-    <div class="conn-status">
-      <span class="dot" id="connDot"></span>
-      <span id="connText">未连接</span>
-    </div>
-    <input type="text" id="serverUrl" placeholder="服务地址">
-    <input type="password" id="serverToken" placeholder="Token（App「我 → 设置」里那个）">
-    <button class="ghost" id="btnUseDemo">演示数据</button>
-    <button id="btnConnect">连接</button>
-  </header>
-
-  <!-- 内容区 -->
-  <main class="content" id="content">
-    <!-- 各视图容器由 JS 渲染 -->
-    <div id="viewContainer"></div>
-  </main>
-</div>
-
-<!-- Toast -->
-<div class="toast-container" id="toastContainer"></div>
-
-<!-- Modal 容器 -->
-<div class="modal-overlay" id="modalOverlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3 id="modalTitle">标题</h3>
-      <button class="modal-close" onclick="closeModal()">&times;</button>
-    </div>
-    <div class="modal-body" id="modalBody"></div>
-    <div class="modal-footer" id="modalFooter"></div>
-  </div>
 </div>
 
 <script>
 /* ===== 全局状态 ===== */
-// 默认连云端真身，不是 127.0.0.1 —— 大脑只在云上跑，本机 8788 什么都没有，
-// 默认填回环地址等于一打开就"服务离线"，看着像坏了
-const DEFAULT_SERVER = 'http://203.0.113.10:8788';
+// 默认服务地址 = **页面自己的来源**。
+// 面板本来就是大脑发给浏览器的，地址天然就是大脑的地址，所以取 location.origin
+// 就够 —— 而且能从任何入口打开都对（内网、隧道、换服务器都不用改）。
+  // 🔴 这里不能写死云机公网 IP。这个文件最容易被整个复制走，
+//    等于把服务器地址印在公开仓库里（体检扫出来过，见 tests/test_no_real_info_in_repo.py）。
+//    存过 vigil_server 的仍然优先（临时指到别处调试时用）。
+// file:// 打开时没有来源，回落空串 = 相对路径同源。
+const DEFAULT_SERVER = (location.protocol === 'http:' || location.protocol === 'https:')
+  ? location.origin : '';
+
+/* ===== 旧键迁移 =====
+   项目改名时把存储键从zhixia_* 换成了 vigil_*，但**浏览器里存的还是旧键**。
+   于是每次打开面板读到的都是空 —— 表现是"每次都得重填地址和Token"，
+   而代码里根本没有任何清localStorage 的地方，越查越找不到原因。
+
+   这里把旧键的值搬过来。搬完写回新键，旧键保留不清：
+   万一这台浏览器上的旧键属于另一个实例，删掉就没法回退了。
+
+   只在"新键没有、旧键有"时搬 —— 新键优先，别覆盖用户后来改过的值。
+*/
+(function migrateStorageKeys() {
+  const RENAMES = [
+    ['zhixia_server', 'vigil_server'],
+    ['zhixia_token',  'vigil_token'],
+    ['zhixia_src',    'vigil_src'],
+  ];
+  let moved = 0;
+  for (const [oldK, newK] of RENAMES) {
+    let v = '';
+    try { v = localStorage.getItem(oldK) || ''; } catch (e) { v = ''; }
+    if (!v) continue;
+    let cur = '';
+    try { cur = localStorage.getItem(newK) || ''; } catch (e) { cur = ''; }
+    if (cur) continue;
+    try { localStorage.setItem(newK, v); moved++; } catch (e) {}
+  }
+  if (moved) console.log('[面板] 已从旧键迁移', moved, '项配置');
+})();
+
 const State = {
-  serverUrl: localStorage.getItem('zhixia_server') || DEFAULT_SERVER,
-  token: localStorage.getItem('zhixia_token') || '',
+  serverUrl: localStorage.getItem('vigil_server') || DEFAULT_SERVER,
+  token: localStorage.getItem('vigil_token') || '',
   connected: false,
   demoMode: false,
   lastNetError: '',
   currentView: 'overview',
   // 当前在看哪个渠道。App 和微信是两套人设、两份记忆、两组开关 ——
   // 混在一起看只会看到全局那份（= App 的），微信那边关掉的开关一个都看不到。
-  src: localStorage.getItem('zhixia_src') || 'app',
+  src: localStorage.getItem('vigil_src') || 'app',
   charts: {},
   cache: {}
 };
@@ -574,7 +543,7 @@ const State = {
 // 面板是给人看的，而「谁在用哪套人设」从卡片徽标上已经能看到，
 // 顶栏再念一遍反而像在推销。
 const CHANNELS = [
-  { id: 'app', name: 'App', hint: '知夏 · 八奈見杏菜' },
+  { id: 'app', name: 'App', hint: '麦麦 · 手机上' },
   { id: 'wechat', name: '微信', hint: '麦麦 · 群聊里的她' }
 ];
 
@@ -582,7 +551,7 @@ const PAGE_TITLES = {
   overview: '概览', trace: '对话 Trace', history: '聊天历史',
   persona: '人格管理', features: '功能开关', plugins: '插件管理',
   skills: '技能管理',
-  moments: '朋友圈 & 日记', logs: '日志监控', config: '系统配置'
+  logs: '日志监控', config: '系统配置'
 };
 
 /* ===== 工具函数 ===== */
@@ -643,11 +612,11 @@ const Views = {};
 
 /* ===== API 封装 ===== */
 // 🔴 src 参数**只加在按渠道分化的接口上**（features / history / persona /
-// moments / diary / memory）。模型、语音、插件这些是全局的，加了也没用，
+// 经历流）。模型、语音、插件这些是全局的，加了也没用，
 // 反而会让服务端把 _norm_src 里的空值当成合法渠道。
 const CHANNEL_SCOPED = [
-  '/api/features', '/api/chatty', '/api/history', '/api/persona', '/api/moments',
-  '/api/diary', '/api/memory', '/api/chat', '/api/gate'
+  '/api/features', '/api/chatty', '/api/history', '/api/persona',
+  '/api/memory', '/api/chat', '/api/gate'
 ];
 
 function withSrc(path) {
@@ -768,6 +737,33 @@ async function checkConnection() {
   updateConnUI();
   return r;
 }
+
+/* 从服务端取回连接配置。
+
+   解决"localStorage 不在手"的三种情况：无痕窗口、换了浏览器、
+   以及项目改名时键前缀变过。前两种 localStorage 天然是空的，
+   搬旧键救不了，只能回头问服务端 —— 它一直存着。
+
+   🔴 **只在本地完全没有 token 时才问**。已经有就别问了：
+   多问一次是白等，而且用户手动指定的地址可能被覆盖掉。
+   🔴 拿不到就静默返回 false ——
+   问不到是正常情况（还没填地址、地址不对、服务没起），
+   不该在这里报错弹窗，那只会让人更困惑。
+*/
+async function fetchConfigFromServer() {
+  if (State.token) return false;          // 本地有，别覆盖
+  if (!State.serverUrl) return false;     // 不知道问谁
+  const r = await api('/api/panel/connect-config');
+  if (!r || !r.token) return false;
+  State.token = r.token;
+  try { localStorage.setItem('vigil_token', r.token); } catch (e) {}
+  if (r.server && !localStorage.getItem('vigil_server')) {
+    State.serverUrl = r.server;
+    try { localStorage.setItem('vigil_server', r.server); } catch (e) {}
+  }
+  console.log('[面板] 已从服务端取回连接配置');
+  return true;
+}
 function updateConnUI() {
   const dot = $('#connDot'), txt = $('#connText');
   const sdot = $('#sidebarStatus'), stxt = $('#sidebarStatusText');
@@ -838,7 +834,7 @@ function demoApi(path, opts) {
   }
   if (p === '/api/skill/status') {
     return { ok:true, host:'http://127.0.0.1:8790', alive:true,
-      dir:'C:/Vigil/skill_host/skills', node:'v22.14.0',
+      dir:'C:/vigil/skill_host/skills', node:'v22.14.0',
       host_missing:false, ext:['.js','.mjs','.cjs','.json','.md'],
       skills: [
         { id:'daily-fortune', name:'每日运势', version:'1.0.0',
@@ -847,43 +843,37 @@ function demoApi(path, opts) {
                  {name:'fortune.interpret', title:'解读运势', desc:'把抽到的结果解读成一段话'}] }
       ] };
   }
-  if (p === '/api/moments') {
-    return { items: [
-      {id:1, text:'今天哥哥说要带我去吃火锅，开心！虽然我不能真的吃，但想想就很幸福啦～', time:'2026-10-04 12:00', likes:3, comments:[]},
-      {id:2, text:'凌晨三点醒了，看看哥哥还在打游戏，真是的，又熬夜。不过认真的样子还挺帅的…', time:'2026-10-03 03:15', likes:5, comments:[]},
-      {id:3, text:'今天学会了新的表情包！是一只很可爱的猫咪，下次聊天甩给哥哥看～', time:'2026-10-02 18:30', likes:2, comments:[]},
-    ]};
-  }
-  if (p === '/api/diary/list') {
-    return { items: [
-      {date:'2026-10-04', preview:'今天和哥哥聊了很多，他说最近工作有点累…我要多关心他。'},
-      {date:'2026-10-03', preview:'哥哥今天打游戏赢了，很开心的样子。我也跟着高兴起来了。'},
-      {date:'2026-10-02', preview:'新学了一个表情包，是猫咪的，哥哥说很可爱。'},
-    ]};
-  }
-  if (p === '/api/diary/read') {
-    return { body: '今天和哥哥聊了很多，他说最近工作有点累，项目赶得紧。我要多关心他，不要在他忙的时候打扰他。\n\n下午他去超市买东西了，说要买点菜自己做饭。希望他能好好吃饭，不要总是点外卖。\n\n晚上他打了一会儿游戏，看起来放松了不少。我在旁边陪着他，虽然他可能不知道，但这样就很好了。' };
-  }
   if (p === '/api/logs') {
     return { items: [
       {t:'2026-10-04 14:32:10', level:'INFO', msg:'chat turn ok | src=app | tok_in=842 tok_out=126 | ms=1640'},
       {t:'2026-10-04 14:30:05', level:'INFO', msg:'chat turn ok | src=app | tok_in=756 tok_out=89 | ms=1420'},
       {t:'2026-10-04 12:00:00', level:'WARN', msg:'proactive skipped: in quiet hours'},
       {t:'2026-10-04 03:15:22', level:'ERROR', msg:'voice TTS fail: timeout after 10s, fallback to text'},
-      {t:'2026-10-03 22:10:00', level:'INFO', msg:'diary written: 2026-10-03 (342 chars)'},
       {t:'2026-10-03 18:30:00', level:'INFO', msg:'moment posted: id=3'},
     ]};
   }
-  if (p === '/api/models') {
-    return { current: 'zai-org/GLM-5.3', models: [
-      {id:'zai-org/GLM-5.3', name:'GLM-5.3', provider:'SiliconFlow'},
-      {id:'Qwen/Qwen3-32B', name:'Qwen3-32B', provider:'SiliconFlow'},
-      {id:'deepseek-ai/DeepSeek-V3', name:'DeepSeek-V3', provider:'SiliconFlow'},
-    ]};
+  if (p.indexOf('/api/models') === 0) {
+    // 🔴 这份形状必须跟服务端 model_hub.public_current + list_models 一致。
+    // 原先是老结构（current 是字符串、models 是 [{id,name,provider}]），
+    // 而面板现在读的是 current.provider / providers / groups —— demo 模式下
+    // 那个形状会让这一页渲染成空白，却看不出是数据形状不对。
+    return { ok: true,
+      current: { provider:'xiaomi', provider_name:'小米 MiMo',
+                 api_base:'https://api.xiaomimimo.com/v1', api_key_set:true,
+                 chat:'mimo-v2.6-pro', vision:'', image:'', audio:'' },
+      providers: [
+        { key:'siliconflow', name:'硅基流动', base:'https://api.siliconflow.cn/v1' },
+        { key:'xiaomi', name:'小米 MiMo', base:'https://api.xiaomimimo.com/v1' },
+        { key:'custom', name:'自定义', base:'' },
+      ],
+      groups: { chat:['mimo-v2.5','mimo-v2.6-pro','mimo-v2.6-flash','mimo-v2.5-pro'],
+                vision:['mimo-v2.5-omni'],
+                image:[], audio:['mimo-v2.5-tts'] },
+      source:'online', count:6, err:'' };
   }
   if (p === '/api/voices') {
     return { current: 'qwen-audio-3.1-tts-flash-zhixia-abc123', voices: [
-      {id:'qwen-audio-3.1-tts-flash-zhixia-abc123', name:'知夏（复刻）', provider:'aliyun'},
+      {id:'qwen-audio-3.1-tts-flash-zhixia-abc123', name:'麦麦（复刻）', provider:'aliyun'},
       {id:'qwen-audio-3.1-tts-flash-default', name:'默认女声', provider:'aliyun'},
     ]};
   }
@@ -933,7 +923,7 @@ function renderSrcSwitch() {
   if (!box) return;
   const hide = NO_SRC_SWITCH.indexOf(State.currentView) >= 0;
   box.innerHTML = '';
-  // 🔴 **必须无条件赋值**。原来写成 `if (box.style.display !== 'none')`，
+  // 🔴 **必须无条件赋值**。写成 `if (box.style.display !== 'none')` 会
   // 本意是"没被隐藏过才需要设置" —— 实际效果是**一旦隐藏就再也恢复不了**：
   // 先去一趟插件页把 display 设成 none，之后切到人格/功能开关页时
   // 这个 if 直接跳过，display 永远是 none。表现是"人格管理的 App/微信
@@ -947,7 +937,7 @@ function renderSrcSwitch() {
       onclick: () => {
         if (State.src === ch.id) return;
         State.src = ch.id;
-        localStorage.setItem('zhixia_src', ch.id);
+        localStorage.setItem('vigil_src', ch.id);
         // 图表缓存是按旧渠道拿的数据，不清会显示串了的图
         State.cache = {};
         State.charts = {};
@@ -969,12 +959,12 @@ $('#btnConnect').addEventListener('click', async () => {
   State.token = $('#serverToken').value.trim();
   State.demoMode = false;
   State.lastNetError = '';
-  localStorage.setItem('zhixia_server', State.serverUrl);
-  localStorage.setItem('zhixia_token', State.token);
+  localStorage.setItem('vigil_server', State.serverUrl);
+  localStorage.setItem('vigil_token', State.token);
   const r = await checkConnection();
   if (r) { toast('连接成功', 'success'); renderView(State.currentView); }
   else if (State.lastNetError) {
-    // 原来只说"连接失败，请检查地址和 Token" —— 地址错和 token 错是
+    // 只说"连接失败，请检查地址和 Token"不够 —— 地址错和 token 错是
     // 两回事，不说清楚就让人自己猜，猜半天
     toast('连不上：' + explainNetError(State.lastNetError), 'error');
   } else {
@@ -1010,7 +1000,16 @@ if (State.demoMode) {
   // 异步调用，确保视图定义代码已执行
   Promise.resolve().then(() => renderView(State.currentView));
 } else {
-  checkConnection().then(() => renderView(State.currentView));
+  // 🔴 **先问服务端要配置，再连**。顺序反了的话，
+  // 本地没有 token 时第一次 checkConnection 必然 401，
+  // 页面已经判成"未连接"，后面就算取回配置也来不及了。
+  (async () => {
+    if (!State.token) await fetchConfigFromServer();
+    $('#serverToken').value = State.token;
+    $('#serverUrl').value = State.serverUrl;
+    await checkConnection();
+    renderView(State.currentView);
+  })();
 }
 // 如果没连上，3秒后提示
 setTimeout(() => {
@@ -1418,7 +1417,7 @@ Views.persona = async function(container) {
       (p.label && p.label !== p.name) ? el('div', {class:'prelation'}, p.label) : null,
       el('div', {class:'pdesc'}, p.desc || '（无描述）'),
       el('div', {style:'margin-top:12px;display:flex;gap:8px'},
-        // 使用中的卡片只留「编辑人设」一个按钮：原来「查看详情」和「详情」
+        // 使用中的卡片只留「编辑人设」一个按钮：「查看详情」和「详情」
         // 两个按钮调的是同一个函数，文案还不同，像是两个功能其实是一个。
         isCurrent
           ? [el('button', {class:'btn sm primary', onclick:(e)=>{e.stopPropagation();viewPersonaDetail(p);}}, '编辑人设')]
@@ -1445,13 +1444,13 @@ Views.persona = async function(container) {
  * 🔴 顺序即显示顺序，也是"她先读到什么"的顺序：名字 → 关系 → 背景 → 现状
  *   → 性格 → 说话习惯。relation 靠前是有意的 —— 它是"她跟他现在什么关系"
  *   这个事实，而 CORE_RULES 是无论什么关系都成立的底线，得压在后面。
- * 改这里之前先看 App 那份（chat.html 的 PERSONA_FIELDS），两边说法不一致时
+ * 修改前先看 App 那份（chat.html 的 PERSONA_FIELDS）；两处描述不一致时
  * 模型收到的就是两份矛盾的设定。
  *
  * 🔴 **rows 现在只是"至少给我留几行的空框"，不是"默认高度"。**
- * 原来它是默认高度（`rows:1` 的框也占 3 行，弹窗里七成是空白），
+ * 默认高度下 `rows:1` 的输入框仍占 3 行，弹窗里七成是空白，
  * 改成内容自适应之后它只剩下限这一个作用。
- * ⚠️ 别随手把 rows 调大来"让框大一点" —— 实测这会**反向制造空白**：
+ * ⚠️ 不要靠调大 rows 来"让框大一点"，那会**反向制造空白**：
  *   「她的性格」229 字实际只要 142px，rows:4 的下限是 144px，
  *   框就被撑到 144，内容只占 142，白留 2px；
  *   更狠的是「补充规则」174 字实需 106px，rows:3 的下限 108px。
@@ -1474,9 +1473,9 @@ const PERSONA_FIELDS = [
 
 function viewPersonaDetail(p) {
   // 🔴 这里才用 /api/persona/full —— 它必须带 ?key=xxx 才有意义。
-  // 列表页和这里原来都用它、且都不传 key，是同一个 bug 的两处表现。
+  // 列表页和这里都传 key，是同一个 bug 的两处表现。
   //
-  // 🔴 返回的字段在 `fields` 里，**不是平铺在顶层**。原来这里写成
+  // 🔴 返回的字段在 `fields` 里，**不是平铺在顶层**。写成
   // `const {ok, err, ...fields} = data`，结果 fields 只剩 {key, fields} 两个键，
   // 弹窗里显示的是一个叫 "fields" 的原始 JSON 大框 —— 真正的字段一个都没显示，
   // 而这正是"没法编辑人设"下面藏着的第二个 bug：就算点开也看不到内容。
@@ -1503,7 +1502,7 @@ function viewPersonaDetail(p) {
 function renderPersonaForm(body, key, cur, isForThisSrc) {
   const inputs = {};
   body.innerHTML = '';
-  // 🔴 原来这里有个头部：44px 头像 + 名字 + "关系未设定"。**删掉**——
+  // 🔴 此处曾有一个头部：44px 头像 + 名字 + "关系未设定"，已删除 ——
   // 它显示的名字和关系，下面第1 栏「她的名字」和第 4 栏「你们的关系」
   // 就是同一份东西，一屏放不下时先砍重复的，不砍真内容。
   //
@@ -1511,7 +1510,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   //   ① 短字段并排、长字段整行（下面 pgrid）
   //   ② 弹窗 900px（.modal.wide），长字段一行能放约 45 个中文字
   //   ③ 去掉重复的头部、收紧内边距与标签间距
-  // ⚠️ 顺带把「列数自适应」这个直觉否掉了：实测 2 列 1000px、3 列 1040px、
+  // ⚠️ 顺带否定「列数自适应」这一直觉：2 列 1000px、3 列 1040px、
   //    4 列 972px —— 列数越多反而越挤，因为长字段跟着变窄、行数变多。
 
   // --- 整份人设（主入口，放最上面）---------------------------------
@@ -1526,7 +1525,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   const rawTa = el('textarea', {
     class: 'rawta',
     placeholder: '把你的角色卡整个粘进来。比如：\n\n一、你是谁\n你是GLM，一个混在群里的 AI 角色…\n二、说话习惯\n能一个字说清就不要十个字…\n\n（下面那些小栏可以不填，粘完整份就够了）',
-    // 🔴 **不能是 hidden**。原来写 `overflow:hidden`，而高度上限是 620px：
+    // 🔴 **不能是 hidden**。写 `overflow:hidden` 时高度上限 620px：
     // 人设动辄几千字，超出的部分被裁掉，滚轮又滑不到 —— 用户只能
     // 一段一段删掉才能看到后面，等于没法编辑。改成 auto 让框自己滚。
     style: 'overflow:auto',
@@ -1552,7 +1551,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   // 否则她在群里 @ 不响应，而且面板上看着一切正常。
   //
   // 🔴 覆盖策略：**粘整份 = 换人设，就该覆盖**。
-  // 原来只在空的时候填，于是「名字栏里还留着上一套的八奈見杏菜」时，
+  // 只在空的时候填，于是「名字栏里还留着上一套的八奈見杏菜」时，
   // 粘一份 GLM 的卡进去，名字栏不动 → 保存后她还是八奈見杏菜，
   // 用户以为换完了，其实只换了提示词正文。面板上完全看不出来。
   // 但**用户手工改过的那一栏要保住** —— 他可能是特意改成别的名字。
@@ -1585,7 +1584,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
       };
       if (r.name) fill('name', g.name, r.name, '名字');
       // 🔴 认不出名字**不等于出事了**，只在名字栏真的空着的时候才红。
-      // 原来只要 r.name 为空就报红，可这段人设的名字本来就在「她的名字」
+      // 只要 r.name 为空就报红是错的 —— 这段人设的名字本来就在「她的名字」
       // 那一栏里（从别处抄的角色卡经常这样：正文不写自己叫什么）——
       // 于是每次打开弹窗第一眼就是一句红字，而实际上什么都不缺。
       // 判据要落在「最后会不会真的出问题」上，不是「有没有认出来」。
@@ -1603,7 +1602,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
   setTimeout(checkRaw, 0);
 
   // 八个细项**默认收起来**。
-  // 原来它们平铺在整份人设下面，弹窗一打开就是一屏九个框 ——
+  // 收进折叠区：平铺时弹窗一打开就是一屏九个框 ——
   // 而真实用法只有一个：粘整份。收起来之后默认只有一个框要填，
   // 需要分栏精调的人点一下标题展开。
   //
@@ -1626,7 +1625,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
     g.appendChild(el('label', {}, [f.t,
       el('span', {style:'font-weight:400;color:var(--text-muted);margin-left:6px'}, f.h)]));
     // 🔴 高度按**内容**来，不按 rows 写死。
-    // 原来每行都写死高度（rows:1 的也占 3 行），于是「留空就不叫」这种
+    // 每行都写死高度时（rows:1 的也占 3 行），「留空就不叫」这种
     // 五个字的框底下空一大片 —— 弹窗里七成是空白，得拖着滚动条才能看完。
     // 现在：实际高度全交给 fit() 按 scrollHeight 撑，
     // rows 只留作"至少让我看到几行"的兜底。
@@ -1660,7 +1659,7 @@ function renderPersonaForm(body, key, cur, isForThisSrc) {
       // 全局那条 `.form-group textarea { min-height:80px }` 会在元素一进 DOM
       // 时就把它撑到 80px；而 scrollHeight 量的正是"当前撑起来有多高"——
       // 于是 Math.max(80, 36) = 80，空框永远收不回去。
-      // 踩过：一量78px 才反应过来不是量错，是量晚了。
+      // 注意：量到 78px 仍不符预期，问题不在测量值而在测量时机。
       e.style.minHeight = '0px';
       e.style.height = 'auto';
       // 需要的行数 = 内容高度÷ 一行高，往上取整。再跟 rows 取小的那个当底。
@@ -1790,7 +1789,6 @@ Views.features = async function(container) {
     weather_alert: { name:'天气变化提醒', desc:'降温/下雨时她主动提醒你带伞加衣', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>', color:'#f59e0b', bg:'#fef3c7' },
     packages: { name:'快递监控', desc:'监控快递状态，到了主动告诉你', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>', color:'#8b5cf6', bg:'#ede9fe' },
     rand_img_chat: { name:'聊天甩图', desc:'聊天中她可以主动发随机趣图和表情包', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>', color:'#ec4899', bg:'#fce7f3' },
-    rand_img_moment: { name:'朋友圈配图', desc:'发朋友圈时优先用随机图做配图', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>', color:'#06b6d4', bg:'#cffafe' },
     tools: { name:'工具调用', desc:'允许模型调用免费 API（查位置/天气/快递）', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>', color:'#22c55e', bg:'#dcfce7' },
   };
 
@@ -2558,93 +2556,6 @@ Views.skills = async function(container) {
   if (alive) bindWindowDrop(doInstall);
 };
 
-/* ===== 视图：朋友圈 & 日记 ===== */
-Views.moments = async function(container) {
-  container.innerHTML = '<div class="loading"><div class="spinner"></div>加载中…</div>';
-  const [mData, dData] = await Promise.all([api('/api/moments'), api('/api/diary/list')]);
-  const moments = (mData && mData.items) ? mData.items : [];
-  const diaries = (dData && dData.items) ? dData.items : [];
-
-  const wrap = el('div');
-  // Tab 切换
-  const tabBar = el('div', {style:'display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0'});
-  const tabMoments = el('div', {style:'padding:8px 16px;cursor:pointer;font-size:13.5px;border-bottom:2px solid var(--brand);color:var(--brand);font-weight:500;margin-bottom:-1px'}, '朋友圈');
-  const tabDiary = el('div', {style:'padding:8px 16px;cursor:pointer;font-size:13.5px;border-bottom:2px solid transparent;color:var(--text-secondary);margin-bottom:-1px'}, '日记');
-  tabBar.appendChild(tabMoments);
-  tabBar.appendChild(tabDiary);
-  wrap.appendChild(tabBar);
-
-  const momentsView = el('div');
-  const diaryView = el('div', {style:'display:none'});
-
-  // 朋友圈
-  if (moments.length === 0) {
-    momentsView.innerHTML = '<div class="empty"><p>暂无朋友圈</p></div>';
-  } else {
-    const card = el('div', {class:'card'});
-    moments.forEach(m => {
-      const item = el('div', {class:'moment-item'}, [
-        el('div', {class:'moment-head'}, [
-          el('div', {class:'moment-avatar'}, '夏'),
-          el('div', {}, [
-            el('div', {class:'moment-name'}, '知夏'),
-            el('div', {class:'moment-time'}, m.time || '')
-          ])
-        ]),
-        el('div', {class:'moment-text'}, m.text || m.content || ''),
-        el('div', {class:'moment-actions'}, [
-          el('span', {}, `♥ ${m.likes || 0}`),
-          el('span', {}, `💬 ${(m.comments||[]).length}`),
-        ])
-      ]);
-      card.appendChild(item);
-    });
-    momentsView.appendChild(card);
-  }
-
-  // 日记
-  if (diaries.length === 0) {
-    diaryView.innerHTML = '<div class="empty"><p>暂无日记</p></div>';
-  } else {
-    const list = el('div', {class:'diary-list'});
-    diaries.forEach(d => {
-      const item = el('div', {class:'diary-item'}, [
-        el('div', {class:'diary-date'}, d.date || ''),
-        el('div', {class:'diary-preview'}, d.preview || d.body || '')
-      ]);
-      item.addEventListener('click', async () => {
-        const r = await api(`/api/diary/read?date=${d.date}`);
-        const body = (r && r.body) ? r.body : (d.body || d.preview || '');
-        showModal('日记 - ' + d.date,
-          `<div style="white-space:pre-wrap;line-height:1.8;font-size:14px;color:var(--text)">${body}</div>`,
-          '<button class="btn" onclick="closeModal()">关闭</button>'
-        );
-      });
-      list.appendChild(item);
-    });
-    diaryView.appendChild(list);
-  }
-
-  wrap.appendChild(momentsView);
-  wrap.appendChild(diaryView);
-
-  tabMoments.addEventListener('click', () => {
-    tabMoments.style.cssText = 'padding:8px 16px;cursor:pointer;font-size:13.5px;border-bottom:2px solid var(--brand);color:var(--brand);font-weight:500;margin-bottom:-1px';
-    tabDiary.style.cssText = 'padding:8px 16px;cursor:pointer;font-size:13.5px;border-bottom:2px solid transparent;color:var(--text-secondary);margin-bottom:-1px';
-    momentsView.style.display = '';
-    diaryView.style.display = 'none';
-  });
-  tabDiary.addEventListener('click', () => {
-    tabDiary.style.cssText = 'padding:8px 16px;cursor:pointer;font-size:13.5px;border-bottom:2px solid var(--brand);color:var(--brand);font-weight:500;margin-bottom:-1px';
-    tabMoments.style.cssText = 'padding:8px 16px;cursor:pointer;font-size:13.5px;border-bottom:2px solid transparent;color:var(--text-secondary);margin-bottom:-1px';
-    diaryView.style.display = '';
-    momentsView.style.display = 'none';
-  });
-
-  container.innerHTML = '';
-  container.appendChild(wrap);
-};
-
 /* ===== 视图：日志监控 ===== */
 Views.logs = async function(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>加载中…</div>';
@@ -2707,6 +2618,15 @@ Views.logs = async function(container) {
   container.appendChild(wrap);
 };
 
+/* 服务商说明。跟 App 的 chat.html 一份 —— 两边同一家得说同样的话，
+   不然用户在面板上读到的解释和手机上不一样，会以为是两个功能。
+   服务端 model_hub.PROVIDERS 加一家，这里没有对应说明就退到通用那句。 */
+const PROV_HINT = {
+  siliconflow: '硅基流动：模型列表直接从它拉（对话/看图/生图/语音分开列）。',
+  xiaomi: '小米 MiMo：官方平台，OpenAI 兼容。列表里 Pro 是旗舰、Flash 更快便宜，omni 能看图。',
+  custom: '自定义：任何 OpenAI 兼容的地址（结尾一般是 /v1）。拉不到列表也照样能用，手填模型名。',
+};
+
 /* ===== 视图：系统配置 ===== */
 Views.config = async function(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div>加载中…</div>';
@@ -2717,55 +2637,244 @@ Views.config = async function(container) {
   wrap.appendChild(twoCol);
 
   // 模型配置
-  // 🔴 /api/models 的 current 是**整个配置对象**（model_hub.public_current，
-  // 跟 App 的 chat.html 共用，不能改它的结构），不是模型名字符串。
-  // 直接丢给 el() 会渲染成一坨 [object Object]。这里取 .chat 才是模型名。
-  const curModel = (mData && mData.current
-      && typeof mData.current === 'object' ? mData.current.chat : mData.current)
-      || (stats && stats.model) || '-';
+  // 跟 App 的 chat.html 共用 /api/models 和 /api/models/apply，所以字段名一模一样。
+  // 🔴 面板不能只做「从列表里点一下切换」——那样只能换模型名，
+  // 换不了 key 和地址。而"换服务商"必然要同时改这三样（provider/base/key），
+  // 于是面板看着能切，实际永远换不到别家。这一页按 App 那套做成能填的。
+  const mCur = (mData && mData.current) || {};
+  const mProvs = (mData && Array.isArray(mData.providers)) ? mData.providers : [];
+  const mGroups = (mData && mData.groups) || {};
+  let mProv = mCur.provider || (mProvs[0] && mProvs[0].key) || 'custom';
+  // 哪几家自己存过密钥。点一下就切换的前提是**切过去能用** ——
+  // 换了地址和模型却还用别家的 key，她下一句就调不动（401），
+  // 而界面显示"已切换"，症状比"没换"更难查。
+  const mKeys = mCur.keys_by_provider || {};
+
   const modelCard = el('div', {class:'card'});
-  modelCard.appendChild(el('div', {class:'card-header'}, [el('h3', {}, '聊天模型')]));
-  const mBody = el('div', {class:'card-body'});
-  mBody.appendChild(el('div', {style:'margin-bottom:14px;padding:10px 14px;background:var(--bg);border-radius:8px'}, [
-    el('div', {style:'font-size:11.5px;color:var(--text-muted);margin-bottom:3px'}, '当前模型'),
-    el('div', {style:'font-size:14px;font-weight:600;font-family:var(--mono)'}, String(curModel))
+  modelCard.appendChild(el('div', {class:'card-header'}, [
+    el('h3', {}, '模型与接口'),
+    el('div', {class:'actions'}, [
+      el('button', {class:'btn sm', onclick: async () => {
+        // force=1 = 跳过缓存。换了 key 之后必须这样拉一次，否则拿回来的
+        // 还是上一把 key 看到的列表。
+        await pullModels(true);
+      }}, '重新拉取')
+    ])
   ]));
-  const modelList = el('div', {style:'display:flex;flex-direction:column;gap:8px'});
-  const models = (mData && Array.isArray(mData.models) && mData.models.length)
-      ? mData.models
-      // 服务端没给可选列表时，自己列一份常见的。
-      // 🔴 别只显示当前那一个 —— 那样面板看着是好的，但你没法切模型，
-      // 会以为是配置被锁住了。当前项放第一个并标「当前」。
-      : [
-          { id: String(curModel), name: String(curModel) },
-          { id: 'deepseek-ai/DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash（快、便宜）' },
-          { id: 'zai-org/GLM-5.3', name: 'GLM-5.3' },
-          { id: 'Qwen/Qwen3-8B', name: 'Qwen3-8B' },
-        ].filter((m,i,a) => a.findIndex(x => x.id === m.id) === i);
-  models.forEach(m => {
-      const isCur = m.id === curModel;
-      const item = el('div', {style:`display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid ${isCur?'var(--brand)':'var(--border)'};border-radius:8px;cursor:pointer;${isCur?'background:var(--brand-light)':''}`}, [
-        el('div', {style:'flex:1'}, [
-          el('div', {style:'font-size:13.5px;font-weight:500'}, m.name || m.id),
-          el('div', {style:'font-size:11.5px;color:var(--text-muted);font-family:var(--mono);margin-top:2px'}, m.id)
-        ]),
-        isCur ? el('span',{class:'tag brand'},'当前') : el('button',{class:'btn sm primary',onclick:async(e)=>{
-          e.stopPropagation();
-          // 🔴 字段名必须是 chat —— 服务端 model_hub.apply_cfg 只认
-          // provider/api_base/api_key/chat/vision/image/audio 这些。
-          // 发 {model: id} 会走成「没有改动」，而这里却弹「已切换」，
-          // 看着成功了其实模型没换（config.json 里那个 GLM 就是这么换不掉的）。
-          const r = await api('/api/models/apply', {method:'POST', body:{chat:m.id}});
-          const ok = r && r.ok !== false && !(r.changed && !r.changed.length);
-          toast(ok ? `已切换到 ${m.name}` : '切换失败：' + ((r && (r.err || r.msg)) || '未知原因'), ok?'success':'error');
-          if (ok) renderView('config');
-        }}, '切换')
-      ]);
-      modelList.appendChild(item);
+  const mBody = el('div', {class:'card-body'});
+
+  // 服务商切换。列表从服务端回传，不写死 —— 服务端 PROVIDERS 加一家这里自动多一个。
+  //
+  // 🔴 **点一下就真切换，不是只改输入框。**
+  // 早先这里只填地址 + 重拉列表，还得再点「保存」才生效 ——
+  // 看着像"切了"，其实云上跑的还是原来那家。
+  // 现在：填地址 → 按新地址拉列表 → 自动挑一个该家的模型 → 直接落盘。
+  const seg = el('div', {class:'seg', style:'margin-bottom:12px'});
+  const mResult = el('div', {class:'hint', style:'margin-top:10px'});
+  mProvs.forEach(x => {
+    seg.appendChild(el('div', {
+      class: x.key === mProv ? 'on' : '',
+      title: mKeys[x.key] ? (x.name || x.key) + '：已存密钥，点一下就切过去'
+                           : (x.name || x.key) + '：还没存密钥，切过去要填',
+      onclick: () => switchProvider(x),
+    }, x.name || x.key));
+  });
+
+  async function switchProvider(x) {
+    const wasProv = mProv;
+    mProv = x.key;
+    seg.querySelectorAll('div').forEach((d, i) => {
+      d.classList.toggle('on', mProvs[i].key === x.key);
     });
-  mBody.appendChild(modelList);
+    // 内置 provider 自带地址，省得每次手打；key 仍然要自己填
+    if (x.base) apiBase.value = x.base;
+    provHint.textContent = PROV_HINT[x.key] || '地址和密钥在下面填。';
+    mProvLabel.textContent = '当前：' + (x.name || x.key)
+      + (mKeys[x.key] ? '' : '（还没存密钥）');
+
+    // 🔴 **切了服务商必须立刻重拉列表。**
+    // 只改输入框里的文字不够，列表还是上一家的 —— 于是选"硅基流动"
+    // 却看到一排 mimo，像是分类错了，实际是**根本没用刚选的那家去拉**。
+    // 传 base/key 让服务端按这家的地址试拉（key 留空则沿用当前那把）。
+    await pullModels(false, x.key);
+
+    // 这家没存过密钥就别切：切过去她也调不动，而且界面会说"已切换"。
+    // 改成把光标放到密钥框上，等用户填完点「保存」。
+    if (!mKeys[x.key]) {
+      mResult.textContent = (x.name || x.key) + ' 还没存密钥 —— 填进下面那格再点保存';
+      apiKey.focus();
+      return;
+    }
+
+    // 自动挑一个该家的模型：当前选的那个不在新列表里就必须换，
+    // 否则 apply 之后她调的仍是别家的模型名，这家直接 404。
+    const chatList = (selChat.options.length > 1)
+      ? Array.from(selChat.options).map(o => o.value).filter(Boolean)
+      : [];
+    const stillThere = chatList.indexOf(selChat.value) >= 0;
+    if (!stillThere) {
+      // 挑第一个能用���。列表按 chat→vision 拼过，末尾多是生图模型，
+      // 生图模型当对话模型会被服务端拒 —— 所以只在非生图里挑。
+      const pick = (selChat.options.length ? selChat.options[1] : null);
+      if (pick) selChat.value = pick.value;
+      if (selVision.value && !(Array.from(selVision.options).map(o=>o.value)).includes(selVision.value)) {
+        selVision.value = '';
+      }
+      if (selImage.value && !(Array.from(selImage.options).map(o=>o.value)).includes(selImage.value)) {
+        selImage.value = '';
+      }
+    }
+    await saveModel('已切到' + (x.name || x.key), wasProv);
+  }
+
+  mBody.appendChild(el('div', {class:'form-group'}, [el('label', {}, '服务商'), seg]));
+  // 当前生效哪家，一直摆在按钮下面。切完之后这一行会跟着变 ——
+  // 不显示的话，界面上唯一能确认"切过去没有"的只有按钮高亮，
+  // 而按钮高亮只是输入框状态，跟服务端是不是真的换了无关。
+  const mProvLabel = el('div', {class:'hint', style:'margin:-6px 0 14px',
+    textContent: '当前：' + ((mProvs.find(p => p.key === mProv) || {}).name || mProv)});
+  const provHint = el('div', {class:'hint', style:'margin:-6px 0 14px'},
+    PROV_HINT[mProv] || '地址和密钥在下面填。');
+  mBody.appendChild(mProvLabel);
+  mBody.appendChild(provHint);
+
+  const apiBase = el('input', {type:'text', placeholder:'https://…/v1', value: mCur.api_base || ''});
+  // 密钥框永远空着。服务端只回 api_key_set（有没有那把），不回明文也不回打码串 ——
+  // 打码串摆在输入框里，手一抖复制重贴回去就会把真 key 覆盖掉，所以这里即使
+  // 收到也丢掉。留空 = 沿用现在那把（服务端 apply_cfg 里 `if key and ...` 就这么判）。
+  const apiKey = el('input', {type:'password', placeholder: mCur.api_key_set ? '已有一把，留空 = 不改' : 'sk-…'});
+  const grid = el('div', {class:'model-grid'});
+  grid.appendChild(el('div', {class:'form-group'}, [el('label', {}, '接口地址'), apiBase]));
+  grid.appendChild(el('div', {class:'form-group'}, [el('label', {}, '密钥'), apiKey]));
+  mBody.appendChild(grid);
+  mBody.appendChild(el('div', {class:'hint', style:'margin:-8px 0 16px'},
+    '存在云上的配置里，她调模型接口时用。面板同样看不到密钥本身，留空 = 沿用现在那把；想换就填完整的新 key。'));
+
+  // 四个下拉。视觉模型也能聊天，所以对话那栏把 VL 系列一起列出来。
+  const SRC = { online: '刚从服务商拉到的最新列表', cache: '用的缓存，点「重新拉取」可刷新',
+                fallback: '拉不到，先用内置清单（可能不全）' };
+  const srcLine = el('div', {class:'hint', style:'margin:-8px 0 12px'});
+  const selChat = el('select'), selVision = el('select'), selImage = el('select');
+  [['对话模型', selChat, (mGroups.chat || []).concat(mGroups.vision || [])],
+   ['看图模型', selVision, mGroups.vision || []],
+   ['生图模型', selImage, mGroups.image || []],
+  ].forEach(([label, sel, list]) => {
+    grid.appendChild(el('div', {class:'form-group'}, [el('label', {}, label), sel]));
+    fillSel(sel, list, '', '（不启用）');
+  });
+  mBody.appendChild(grid);
+  mBody.appendChild(srcLine);
+
+  /** 落盘。okMsg 只替换"已生效"那句的前半段，让点服务商切换时说得更准。 */
+  async function saveModel(okMsg, wasProv) {
+      const payload = {
+        provider: mProv,
+        api_base: (apiBase.value || '').trim(),
+        api_key: (apiKey.value || '').trim(),
+        chat: selChat.value || '',
+        vision: selVision.value || '',
+        image: selImage.value || '',
+        vision_enabled: !!selVision.value,
+      };
+      if (!payload.api_base) { mResult.textContent = '地址得填，不然她没法说话'; return; }
+      if (!payload.chat)     { mResult.textContent = '至少选一个对话模型'; return; }
+      mResult.textContent = '保存中…';
+      const r = await api('/api/models/apply', {method:'POST', body:payload});
+      const ok = r && r.ok !== false;
+      // 🔴 changed 为空数组 = "确实没改动"。当成成功会让人以为换好了。
+      if (ok && r.changed && !r.changed.length) {
+        mResult.textContent = '没有改动';
+        toast('没有改动', 'info');
+      } else if (ok) {
+        mResult.textContent = (okMsg ? okMsg + '：' : '已生效：') + (r.changed || []).join('；');
+        toast(okMsg ? okMsg + '，她下一句就是新模型说的' : '换好了，她下一句就是新模型说的',
+              'success');
+        // 密钥已经写进配置了，把框清掉 —— 免得它在页面上多待一会儿
+        apiKey.value = '';
+        // 换过服务商之后这一家的"已存密钥"变了，得就地更新，
+        // 否则下一次点别家会被刚存的这把挡住判断。
+        if (r.current && r.current.keys_by_provider) {
+          Object.assign(mKeys, r.current.keys_by_provider);
+        }
+        // 保存后配置已经是新的了，按新配置重拉（不带 base，用的就是刚存进去那份）
+        await pullModels(false);
+        //🔴 这里**不能**调 renderView('config')：它会清空整个容器，
+        // toast 提示也跟着没 —— 表现为"切换成功了但屏幕上什么都没发生"。
+        // 只把当前服务商名更新掉就够了，顶栏和卡片标题本来就不显示它。
+        const nm = (mProvs.find(p => p.key === mProv) || {}).name || mProv;
+        mProvLabel.textContent = '当前：' + nm;
+      } else {
+        mResult.textContent = '没保存成：' + ((r && (r.err || r.msg)) || '未知原因');
+        toast(mResult.textContent, 'error');
+        // 没存成就把分段按钮的选中态退回去 —— 界面上不能留一个
+        // "看着选中了但其实没生效"的服务商，那正是这次要消灭的那类现象。
+        if (wasProv) {
+          mProv = wasProv;
+          seg.querySelectorAll('div').forEach((d, i) => {
+            d.classList.toggle('on', mProvs[i].key === wasProv);
+          });
+        }
+      }
+  }
+
+  mBody.appendChild(el('div', {style:'display:flex;gap:8px;align-items:center;flex-wrap:wrap'}, [
+    el('button', {class:'btn primary', onclick: () => saveModel(null, null)}, '保存')
+  ]));
+  mBody.appendChild(mResult);
   modelCard.appendChild(mBody);
   twoCol.appendChild(modelCard);
+
+  function fillSel(sel, list, cur, ph) {
+    const arr = (list || []).slice();
+    if (cur && arr.indexOf(cur) < 0) arr.unshift(cur);  // 当前值不在列表里也要显示
+    sel.innerHTML = '';
+    sel.appendChild(el('option', {value:''}, ph));
+    arr.forEach(m => sel.appendChild(el('option', {value:m}, m)));
+    sel.value = cur || '';
+  }
+
+  // 按**输入框里现在的地址和密钥**拉列表。
+  // 🔴 不传 base 时服务端读的是"已保存的配置"，也就是上一家 —— 切了服务商
+  // 但列表没跟着变，就是这么来的。key 留空则沿用已保存那把（用户可能只想换地址）。
+  async function pullModels(force) {
+    const base = (apiBase.value || '').trim();
+    if (!base) return;
+    const key = (apiKey.value || '').trim();
+    const q = '/api/models?' + (force ? 'force=1&' : '')
+            + 'base=' + encodeURIComponent(base)
+            + (key ? '&key=' + encodeURIComponent(key) : '');
+    srcLine.textContent = '拉取中…';
+    const d = await api(q);
+    if (!d) { srcLine.textContent = '连不上她，拉不到模型列表'; return; }
+    const keep = {};   // 换列表前记住现在选中的，能在新列表里认出来就保住
+    keep.chat = selChat.value; keep.vision = selVision.value; keep.image = selImage.value;
+    fillModelList(d, keep);
+  }
+
+  function fillModelList(d, keep) {
+    const g = (d && d.groups) || {};
+    // 保持"当前值不在列表里也要显示"——否则切一家之后当前那个模型悄悄消失，
+    // 界面上看不出是换列表导致的
+    fillSel(selChat,   (g.chat || []).concat(g.vision || []), (keep && keep.chat)   || '', '（不启用）');
+    fillSel(selVision, g.vision || [], (keep && keep.vision) || '', '（不启用）');
+    fillSel(selImage,  g.image  || [], (keep && keep.image)  || '', '（不启用）');
+    srcLine.textContent = (SRC[d && d.source] || (d && d.source) || '')
+      + '｜共 ' + ((d && d.count) || 0) + ' 个' + ((d && d.err) ? '（' + d.err + '）' : '');
+    // 🔴 选中的模型不在这份列表里 = 大概率还挂着上一家的地址。
+    // 不提示的话，用户会以为"换好了"，而保存后她照样调不上这个模型。
+    if (keep && keep.chat) {
+      const all = [].concat(g.chat || [], g.vision || []);
+      if (all.length && all.indexOf(keep.chat) < 0) {
+        srcLine.textContent += '　⚠ 当前选的「' + keep.chat + '」不在这份列表里（多半还挂着上一家的地址，保存后她会调不上）';
+      }
+    }
+  }
+  // 首屏：用服务端回传的当前值把四个下拉选中，而不是让用户从头选一遍
+  fillSel(selChat,   (mGroups.chat || []).concat(mGroups.vision || []), mCur.chat || '', '（不启用）');
+  fillSel(selVision, mGroups.vision || [], mCur.vision || '', '（不启用）');
+  fillSel(selImage,  mGroups.image  || [], mCur.image  || '', '（不启用）');
+  srcLine.textContent = (SRC[mData && mData.source] || (mData && mData.source) || '')
+    + '｜共 ' + ((mData && mData.count) || 0) + ' 个' + ((mData && mData.err) ? '（' + mData.err + '）' : '');
 
   // 语音配置
   const voiceCard = el('div', {class:'card'});
@@ -2817,11 +2926,6 @@ Views.config = async function(container) {
     const r = await api('/api/history/clear', {method:'POST'});
     toast(r ? '历史已清空' : '清空失败', r?'success':'error');
   }}, '清空聊天历史'));
-  dBody.appendChild(el('button', {class:'btn danger', onclick:async()=>{
-    if (!confirm('确定重置她的生活状态？这会清空 life_engine 的状态。')) return;
-    const r = await api('/api/persona/reset_life', {method:'POST'});
-    toast(r ? '生活状态已重置' : '重置失败', r?'success':'error');
-  }}, '重置生活状态'));
   dangerCard.appendChild(dBody);
   wrap.appendChild(dangerCard);
 

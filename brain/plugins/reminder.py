@@ -98,7 +98,7 @@ def _dir():
         from paths import PLUGIN_DATA_DIR
         d = os.path.join(str(PLUGIN_DATA_DIR), NAME)
     except Exception:
-        d = r"C:\Vigil\data\plugins\reminder"
+        d = r"C:\vigil\data\plugins\reminder"
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -254,6 +254,18 @@ TOOL_HELP = (
     "（支持「20分钟后」「明天早上八点」「八点半」「三天后」）；"
     "[tool:reminder_list] 看她手上还有哪些提醒；"
     "[tool:reminder_cancel:关键词] 取消（说“全部取消”就传“全部”）。\n"
+    "  设了提醒她真的会到点主动喊他，所以只要他说了任何带时间、像是"
+    "「待会儿/回头/到时候/别忘了」的事，就设上 —— 他自己不记这个。\n"
+    "  提醒已经设过、到了、或者他说的不是时间（比如“明天见”这种约见面），"
+    "就别重复设。要查他之前提过什么提醒用 reminder_list，别凭印象说。\n"
+)
+
+
+TOOL_HELP_NATIVE = (
+    "- 提醒（闹钟）：能设一个到点主动提醒他的事（支持「20分钟后」「明天早上八点」"
+    "「八点半」「三天后」）、能看她手上还有哪些提醒、能取消（说“全部取消”"
+    "就传“全部”）。三个工具分别叫 reminder_set / reminder_list / "
+    "reminder_cancel。\n"
     "  设了提醒她真的会到点主动喊他，所以只要他说了任何带时间、像是"
     "「待会儿/回头/到时候/别忘了」的事，就设上 —— 他自己不记这个。\n"
     "  提醒已经设过、到了、或者他说的不是时间（比如“明天见”这种约见面），"

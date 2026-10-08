@@ -84,7 +84,7 @@ SPI_GETSCREENREADER = 0x0046
 SPI_SETSCREENREADER = 0x0047
 SPIF_SENDCHANGE = 0x02
 
-#: 实测过的无障碍闸门 RVA（Weixin.dll 相对偏移）。键是版本目录名。
+#: 验证过的无障碍闸门 RVA（Weixin.dll 相对偏移）。键是版本目录名。
 QACCESSIBLE_ACTIVE_RVA_BY_VERSION: Dict[str, int] = {
     "203.0.113.10": 0x0A1E7DB8,
     "203.0.113.10": 0x0AE2B0C8,   # 本项目实测环境即为该版本

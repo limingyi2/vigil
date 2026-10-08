@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """后台循环：她的"生活"全在这几根线程里跑。
 
-- 生活补算（半小时）      过日子 + 夜里写日记
+- 生活补算（半小时）      过日子（写经历流）
 - 历史摘要（20 分钟）    滑出窗口的旧对话压成摘要，让她不忘前几天；顺路刷约定账本
-- 朋友圈（每小时）       让她决定发不发；顺路刷天气/热搜缓存
 - 主动搭话（自适应间隔）  静默时段/每日上限/被回应率全算进去
 - 事件提醒（30 分钟）    快递进展 + 天气突变，走主动搭话同一条路弹通知
 
@@ -19,7 +18,6 @@ from proactive import (
     _proactive_interval_multiplier, _proactive_stats_load,
     _proactive_used_today, _proactive_count_up, _proactive_note_sent,
     _is_repeat_of_recent, _cloud_append_assistant, _his_ip)
-from moment_flow import try_post_moment, _SEEDED_AT, _seed_initial_moment
 
 
 class _NullChannel(object):
@@ -45,11 +43,8 @@ def _feat_channel(src):
 
 
 def start_background(brain):
-    """把她的"生活"全部跑起来（run_server 装配完大脑后调一次）。"""
-    threading.Thread(target=_life_loop, args=(brain,), daemon=True).start()
+    """把她的后台循环全部跑起来（run_server 装配完大脑后调一次）。"""
     threading.Thread(target=_recap_loop, args=(brain,), daemon=True).start()
-    threading.Thread(target=_moment_loop, args=(brain,), daemon=True).start()
-    threading.Thread(target=_seed_initial_moment, args=(brain,), daemon=True).start()
     threading.Thread(target=_proactive_loop, args=(brain,), daemon=True).start()
     threading.Thread(target=_reminder_loop, args=(brain,), daemon=True).start()
 
@@ -70,26 +65,24 @@ def _trace_loop(kind, **kw):
         pass
 
 
-def catch_up_life_local(brain):
-    """独立模式下开机补一次她的生活（后台跑，不挡连接）。"""
-    life = getattr(brain, "life", None)
-    if life is None:
-        return
+def _recap_scopes(b):
+    """要压哪几个分区：每个渠道按它自己那份人设算。
+
+    🔴 漏掉渠道这一维的话，只有"当前渠道"那一份会被压 —— 另一个渠道
+    的对话一直堆在窗口里没人管，她照样忘事，而日志里看不出任何异常。
+    """
     try:
-        res = life.catch_up()
-        if res.get("events") or res.get("diary"):
-            print(f"[大脑] 补算了她 {res.get('events', 0)} 条经历、"
-                  f"{res.get('diary', 0)} 篇日记", flush=True)
-    except Exception as e:
-        print(f"[大脑] 生活补算失败（不影响聊天）：{e}", flush=True)
-
-
-def _life_loop(b):
-    """生活补算：她过日子 + 夜里写日记（云上没有桌宠定时器，靠这个补）。
-    catch_up 幂等 + 自带节流，循环着跑才不会漏掉跨天。"""
-    while True:
-        catch_up_life_local(b)
-        time.sleep(1800)
+        import paths
+        srcs = list(paths.CHANNELS)
+    except Exception:
+        srcs = ["app", "wechat"]
+    out = []
+    for s in srcs:
+        try:
+            out.append((b.persona_key_of(s), s))
+        except Exception:
+            out.append(("", s))
+    return out
 
 
 def _recap_loop(b):
@@ -98,10 +91,10 @@ def _recap_loop(b):
     time.sleep(60)
     while True:
         try:
-            st = recap_store.tick(b.api)
+            st = recap_store.tick(b.api, scopes=_recap_scopes(b))
             if st.get("pressed"):
-                print("[大脑] 历史摘要：压了 %d 段 / %d 字"
-                      % (st["pressed"], st.get("chars", 0)), flush=True)
+                print("[大脑] 历史摘要：%s"
+                      % "；".join(st.get("parts") or []), flush=True)
         except Exception as e:
             print(f"[大脑] 历史摘要出错（不影响聊天）：{str(e)[:80]}",
                   flush=True)
@@ -123,48 +116,20 @@ def _refresh_world_caches():
     """
     try:
         tok = (API_CFG.get("uapi") or {}).get("token")
-        fallback = (_LOCAL["brain"].life.world.get("city")
-                    if getattr(_LOCAL.get("brain"), "life", None) else "")
+        fallback = ""
         if tok:
             import features as _feat
-            import weather_cache, hotboard_cache
+            import weather_cache
             if _feat.on("weather"):
                 weather_cache.refresh_auto(_his_ip(), tok, fallback)
-            if _feat.on("hotboard") and hotboard_cache.should_refresh():
-                plat = ((API_CFG.get("uapi") or {})
-                        .get("hotboard_type") or "douyin")
-                hotboard_cache.refresh(plat, tok)
+            # 热梗榜这里**不刷**：meme 插件自己是现拉的（20 分钟缓存、0.3 秒），
+            # 榜单只在"她那一轮聊天"有用，后台刷一遍省不下什么，
+            # 却要多一套缓存文件 + 一个过期判断要维护。
+            # hotboard_cache（抖音榜）就是这么来的，已经删了。
     except Exception:
         pass
 
 
-def _moment_loop(b):
-    """朋友圈：每小时让她"想想要不要发"，发不发、发什么由她定。"""
-    import moments
-    first = True
-    while True:
-        try:
-            # 启动后 150s 先快跑一次，保证"今天有东西可看"。刚种过开场圈就
-            # 跳过这次，免得两分钟内连发两条，之后恢复每小时一次
-            time.sleep(150 if first else 3600)
-            if first and (time.time() - _SEEDED_AT["t"]) < 1500:
-                first = False
-                continue
-            first = False
-            _refresh_world_caches()
-            if moments.today_count() >= 4:
-                continue        # 一天最多四条（自拍/吃的/风景/猫狗/八卦都能发，活跃一天很正常）
-            raw, posted = try_post_moment(b)
-            if posted:
-                _trace_loop("moment", posted=1, chars=len(raw or ""))
-                print("[大脑] 她发了一条朋友圈", flush=True)
-            else:
-                # 必须把原话打出来：她可能只是"这轮不想发"，也可能是格式跑偏
-                _trace_loop("moment", posted=0, raw=(raw or "")[:80])
-                print("[大脑] 朋友圈：这轮没发，她的原话＝%s"
-                      % raw.replace("\n", " / ")[:140], flush=True)
-        except Exception as e:
-            print(f"[大脑] 朋友圈循环出错：{str(e)[:80]}", flush=True)
 
 
 def _proactive_loop(b):

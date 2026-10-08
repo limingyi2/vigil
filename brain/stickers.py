@@ -52,6 +52,7 @@ def _sniff_ext(blob):
 
 
 def save_bytes(blob, desc="", src=""):
+
     """收藏一张表情包，返回文件名；失败返回 ""。"""
     if not blob:
         return ""
@@ -88,6 +89,7 @@ def all_names():
 
 
 def block(max_n=12):
+
     """给 draft prompt 的素材清单。一张都没有时返回 ""。"""
     idx = _ensure_loaded()
     if not idx:

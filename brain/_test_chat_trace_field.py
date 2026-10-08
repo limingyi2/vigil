@@ -24,7 +24,7 @@
   ③ 非规划轮（闲聊）plan_steps 必须是 None，**不能是0**
      —— 0 表示"规划了但0步"，那是另一种错
 
-用法：F:/Vigil/venv/Scripts/python.exe _test_chat_trace_field.py
+用法：F:/vigil/venv/Scripts/python.exe _test_chat_trace_field.py
 """
 import ast
 import io
@@ -55,7 +55,7 @@ def main():
     tree = ast.parse(src)          # 语法错就直接炸，不用给"通过"
 
     print("[1] /api/chat 的返回体里带 trace")
-    # ⚠️ 锚点写错会让整个测试**静默测一个空字符串**然后全红 ——
+    # 锚点写错会让整个测试**静默测一个空字符串**然后全红 ——
     # 看起来像"代码没改"，真因是锚点是 `if path ==` 而不是 `elif`。
     # 所以先硬断言锚点存在，再往下测。
     i = src.find('if path == "/api/chat"')

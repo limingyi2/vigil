@@ -374,6 +374,9 @@ public class MainActivity extends Activity {
                     String sel = android.provider.MediaStore.Images.Media.DISPLAY_NAME
                             + "=? AND " + android.provider.MediaStore.Images.Media.RELATIVE_PATH + "=?";
                     int k = 0;
+                    // 后两个是**旧版本用过的相册目录**，不是笔误：删图时要扫得到
+                    // 老用户手机里已经存下来的那些，否则他们会看到"相册里没找到这张"。
+                    // 项目改名不改这两个 —— 它们是设备上真实存在的路径。
                     for (String dir : new String[]{ALBUM_DIR, "Pictures/知夏图片", "Pictures/知夏"}) {
                         int r = getContentResolver().delete(
                                 android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,

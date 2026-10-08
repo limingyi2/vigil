@@ -164,7 +164,7 @@ def install_excepthook():
     - threading.excepthook  → 子线程的未捕获异常（Python 3.8+）
 
     只装前者的话，服务里那 6 条后台 daemon 线程静默死掉时一个字都不会留下 ——
-    而它们恰恰是最容易"死了没人发现"的地方（主动搭话、摘要、朋友圈、生活循环）。
+    而它们恰恰是最容易"死了没人发现"的地方（主动搭话、摘要、生活循环）。
     """
     import sys
     import threading

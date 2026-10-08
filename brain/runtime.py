@@ -14,7 +14,7 @@ import json
 import threading
 
 # 计划任务启动时 stdout 是 GBK，回复里带 emoji 会让 print 抛
-# UnicodeEncodeError，流程断在"发送"之前（看着像生成了但对方收不到）
+# UnicodeEncodeError，流程断在"发送"之前（症状：看着像生成了但对方收不到）
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -64,8 +64,13 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 # 以前 runtime.API_CFG 和 server.py 换模型那段各写一份 ——
 # 两份迟早不等，而 update 是整体替换，少一个键那个键就消失。
 # 现在别处要刷新内存配置，只能调 api_cfg_subset()，不许再抄。
+# 🔴 `provider` 与 `api_keys` 也在名单里，别删。
+# 少了 provider：换服务商后磁盘存了新家、内存里还是旧家
+# （`API_CFG.update` 是整体替换，缺键即当場消失）→ 面板显示已切换，
+# 而 Brain 构造时读到的仍是旧家的 base，模型接口直接连错地方。
+# 少了 api_keys：各家密钥那份在内存里没了，下次切回那家要重新填。
 API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
-                "persona_file")
+                "persona_file", "provider", "api_keys")
 
 
 def api_cfg_subset(src):
@@ -103,7 +108,7 @@ def _trace_path():
         from paths import DATA_DIR
         return os.path.join(str(DATA_DIR), "trace.jsonl")
     except Exception:
-        return r"C:\Vigil\data\trace.jsonl"
+        return r"C:\vigil\data\trace.jsonl"
 
 
 TRACE_MAX = 4 * 1024 * 1024        # 超过这个大小就砍掉前面一半（按行砍）
@@ -137,7 +142,7 @@ def _trace_write(rec):
     字、约定账本有没有带上、去重与静默闸门拦没拦、用了哪个模型、延迟、token、
     是不是走了兜底。**只记结构化的中间数据**，不记模型内心活动。
 
-    没有 trace 的路径：生活补算与写日记（life_engine 自己落 journal）。
+    没有 trace 的路径：无（生活引擎已移除）。
     没有它就只能靠 SSH 上去 grep 日志，"她为什么这么答"永远查不清。
 
     写文件失败一律静默：观测手段不能反过来把聊天搞挂。
@@ -161,7 +166,14 @@ def _trace_tail(n=20):
     """
     from collections import deque
     p = _trace_path()
-    out = deque(maxlen=max(1, int(n or 20)))
+        # 夹紧入参：`int(n)` 若在 try 外面，`/api/trace?last=abc` 会抛 ValueError
+    # 冒到 do_GET —— 而 do_GET 没有兜底 except，连接直接断，客户端收不到响应。
+    # 顺手封顶，别让人用 ?last=999999999 把整个文件拽进内存。
+    try:
+        cap = int(n)
+    except (TypeError, ValueError):
+        cap = 20
+    out = deque(maxlen=max(1, min(cap, 5000)))
     try:
         with open(p, encoding="utf-8") as f:
             for line in f:

@@ -108,8 +108,12 @@ def _describe_bytes_once(blob, api_config, timeout=90):
     v = _cfg(api_config)
     if not v.get("enabled", True):
         return ""
-    base = str(api_config.get("api_base") or "").rstrip("/")
-    key = str(api_config.get("api_key") or "")
+    # 看图模型允许走独立的 api_base / api_key（写进 config.json 的 vision 段）：
+    # 2026-10-06 聊天模型切到小米 MiMo 后，小米目录里一个 VL 模型都没有，
+    # 看图必须指回硅基流动。不写覆盖项就透明沿用主配置的 base/key，
+    # 老配置行为一分不变。
+    base = str(v.get("api_base") or api_config.get("api_base") or "").rstrip("/")
+    key = str(v.get("api_key") or api_config.get("api_key") or "")
     if not base or not key:
         return ""
 
@@ -128,7 +132,11 @@ def _describe_bytes_once(blob, api_config, timeout=90):
 
     payload = {
         "model": model,
-        "max_tokens": int(v.get("max_tokens") or 200),
+        # 🔴 上限给 1024，别给 200：mimo v2.6 这类推理模型**思考默认开启**，
+        # 2026-10-07 实测 max_tokens=40 时推理就把预算吃光、content 返回空 ——
+        # 看着像"看图失败"，其实是没空间说话了。max_tokens 只是上限，
+        # 计费按实际用量，给大没有任何代价（Qwen3-VL 说到点就停）。
+        "max_tokens": max(int(v.get("max_tokens") or 1024), 1024),
         "messages": [{
             "role": "user",
             "content": [

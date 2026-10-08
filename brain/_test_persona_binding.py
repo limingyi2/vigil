@@ -15,7 +15,7 @@
    → app 渠道所有分区退化成公共文件。**改人设完全不换记忆。**
 
 2. `self.persona_text` 是 reload_persona 时按**全局**人设算好的一个普通属性
-   → 聊天主链路（hist[0]、主动搭话、朋友圈、moment）全读它
+   → 聊天主链路（hist[0]、主动搭话、各渠道）全读它
    → `persona_by_src` 配了也白配。**改渠道人设不换人。**
 
 3. `reload_persona` 不清按人设 key 的缓存
@@ -28,7 +28,7 @@
 
 ## 跑法
 
-    F:/Vigil/venv/Scripts/python.exe _test_persona_binding.py
+    F:/vigil/venv/Scripts/python.exe _test_persona_binding.py
 """
 import io
 import json

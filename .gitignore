@@ -146,7 +146,7 @@ _smoke*
 # 如果又出现 remote rejected（缺 workflow scope），先查 scopes 再推。
 # 人设同步脚本：里面有真实的云机 IP 与 SSH 用户名，对 clone 的人没用
 # （他们没有这台服务器），也不该出现在公开仓库里。脚本副本在私有仓库
-# limingyi2/zhixia-private，换服务器时从那儿取。
+# limingyi2/vigil-private，换服务器时从那儿取。
 tools/persync.py
 # persync 传输用的临时 payload（每次 push 覆写）
 deploy/_persync_payload.b64
@@ -179,6 +179,22 @@ brain/skill_host/skills/*
 brain/skill_host/node_modules/
 brain/skill_host/package-lock.json
 
+#===== node_modules：写成通用规则 =====
+# 🔴 原来只写了上面 `brain/skill_host/node_modules/` 那一条（限定路径），
+# 于是 `vigil-client/node_modules/` **完全没被挡住** ——
+# 那个目录 436MB、5000+ 个文件，一次 `git add .` 就会整个吞进仓库。
+# 写成通用规则，以后新增任何前端目录都自动生效。
+node_modules/
+#===== vigil-client：客户端真做起来了 =====
+# 这条原来是**整目录忽略**，当时的注释写着"里面只有 node_modules、连
+# package.json 都没有（436MB）……将来真要做客户端，把这个规则删掉、
+# 把源码补上再用"。现在源码齐了（electron/ src/ tools/ package.json
+# README），按那句话把整目录规则删掉，只挡产物。
+# （node_modules/ 已经被上面的通用规则盖住，这里不用再写一遍。）
+vigil-client/dist/
+vigil-client/_shots/
+vigil-client/src/_harness.html
+
 #===== 浏览器验收的临时产物 =====
 # _cdp_*.js / _measure_modal.js / _dump_modal.js / _static.js 是用真实
 # Edge(CDP) 验面板的工具，不入库：它们依赖本机 Edge 路径和固定探针端口，
@@ -205,3 +221,15 @@ brain/plugins/_registry.json
 # 打云端的接口验收脚本：里面必须有真实云机地址 + token + 私钥路径，
 # 这个仓库是公开的，这个文件只留在本地（.workbuddy/scripts/ 也一样没入库）。
 brain/_test_cloud_http.py
+
+# ===== 改造前的本地备份（2026-10 起）=====
+# 我改代码前习惯先整目录备份一份。这些目录里**含真实 wxid / 云机 IP**
+# （wxbridge.local.json 就是那种文件），而这个仓库是公开的 ——
+# 漏掉这条等于把密钥和地址一起推上 GitHub。
+_backup_*/
+
+# ===== 本地优先改造期间的备份/参考目录（2026-10-08 基线快照时补挡）=====
+_removed_*/
+_split/
+vigil-client_backup_*/
+deepseek-harness/

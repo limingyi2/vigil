@@ -4,7 +4,7 @@ r"""看门狗 —— 桌宠掉线就自己拉起来。
 她的脑子在云上，但"人常常不在电脑前"这件事没变：开机自启偶尔失败、桌宠会崩、
 会被误关，崩了没人管桌宠就一直不在。本脚本由计划任务每 5 分钟叫一次，跑完就退。
 
-怎么判断桌宠在不在：只看**单实例互斥量**（Global\LinZhixiaPetSingleInstance）被不被
+怎么判断桌宠在不在：只看**单实例互斥量**（Global\VigilPetSingleInstance）被不被
 占。它由内核持有，进程活着就占着、崩了立刻释放，刚启动还没建窗口那段也算在。
 不再探端口 —— 桌宠已经变成纯客户端，本地没有任何 HTTP 服务了，探端口会一直判
 "她不在"，然后每 5 分钟重复拉起一次，一晚上能叠出十几个"已经在运行"的弹窗。
@@ -31,7 +31,7 @@ if BRAIN not in sys.path:
     sys.path.insert(0, BRAIN)
 
 PET_BAT = os.path.join(HERE, "pet.py")          # 桌宠：本目录
-# 注意：这里没有云端大脑的守护。大脑在另一台机器（C:\Vigil\app），
+# 注意：这里没有云端大脑的守护。大脑在另一台机器（C:\vigil\app），
 # 本机看门狗够不着它。
 # 早先留过一个 BRAIN_PY 常量从来没被用过，README 也因此写成"桌宠/大脑掉了
 # 都自动拉起"，是句假话，已删。
@@ -85,7 +85,7 @@ def pet_singleton_held():
     try:
         import ctypes
         k = ctypes.windll.kernel32
-        h = k.OpenMutexW(0x00100000, False, "Global\\LinZhixiaPetSingleInstance")
+        h = k.OpenMutexW(0x00100000, False, "Global\\VigilPetSingleInstance")
         if h:
             k.CloseHandle(h)
             return True
@@ -165,11 +165,11 @@ if __name__ == "__main__":
     # 单实例守卫：同一时间只允许一个看门狗，否则两个会抢着拉桌宠。
     # 必须用 WinDLL(use_last_error=True) + ctypes.get_last_error()：
     # 走 ctypes.windll 再调 kernel32.GetLastError() 的话，ctypes 自己的调用会把
-    # LastError 冲掉，拿回来的几乎总是 0，这个守卫等于没装（pet.py 里踩过同样的坑）。
+    # LastError 冲掉，拿回来的几乎总是 0，这个守卫等于没装（pet.py 里是同一个问题）。
     try:
         import ctypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        mutex = kernel32.CreateMutexW(None, False, "Global\\LinZhixiaWatchdogSingleInstance")
+        mutex = kernel32.CreateMutexW(None, False, "Global\\VigilWatchdogSingleInstance")
         if ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
             print("[看门狗] 看门狗已在运行，本实例退出。", flush=True)
             sys.exit(0)

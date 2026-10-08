@@ -1,59 +1,19 @@
 # -*- coding: utf-8 -*-
-"""发言闸门：让她先判断"这里真人会不会接话"，PASS 就不开口。
+"""发言闸门：判断"这里真人会不会接话"，PASS 就不开口。
 
-## 为什么要有这一层
+挂在 `on_turn_in` —— 唯一能一票否决的入站钩子：
 
-原来"说不说话"是写在人设里的（「话头明显能接→主动接」）。人设一变长，
-这条规则就必然变钝 —— 而且**没法测**。这一层把它挪到代码里：
+    消息进来 → 本机快筛（没@就没戏）→ 本插件判定 → OPEN 才问大脑
 
-    消息进来 → 本机朴素快筛（没@就没戏）→ **本插件判定** → OPEN 才问大脑
+位置很关键：它在"要不要问大脑"之前，不在"她怎么回答"里。所以人设里那条
+"话头明显能接就接"可以整条删掉，判定用便宜小模型（temperature 0.3），
+统计结果落地成数据。
 
-关键在**位置**：它在"要不要问大脑"之前，不在"她怎么回答"里。所以：
+温度必须压到 0.3：热采样下同一段对话跑两次可能一个 PASS 一个 OPEN，
+群里表现就是"她说话没规律"。判定要的是稳定，不是创造力。
 
-1. **大脑那4000 字人设一个字都不用动**，也不用在聊天链路里塞判定逻辑。
-2. 判定用**便宜小模型 + temperature 0.3**，比主模型便宜一个数量级。
-3. 判定结果可以事后统计 —— 她为什么没说、有多少轮被判PASS，落地成数据。
-
-## 为什么温度必须压到 0.3
-
-热采样（temperature 1.0）下，同一段对话跑两次可能一个 PASS 一个 OPEN，
-群里表现就是"她说话没规律"。判定要的是**稳定**，不是创造力。
-
-## 为什么给判据、不给场景映射
-
-用户明确反对「什么场景用什么方案」那种规则 —— 每加一个场景就得补一条，
-永远补不完，而且把她管死了。下面只给**判据**和一份 PASS 清单，
-具体什么算"明显能接"是她自己的判断。
-
-## 挂在哪个钩子上
-
-`on_turn_in`。它是**唯一能一票否决**的入站钩子：往 /api/chat 返回空串
-就等于整轮不成立，大脑根本不会被问。别的钩子都只能"往提示里加东西"。
-
-注意：这跟"给判据≠给许可"是同一类错误，这里是反过来的 —— 闸门是**否决权**，
-所以默认是 OPEN（放行），只有判得很确定时才拦。全程走降级：**任何不确定
-都放行**，绝不能因为判定失败而让她哑掉。
-
-## 慢就是失败（实测出来的）
-
-2026-10-04 用硅基真测（`_test_gate_models.py`）：
-
-| 模型 | 判对 | 超时 | 平均 |
-|---|---|---|---|
-| zai-org/GLM-5.3（主模型） | 8/10 | 2 | 6.9 秒 |
-| **deepseek-ai/DeepSeek-V4-Flash** | **9/10** | 0 | **2.0 秒** |
-| inclusionAI/Ling-flash-2.0 | 6/10 | 0 | 0.9 秒 |
-
-最慢的**不是最差的**，但再快的判不准也不值 —— 判定错一次靠连 PASS 保底
-能兜住，等4 秒没人兜。config 里默认填了 V4-Flash。
-
-**实测两条反直觉的，别照抄别处的做法去改**：
-
-1. **删掉系统提示会变慢**（4.2 秒）而且判错 —— 那些判据不是负担，是它
-   判得准的原因。别为了"省 token"精简它。
-2. **max_tokens 千万别掐到 5**。会截断模型的思考，吐出 `PASSPASS`、
-   `OPEN</think>` 这种半截输出，反而要花一次去猜。给够空间（200）、
-   靠提示词要求简短，实测输出干净且同速。
+🔴 **给判据、不给场景映射**。「什么场景用什么方案」那种规则每加一个场景
+就得补一条、永远补不完。所以只给判据和一份 PASS 清单，"明显能接"由她自己判断。
 """
 import os
 import re
@@ -71,13 +31,34 @@ _TIMEOUT = 15                 # 秒。实测 flash 模型 1.8~2.0 秒，8 秒偶
     # 别设成 30：群里等 30 秒比不说话还假。
 # 只要两个词，但**别把 max_tokens 掐到 5** —— 那样会把模型的思考过程截断在半路，
 # 吐出 "PASSPASS" / "OPEN</think>" 这种半截输出，反而要多花一次去猜它想说什么。
-# 给够空间，靠提示词要求简短（实测输出干净且同速）。
+# 给够空间，靠提示词要求简短（输出干净且同速）。
 _MAX_TOKENS = 200
 _CTX_CHARS = 1200# 塞给闸门的上下文上限
 
 # 同一段对话里连着被判几次 PASS 就直接放行。防"她一直不接话"这种
 # 越狱 —— 闸门误拦一次是运气，连着拦就说明她被关起来了。
-_MAX_CONSECUTIVE_PASS = 3
+#
+# 🔴 写死 **3** 太密。群里绝大多数消息都不是找她的，于是基本每三条
+# 她就会被强制放行一次 —— 而放行的那一句是在接**别人**的话题。日志形态：
+#
+#     [收到] 懒得起：@Echo 你玩不玩
+#     [发送] OK '那是问Echo的，不是我。'
+#
+# 群里看着就是"牛头不对马嘴"。改成可配（gate.max_consecutive_pass），默认 8。
+_MAX_CONSECUTIVE_PASS = 8
+
+
+def _max_pass(cfg):
+    """连着 PASS 几次就强制放行。config 的 `gate.max_consecutive_pass` 可调。
+
+    给个下限 2：设成 1 等于"一次不接话就必须开口"，比默认还吵；
+    非法值一律回落默认，别让一个写错的配置把她变成复读机。
+    """
+    try:
+        v = int((cfg or {}).get("max_consecutive_pass"))
+    except (TypeError, ValueError):
+        return _MAX_CONSECUTIVE_PASS
+    return v if v >= 2 else _MAX_CONSECUTIVE_PASS
 
 # 统计按渠道分开存 —— 她在群里和App 里的"沉默率"完全是两回事，
 # 混在一起看不出是哪边判错了。扁平 key 会让这个永远查不出来。
@@ -103,6 +84,81 @@ def _cfg():
 def _model(api_config, cfg):
     """用哪个模型判定。没配就用主模型 —— 宁可用贵的模型，也不能不判。"""
     return str(cfg.get("model") or api_config.get("model") or "")
+
+
+def _judge_api(api_config, cfg):
+    """判定用的 (base, key, model)。**模型必须和 base 同家**，不同家就是 400。
+
+    为什么单开一个函数：`gate.model` 是显式配置（默认 DeepSeek flash），
+    而 `api_base` 跟着主模型的服务商走。哪天主对话切回小米，gate.model 还留着
+    `deepseek-ai/...`，小米那边直接回 `Unsupported model` —— 每条群消息都白判
+    一次（好在判不了=放行，不会漏回，但 15 秒超时的那次要白等）。
+    实测 2026-10-07：小米 base + deepseek model = 400 Unsupported model。
+
+    规则（都拿 config.json 判）：
+      1. gate.model 在当前 base 的家 → 原样用。
+      2. 不在 → 找一家**存了 key 且模型属于它**的 provider，换那家的 base/key。
+      3. 找不到就退化成"主模型 + 主 base"（同源，至少不会 400）。
+    """
+    model = _model(api_config, cfg)
+    base = str(api_config.get("api_base") or "").rstrip("/")
+    key = str(api_config.get("api_key") or "")
+    if not model or not base:
+        return base, key, model
+    try:
+        from model_hub import PROVIDERS, provider_key, has_provider_key
+    except Exception:
+        return base, key, model
+    # 当前 base 属于哪家
+    home = ""
+    for pid, meta in PROVIDERS.items():
+        if pid == "custom":
+            continue
+        if str(meta.get("base") or "") and base == str(meta["base"]).rstrip("/"):
+            home = pid
+            break
+    if home and _model_fits(model, home):
+        return base, key, model
+    # 不同家：翻配置里存过 key 的 provider，找一个模型认得的
+    try:
+        from runtime import CFG_PATH
+        cfg_all = json.load(open(CFG_PATH, encoding="utf-8"))
+    except Exception:
+        cfg_all = {}
+    for pid in PROVIDERS:
+        if pid == "custom" or not has_provider_key(cfg_all, pid):
+            continue
+        if _model_fits(model, pid):
+            b = str(PROVIDERS[pid]["base"]).rstrip("/")
+            return b, provider_key(cfg_all, pid), model
+    # 找不到同家的：退回主模型（主模型和主 base 永远同源）
+    return base, key, str(api_config.get("model") or "")
+
+
+# 模型 id → 它属于哪家。按 id 关键字判：`deepseek-*` 只可能在 DeepSeek 官方
+# 或硅基流动（硅基是全集），`mimo-*` 只在小米，`zai-org/GLM-*` 只在智谱/硅基。
+# 兜底策略：认不出来的就算"当前家也行"——宁可同家撞一次 400（会被 except 放行），
+# 也别把能用的配置判成无家可归。
+_MODEL_HOME_HINTS = {
+    "xiaomi": ("mimo",),
+    "siliconflow": ("deepseek-ai/", "zai-org/", "qwen/", "glm-", "moonshotai/",
+                    "stepfun-ai/", "tencent/", "meituan-", "baichuan-", "fnlp/"),
+}
+
+
+def _model_fits(model, provider_id):
+    """这个模型 id 看起来是不是 provider_id 家的。"""
+    m = str(model or "").lower()
+    hints = _MODEL_HOME_HINTS.get(provider_id)
+    if not hints:
+        return True                      # custom 没有清单，放行
+    if any(h in m for h in hints):
+        return True                      # 关键字命中某家（兜底清单里有才命中这里）
+    # 命中了**别家**的独占关键字 → 不属于这家
+    for other, hs in _MODEL_HOME_HINTS.items():
+        if other != provider_id and any(h in m for h in hs):
+            return False
+    return True                          # 认不出来：按属于这家处理
 
 
 def _bump(src, field):
@@ -189,7 +245,7 @@ def _recent_context(ctx):
 def _nicknames(ctx):
     """她能被叫的名字：配置 + 人设里的 nicknames。
 
-    两个来源都要。人设那份跟着换人设变（"麦麦"→"知夏"），只看配置会漏
+    两个来源都要。人设那份跟着换人设变（人格 A→人格 B），只看配置会漏
     —— 而漏了就意味着被叫了也不回，那是最明显的 bug。
     拿不到就算，宁可多问一次模型。
 
@@ -247,6 +303,64 @@ def _called_by_name(ctx, msg):
         if ("@" + n) in t or n in t:
             return True
     return False
+
+
+# 微信的 @ 是正文里的"@名字"。要求 @ 前面是行首/空白/中文标点，
+# 免得把邮箱、链接里的 @（a@b.com）当成点名。
+_AT_RE = re.compile(r"(?:^|[\s：:，,（(])@([^\s]+)")
+# @所有人 也包含她，不能当成"在叫别人"
+_AT_ALL = ("所有人", "全体成员", "all")
+
+
+def _at_names(msg):
+    """这条消息里 @ 了谁。返回被点到的名字列表（去重、保持顺序）。"""
+    out = []
+    for m in _AT_RE.finditer(str(msg or "")):
+        n = (m.group(1) or "").strip()
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def _called_someone_else(ctx, msg):
+    """这条消息是不是在 @ **别人**（不是她）。
+
+    ## 为什么这条必须在代码层判
+
+    跟 `_called_by_name` 完全对称，理由也一样：**提示词里写清楚了，小模型不认。**
+    `_JUDGE_PROMPT` 第一条确实写着"两个人在对话 → PASS"，但它的条件是
+    "其中一个在 @ 另一个、**另一个在回他**"。群里更常见的却是
+
+        @Echo 你玩不玩          ← @ 了别人，但对方还没回
+
+    这一句不满足"另一个在回他"，于是掉进第四条「剩下的都是 OPEN」——
+    而第四条里正好写着「提了个问题 → OPEN」。判成 OPEN，她就把**问别人的问题**
+    当成问自己的答了。实测（2026-10-06 群日志）：
+
+        [收到] 懒得起：@Echo 你玩不玩  -> 她："那是问Echo的，不是我。"
+        [收到] 懒得起：@。 你玩不玩     -> 她："还是问别人的，我可没接这个茬。"
+        [收到] 懒得起：@Echo           -> 她："他们聊他们的，我玩我的。"
+
+    她自己清楚不是在问她，但闸门放行了就总得说点什么 —— 群里看着就是
+    "牛头不对马嘴"。判"这条不是在跟我说"是纯字符串匹配，零成本、不会抖，
+    没有任何理由交给模型。
+
+    ## 没 @ 任何人的消息不归它管
+
+    只处理"有人 @ 了谁"的情形。既没人 @、也没提她名字的普通消息，
+    还是交给模型判该不该接 —— 那才是"像不像真人"的部分。
+    """
+    names = _at_names(msg)
+    if not names:
+        return False
+    mine = _nicknames(ctx)
+    for name in names:
+        if name in _AT_ALL:
+            return False                    # @所有人 包括她，交给模型
+        for n in mine:
+            if n and (name.startswith(n) or n in name):
+                return False                # @ 的人里有她 -> 不是"只叫了别人"
+    return True
 
 
 def _self_share(ctx, lookback=6):
@@ -414,7 +528,12 @@ _JUDGE_PROMPT = """你在替一个人判断：群里的最新一条消息，如�
 
 ## 一、这条消息是在跟谁说的？
 
-明显是两个人之间的对话（其中一个在 @ 另一个、另一个在回他）→ PASS
+**只要有人 @ 了别人（不是她），就是在跟别人说话 → PASS。**
+不管对方回没回，也不管那句话看着像不像个问句 —— 那不是问她的。
+（"有人在 @ 别人"这种情况多半已经在代码里被拦掉了，走不到你这里；
+真走到这里，按这条判。）
+
+两个人在一来一回地聊，更是在聊他们自己的 → PASS
 
 ### 二、他现在的处境是什么？（**决定分寸，别跳过**）
 
@@ -462,14 +581,14 @@ def _judge(ctx, cfg):
         return True, "没配模型"
 
     #🔴 **被叫名字必须在代码层直接放行，不许问模型。**
-    # 实测栽在这：提示词里写了「@ 了就回 OPEN、不用往下想」，模型照样
+    # 失效方式：提示词里写了「@ 了就回 OPEN、不用往下想」，模型照样
     # 判 PASS —— 小模型不吃这种"软指令"，思考两句就把它推翻了。
     # 而这条判错的后果是"她被@了却不回"，是最明显的不像人。
     # 关键词匹配在代码层做一次，零成本、不出错、不会抖。
     if _called_by_name(ctx, msg):
         return True, "有人喊了名字"
 
-    # 🔴 刷屏抑制放在被@ 放行之后、问模型之前。
+        # 🔴 刷屏抑制必须放在被@ 放行之后、问模型之前。
     # 顺序很要紧：被叫了名字必须无条件说话，别的都不管。
     why = _flood_guard(ctx)
     if why:
@@ -480,10 +599,13 @@ def _judge(ctx, cfg):
 
     try:
         import httpx
+        _b, _k, _m = _judge_api(api, cfg)
+        if not _m or not _b:
+            return True, "没有可用的判定模型"
         r = httpx.post(
-            api["api_base"].rstrip("/") + "/chat/completions",
-            headers={"Authorization": "Bearer " + api["api_key"]},
-            json={"model": _model(api, cfg),
+            _b.rstrip("/") + "/chat/completions",
+            headers={"Authorization": "Bearer " + _k},
+            json={"model": _m,
                   "messages": [
                       {"role": "system", "content": _JUDGE_PROMPT},
                       {"role": "user", "content": body}],
@@ -535,9 +657,22 @@ def on_turn_in(ctx):
 
     scope = _scope(ctx)
 
+    # 🔴 **@ 的是别人：直接拦，而且不花模型调用、不计入强制放行。**
+    #
+    # 两个"不计入"都是有意的：
+    #   * 不花调用 —— 纯字符串匹配能定的事，没必要问模型（省一次 flash 调用）；
+    #   * **不计入 `_pass_streak`** —— 这条是"确定不是在跟她说话"，不是
+    #     "闸门拿不准所以先拦一下"。后者连着几次就该强制放行（怕她被关起来），
+    #     但前者是事实，强制放行会把它推翻成"她偏要接一句别人的话题"，
+    #     而那正是群里"牛头不对马嘴"的来源。
+    if _called_someone_else(ctx, msg):
+        _bump(src, "pass")
+        _last_judge[scope] = "PASS · 在@别人"
+        return ctx.veto("闸门判定 PASS：这条在 @ 别人")
+
     # 连着 PASS 太多次就强制放行。她不是不能说话，是闸门误判了。
     try:
-        if _pass_streak.get(scope, 0) >= _MAX_CONSECUTIVE_PASS:
+        if _pass_streak.get(scope, 0) >= _max_pass(cfg):
             _pass_streak[scope] = 0
             _bump_global("forced_open")
             _last_judge[scope] = "强制放行（连PASS 太多次）"

@@ -40,6 +40,8 @@ _SELFIE_THING_RE = re.compile(
 
 
 def _looks_like_selfie(text):
+
+    return False  # 自拍功能已停用（用户要求删除 App 自拍）
     """他是不是在要"她本人"的照片。
 
     判断顺序是四道闸门（从严到宽）：

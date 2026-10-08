@@ -1,6 +1,6 @@
 @echo off
 REM ======================================================================
-REM  Zhixia WeChat bridge - ONE CLICK launcher for the VM
+REM  Vigil WeChat bridge - ONE CLICK launcher for the VM
 REM
 REM  Double-click this file. That is the whole procedure.
 REM    - first run  : copies runtime + bridge into C:\zx, wires sys.path
@@ -9,7 +9,7 @@ REM
 REM  ASCII only on purpose: Chinese text in a .cmd corrupts the structure.
 REM ======================================================================
 setlocal EnableExtensions
-set SHARE=\\vboxsrv\zhixia
+set SHARE=\\vboxsrv\vigil
 set DST=C:\zx
 
 REM ------------------------------------------------------------------
@@ -21,7 +21,7 @@ REM       at the CD-ROM and the share, so a successful unpack was
 REM       followed by "cannot find payload" anyway.
 REM    2. D:\ E:\ F:\ -- the CD-ROM we mounted the ISO on. Hardware level,
 REM       does not depend on Guest Additions, which keeps dropping out.
-REM    3. \\vboxsrv\zhixia\_setup -- the shared folder, when it happens
+REM    3. \\vboxsrv\vigil\_setup -- the shared folder, when it happens
 REM       to be alive.
 REM  The log goes to C:\zx\logs, NOT to the share: writing logs to a
 REM  share that dies mid-run loses exactly the evidence we need.
@@ -60,7 +60,7 @@ if not exist "%DST%\logs" (
 >>"%LOG%" echo payload source = %SRC%
 
 > "%LOG%" echo ==========================================================
->>"%LOG%" echo  Zhixia bridge   %DATE%  %TIME%
+>>"%LOG%" echo  Vigil bridge   %DATE%  %TIME%
 >>"%LOG%" echo ==========================================================
 
 REM ------------------------------------------------------------------
@@ -247,11 +247,20 @@ if errorlevel 1 (
     if not exist "%DST%\keys\zx_key" (
         copy /Y "%SRC%zx_key" "%DST%\keys\zx_key" >nul
     )
-    start "zhixia-tunnel" /min ssh -N -o StrictHostKeyChecking=no ^
+    REM 云机地址从环境变量读 —— 跟下面的 ZX_BRAIN_TOKEN 同一个道理：
+    REM 仓库是 PUBLIC，真地址不写死在脚本里。在这台机器上设一次：
+    REM     setx ZX_BRAIN_HOST 你的云机IP
+    if "%ZX_BRAIN_HOST%"=="" (
+        echo [错误] 没设 ZX_BRAIN_HOST，不知道要连哪台机器。
+        echo         执行一次：setx ZX_BRAIN_HOST 你的云机IP
+        >>"%LOG%" echo [ERROR] ZX_BRAIN_HOST not set
+        exit /b 1
+    )
+    start "vigil-tunnel" /min ssh -N -o StrictHostKeyChecking=no ^
         -o UserKnownHostsFile=NUL -o ServerAliveInterval=30 ^
         -o ExitOnForwardFailure=yes ^
         -i "%DST%\keys\zx_key" ^
-        -L 18787:127.0.0.1:8788 administrator@203.0.113.10
+        -L 18787:127.0.0.1:8788 administrator@%ZX_BRAIN_HOST%
     >>"%LOG%" echo ssh tunnel started
     timeout /t 5 /nobreak >nul
 ) else (

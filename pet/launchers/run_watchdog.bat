@@ -7,4 +7,4 @@ rem Do NOT redirect output here: cmd would hold the log file handle, and one
 rem stuck run would make every later run fail with "file in use".
 rem watchdog.py writes watchdog.log itself.
 
-"F:\Vigil\venv\Scripts\pythonw.exe" "F:\Vigil\pet\watchdog.py"
+"F:\vigil\venv\Scripts\pythonw.exe" "F:\vigil\pet\watchdog.py"

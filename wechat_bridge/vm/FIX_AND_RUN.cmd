@@ -5,12 +5,12 @@ REM  The share keeps dropping because VBoxService is not running.
 REM  This restarts it, waits, verifies, and only then installs.
 REM ======================================================================
 setlocal EnableExtensions
-set SHARE=\\vboxsrv\zhixia
+set SHARE=\\vboxsrv\vigil
 set DST=C:\zx
 set LOG=%SHARE%\_zx_log.txt
 
 > "%LOG%" echo ==========================================================
->>"%LOG%" echo  Zhixia fix+install   %DATE%  %TIME%
+>>"%LOG%" echo  Vigil fix+install   %DATE%  %TIME%
 >>"%LOG%" echo ==========================================================
 
 REM ---- 1. VBoxService up? ----

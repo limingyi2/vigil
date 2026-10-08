@@ -24,7 +24,7 @@ DRAFT_RULES = build_draft_rules(DEFAULT_PERSONA)
 INTENT_TMPL = "（你想跟他说的意思是：{draft}。用你自己的口气说出来，短句，别端着。）"
 
 # 聊天记录存档（跨重启保留）：只记你和她一来一回的话。
-# 与 her_life/chat_*.jsonl 不同 —— 那个是给她写日记的素材，连主动搭话一起记。
+# 与 her_life/chat_*.jsonl 不同 —— 那个连主动搭话、摘要等内部调用也一起记。
 try:
     import paths
     CHAT_LOG = paths.CHAT_LOG
@@ -185,6 +185,82 @@ def _clean(s, keep_newlines=False):
     return s.strip()
 
 
+def _extract_reasoning(msg, raw=""):
+    """从模型响应里提取思考过程。
+
+    优先级：
+    1. 原生 reasoning_content 字段（DeepSeek / MiMo 等推理模型直接返回，
+       思考和正文分离，不依赖提示词教学）
+    2. 回退到正则提取 <think>...</think>（老模型/不支持 reasoning_content 时）
+
+    返回空字符串表示没有思考过程。
+    """
+    # 1. 原生 reasoning_content（优先）
+    rc = ""
+    if isinstance(msg, dict):
+        rc = str(msg.get("reasoning_content") or "").strip()
+    if rc:
+        return rc
+
+    # 2. 回退：从 content 里正则提取 <think>
+    text = raw or (msg.get("content") if isinstance(msg, dict) else "") or ""
+    _m = re.search(r"<think>(.*?)</think>", text, re.S)
+    if _m:
+        return _m.group(1).strip()
+    if "<think>" in text:
+        # 被截断的 think：只开标签没闭标签，后面全是思考
+        return text.split("<think>", 1)[1].strip()
+    return ""
+
+
+# XML 格式工具调用的兜底解析（小米 MiMo 等不支持结构化 tool_calls 的供应商）。
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.S | re.I)
+_TOOL_FUNC_RE = re.compile(r"<function=([^>]+)>(.*?)</function>", re.S | re.I)
+
+
+def _parse_xml_tool_calls(text):
+    if not text or "<tool_call" not in text.lower():
+        return []
+    out = []
+    for i, m in enumerate(_TOOL_CALL_RE.finditer(text)):
+        fm = _TOOL_FUNC_RE.search(m.group(1))
+        if not fm:
+            continue
+        name = fm.group(1).strip()
+        args = {}
+        for pm in _TOOL_PARAM_RE.finditer(fm.group(2)):
+            args[pm.group(1).strip()] = pm.group(2).strip()
+        if name:
+            out.append({"id": "xml_%d_%d" % (int(time.time()), i),
+                        "type": "function",
+                        "function": {"name": name,
+                                     "arguments": json.dumps(args, ensure_ascii=False)}})
+    return out
+
+
+def _strip_xml_tool_calls(text):
+    if not text:
+        return text
+    return _TOOL_CALL_RE.sub("", text).strip()
+
+
+_KNOWLEDGE_Q_RE = re.compile(
+    r"(是什么|什么是|什么意思|为啥|为什么|原理|底层|区别|对比|优缺点|哪个好|"
+    r"推荐|入门|学习|学会|路线|教程|攻略|需要.{0,6}(?:什么|哪些|掌握)|有哪些|"
+    r"怎么学|如何学|怎么写|怎么做|怎么用|怎么选|怎么开发|怎么实现|"
+    r"编程|代码|开发|框架|算法|模型|部署|面试|考研|考证|"
+    r"报错|调试|安装|编译|环境变量|python|java|javascript|api|linux)", re.I)
+
+
+def _is_knowledge_q(text):
+    """正经的知识/技术/方法类问题 → 详细回答模式（更长 max_tokens + 更高思考档）。
+
+    门槛 6 字而不是更长：'这个报错怎么办'、'Python怎么学' 都是真实且该详答的
+    短问；闲聊超短句（怎么了/吃了吗/想你了）3 个字进不来。关键词本身才是主闸。"""
+    t = (text or "").strip()
+    return len(t) >= 6 and bool(_KNOWLEDGE_Q_RE.search(t))
+
+
 def _is_silence(s):
     """判断她是不是在说"没什么好说的"。
 
@@ -197,6 +273,38 @@ def _is_silence(s):
     core = "".join(ch for ch in t
                    if ch not in " \t\r\n。．.,，、!！?？~～-—－()（）[]［］【】\"'“”‘’")
     return core == "" or set(core) == {"无"}
+
+
+# --- 服务商内容风控的"拒绝语"：只留识别，不做自动降级（2026-10-07 用户决定）---
+# 现象：小米 MiMo 会判 `personas/base.json` 的 notes（含带性暗示的固定形象描写）
+# 为高风险，然后回一段英文提示
+#   "The request was rejected because it was considered high risk"
+# ——这段是**平台拒答**，不是她说的话；实测它是**内容累积触发**的
+# （干净对话照常回中文，聊到某些内容才拒）。
+# 为什么留着这个识别：她在 App 里的每句话都会进对话历史、还会抽记忆。
+# 拒答语一旦当成"她说过的话"存进去，等于把平台的提示词混进她的口吻里，
+# 后面越聊越怪。识别出来至少能**不入历史**。
+# 为什么不做降级：用户明确说不需要（2026-10-07）——换家重问会让她"说的话"
+# 和设定不一致（同一段记忆、同一套人设，换个模型口吻就变了），不如如实显示。
+_RISK_REFUSALS = (
+    "was rejected because it was considered high risk",
+    "content policy",
+    "content_policy",
+    "responsible ai",
+    "usage policies",
+    "request cannot be fulfilled",
+    "输入内容存在风险",
+    "内容存在风险",
+)
+
+
+def is_provider_refusal(text):
+    """这段文字是不是服务商风控/策略拒绝语（而不是模型说的话）。"""
+    s = str(text or "").strip().lower()
+    if not s or len(s) > 400:
+        # 拒答语都是短句；超长的多半是真的回复（她一回常是两段）
+        return False
+    return any(k in s for k in _RISK_REFUSALS)
 
 
 # --- 回复分段：把一条回复拆成"像真人连发的几条短消息" ---
@@ -290,10 +398,10 @@ class Brain:
 
         # 每个渠道一份对话历史：手机 App 和微信上的她不该互相读到对方的对话。
         # 键是渠道名（app / wechat / 以后加什么都行），代码里不针对具体渠道写规则。
-        # 必须在 reload_persona 之前建好 —— 那儿会往 self.hist 里写 system 段。
+        # 必须在 reload_persona 之前建好：reload_persona 会往 self.hist 里写 system 段。
         self._hists = {}
         self._cur_src = DEFAULT_SRC
-        # 每个渠道的内存历史**当初是按哪个人设载入的**。
+        # 每个渠道的内存历史**是按哪个人设载入的**。
         # 换人设时靠它判断"这份 hist 能不能留" —— 换了人就不能接着上一段的话说。
         self._hist_persona = {}
 
@@ -385,48 +493,39 @@ class Brain:
 
     def _persona_text_for(self, src):
         """这个渠道的 system 段。缓存的是 build 之后的结果（读文件 + 拼装
-        不便宜，但内容只随人设 key 变）。"""
+        不便宜，但内容只随人设 key 变）。
+
+        🔴 缓存键必须**同时含渠道**：build_system_text 会按 src 选底线
+        （PC 客户端用助手规则、其他渠道用陪伴规则，见 persona_store.
+        ASSISTANT_SRCS）。只按人设 key 缓存的话，同一个人设在 pc 和 app
+        两个渠道会共用同一份文本 —— 改渠道不换底线，助手设定等于没生效，
+        而且症状是"人设文件改了没反应"，极难查。
+        """
         key = self._persona_key_for(src)
+        ckey = "%s\x00%s" % (key, str(src or "app"))
         cache = getattr(self, "_ptext_cache", None)
         if cache is None:
             cache = self._ptext_cache = {}
-        if key not in cache:
+        if ckey not in cache:
             try:
-                cache[key] = build_system_text(load_persona(key) or {})
+                cache[ckey] = build_system_text(load_persona(key) or {}, src=src)
             except Exception:
-                cache[key] = ""
-        return cache[key]
+                cache[ckey] = ""
+        return cache[ckey]
 
     def _draft_rules_for(self, src):
-        """这个渠道的工具使用规则。跟 persona_text 同理，必须跟着人设走：
-        人设换了而规则没换，等于新的人在用旧的人的工具。"""
-        key = self._persona_key_for(src)
-        cache = getattr(self, "_rules_cache", None)
-        if cache is None:
-            cache = self._rules_cache = {}
-        # 🔴 缓存键必须带上渠道，不能只用 persona key。
-        # 「说话多少」是按渠道存的（群里想让她安静点、App 里随她聊），
-        # 两个渠道碰巧用同一套人设时（key 相同），只按 key 缓存
-        # 就会把 App 的密度用到微信上 —— 而这个错"看着一切正常"。
-        ck = (key, str(src or "app"))
-        if ck not in cache:
-            try:
-                base = build_draft_rules(load_persona(key) or {})
-            except Exception:
-                base = ""
-            # 旋钮那段拼在规则尾部：它管的是"说多少"，跟工具规则互不干扰，
-            # 而这个位置紧挨着模型的输出约束，不会被前面的长文淹掉。
-            try:
-                import chatty
-                base = (base or "") + chatty.rule_for(src)
-            except Exception:
-                pass
-            cache[ck] = base
-        return cache[ck]
+        """恒返回空串 —— 行为约束不再由代码拼。
+
+        2026-10-08：规则整体移进人设文件（见 persona_store.build_draft_rules
+        的说明）。这里保留一个空实现，是因为 draft_rules 这个属性在十几处
+        还会被读 —— 直接删属性会让那些地方 AttributeError，而它们其实已经
+        不需要任何规则了。留着返回空串，是"最小改动"而不是"留一半功能"。
+        """
+        return ""
 
     # 🔴 persona_text / draft_rules 走**当前渠道**，不再是一份全局的。
-    # 原来它们在 reload_persona 里按全局 persona_file 生成，而聊天主链路
-    # （hist[0]、主动搭话、朋友圈、moment）全读这两个属性 —— 于是
+    # 这两个属性按全局 persona_file 生成于 reload_persona 内，而聊天主链路
+    # （hist[0]、主动搭话、各渠道）全读这两个属性 —— 于是
     # persona_by_src 配了也白配：分区名算对了、存档分开了，开口却还是
     # 那个全局人设。**症状是"配置改了但她在群里还是旧人"**，
     # 而每处看起来都"按渠道取历史了"，极难查。
@@ -516,20 +615,25 @@ class Brain:
 
         self.persona = load_persona(key_from_config(self.api))
         # 这两行走属性 setter，存进缓存里，下一次读到的就是它。
-        self.persona_text = build_system_text(self.persona)
+        # src 要传：底线按渠道选（PC 客户端是助手规则），不传就默认按
+        # 陪伴渠道拼 —— 助手渠道重载后会拿到陪伴底线，设定又变回去。
+        self.persona_text = build_system_text(self.persona, src=self._cur_src)
         self.draft_rules = build_draft_rules(self.persona)
         # 历史摘要也跟着换人设 —— 摘要里全是"你们聊过什么"，
-        # 不切的话新人设一开口就知道你的旧事（实测：换了人设她还记得
+        # 不切的话新人设一开口就知道你的旧事（症状：换了人设她还记得
         # 上次说摸鱼被老板抓了）。分区跟记忆库一个道理。
         try:
             import recap_store
-            _rs = recap_store.scoped_to(key_from_config(self.api))
+            #渠道要一起给：只切人设不切渠道，微信那半份对话的摘要会落进
+            # app 的分区（跟记忆库同一个道理）。
+            _rs = recap_store.scoped_to(key_from_config(self.api),
+                                        self._cur_src)
             if _rs and _rs != "(默认)":
                 print(f"[大脑] 历史摘要已切到人设分区 {_rs}", flush=True)
         except Exception:
             pass
         # 🔴 渠道绑定可能被改了（面板里换人设就是改 persona_by_src），
-        # 所以连 _hist_persona 里记的"这份历史当初属于谁"也要作废，
+        # 所以连 _hist_persona 里记的"这份历史属于哪个人设"也要作废，
         # 否则 key 变了但 same 判定用的是旧 key 的对照结果，历史会被留下来。
         # 换句话说：改渠道人设必须重载，不然旧的对话历史会跟着新的人设走。
         for src in list(self._hists.keys()):
@@ -572,24 +676,16 @@ class Brain:
         """
         return datetime.datetime.now().strftime("[%m-%d %H:%M] ")
 
-    # 只有他提到这些词，才把日记正文带进上下文。
-    # 早先每轮无条件带，白烧 250 字；而且日记和 life_block 写的是同一批事的
-    # 两种说法，模型看到两份会把日记当成"刚发生的事"讲出来。
-    _DIARY_ASK = ("日记", "日志", "记了啥", "记的啥", "写了啥",
-                  "写了什么", "写到哪", "今天记", "昨天记")
+    # 2026-10-08：日记模块已整体移除。原来这里有 _DIARY_ASK + _wants_diary，
+    # 只有他提到日记才把正文带进上下文；diary_block() 删了之后那个判断
+    # 再没有意义（一句话里再也没有正文可带），所以两个一起删掉。
+    def _life_block(self, aware=True):
+        """她自己的生活 + 自知块。
 
-    def _wants_diary(self, text):
-        t = (text or "").strip()
-        return bool(t) and any(k in t for k in self._DIARY_ASK)
+        aware=False 给"不解释她会什么"的那条路用（那边本来就在自己动手写东西，
+        再塞"你会写这个"是废话，还可能让她在正文里自我指涉）。
 
-    def _life_block(self, aware=True, query=None):
-        """她自己的生活 + （他问起时的）最近一篇日记 + 自知块。
-
-        aware=False 给朋友圈那条路用（Brain.moment）：那边本来就在写一条
-        朋友圈，再塞"你会发朋友圈"是废话，还可能让她在正文里自我指涉。
-
-        query=他这轮说的话，只有提到日记才拼 diary_block()；主动搭话和
-        朋友圈没有"他问的话"，走默认值就不带日记正文。
+        query 参数（"只有他问起才带日记正文"）随之退役。
         """
         if self.life is None:
             return ""
@@ -598,12 +694,8 @@ class Brain:
             b = self.life.life_block()
             if b:
                 parts.append(b)
-            if self._wants_diary(query):
-                d = self.life.diary_block()
-                if d:
-                    parts.append(d)
             if aware:
-                # 让她知道自己会写日记、会发朋友圈，否则她提不起来
+                # 让她知道自己会做什么，否则她提不起来
                 try:
                     sa = self.life.self_aware_block()
                     if sa:
@@ -636,49 +728,35 @@ class Brain:
                         "content": c or "（发了一张图）"})
         return out
 
-    # --- 阶段 A：API 出草稿 ---
-    def draft(self, user_text, memory_block):
-        """出草稿。
+    # --- 公共：组装 system 资料块（draft_native 用）---
+    def _build_system_parts(self, user_text, memory_block):
+        """组装人设+此刻+记忆+历史摘要+生活+约定+贴纸+插件行为引导。
 
-        system 装资料（人设 + 此刻 + 记忆 + 历史摘要 + 她的生活 + 贴纸 + 说话
-        规则），中间是最近 12 条真实对话，最后一条 user = 他的话 + 回话要求。
-
-        必须是多轮 messages：以前把历史拼成"他：…／你：…"一段文本塞进单条
-        user 消息，最近两句被夹在这坨文本中间，注意力被稀释（lost in the
-        middle），表现就是"接不上上一句"。
-
-        历史摘要（recap_store）只走这条路：主动搭话和朋友圈要的是"随口一说"，
-        塞一堆历史反而啰嗦。
+        返回 (parts, life)：parts 是字符串列表，life 是生活块文本（调用方
+        据此决定是否追加 LIFE_RULES）。**不包含**工具使用规则——那是调用方
+        按通道自己加的（FC 通道加工具态度，router 通道加工具结果）。
         """
-        if not self.api.get("api_key"):
-            return None
         parts = [self.persona_text]
-        _rb_len = 0
         tm = self._time_hint()
         if tm:
             parts.append("\n" + tm)
         if memory_block:
             parts.append("\n" + memory_block)
-        # 历史打了时间标签时才说明读法，没打就不花这份 token（见 _stamp）
         if any(str(m.get("content") or "").startswith("[")
                for m in self.hist[1:] if m.get("role") != "system"):
             parts.append("\n" + HIST_TIME_NOTE)
         try:
             import recap_store
-            # 摘要按「人设+渠道」分区：不传的话读的是上一次切过的那个人的
             rb = recap_store.block(
-                persona_key=self._persona_key_for(self._cur_src))
+                persona_key=self._persona_key_for(self._cur_src),
+                src=self._cur_src)
             if rb:
                 parts.append("\n" + rb)
-                _rb_len = len(rb)
         except Exception:
             pass
-        # query=他这轮说的话：日记正文只在他问到的时候才带
-        life = self._life_block(query=user_text)
+        life = self._life_block()
         if life:
             parts.append("\n" + life)
-        # 约定账本（agenda）：有日期、说好的事按日期强制带上，不靠语义检索 ——
-        # "票买了吗"这种短句召不回来。放在生活块之后是故意的：冲突时它离输出更近。
         try:
             import agenda
             ab = agenda.block()
@@ -693,150 +771,459 @@ class Brain:
                 parts.append("\n" + sb)
         except Exception:
             pass
-        # 插件各自的能力说明（plugins/*.py 的 prompt 钩子）。
-        # 位置贴着 system 末尾：跟人设/记忆那些大块比，这段短，放后面照做率高。
-        # 整段 try/except —— 插件炸了顶多少一段提示词，不能让她一句话都说不出来
         try:
             import plugin_host
-            pb = plugin_host.prompt_block()
+            # native=True：跳过工具类插件的标签教学，只留 react/gate 行为引导
+            pb = plugin_host.prompt_block(native=True)
             if pb:
                 parts.append(pb)
         except Exception:
             pass
+        return parts, life
+
+    # --- 前置路由器用的便宜模型配置（复用 plan_and_execute 的 planner_model）---
+    def _router_cfg(self):
+        pa = self.api.get("plan_and_execute") or {}
+        return {
+            "model": pa.get("planner_model") or self.api.get("model"),
+            "api_base": pa.get("api_base") or self.api.get("api_base"),
+            "api_key": pa.get("api_key") or self.api.get("api_key"),
+        }
+
+    def _user_msg_with_rules(self, user_text):
+        """把说话规则贴在他这句话**后面**（不是塞进 system）。
+
+        位置是有讲究的：规则紧跟在"他的原话"之后、离模型输出最近，照做率最高；
+        放进 system 尾部模型敏感度明显低（见 draft_rules 那段老注释）。
+
+        2026-10-08：行为约束整体移进了人设文件（代码不再拼规则，见
+        persona_store.build_draft_rules）。这个函数保留的意义是**万一**人设里
+        写了额外的"回话要求"，仍然能贴到他原话后面 —— 空字符串时原样返回，
+        不产生任何多余分隔符。
+        """
+        rules = self.draft_rules or ""
+        if not rules:
+            return user_text
+        return (user_text + "\n\n—— 下面是回话要求（不是他说的话）——\n"
+                + rules)
+
+    # --- 原生 function calling 多轮（**线上只有这一条**）---
+    #
+    # 历史上还有两条（`draft()` 靠正文里的 [tool:...] 标签、`draft_router()`
+    # 先用便宜模型决定再让主模型组织回答），**都已删除**。删掉的理由不是"没用"，
+    # 而是**同一条链路上有两份提示词、两套工具协议**：
+    #   * `draft()` 是唯一会拼 draft_rules 的地方，而 chat() 不再调它 ——
+    #     于是整块说话规则静默失效（"她不像群友、不会梗、说话多少没反应"）；
+    #   * 它们的提示词还在教 `[tool:...]` 标签，和 tools schema 打架。
+    # 一个决策点只留一条路，这类"改一处漏一处"才不会重演。
+    def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None):
+        """原生 FC 出草稿：工具调用走结构化 tool_calls，时序仍是 ReAct。
+
+        和 draft 的区别只在"工具怎么传"：工具表挂在请求的 tools 字段，模型在
+        message.tool_calls 里请求，执行后以 role:"tool"（带 tool_call_id）在
+        **同一条 messages 链**上回灌继续，直到她给出不含 tool_calls 的正文。
+        不再靠正文里的 [tool:...] 标签和正则。工具结果消息与 assistant 的
+        tool_calls 严格配对（OpenAI 格式要求），否则下一次请求会 400。
+
+        no_tools=True 时**不挂工具表**：给"工具已经查完了、只差组织语言"的
+        场合用（plan 分支的收尾那一步就是）。不关掉的话，主模型会拿计划里
+        刚查过的结果再查一遍 —— 同一条消息两次计费、两次执行。
+        """
+        if not self.api.get("api_key"):
+            return None
+
+        # --- system 资料（与 draft 同源）；工具用法不贴标签教学 ---
+        parts, life = self._build_system_parts(user_text, memory_block)
+        # 原生 FC 的工具使用态度（语法不用教，API 通道处理）
+        parts.append(
+            "\n## 工具\n"
+            "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
+            "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
+            "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
+            "原样倒给他；查不到就照实说查不到。")
+        if life:
+            parts.append("\n" + LIFE_RULES)
+
         msgs = [{"role": "system", "content": "".join(parts)}]
         for m in self.recent_hist():
             msgs.append(m)
-        # 说话规则贴最后一条（紧跟他的原话），约束力最强 —— 放进 system 的话
-        # 模型对尾部规则的照做率明显差。hist 里存的是 user_text 原值，不含这段。
-        # 分隔线不能省：没有它规则会紧贴原话，模型偶尔把"只输出你会说的话本身"
-        # 当成他说的。
-        tail = (user_text + "\n\n—— 下面是回话要求（不是他说的话）——\n"
-                + self.draft_rules)
-        if life:
-            tail += "\n" + LIFE_RULES
-        msgs.append({"role": "user", "content": tail})
-        # 这一轮的输入有多大，出问题时先看这个（配合 trace 落盘）
+        # 说话规则贴在他原话后面（**不是 system**）—— 见 _user_msg_with_rules
+        msgs.append({"role": "user",
+                     "content": self._user_msg_with_rules(user_text)})
+
+        import tools as _tools
+        import plugin_host as _ph
+        # features.tools 总开关：关了就不挂工具表（退化成普通聊天）。
+        # tools.all_specs 里也判了同一个开关 —— 两处都留是有意的：这里判能省掉
+        # 一次 all_specs 的调用（它会去问技能宿主），那边判保证别的调用方也管得住。
+        tool_specs = None
+        if not no_tools:
+            try:
+                import features as _feat
+                _tools_on = bool(_feat.on("tools", ctx_src))
+            except Exception:
+                _tools_on = True
+            # 明确是寒暄就不挂工具表 —— 省掉这一轮 ~1100 token 的 schema。
+            # 判据很保守（见 tools.schema_needed）：短句 + 没有任何"可能要查"的字。
+            # 该挂没挂她答不上来（用户看得见），不该挂却挂了只是贵（看不见），
+            # 所以宁可多挂。
+            if _tools_on and _tools.schema_needed(user_text):
+                tool_specs = _tools.all_specs(brain=self, src=ctx_src or self._cur_src)
+        ctx = _ph.Turn(text=user_text, src=ctx_src or self._cur_src, brain=self)
+
         self.last_sizes = {
-            "persona": len(self.persona_text),
-            "time": len(tm or ""),
-            "memory": len(memory_block or ""),
-            "history_note": len(HIST_TIME_NOTE) if any(
-                str(m.get("content") or "").startswith("[")
-                for m in self.hist[1:] if m.get("role") != "system") else 0,
-            "recap": _rb_len,
-            "life": len(life or ""),
-            "rules": len(self.draft_rules or "") + (len(LIFE_RULES) if life else 0),
-            "hist_msgs": len(self.recent_hist()),
             "total": sum(len(m.get("content") or "") for m in msgs),
+            # `or []` 不能省：关掉 features.tools、或者 no_tools=True 时
+            # tool_specs 就是 None，len(None) 会抛 TypeError —— 被外层 except
+            # 吞掉之后整轮变成"API失败"，用户看到"我脑子有点转不动"。
+            # 也就是说**把"工具"开关关掉会让她整个不能说话**，只是这条
+            # 链路没人走所以没暴露。
+            "tools": len(tool_specs or []),
+            # 说话规则有多长也要记 —— 它漏掉过一次（整块规则没进提示词），
+            # trace 里有这个数就能一眼看出来"规则是空的"。
+            "rules": len(self.draft_rules or ""),
         }
         self.last_usage = None
         self.last_ms = None
         self.last_err = ""
+        self.last_think = ""
         _t0 = time.time()
-        # 重试一次，只重试"下一次可能就好了"的错：网络异常 / 超时 / 429 / 5xx。
-        # 401、402 重试没用还照样费钱。代价是最坏情况延迟翻倍，server 侧有超时兜着。
-        _last_exc = None
-        for _attempt in range(2):
-            _retry = False
+        _uin = _uout = 0
+        used = []
+
+        try:
+            # 工具循环的轮数与时间预算。
+            #
+            # 🔴 原来是 6 轮 / 150 秒 —— 对"查天气、算个数"够，对**多步任务**不够：
+            # "帮我把下载目录按类型分好类"要先列目录、再逐类建子目录、再一批批移动，
+            # 6 轮里连热身都算不上，最后只能跟人说"我脑子转不动了"。
+            # 干这种活得留够轮次，同时把时间预算放宽（每一步都要等人点确认，
+            # 而确认框可能是几分钟后才被点掉的）。
+            #
+            # 光有轮次上限不够：每轮 90s 超时，轮数 × 90s 是最坏情况。
+            # 聊天锁的等待上限是 CHAT_LOCK_WAIT（300s）—— 超预算会让第二条消息
+            # 在第一条还正常干活时被判"忙碌"。所以预算既是防跑飞的闸，
+            # 也是**别把聊天锁占穿**的约束。
+            # 这两个值都能在 config 里覆盖，测试也靠它把时间调短。
+            _max_rounds = int(self.api.get("tool_max_rounds") or 24)
+            _budget_s = float(self.api.get("tool_budget_seconds") or 270)
+            # 知识/技术类问题走"详细回答模式"：max_tokens 放大、思考档位提高，
+            # 配合人设规则里的"正经问题不拆短句"例外 —— 不然同一个模型，
+            # 官网能给完整长文，这边只有三五个字的名词气泡，差距肉眼可见。
+            _know = _is_knowledge_q(user_text)
+            # 4096 而不是 2048：思考 token 和正文共享这个上限，
+            # 思考长了的话 2048 会把正文截断 —— 又回到"答一半"
+            _mt = 4096 if _know else 600
+            _eff = "medium" if _know else "low"
+            # XML 模式下，工具结果已经拼到用户消息里了，下一轮不挂工具表，
+            # 避免模型继续调用工具陷入死循环。
+            _next_no_tools = False
+            for _round in range(_max_rounds):
+                if time.time() - _t0 > _budget_s:
+                    self.last_err = "工具循环超过 %.0fs 预算：%s" % (_budget_s, "、".join(used))
+                    print("[大脑] %s" % self.last_err, flush=True)
+                    break
+                _payload = {
+                    "model": self.api.get("model", "deepseek-chat"),
+                    "messages": msgs,
+                    "temperature": 0.85,
+                    # 详细回答模式给足空间；闲聊维持原值
+                    "max_tokens": _mt,
+                    "reasoning_effort": _eff,
+                }
+                if tool_specs and not _next_no_tools:
+                    _payload["tools"] = tool_specs
+                    _payload["tool_choice"] = "auto"
+                r = httpx.post(
+                    self.api["api_base"].rstrip("/") + "/chat/completions",
+                    headers={"Authorization": "Bearer " + self.api["api_key"]},
+                    json=_payload,
+                    timeout=90,
+                )
+                r.raise_for_status()
+                _j = r.json()
+                try:
+                    _u = _j.get("usage") or {}
+                    _uin += int(_u.get("prompt_tokens") or 0)
+                    _uout += int(_u.get("completion_tokens") or 0)
+                except Exception:
+                    pass
+
+                msg = _j["choices"][0]["message"]
+                tcs = msg.get("tool_calls") or []
+
+                # XML 兜底：部分供应商（小米 MiMo 等）不支持结构化 tool_calls，
+                # 模型会在正文里输出 <tool_call><function=Bash>...</tool_call>。
+                # 解析出来走同一条执行链路，剥掉标签后的正文才是给用户看的。
+                _raw_content = msg.get("content") or ""
+                _xml_mode = False
+                if not tcs and _raw_content:
+                    _xml_tcs = _parse_xml_tool_calls(_raw_content)
+                    if _xml_tcs:
+                        tcs = _xml_tcs
+                        _xml_mode = True
+                        print("[大脑] 从正文解析到 %d 个 XML 工具调用: %s"
+                              % (len(tcs), "、".join(
+                                  (tc.get("function") or {}).get("name", "")
+                                  for tc in tcs)), flush=True)
+
+                # 没有工具调用 → 这就是最终回复
+                if not tcs:
+                    self.last_ms = int((time.time() - _t0) * 1000)
+                    self.last_usage = {"in": _uin, "out": _uout}
+                    raw = _raw_content
+                    # 思考过程提取（react.on_reply 从 self.last_think 读）：
+                    # 优先用原生 reasoning_content 字段，回退到 <think> 正则
+                    self.last_think = _extract_reasoning(msg, raw)
+                    self.last_tools_used = used
+                    return _clean(raw, keep_newlines=True)
+
+                # 记录用到的工具
+                for tc in tcs:
+                    _nm = (tc.get("function") or {}).get("name") or ""
+                    if _nm and _nm not in used:
+                        used.append(_nm)
+
+                # 执行所有工具调用，收集结果
+                _tool_results = []
+                for tc in tcs:
+                    _fn = tc.get("function") or {}
+                    try:
+                        _args = json.loads(_fn.get("arguments") or "{}")
+                    except Exception:
+                        _args = {}
+                    _result = _tools.invoke_spec(
+                        _fn.get("name") or "", _args, ctx)
+                    _tool_results.append((_fn.get("name") or "", _result))
+
+                if _xml_mode:
+                    # 🔴 XML 模式：MiMo 等不支持 role:tool 回灌的供应商。
+                    # 把工具结果拼到一条用户消息里，模型看到结果后继续生成最终回复。
+                    # 不回灌 assistant 的 tool_calls 字段（MiMo 不认，会卡死）。
+                    _result_text = "\n".join(
+                        "【工具结果 %s】\n%s" % (n, r or "查询失败，照实说查不到，别编")
+                        for n, r in _tool_results)
+                    msgs.append({
+                        "role": "user",
+                        "content": "（系统提示：以下是你刚才调用工具的返回结果，"
+                                   "请根据结果用你自己的话回答他，不要再调用工具。）\n"
+                                   + _result_text,
+                    })
+                    _next_no_tools = True
+                else:
+                    # 原生 FC 模式：OpenAI 格式回灌
+                    # 1) 原样回传带 tool_calls 的 assistant 消息
+                    msgs.append({
+                        "role": "assistant",
+                        "content": _strip_xml_tool_calls(_raw_content),
+                        "tool_calls": tcs,
+                    })
+                    # 2) 每个调用配一条 role:tool 结果（tool_call_id 对齐）
+                    for tc, (_name, _result) in zip(tcs, _tool_results):
+                        msgs.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id"),
+                            "content": _result or "查询失败，照实说查不到，别编",
+                        })
+
+            # 轮次用完了 / 超预算：**不再挂工具，逼她出一段正文**。
+            #
+            # 🔴 这里不能直接 return None —— 那样 chat() 判成"API失败"、用户看到
+            # "……我脑子有点转不动，等会儿再聊？"，而她其实全程都在正常干活，
+            # 只是陷在工具循环里。最后一次不挂 tools，模型只能组织语言，
+            # 通常能拿到一段正常回复（工具结果都还在 msgs 里）。
+            if not self.last_err:
+                self.last_err = "工具循环超过 %d 轮上限：%s" % (_max_rounds, "、".join(used))
+                print("[大脑] %s" % self.last_err, flush=True)
             try:
                 r = httpx.post(
                     self.api["api_base"].rstrip("/") + "/chat/completions",
                     headers={"Authorization": "Bearer " + self.api["api_key"]},
-                    json={"model": self.api.get("model", "deepseek-chat"),
-                          "messages": msgs,
-                          # 90 个 token 只够 60~90 个汉字，她想多说两句就被硬截断
-                          "temperature": 0.85, "max_tokens": 200,
-                          # GLM 系默认先思考几百字，聊天气泡等不起
-                          "reasoning_effort": "low"},
+                    json={
+                        "model": self.api.get("model", "deepseek-chat"),
+                        "messages": msgs + [{
+                            "role": "user",
+                            "content": "（系统提示：工具已经查完了。现在直接用"
+                                       "你自己的话回答他，不要再调用任何工具。）",
+                        }],
+                        "temperature": 0.85,
+                        "max_tokens": _mt,
+                        "reasoning_effort": _eff,
+                    },
                     timeout=60,
                 )
-                if r.status_code == 429 or r.status_code >= 500:
-                    _last_exc = RuntimeError("HTTP %d %s"
-                                             % (r.status_code, r.reason_phrase))
-                    _retry = True
-                else:
-                    r.raise_for_status()
-                    _j = r.json()
-                    self.last_ms = int((time.time() - _t0) * 1000)
-                    # token 用量上游在 usage 里回，拿不到就算了
-                    try:
-                        _u = _j.get("usage") or {}
-                        self.last_usage = {
-                            "in": int(_u.get("prompt_tokens") or 0),
-                            "out": int(_u.get("completion_tokens") or 0)}
-                    except Exception:
-                        self.last_usage = None
-                    raw = _j["choices"][0]["message"]["content"] or ""
-                    # _clean() 会删掉 <think>，先提取出来存到 self.last_think
-                    # react.on_reply 从这里读，因为 _clean() 之后文本里已经没有 think 了
-                    _m = re.search(r"<think>(.*?)</think>", raw, re.S)
-                    self.last_think = (_m.group(1).strip() if _m else "")
-                    # 兜底：被截断的 think（只有 <think> 没有 </think>，被 max_tokens 砍了）
-                    if not self.last_think and "<think>" in raw:
-                        self.last_think = raw.split("<think>", 1)[1].strip()
+                r.raise_for_status()
+                _j = r.json()
+                try:
+                    _u = _j.get("usage") or {}
+                    _uin += int(_u.get("prompt_tokens") or 0)
+                    _uout += int(_u.get("completion_tokens") or 0)
+                except Exception:
+                    pass
+                _msg = _j["choices"][0]["message"]
+                raw = _msg.get("content") or ""
+                self.last_ms = int((time.time() - _t0) * 1000)
+                self.last_usage = {"in": _uin, "out": _uout}
+                self.last_tools_used = used
+                if raw.strip():
+                    # 思考过程提取：优先原生 reasoning_content，回退 <think> 正则
+                    self.last_think = _extract_reasoning(_msg, raw)
                     return _clean(raw, keep_newlines=True)
-            except httpx.HTTPStatusError as e:
-                _last_exc = e
-                _c = getattr(e.response, "status_code", 0)
-                _retry = (_c == 429 or _c >= 500)
-            except Exception as e:                  # 连不上 / 超时 / 解析失败
-                _last_exc = e
-                _retry = True
-            if not _retry or _attempt == 1:
-                break
-            print("[大脑] 上游这次没成（%s），隔 1.5 秒重试一次"
-                  % type(_last_exc).__name__, flush=True)
-            time.sleep(1.5)
-        self.last_ms = int((time.time() - _t0) * 1000)
-        self.last_err = "%s: %s" % (type(_last_exc).__name__,
-                                    str(_last_exc)[:120])
-        return None
+            except Exception as e:
+                print("[大脑] 收尾那次也失败：%s: %s"
+                      % (type(e).__name__, str(e)[:100]), flush=True)
+            self.last_ms = int((time.time() - _t0) * 1000)
+            self.last_usage = {"in": _uin, "out": _uout}
+            self.last_tools_used = used
+            return None
+        except Exception as e:
+            self.last_ms = int((time.time() - _t0) * 1000)
+            self.last_usage = {"in": _uin, "out": _uout}
+            self.last_err = "%s: %s" % (type(e).__name__, str(e)[:120])
+            print("[大脑] 原生FC失败：%s" % self.last_err, flush=True)
+            if tool_specs:
+                # 🔴 **降级：去掉工具表再来一次。**
+                #
+                # 上游不认 tools 的时候（换模型/换供应商、参数被静默拒绝、
+                # 或者某次 schema 校验不过）整轮会走到这里。直接 return None
+                # 的话 chat() 判成"API失败"→ 她一句都说不出来 —— 而
+                # "还能说话、只是这次没查"要好得多，这也是 router 模式唯一
+                # 真正比 native 强的地方，搬过来。
+                #
+                # 递归调用带 no_tools=True，所以最多降级一次，不会打转。
+                print("[大脑] 去掉工具表重试一次", flush=True)
+                return self.draft_native(user_text, memory_block,
+                                         no_tools=True, ctx_src=ctx_src)
+            return None
 
-    # --- 朋友圈专用：不走聊天框架 ---
-    def moment(self, prompt, max_tokens=260):
-        """生成一条朋友圈（要发就返回"发\\n正文…"，不发返回"无"）。
+    # --- 前置判断（router）：便宜模型先决策并调工具，主模型只组织回答 ---
+    #
+    # **当前没有被 chat() 调用**（线上走 draft_native）。保留是因为它省 token
+    # --- 流式聊天：实时产出思考过程和正文 ---
+    def stream_chat(self, user_text, src=None):
+        """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
-        必须走这条干净通道，不能复用 chat()：chat() 会把提示词包成
-        「他现在对你说：<提示词>」，还塞进最近聊天记录与贴图清单，于是模型
-        把它当成"他发来的一条消息"，只回一个字「发」，正文没了、朋友圈发不出去。
-        这里不碰 self.hist，所以不用加锁，也不该拖住 App 那边的聊天。
+        产出的事件格式：
+          {"type": "think", "text": "..."}   — 思考过程增量
+          {"type": "text", "text": "..."}    — 正文增量
+          {"type": "done", "text": "..."}    — 完成，带完整正文
+          {"type": "error", "msg": "..."}    — 出错
+
+        🔴 当前版本**不支持工具调用**：需要工具时模型会在正文里说明，
+        客户端可降级到非流式 /api/chat。工具调用的流式支持后续再加。
         """
         if not self.api.get("api_key"):
-            return ""
-        parts = [self.persona_text]
-        tm = self._time_hint()
-        if tm:
-            parts.append("\n" + tm)
-        life = self._life_block(aware=False)
+            yield {"type": "error", "msg": "没配 API key"}
+            return
+
+        if src:
+            self.use_src(src)
+
+        # 复用 draft_native 的 system prompt 构建逻辑
+        parts, life = self._build_system_parts(user_text, "")
+        parts.append(
+            "\n## 工具\n"
+            "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
+            "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
+            "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
+            "原样倒给他；查不到就照实说查不到。")
         if life:
-            parts.append("\n" + life)
-        parts.append("\n" + prompt)
+            parts.append("\n" + LIFE_RULES)
+
+        msgs = [{"role": "system", "content": "".join(parts)}]
+        for m in self.recent_hist():
+            msgs.append(m)
+        msgs.append({"role": "user", "content": self._user_msg_with_rules(user_text)})
+
+        _know = _is_knowledge_q(user_text)
+        _mt = 4096 if _know else 600
+        _eff = "medium" if _know else "low"
+
+        payload = {
+            "model": self.api.get("model", "deepseek-chat"),
+            "messages": msgs,
+            "temperature": 0.85,
+            "max_tokens": _mt,
+            "reasoning_effort": _eff,
+            "stream": True,
+        }
+
+        think_buf = []
+        text_buf = []
+        _t0 = time.time()
+        _uin = _uout = 0
+
         try:
-            r = httpx.post(
+            with httpx.stream(
+                "POST",
                 self.api["api_base"].rstrip("/") + "/chat/completions",
                 headers={"Authorization": "Bearer " + self.api["api_key"]},
-                json={"model": self.api.get("model", "deepseek-chat"),
-                      "messages": [{"role": "user", "content": "".join(parts)}],
-                      "temperature": 0.95, "max_tokens": max_tokens,
-                      "reasoning_effort": "low"},
-                timeout=90,
-            )
-            r.raise_for_status()
-            return _clean(r.json()["choices"][0]["message"]["content"],
-                          keep_newlines=True)
+                json=payload,
+                timeout=120,
+            ) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except Exception:
+                        continue
+                    try:
+                        _u = obj.get("usage") or {}
+                        _uin += int(_u.get("prompt_tokens") or 0)
+                        _uout += int(_u.get("completion_tokens") or 0)
+                    except Exception:
+                        pass
+                    choices = obj.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    rc = delta.get("reasoning_content", "")
+                    c = delta.get("content", "")
+                    if rc:
+                        think_buf.append(rc)
+                        yield {"type": "think", "text": rc}
+                    if c:
+                        text_buf.append(c)
+                        yield {"type": "text", "text": c}
         except Exception as e:
-            print(f"[perf] 朋友圈生成失败：{str(e)[:80]}", flush=True)
-            return ""
+            yield {"type": "error", "msg": "%s: %s" % (type(e).__name__, str(e)[:120])}
+            return
+
+        full_text = "".join(text_buf)
+        full_think = "".join(think_buf)
+        self.last_think = full_think
+        self.last_ms = int((time.time() - _t0) * 1000)
+        self.last_usage = {"in": _uin, "out": _uout}
+        self.last_tools_used = []
+
+        # 存进历史（和 chat 方法一致）
+        try:
+            self._log_turn(user_text, full_text, img=None)
+        except Exception:
+            pass
+
+        yield {"type": "done", "text": full_text, "think": full_think}
 
     # --- 对外：说一句话 ---
-    def chat(self, user_text, proactive=False, img=None, log=True, src=None):
+    def chat(self, user_text, proactive=False, img=None, log=True, src=None,
+             no_tools=False):
         """返回 (她说的话, 模式标签)。模式标签用于排查到底走的哪条路
 
         img：这一轮带的图片路径（有的话会记进聊天存档，手机/App 那边好显示）。
         图片内容本身早就在 user_text 里被描述成文字了 —— 她看不见像素，只看得见描述。
 
         src：渠道（app / wechat）。决定这轮读哪份人设、哪份对话历史、哪个记忆分区。
-        不传就是主渠道（手机 App）。主动搭话和朋友圈不算渠道对话，走主渠道。
+        不传就是主渠道。主动搭话不算渠道对话，走主渠道。
+
+        no_tools：不挂工具表。给 plan 分支的收尾那一步用（工具已经查过了，
+        再挂一遍等于同一条消息查两次、计费两次）。
         """
         from memory_store_v2 import MemoryStore, classify_her_speech
 
@@ -849,25 +1236,61 @@ class Brain:
 
         memory_block = ""
         # 短句闲聊（"嗯""在吗""哈哈"）不检索：这种话本身没信息量，硬凑出来的
-        # "最相关"记忆反而把她的话题带跑。阈值 0.25 → 0.40。
+        # "最相关"记忆反而把她的话题带跑。
+        #
+        # 🔴 **别用长度当判据。** 用 `len(q) >= 6` 会导致
+        #   "康神是谁"（4 字）—— 恰恰是**最需要记忆**的那类短句 —— 被整条跳过：
+        # 她一条记忆都拿不到，回一句"没听说过这个人"。
+        # 而那条记忆明明在库里、检索分数还排第一（0.6893）。
+        # 两个渠道都会命中这个问题，"康神开播了"（5 字）也在此列。
+        #
+        # 判"是不是纯寒暄"用 tools.is_smalltalk：它认的是**内容**
+        # （"谁""什么""哪""几"这些字一出现就照检索），不是字数。
+        #
+        # 🔴 注意这和"挂不挂工具表"是**两个独立的决策**，只是碰巧共用一个判据。
+        # 工具问的是"有没有需要**外部**信息的东西"，记忆问的是"有没有可能
+        # **勾起**她记得的事" —— 前者为否不蕴含后者为否。所以别把两件事
+        # 合成一个 if（这轮已经因为这种耦合栽过一次）。
         q = (user_text or "").strip()
         _m = self._mem_for()
-        if _m is not None and len(q) >= 6:
-            try:
-                _t1 = time.time()
-                memory_block = _m.render(query=q, top_k=5,
-                                              chan=self._cur_src)
-                print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
-            except Exception:
-                memory_block = ""
+        try:
+            import tools as _tl
+            _want_mem = not _tl.is_smalltalk(q)
+        except Exception:
+            # 判不了就检索 —— 多检索一次的代价远小于"该记得的没记得"
+            _want_mem = bool(q)
+        if _m is not None and _want_mem:
+            # 向量检索开关：config.json 里 memory_search.enabled=false 时不检索，
+            # 省 embed API 调用。后台记忆抽取照常跑，只是不做语义召回。
+            _ms_cfg = (self.api.get("memory_search") or {}) if isinstance(self.api.get("memory_search"), dict) else {}
+            if _ms_cfg.get("enabled", True):
+                try:
+                    _t1 = time.time()
+                    memory_block = _m.render(query=q, top_k=5,
+                                                  chan=self._cur_src)
+                    print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
+                except Exception:
+                    memory_block = ""
 
         draft = None
         if self.mode in ("two_stage", "api"):
             _t2 = time.time()
-            draft = self.draft(user_text, memory_block)
-            print(f"[perf] GLM 起草 {time.time()-_t2:.1f}s "
+            # 主动搭话的 user_text 是"说/无"那个决策提示词，不是用户的话 ——
+            # 那种轮次不会有工具需求，挂上去纯属白花钱。
+            draft = self.draft_native(user_text, memory_block,
+                                      no_tools=no_tools or proactive,
+                                      ctx_src=self._cur_src)
+            print(f"[perf] 原生FC起草 {time.time()-_t2:.1f}s "
                   f"({'有稿' if draft else '没稿'})", flush=True)
         self.last_draft = draft
+
+        # 风控拒答：**照旧显示**（那是平台的话，如实给用户看，也方便知道是谁拦的），
+        # 但不入她的对话历史/记忆 —— 它不是她说的，混进她的口吻里会越聊越怪。
+        # 2026-10-07 用户决定：**不做自动降级** —— 换一家重问，
+        # 同一段记忆、同一套人设换个模型说出来的就不是同一个人了。
+        _refused = bool(draft) and is_provider_refusal(draft)
+        if _refused:
+            print("[风控] 服务商拒答，本条不入她的历史", flush=True)
 
         # 这里曾有一层「本地 4B 兜底」，已移除：bitsandbytes 的 4bit 量化要 CUDA，
         # 本机是 AMD 卡，那层从没真跑起来过。拿不到稿就明说。
@@ -879,7 +1302,8 @@ class Brain:
             self.last_mode = "API失败"
         # 失败时的兜底话不能当"她说过的话"存。欠费那阵主动搭话每 40 分钟失败
         # 一次，攒了 97 条一模一样的记录，重启灌回上下文后历史里全是同一句。
-        _failed = (self.last_mode == "API失败")
+        # 风控拒答同理：那句英文拒答语更不能进历史（它压根不是她说的）
+        _failed = (self.last_mode == "API失败") or _refused
 
         # 记忆抽取挪到后台：提取 API 一旦慢（25s 超时）也不能拖住回复
         # 主动搭话的输入是「说/无」决策提示词，要抽记忆得先剥掉那个前缀，
@@ -921,13 +1345,13 @@ class Brain:
 
                     # 她自己说的承诺/约定也要记。以前只抽用户的话，于是她说过的
                     # "明天去望江楼拍银杏"她自己也检索不到，回过头来只能编一个
-                    # 别的（实测编过"下午那个高铁"）。先按语气过滤：假设句、玩笑、
+                    # 别的（曾编造过"下午那个高铁"）。先按语气过滤：假设句、玩笑、
                     # 天气播报都不进。
                     saved = 0
                     if her_text:
                         # 逐行判断，不只看第一句。她一回常是两段：
                         # "行，你复习你的高数去吧。" + "我下午正好闲着，…明天望江楼用。"
-                        # 承诺常在第二句，只看第一句等于白抽（实测 hers=0 的原因）。
+                        # 承诺常在第二句，只看第一句等于白抽（hers=0 即由此而来）。
                         for ln in [x.strip() for x in her_text.splitlines() if x.strip()]:
                             ok, why = classify_her_speech(ln)
                             if not ok:
@@ -973,11 +1397,11 @@ class Brain:
         if len(self.hist) > self.history_turns + 1:
             self.hist = [self.hist[0]] + self.hist[-self.history_turns:]
         self.last_active = datetime.datetime.now()   # 记时间，供"离开时长"用
-        # 当天的对话流水，晚上写日记要用（不然无从下笔）
+        # 当天的对话流水（生活补算要用 —— 不然接不上她经历过什么）
         if self.life is not None and not _failed:
             self.life.log_chat("user", user_text)
             self.life.log_chat("assistant", ans)
-        # 聊天记录存档，重启后聊天窗能接着看。朋友圈决策这类内部调用不进
+        # 聊天记录存档，重启后聊天窗能接着看。摘要这类内部调用不进
         if log and not _failed:
             self._log_turn(user_text, ans, img=img)
         return ans, self.last_mode
@@ -987,8 +1411,10 @@ class Brain:
         """把这一轮存进 chat_history.jsonl。写不进去也不能影响聊天。
 
         img 是可选的图片路径 —— 手机/App 靠它把图显示出来，只加在 user 那条上。
-        她的回复按段拆开各存一行：App 一行一个气泡，不拆的话重开 App 后
-        刚才连发的几条会并回一个大泡，前后对不上。
+
+        🔴 2026-10-08：客户端（pc）不拆分，整条回复存成一条消息。
+        拆分是为微信渠道设计的（微信一条消息有长度限制），客户端没有这个限制，
+        拆成多条会显示成一堆气泡，而且 Markdown 格式被拆碎了渲染不出来。
         """
         try:
             t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -997,7 +1423,12 @@ class Brain:
                 u["img"] = img
             with open(self._log_for(self._cur_src), "a", encoding="utf-8") as f:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
-                for piece in split_messages(ans):
+                # pc 渠道不拆分；微信等渠道按 split_messages 拆
+                if self._cur_src == "pc":
+                    pieces = [ans] if (ans or "").strip() else []
+                else:
+                    pieces = split_messages(ans)
+                for piece in pieces:
                     f.write(json.dumps({"t": t, "role": "assistant", "text": piece},
                                        ensure_ascii=False) + "\n")
         except OSError:
@@ -1088,7 +1519,7 @@ class Brain:
         hook = (scene.get("hook") or "").strip()
         source = (scene.get("source") or "").strip()
         # 主动搭话只属于主渠道：她是看着你的电脑开口的，不是看着微信。
-        # 不切回来的话，上一轮如果停在微信侧，她这句话会落进微信那份历史里，
+        # 不切回来的话，若当前停在微信侧，她这句话会落进微信那份历史里，
         # 而你在手机上根本看不到 —— 等于凭空多了一段她说过的话。
         # 放在空内容判断之前：早退的那条路同样会把当前渠道留在微信上。
         self.use_src(DEFAULT_SRC)

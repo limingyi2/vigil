@@ -1,0 +1,14 @@
+{
+  "activity_url": "https://cloud.tencent.com/act",
+  "target_keyword": "轻量应用服务器",
+  "target_price": "38",
+  "seckill_times": ["10:00", "15:00"],
+  "提前启动秒数": 120,
+  "点击间隔毫秒": 100,
+  "最大重试次数": 50,
+  "并发页面数": 3,
+  "cookie_file": "tencent_cookie.json",
+  "headless": false,
+  "地域": "广州",
+  "时长": "1年"
+}

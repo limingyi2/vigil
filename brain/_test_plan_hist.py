@@ -21,6 +21,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
                               errors="replace")
@@ -148,7 +149,8 @@ def load_server_funcs(names, consts=()):
                 found.update(tgt)
     missing = set(names) - found
     assert not missing, "server.py 里没有这些函数：%s" % missing
-    ns = {"os": os, "datetime": datetime, "print": print}
+    ns = {"os": os, "datetime": datetime, "print": print,
+          "threading": threading}
     exec(compile(ast.Module(body=keep, type_ignores=[]), "server.py", "exec"), ns)
     return ns
 
@@ -248,8 +250,26 @@ def main():
     body = _a.dump(fn)
     chk("TOOL_TAG_ANY_RE" in body,
         "规划分支里有清扫（不然 [tool:x] 会直接发给用户）")
-    chk("run_chat_with_tools" in body,
-        "规划失败时还有 ReAct 兜底那条路")
+    # 规划失败（should_plan 假阳性、plan 返回空、执行抛异常）必须落到一条
+    # 能答的路径上。原先断言的是 tools.run_chat_with_tools（外层标签 ReAct），
+    # 现在那条路已经并进 brain.draft_native，这里判的是 _once 直答。
+    #
+    # ⚠️ 别按字符串切（"except Exception as e" 在 ast.dump 里根本不是这句，
+    # rfind 返回 -1，tail 变成末尾一个字符，判据恒红）。按 AST 结构取：
+    # 最后一个 Try 的 handler 之后那些语句，就是兜底那段。
+    stmts = fn.body
+    last_try = None
+    for st in stmts:
+        if isinstance(st, _a.Try):
+            last_try = st
+    chk(last_try is not None, "规划分支包在 try 里（异常时才走得到兜底）")
+    tail_stmts = []
+    if last_try is not None:
+        after = stmts[stmts.index(last_try) + 1:]
+        tail_stmts = [_a.dump(s) for s in after]
+    tail = " ".join(tail_stmts)
+    chk("_once" in tail and "TOOL_TAG_ANY_RE" in tail,
+        "规划异常之后还有一条能直接答的兜底（且同样清扫标签）")
 
     print("\n== 5. planner.py 的 print 里不许有 emoji ==")
     # 云端控制台 GBK，print emoji 抛 UnicodeEncodeError；检查器那行在 try 之外，

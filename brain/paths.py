@@ -7,7 +7,7 @@
 config/  config.json 主配置、world.json 世界设定、personas/ 人设
 plugins/ 插件：每个 .py 是一个功能块（reminder 闹钟、calc 算数…），
          加新功能只往这里丢文件，核心代码不改
-data/    memory 记忆库、her_life 经历流、journal 日记、summary 历史摘要、
+data/    memory 记忆库、her_life 经历流、summary 历史摘要、
          chat_history.jsonl 聊天存档、upload 手机发来的图、run 运行时标记
 logs/watchdog.log 看门狗日志        archive/ 备份与旧数据
 """
@@ -31,11 +31,12 @@ PERSONA_DIR = os.path.join(CONFIG_DIR, "personas")
 # --- data/：程序自己写的 ---
 MEMORY_DIR = os.path.join(DATA_DIR, "memory")
 LIFE_DIR = os.path.join(DATA_DIR, "her_life")
-JOURNAL_DIR = os.path.join(DATA_DIR, "journal")
 SUMMARY_DIR = os.path.join(DATA_DIR, "summary")      # 历史摘要（聊过什么）
 UPLOAD_DIR = os.path.join(DATA_DIR, "upload")
 STICKERS_DIR = os.path.join(DATA_DIR, "stickers")    # 她收藏的表情包
 PLUGIN_DATA_DIR = os.path.join(DATA_DIR, "plugins")  # 插件自己的持久化
+KB_DIR = os.path.join(DATA_DIR, "kb")                # 本地知识库：语料块 + 向量索引
+DEVICES_PATH = os.path.join(DATA_DIR, "devices.json")  # 已绑定设备表（只存 token 哈希）
 RUN_DIR = os.path.join(DATA_DIR, "run")
 CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 
@@ -43,15 +44,25 @@ CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 # 她同时在手机 App 和微信上跟同一个人说话，两边要是共用一份历史，
 # 在 App 里说的"我在宿舍"会顺着微信那头的上下文往下编。
 # 每个渠道一份聊天存档，互不读取。渠道名同时用于记忆库分区（见 memory_store_v2）。
-# 生活流和朋友圈不分区 —— 那是同一个人在过同一种日子，分开反而不一致。
-CHANNELS = ("app", "wechat")
+# 生活流不分区 —— 她过的是同一种日子，分开反而不一致。
+CHANNELS = ("app", "wechat", "wechat_group", "pc")
 
 
 def chat_log_for(src="app"):
-    """按渠道取聊天存档路径。app 沿用老文件名，老数据不用搬。"""
-    src = (src or "app").strip().lower()
-    if src not in CHANNELS:
-        src = "app"
+    """按渠道取聊天存档路径。app 沿用老文件名，老数据不用搬。
+
+    🔴 渠道名**不在这份白名单里也要照样分一份存档**（2026-10-08）。
+    原来这里 `if src not in CHANNELS: src = "app"` —— 认不出的渠道一律
+    并进 app，于是：
+      · 微信群（src=wechat_group）的对话被写进 chat_history.jsonl，
+        也就是**手机 App 那一份**。手机上打开聊天记录会看到群里的对话，
+        而群和私聊的记忆、摘要也搅在一起（她会把群里的反应拿去回答私聊）。
+      · 拼错一个字符的后果不是"多一份空历史"，而是**静默污染主渠道**。
+    CHANNELS 留着（给 recap 遍历等按名单轮询的地方用），但存档路径不再
+    拿它当准入 —— `scope_name` 那边本来也是只做字符过滤、不看白名单，
+    两处不一致才让"分区名算对了、文件却写错地方"这种问题反复出现。
+    """
+    src = (src or "app").strip().lower() or "app"
     if src == "app":
         return CHAT_LOG
     return os.path.join(DATA_DIR, "chat_history.%s.jsonl" % src)
@@ -65,7 +76,7 @@ def chat_log_for(src="app"):
 # 所以每个「人设 × 渠道」组合一份数据。**不按人设分区的东西**：配置本身、
 # 表情包、图库、look_refs —— 那是素材，不是记忆。
 #
-# 生活流 / 朋友圈 / 日记也分区：换了人设就是换了个人，她过去那阵子过的是
+# 生活流也分区：换了人设就是换了个人，她过去那阵子过的是
 # 另一个人的日子。只有"当前人设的日常"会继续往前长。
 def scope_name(persona_key="", src="app"):
     """算出一个人设+渠道的数据分区名。默认人设返回 ""（沿用老路径，老数据不用搬）。"""
@@ -112,8 +123,8 @@ WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
 
 # 会自动建出来的目录
 _DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR,
-         MEMORY_DIR, LIFE_DIR, JOURNAL_DIR, SUMMARY_DIR, UPLOAD_DIR,
-         STICKERS_DIR, RUN_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR)
+         MEMORY_DIR, LIFE_DIR, SUMMARY_DIR, UPLOAD_DIR,
+         STICKERS_DIR, RUN_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR)
 
 
 def ensure():

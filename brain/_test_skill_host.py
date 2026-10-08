@@ -17,7 +17,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-# ⚠️ 本机 HTTP_PROXY 有值，而宿主在 127.0.0.1：不关掉的话 urllib 会去问代理，
+# 本机 HTTP_PROXY 有值，而宿主在 127.0.0.1：不关掉的话 urllib 会去问代理，
 # 代理连不上本机端口，最后报"连不上宿主" —— 看着像宿主挂了，其实是被代理吃了。
 for _k in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
     os.environ[_k] = ""

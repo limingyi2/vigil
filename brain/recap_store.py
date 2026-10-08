@@ -67,6 +67,12 @@ STATE_PATH = os.path.join(SUMMARY_DIR, "_state.json")
 # ROLLUP_DIR / STATE_PATH，逐个加参数改的面太大，而它们**只在这一份文件里用**。
 # 用 scoped_to() 在入口处切一次，比改 26 处可靠。
 _SCOPE = ""
+# 人设 key 和渠道**分开记**，不要靠把 _SCOPE 按 "." 拆回来还原。
+# paths._safe 允许人设名里带点（"my.persona"），一拆就变成
+# ("my", "persona") —— 渠道认成 "persona"、人设认成 "my"，
+# 于是去读一个从来没写过的分区，症状是"摘要一直是空的"。
+_SCOPE_PK = ""
+_SCOPE_SRC = ""
 
 
 def _apply_scope():
@@ -80,25 +86,37 @@ def _apply_scope():
     STATE_PATH = os.path.join(SUMMARY_DIR, "_state.json")
 
 
-def scoped_to(persona_key=""):
-    """切到某个人设的摘要分区。传空回到默认。
+def scoped_to(persona_key="", src=""):
+    """切到某个人设 + 某个渠道的摘要分区。传空回到默认。
 
     摘要里全是"你们聊过什么"—— 换了人设还带上一段的摘要，新人设一开口
     就知道你的旧事，感知上完全没换。分区跟记忆库一个道理。
     顺带清缓存：切了分区还留着上一段的缓存块，等于没切。
+
+    🔴 **渠道必须一起切**。这里原来把 src 写死成 "app"，于是微信那半份
+    对话的摘要也落进 `summary.<人设>.app` —— 两个渠道共用一个目录，
+    谁都在读对方的原料。跟记忆库按渠道分区是同一件事。
     """
-    # ⚠️ 三个路径都必须在函数开头声明 global。
+    # 四个路径都必须在函数开头声明 global。
     # 漏掉任何一个，函数里的赋值就变成**局部变量**：调用方看不到变化，
-    # 而且不报错 —— 实测「切回默认」时路径留在上一个分区就是这么来的。
-    global _SCOPE, SUMMARY_DIR, ROLLUP_DIR, STATE_PATH
+    # 而且不报错 —— 「切回默认」时路径留在上一个分区就是这么来的。
+    global _SCOPE, _SCOPE_PK, _SCOPE_SRC, SUMMARY_DIR, ROLLUP_DIR, STATE_PATH
     name = ""
-    if persona_key:
+    pk = str(persona_key or "").strip()
+    sc = str(src or "").strip().lower()
+    # 判据是 `pk or sc`，**不是只看 pk**。默认人设（没配 persona_file）
+    # + 微信渠道照样要分区 —— paths.scope_name("", "wechat") 返回 "wechat"，
+    # 聊天存档那边也是分的（chat_history.wechat.jsonl）。只判 pk 的话，
+    # 微信的摘要会退回无分区目录，跟 App 的摘要混在一起。
+    if pk or sc:
         try:
             import paths
-            name = paths.scope_name(persona_key, "app")
+            name = paths.scope_name(pk, sc)
         except Exception:
             name = ""
     _SCOPE = name
+    _SCOPE_PK = pk
+    _SCOPE_SRC = sc
     # 先无条件复原到基准，再按需套分区
     SUMMARY_DIR = _BASE_SUMMARY_DIR
     ROLLUP_DIR = os.path.join(SUMMARY_DIR, "rollup")
@@ -123,6 +141,63 @@ LOOP_MAX = 8             # 一次 tick 最多循环几批（首次补压积压�
 
 _LOCK = threading.Lock()
 _CACHE = {"t": 0.0, "text": ""}
+
+def _paths_for(pk, sc):
+    """算出某个分区的路径 —— **纯函数，不碰任何模块状态**。
+
+    后台 tick 用这个拿自己那份快照，然后把 sp 一路传下去，于是它**再也不需要
+    "把进程的当前分区切过去"**。这就是那个竞态的修法：只要 tick 不写全局，
+    请求线程的 block() 就不可能和它互相踩 —— 而 block() 是**每个聊天轮次**
+    都会调的，此前它和 tick 都在改同一批全局变量。
+
+    为什么不能靠"让 block 也拿 _LOCK"：tick 拿着那把锁最长 max_seconds
+    （300 秒）而且在锁里调模型，block 一排队，每条消息都要等摘要跑完。
+    """
+    base = _BASE_SUMMARY_DIR
+    pk = str(pk or "").strip()
+    sc = str(sc or "").strip().lower()
+    name = ""
+    if pk or sc:
+        try:
+            import paths
+            name = paths.scope_name(pk, sc)
+        except Exception:
+            name = ""
+    summary = (os.path.join(os.path.dirname(base), "summary.%s" % name)
+               if name else base)
+    log = CHAT_LOG
+    if name:
+        try:
+            import paths
+            log = paths.scoped(CHAT_LOG, pk, sc or "app")
+        except Exception:
+            log = CHAT_LOG
+    return {"pk": pk, "src": sc, "name": name, "summary": summary,
+            "rollup": os.path.join(summary, "rollup"),
+            "state": os.path.join(summary, "_state.json"),
+            "log": log}
+
+
+def _cur_paths():
+    """当前分区的快照，**直接读那几个全局变量**。block / stats 那条链用。
+
+    🔴 这里必须读全局，不能拿 _paths_for 重算。
+    `scoped_to` 不是唯一会动这些路径的地方 —— 直接给
+    `recap_store.SUMMARY_DIR` 赋值也是合法用法（测试就是靠这个搭临时目录）。
+    重算等于把那些赋值悄悄盖掉，症状是"写在一个目录、读的是另一个目录"，
+    表现为摘要块莫名其妙变空。
+    """
+    log = CHAT_LOG
+    if _SCOPE_PK or _SCOPE_SRC:
+        try:
+            import paths
+            log = paths.scoped(CHAT_LOG, _SCOPE_PK, _SCOPE_SRC or "app")
+        except Exception:
+            log = CHAT_LOG
+    return {"pk": _SCOPE_PK, "src": _SCOPE_SRC, "name": _SCOPE,
+            "summary": SUMMARY_DIR, "rollup": ROLLUP_DIR,
+            "state": STATE_PATH, "log": log}
+
 
 # --- prompt ---
 
@@ -161,9 +236,9 @@ def _target_word():
 
 # --- 基础 IO ---
 
-def _ensure():
+def _ensure(sp=None):
     try:
-        os.makedirs(ROLLUP_DIR, exist_ok=True)
+        os.makedirs((sp or _cur_paths())["rollup"], exist_ok=True)
     except OSError:
         pass
 
@@ -196,6 +271,22 @@ def _append_text(p, text):
         return False
 
 
+def _append_text_unique(p, text):
+    """幂等追加：这段文字已经在文件里就不再写第二遍。
+
+    为什么必须幂等：tick 在"某一天压失败"时会**故意不推水位线**，下一轮把
+    同一批重压一遍 —— 那批里已经成功的那几天会被再压一次。没有这道去重，
+    同一天的摘要在文件里出现两遍，注入提示词时同一件事说两遍（跟 rollup
+    那段注释里抱怨的重复是同一类毛病）。日摘要文件很小，读一次不心疼。
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t in _read_text(p):
+        return True              # 已经有了：算成功，但不再写
+    return _append_text(p, t)
+
+
 def _list_files(d, pattern):
     try:
         return sorted(n for n in os.listdir(d)
@@ -204,34 +295,31 @@ def _list_files(d, pattern):
         return []
 
 
-def _day_path(day):
-    return os.path.join(SUMMARY_DIR, day + ".md")
+def _day_path(day, sp=None):
+    return os.path.join((sp or _cur_paths())["summary"], day + ".md")
 
 
 # --- 聊天存档 ---
 
-def _read_log():
+def _read_log(sp=None):
     """读 chat_history.jsonl，返回 [(行号, 时间, 角色, 正文)]（行号从 1 起）
 
-    🔴 读的是**当前人设分区**那一份，不是模块级的 CHAT_LOG。
+    🔴 读的是**当前分区**那一份，不是模块级的 CHAT_LOG。
     用 CHAT_LOG 的话，新人设的摘要会拿旧人设的对话去生成 ——
     表现是"换了人设她还是知道你上个月说过什么"，而分区目录建了、
     文件也有，看着一切正常，只有内容是错的（这个坑查了好几轮）。
     分区规则跟 Brain._log_for 一致：<人设>.<渠道>.chat_history.jsonl。
+
+    🔴 **判据是 `pk or 渠道`，不能只看 pk。**
+    这里是"渠道隔离"那次修复的**剩下半截**：scoped_to 早就按 `pk or sc`
+    分目录了，而这里只判 `_SCOPE_PK` —— 于是「默认人设 + 微信」这一格，
+    摘要写进 `summary.wechat`，原料却从 **App 的** chat_history.jsonl 读。
+    又回到那个最难查的形状：目录建了、文件也有、只有内容是错的。
+    （`scope_name("", "app")` 返回 ""，所以默认人设 + App 仍然是老路径，
+    改这一处不会动到既有数据。）
     """
-    log = CHAT_LOG
-    if _SCOPE:
-        try:
-            import paths
-            # 🔴 渠道要从 _SCOPE 里**取出来**，不能写死 "app"。
-            # 写死的话群聊那半份对话的摘要会从 app 的存档里取原料 ——
-            # 分区名算对了、文件也在，只有内容是错的。
-            parts = _SCOPE.split(".")
-            pk = parts[0] if len(parts) > 1 else ""
-            sc = parts[1] if len(parts) > 1 else "app"
-            log = paths.scoped(CHAT_LOG, pk, sc)
-        except Exception:
-            log = CHAT_LOG
+    sp = sp or _cur_paths()
+    log = sp["log"]
     if not os.path.exists(log):
         return []
     out = []
@@ -255,19 +343,20 @@ def _read_log():
     return out
 
 
-def _load_state():
+def _load_state(sp=None):
     try:
-        with open(STATE_PATH, encoding="utf-8") as f:
+        with open((sp or _cur_paths())["state"], encoding="utf-8") as f:
             s = json.load(f)
         return s if isinstance(s, dict) else {}
     except Exception:
         return {}
 
 
-def _save_state(s):
+def _save_state(s, sp=None):
+    sp = sp or _cur_paths()
     try:
-        _ensure()
-        with open(STATE_PATH, "w", encoding="utf-8") as f:
+        _ensure(sp)
+        with open(sp["state"], "w", encoding="utf-8") as f:
             json.dump(s, f, ensure_ascii=False, indent=1)
     except OSError:
         pass
@@ -315,9 +404,20 @@ def pending_rows(rows, upto):
 # --- 调模型 ---
 
 def _ask(api, prompt, timeout=90, max_tokens=500):
-    """调一次模型。任何失败都返回 ""，绝不抛。"""
+    """调一次模型。
+
+    返回三态 —— 调用方**必须**分辨，否则会永久丢内容：
+      ""    —— 模型确实回了空/无内容
+      None  —— 失败：没配 key、连不上、欠费、超时、非 200
+      文本  —— 正常结果
+
+    绝不抛异常（调用方是后台线程）。
+    """
     if not api or not api.get("api_key"):
-        return ""
+        # 没配 key 也算失败，**不能**算"这段没内容"。
+        # 算成功的话水位线会一路推到底，等 key 配好了积压的对话早已被标成
+        # 处理过 —— 那批摘要永远补不回来。（这里返回 "" 就会造成这种丢失。）
+        return None
     try:
         r = httpx.post(
             (api.get("api_base") or "").rstrip("/") + "/chat/completions",
@@ -331,7 +431,14 @@ def _ask(api, prompt, timeout=90, max_tokens=500):
         r.raise_for_status()
         return (r.json()["choices"][0]["message"]["content"] or "").strip()
     except Exception:
-        return ""
+        # **失败必须和"模型答无"分开**。
+        #
+        # 此处返回 "" 是错的，下游的语义是"空 = 这段没内容，可以记成处理过"。
+        # 于是断网/402 欠费/超时的时候，那一批对话被标成"已摘要"，实际一个字
+        # 都没写 —— 而原始 chat_history.jsonl 再也不会被回读（水位线只前进），
+        # 那几天的对话她就**永远想不起来**，且全程没有任何报错。
+        # 返回 None 让调用方能分辨：None = 上游失败，"" = 模型确实没内容。
+        return None
 
 
 def _squeeze(text, limit):
@@ -349,21 +456,48 @@ def _squeeze(text, limit):
 
 # --- 压缩 ---
 
+def _split_body(body, cap):
+    """按行把 body 切成每块不超过 cap 的几块，尽量不切断单行。"""
+    out, cur, n = [], [], 0
+    for line in body.splitlines():
+        if cur and n + len(line) + 1 > cap:
+            out.append("\n".join(cur))
+            cur, n = [], 0
+        cur.append(line)
+        n += len(line) + 1
+    if cur:
+        out.append("\n".join(cur))
+    return out or [body[:cap]]
+
+
 def compress_day(day, items, api, timeout=90):
-    """把某天的若干条对话压成一段。返回 "" 表示没压出东西。"""
+    """把某天的若干条对话压成一段。
+
+    返回三态，调用方靠它决定"能不能推进水位线"：
+      ""    —— 这段确实没内容（太短／模型答"无"），**可以**算是处理过了
+      None  —— 上游失败，**不可以**推进水位线（否则内容永久丢失，见 _ask）
+      文本  —— 压好的摘要
+    """
     body = "\n".join("%s：%s" % ("他" if role == "user" else "她", txt)
                      for _, _, role, txt in items)
     # 太短的片段不值得花一次请求：直接取实况摘要
     if len(body) < 60:
         return ""
-    prompt = COMPRESS_PROMPT.format(target=DAY_TARGET, body=body[:8000])
-    txt = _ask(api, prompt, timeout=timeout, max_tokens=400)
-    if not txt:
-        return ""
-    txt = re.sub(r"^```.*?```$", "", txt, flags=re.S).strip()
-    if txt.replace("。", "").strip() in ("", "无"):
-        return ""
-    return _squeeze(txt, DAY_TARGET * 2)
+    # 一天太长要**分块**压，不能写 body[:8000] 就完事。
+    # 截断的后果和上面的失败一样隐蔽：水位线照推，8000 字后面的对话既没进
+    # 摘要、也不会被重读 —— 一个 600 行的忙日（15551 字）后半天的 280
+    # 条消息就这么没了。宁可多花几次请求。
+    outs = []
+    for chunk in _split_body(body, 8000):
+        txt = _ask(api, COMPRESS_PROMPT.format(target=DAY_TARGET, body=chunk),
+                   timeout=timeout, max_tokens=400)
+        if txt is None:
+            return None          # 任何一块失败都算整段失败，这轮不推水位线
+        txt = re.sub(r"^```.*?```$", "", txt, flags=re.S).strip()
+        if txt.replace("。", "").strip() in ("", "无"):
+            continue
+        outs.append(_squeeze(txt, DAY_TARGET * 2))
+    return " ".join(outs)
 
 
 def _merge(body, api, limit, timeout=90):
@@ -383,7 +517,7 @@ def _drop(path):
         return False
 
 
-def rollup(api):
+def rollup(api, sp=None):
     """老的日摘要 → 周摘要；老的周摘要 → 月摘要。
 
     **并完之后把源文件删掉**（不是留着）。
@@ -402,11 +536,13 @@ def rollup(api):
     一条不动，随时能重压，回溯性不受影响。
     """
     today = datetime.date.today()
+    sp = sp or _cur_paths()
+    sdir, rdir = sp["summary"], sp["rollup"]
     made = {"week": 0, "month": 0}
 
     # --- 日 → 周：7 天以外的 ---
     by_week = {}
-    for name in _list_files(SUMMARY_DIR, r"^\d{4}-\d{2}-\d{2}\.md$"):
+    for name in _list_files(sdir, r"^\d{4}-\d{2}-\d{2}\.md$"):
         try:
             d = datetime.date.fromisoformat(name[:-3])
         except ValueError:
@@ -417,10 +553,10 @@ def rollup(api):
         by_week.setdefault("%04d-W%02d" % (iso[0], iso[1]), []).append(
             (d.isoformat(), name))
     for wk, items in sorted(by_week.items()):
-        wp = os.path.join(ROLLUP_DIR, wk + ".md")
+        wp = os.path.join(rdir, wk + ".md")
         pieces = []
         for day, _ in sorted(items):
-            body = _read_text(_day_path(day)).replace("\n", " ")
+            body = _read_text(_day_path(day, sp)).replace("\n", " ")
             if body:
                 pieces.append("%s：%s" % (day, body))
         if not pieces:
@@ -431,12 +567,12 @@ def rollup(api):
             pieces.append("（更早并进来的）" + old.replace("\n", " "))
         if _write_text(wp, _merge("\n".join(pieces), api, WEEK_LIMIT)):
             for _, name in items:
-                _drop(os.path.join(SUMMARY_DIR, name))
+                _drop(os.path.join(sdir, name))
             made["week"] += 1
 
     # --- 周 → 月：30 天以外的 ---
     by_month = {}
-    for name in _list_files(ROLLUP_DIR, r"^\d{4}-W\d{2}\.md$"):
+    for name in _list_files(rdir, r"^\d{4}-W\d{2}\.md$"):
         y, w = name[:-3].split("-W")
         try:
             d = datetime.date.fromisocalendar(int(y), int(w), 1)
@@ -446,10 +582,10 @@ def rollup(api):
             continue
         by_month.setdefault(d.strftime("%Y-%m"), []).append((d.isoformat(), name))
     for mk, items in sorted(by_month.items()):
-        mp = os.path.join(ROLLUP_DIR, mk + ".md")
+        mp = os.path.join(rdir, mk + ".md")
         pieces = []
         for _, name in sorted(items):
-            body = _read_text(os.path.join(ROLLUP_DIR, name)).replace("\n", " ")
+            body = _read_text(os.path.join(rdir, name)).replace("\n", " ")
             if body:
                 pieces.append(body)
         if not pieces:
@@ -459,7 +595,7 @@ def rollup(api):
             pieces.append("（更早并进来的）" + old.replace("\n", " "))
         if _write_text(mp, _merge("\n".join(pieces), api, MONTH_LIMIT)):
             for _, name in items:
-                _drop(os.path.join(ROLLUP_DIR, name))
+                _drop(os.path.join(rdir, name))
             made["month"] += 1
 
     return made
@@ -467,51 +603,105 @@ def rollup(api):
 
 # --- 主入口 ---
 
-def tick(api=None, verbose=True, max_seconds=300):
-    """跑一次检查：压掉新滑出窗口的对话 + 滚动老摘要。
+def tick(api=None, verbose=True, max_seconds=300, scopes=None):
+    """跑一次检查：压掉新滑出窗口的旧对话 + 滚动老摘要。
 
     幂等：跑第二次不会再压同样的行（水位线记着）。
     首次运行会把积压的全补上（一批 240 行，循环最多 LOOP_MAX 轮），
     所以整个 tick 有时间上限，防止一次占太久。
     任何异常都在内部吞掉（调用方是后台线程，不该拖垮服务）。
+
+    🔴 **每个分区各压一遍**。scopes 是 [(人设key, 渠道), ...]；
+    不传就只压当前分区。水位线存在各自分区的 _state.json 里，所以
+    分开压互不干扰 —— 不分的话只有"上一次切过的那个渠道"能被压到，
+    另一个渠道的对话永远压在窗口里没人管。
+
+    🔴 **tick 不动模块全局状态**（不调 scoped_to）。
+    每个分区先算出一份路径快照 sp，再一路传下去。原来每轮都调 scoped_to
+    去改 SUMMARY_DIR/STATE_PATH，而 block() 每个聊天轮次也在改同一批全局
+    变量 —— 两边交错时，_tick_one 会在 _load_state 和 _save_state 之间
+    被换掉分区：**读的是 A 分区的 _state.json，写入的是 B 分区的**，
+    行号还是按 A 的日志算的。后果是 B 那批对话被永久跳过（再也不进摘要），
+    而且没有任何异常、日志、文件异常 —— 她只是"想不起来"。
+    跨分区切得越多窗口越多，所以这个循环本身把这个 bug 放大了。
     """
     with _LOCK:
-        _ensure()
-        t0 = time.time()
-        state = _load_state()
-        upto = int(state.get("pressed_upto") or 0)
-        segs, chars, lines = 0, 0, 0
-        for _ in range(LOOP_MAX):
-            if time.time() - t0 > max_seconds:
+        if scopes is None:
+            scopes = [(_SCOPE_PK, _SCOPE_SRC)]
+        agg = {"pressed": 0, "chars": 0, "lines": 0,
+               "week": 0, "month": 0, "parts": []}
+        budget = max(10.0, max_seconds / max(1, len(scopes)))
+        for pk, sc in scopes:
+            sp = _paths_for(pk, sc)
+            one = _tick_one(api, verbose=verbose, max_seconds=budget, sp=sp)
+            for k in ("pressed", "chars", "lines", "week", "month"):
+                agg[k] += one.get(k) or 0
+            if one.get("pressed") or one.get("lines"):
+                agg["parts"].append("%s.%s 压了 %d 段 / %d 字"
+                                    % (pk or "(默认)", sc or "app",
+                                       one.get("pressed") or 0,
+                                       one.get("chars") or 0))
+        return agg
+
+
+def _tick_one(api=None, verbose=True, max_seconds=300, sp=None):
+    """压**某一个分区**。sp 是分区路径快照（见 _paths_for），一路传下去。"""
+    _ensure()
+    t0 = time.time()
+    sp = sp or _cur_paths()
+    state = _load_state(sp)
+    upto = int(state.get("pressed_upto") or 0)
+    segs, chars, lines = 0, 0, 0
+    for _ in range(LOOP_MAX):
+        if time.time() - t0 > max_seconds:
+            break
+        # sp 在**整个函数里保持不变**：它是一份快照，不是"当前分区"。
+        # 这样即便别的线程同时把模块全局切走，这里的读和写也永远落在
+        # 同一份 _state.json 上（_load_state 和 _save_state 之间
+        # 隔着一次模型调用，足够被切掉）。
+        rows = _read_log(sp)
+        if not rows:
+            break
+        sel, new_upto = pending_rows(rows, upto)
+        if not sel:
+            break
+        by_day = {}
+        for r in sel:
+            by_day.setdefault((r[1][:10] or "未知"), []).append(r)
+        failed = False
+        for day, items in sorted(by_day.items()):
+            txt = compress_day(day, items, api)
+            if txt is None:
+                # 上游失败：这一天的对话一个字都没进摘要。
+                failed = True
                 break
-            rows = _read_log()
-            if not rows:
-                break
-            sel, new_upto = pending_rows(rows, upto)
-            if not sel:
-                break
-            by_day = {}
-            for r in sel:
-                by_day.setdefault((r[1][:10] or "未知"), []).append(r)
-            for day, items in sorted(by_day.items()):
-                txt = compress_day(day, items, api)
-                if txt and _append_text(_day_path(day), txt):
-                    segs += 1
-                    chars += len(txt)
-            # 水位线一次推到底，压出"无"也算处理过，不然每次 tick 都重压同一段
-            upto = new_upto
-            lines += len(sel)
-        if lines:
-            state["pressed_upto"] = upto
-            state["last_run"] = time.strftime("%Y-%m-%d %H:%M")
-            _save_state(state)
-        made = rollup(api)
-        _CACHE["t"] = 0.0                      # 有新内容，缓存作废
-        if verbose and (segs or made["week"] or made["month"]):
-            print("[摘要] 压了 %d 段 / %d 字（%d 条记录），周摘要 +%d、月摘要 +%d"
-                  % (segs, chars, lines, made["week"], made["month"]), flush=True)
-        return {"pressed": segs, "chars": chars, "lines": lines,
-                "week": made["week"], "month": made["month"]}
+            if txt and _append_text_unique(_day_path(day, sp), txt):
+                segs += 1
+                chars += len(txt)
+        if failed:
+            # **这一轮绝不能推水位线。**
+            # 推了就等于把这批对话永久标记成"已摘要"，而原始日志不会被
+            # 回读 —— 那几段她就再也想不起来了，且不留任何痕迹。
+            # 保持 upto 不动直接结束，下一轮重压同一批（append 是幂等的，
+            # 已经写成功的那几天不会重复）。
+            print("[摘要] 压缩失败（上游不可用），本轮不推水位线，"
+                  "下次重试 %d 条" % len(sel), flush=True)
+            break
+        # 水位线一次推到底，压出"无"也算处理过，不然每次 tick 都重压同一段
+        upto = new_upto
+        lines += len(sel)
+    if lines:
+        state["pressed_upto"] = upto
+        state["last_run"] = time.strftime("%Y-%m-%d %H:%M")
+        _save_state(state, sp)
+    made = rollup(api, sp)
+    _CACHE["t"] = 0.0                      # 有新内容，缓存作废
+    if verbose and (segs or made["week"] or made["month"]):
+        print("[摘要] %s 压了 %d 段 / %d 字（%d 条记录），周摘要 +%d、月摘要 +%d"
+              % (sp["name"] or "(默认)", segs, chars, lines,
+                 made["week"], made["month"]), flush=True)
+    return {"pressed": segs, "chars": chars, "lines": lines,
+            "week": made["week"], "month": made["month"]}
 
 
 # --- 注入 ---
@@ -526,18 +716,18 @@ def _week_label(name):
         return name
 
 
-def block(cap=BLOCK_CAP, use_cache=True, persona_key=None):
+def block(cap=BLOCK_CAP, use_cache=True, persona_key=None, src=""):
     """拼成给模型的注入块。没有摘要就返回 ""。
 
     顺序按时间正序（最近的放最后）—— 离当前对话越近，模型越看得住。
     """
-    # 按人设分区读摘要。**每次调用都切**，而不是靠 reload_persona 时切一次
+    # 按「人设+渠道」分区读摘要。**每次调用都切**，而不是靠 reload_persona 时切一次
     # 模块状态 —— 后者在两个渠道各用不同人设时会互相覆盖：
     # 切到渠道B把目录换成B的，切回渠道A没人换回来，读的就是B的。
     # 摘要块只有几百字符，代价可以忽略。
     if persona_key:
         try:
-            scoped_to(persona_key)
+            scoped_to(persona_key, src)
         except Exception:
             pass
     now = time.time()
@@ -581,10 +771,10 @@ def block(cap=BLOCK_CAP, use_cache=True, persona_key=None):
     entries.sort(key=lambda e: e[0])
     # entries 已按时间正序（最近的在最后），但预算要优先给最近的。
     # 从后往前选，选中的再翻正序 —— 少了的那几条是"最早的"，不是"最近的"。
-    # 原来正序遍历 + 超限 break：一旦某条超预算就直接停，后面所有条目全丢，
-    # 而排在后面的恰好是最近几天的事 —— 该记的没记上，丢的却是最该记的。
-    # （当前 MONTH_MAX/WEEK_MAX/DAY_KEEP 的组合下总量约 1300，撞不到 1500 的
-    #  上限，所以这是个等着被踩的隐患，不是正在发生的 bug。）
+    # 🔴 千万别改成"正序遍历 + 超限 break"：一旦某条超预算就直接停，
+    # 后面所有条目全丢，而排在后面的恰好是最近几天的事 —— 该记的没记上。
+    # （当前 MONTH_MAX/WEEK_MAX/DAY_KEEP 的组合下总量约 1300，撞不到 1500 上限，
+    #  所以这是等着被踩的隐患，不是正在发生的 bug。）
     lines, used = [], 0
     for _, lab, txt in reversed(entries):
         seg = "· %s：%s" % (lab, txt.replace("\n", " "))

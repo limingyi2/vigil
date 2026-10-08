@@ -1,5 +1,5 @@
 @echo off
-rem Cloud brain launcher. Started by the LinZhixiaBrain scheduled task.
+rem Cloud brain launcher. Started by the VigilBrain scheduled task.
 rem
 rem ASCII only and CRLF, because cmd. Everything the box needs is spelled out
 rem here rather than assumed, since this file is the one that has to work when
@@ -20,7 +20,7 @@ cd /d C:\Vigil
 title LinZhixia Server
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
-set BRAIN_MUTEX=Global\LinZhixiaBrainSingleInstance
+set BRAIN_MUTEX=Global\VigilBrainSingleInstance
 if not exist C:\Vigil\logs mkdir C:\Vigil\logs
 
 rem --- skill host first, so the brain loads with skills available -----------

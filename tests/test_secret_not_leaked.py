@@ -109,7 +109,7 @@ class TestFrontendNeverPrefillsKey(unittest.TestCase):
         import io
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         p = os.path.join(root, "android-app", "app", "src", "main",
-                         "assets", "chat.html")
+                         "js", "pages.js")
         if not os.path.exists(p):
             self.skipTest("assets/chat.html 不在（仓库里可能省略）")
         with io.open(p, encoding="utf-8") as f:

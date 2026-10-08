@@ -1,8 +1,8 @@
 @echo off
 REM ======================================================================
-REM  Zhixia setup - unpack and install in one go.
+REM  Vigil setup - unpack and install in one go.
 REM
-REM  Send GO.cmd and zhixia_pkg.zip together, then double-click GO.cmd.
+REM  Send GO.cmd and vigil_pkg.zip together, then double-click GO.cmd.
 REM  If WeChat drops them in different folders, this script searches for
 REM  the zip itself and says out loud where it looked.
 REM
@@ -10,12 +10,12 @@ REM  ASCII only on purpose: Chinese text in a .cmd corrupts the structure.
 REM ======================================================================
 setlocal EnableExtensions
 set HERE=%~dp0
-set PKG=%HERE%zhixia_pkg
+set PKG=%HERE%vigil_pkg
 set ZIP=
 set WANT=13500000
 
 echo.
-echo   Zhixia setup
+echo   Vigil setup
 echo   ------------
 echo   running from: %HERE%
 echo.
@@ -30,13 +30,13 @@ REM
 REM  Search order: next to me -> above me -> Desktop -> Downloads ->
 REM  WeChat download folders -> a full walk of Documents (slow, last).
 REM ------------------------------------------------------------------
-echo   [1/3] looking for zhixia_pkg.zip ...
+echo   [1/3] looking for vigil_pkg.zip ...
 
-if exist "%HERE%zhixia_pkg.zip" set ZIP=%HERE%zhixia_pkg.zip
-if not defined ZIP if exist "%HERE%..\zhixia_pkg.zip" set ZIP=%HERE%..\zhixia_pkg.zip
-if not defined ZIP if exist "%USERPROFILE%\Desktop\zhixia_setup\zhixia_pkg.zip" set ZIP=%USERPROFILE%\Desktop\zhixia_setup\zhixia_pkg.zip
-if not defined ZIP if exist "%USERPROFILE%\Downloads\zhixia_setup\zhixia_pkg.zip" set ZIP=%USERPROFILE%\Downloads\zhixia_setup\zhixia_pkg.zip
-if not defined ZIP if exist "%USERPROFILE%\Downloads\zhixia_pkg.zip" set ZIP=%USERPROFILE%\Downloads\zhixia_pkg.zip
+if exist "%HERE%vigil_pkg.zip" set ZIP=%HERE%vigil_pkg.zip
+if not defined ZIP if exist "%HERE%..\vigil_pkg.zip" set ZIP=%HERE%..\vigil_pkg.zip
+if not defined ZIP if exist "%USERPROFILE%\Desktop\vigil_setup\vigil_pkg.zip" set ZIP=%USERPROFILE%\Desktop\vigil_setup\vigil_pkg.zip
+if not defined ZIP if exist "%USERPROFILE%\Downloads\vigil_setup\vigil_pkg.zip" set ZIP=%USERPROFILE%\Downloads\vigil_setup\vigil_pkg.zip
+if not defined ZIP if exist "%USERPROFILE%\Downloads\vigil_pkg.zip" set ZIP=%USERPROFILE%\Downloads\vigil_pkg.zip
 
 REM  WeChat 4.x drops received files in
 REM    Documents\WeChat Files\<acct>\FileStorage\File\<YYYY-MM>\
@@ -51,22 +51,22 @@ if not defined ZIP if exist "%USERPROFILE%\Documents" for /d %%B in ("%USERPROFI
 if not defined ZIP (
     echo.
     echo         still nothing, walking all of Documents. this is slow ...
-    for /r "%USERPROFILE%\Documents" %%Z in (zhixia_pkg*.zip) do call :setzip "%%Z"
-    for /r "%USERPROFILE%\Desktop" %%Z in (zhixia_pkg*.zip) do call :setzip "%%Z"
-    for /r "%USERPROFILE%\Downloads" %%Z in (zhixia_pkg*.zip) do call :setzip "%%Z"
+    for /r "%USERPROFILE%\Documents" %%Z in (vigil_pkg*.zip) do call :setzip "%%Z"
+    for /r "%USERPROFILE%\Desktop" %%Z in (vigil_pkg*.zip) do call :setzip "%%Z"
+    for /r "%USERPROFILE%\Downloads" %%Z in (vigil_pkg*.zip) do call :setzip "%%Z"
 )
 
 if not defined ZIP (
     echo.
-    echo   [FAIL] zhixia_pkg.zip not found anywhere.
+    echo   [FAIL] vigil_pkg.zip not found anywhere.
     echo.
     echo   Searched: next to me, one level up, Desktop, Downloads,
     echo            and every subfolder of Documents.
     echo.
     echo   Most likely cause: you sent GO.cmd without the zip.
     echo.
-    echo   FIX: send zhixia_pkg.zip too - it is about 13 MB, and
-    echo        the name must start with  zhixia_pkg
+    echo   FIX: send vigil_pkg.zip too - it is about 13 MB, and
+    echo        the name must start with  vigil_pkg
     echo.
     pause
     exit /b 1
@@ -83,7 +83,7 @@ if %GOT% LSS 10000000 (
     echo   [FAIL] that zip is only %GOT% bytes, it should be about %WANT%.
     echo          The transfer was cut short.
     echo.
-    echo          Send zhixia_pkg.zip again, on its own, not inside
+    echo          Send vigil_pkg.zip again, on its own, not inside
     echo          another zip or a chat with other files.
     echo.
     pause
@@ -122,7 +122,7 @@ if not defined UNPACKED (
     echo         %PKG%
     echo.
     echo   If the zip opened fine when you double-clicked it, use this
-    echo   instead: right-click zhixia_pkg.zip - Extract All - into
+    echo   instead: right-click vigil_pkg.zip - Extract All - into
     echo.
     echo         %PKG%
     echo.
@@ -168,11 +168,11 @@ REM  folder, a FileStorage folder, or an attach folder. Depth is capped
 REM  so this cannot walk a whole disk.
 :scan_dir
 if defined ZIP goto :eof
-if exist "%~1\zhixia_pkg*.zip" (
-    for %%Z in ("%~1\zhixia_pkg*.zip") do call :setzip "%%Z"
+if exist "%~1\vigil_pkg*.zip" (
+    for %%Z in ("%~1\vigil_pkg*.zip") do call :setzip "%%Z"
 )
 if defined ZIP goto :eof
-for /d %%C in ("%~1\*") do if not defined ZIP if exist "%%~fC\zhixia_pkg*.zip" call :setzip "%%~fC\zhixia_pkg*.zip"
+for /d %%C in ("%~1\*") do if not defined ZIP if exist "%%~fC\vigil_pkg*.zip" call :setzip "%%~fC\vigil_pkg*.zip"
 if defined ZIP goto :eof
-for /d %%C in ("%~1\*") do if not defined ZIP for /d %%D in ("%%~fC\*") do if exist "%%~fD\zhixia_pkg*.zip" call :setzip "%%~fD\zhixia_pkg*.zip"
+for /d %%C in ("%~1\*") do if not defined ZIP for /d %%D in ("%%~fC\*") do if exist "%%~fD\vigil_pkg*.zip" call :setzip "%%~fD\vigil_pkg*.zip"
 goto :eof

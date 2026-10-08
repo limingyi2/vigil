@@ -164,29 +164,43 @@ class TestNoTechniqueInInstruction(unittest.TestCase):
                 len(it.get("instruction") or ""), 8,
                 "%s 的 instruction 过长 —— 该只留情绪词" % it["key"])
 
-    def test_prompt_warns_against_technique_words(self):
-        """她自己也可能写"语速慢一点"，提示词得明确禁掉。"""
+    def test_no_rules_hardcoded_in_code(self):
+        """行为约束不再写在代码里 —— 规则由人设文件定义（2026-10-08）。
+
+        原来这条钉的是"提示词里必须教她别写怎么念"。现在反过来：代码里
+        一条约束都不该有，否则人设改了行为却不动（两套规则同时生效）。
+        """
         import persona_store
         rules = persona_store.build_draft_rules({})
-        self.assertIn("别写怎么念", rules)
+        self.assertEqual(rules, "",
+                         "代码里又开始拼行为约束了；规则该写进人设文件")
 
 
 class TestDraftRulesTeachesMood(unittest.TestCase):
-    """她得知道有这个选项，否则永远不标，白改。"""
+    """情绪标记：**解析机制必须在，教她怎么写随人设走。**
+
+    2026-10-08：人设清空后，规则里不再有"（语气：xxx）"的教学文案
+    （那是人设的一部分，不该由代码硬塞）。但 reply.extract_mood 还得能认这些
+    标记 —— 以后人设写回来、她又开始写标记时，解析不能跟着退化。
+    """
 
     def setUp(self):
         import persona_store
         self.rules = persona_store.build_draft_rules({})
 
-    def test_mentions_mood_marker(self):
-        self.assertIn("语气：", self.rules)
+    def test_marker_is_still_parseable(self):
+        """机制侧：标记怎么写都能抽出情绪（这条与提示词无关，必须一直绿）。"""
+        import reply
+        for t in ("话（语气：犯困）", "话(语气:犯困)",
+                  "话[语气：犯困]", "话【语气：犯困】"):
+            _, mood = reply.extract_mood(t)
+            self.assertEqual(mood, "犯困", "认不出这种写法：%s" % t)
 
-    def test_marker_format_is_documented(self):
-        self.assertIn("（语气：xxx）", self.rules)
-
-    def test_says_it_is_not_shown(self):
-        """得说清那段不会显示出来，不然她会担心发出去很奇怪。"""
-        self.assertIn("不会显示", self.rules)
+    def test_rules_are_empty_now(self):
+        """标记解析机制仍在（extract_mood），教学文案归人设所有。"""
+        self.assertEqual(self.rules, "",
+                         "build_draft_rules 还在返回内容；"
+                         "要教她写情绪标记，把这段写进人设文件的 notes")
 
 
 if __name__ == "__main__":

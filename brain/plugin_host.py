@@ -38,6 +38,7 @@ if-else，改一个功能还可能弄坏别的。插件化之后，核心只认�
 import importlib
 import importlib.util
 import os
+import re
 import sys
 import threading
 import traceback
@@ -48,9 +49,9 @@ try:
     _DDIR = str(PLUGIN_DATA_DIR)
     _ROOT = str(CONFIG_DIR)
 except Exception:
-    _DIR = r"C:\Vigil\plugins"
-    _DDIR = r"C:\Vigil\data\plugins"
-    _ROOT = r"C:\Vigil\config"
+    _DIR = r"C:\vigil\plugins"
+    _DDIR = r"C:\vigil\data\plugins"
+    _ROOT = r"C:\vigil\config"
 
 # 钩子名 → 必需参数个数。用于参数个数不对时打一行日志而不是抛 TypeError
 # 到调用方栈里（插件作者看到的应该是"你这里少传了参数"，不是她的调用栈）。
@@ -127,7 +128,7 @@ class Turn(object):
 
     def data_dir(self):
         """插件自己的持久化目录（data/plugins/<name>/），不存在就建好。"""
-        d = os.path.join(_DDIR, self.owner or "_shared")
+        d = os.path.join(_DDIR, self._owner or "_shared")
         try:
             os.makedirs(d, exist_ok=True)
         except OSError:
@@ -150,6 +151,11 @@ class Plugin(object):
         self.path = path
         self.tools = dict(getattr(mod, "TOOLS", {}) or {})
         self.tool_help = str(getattr(mod, "TOOL_HELP", "") or "").strip()
+        # 可选的**动态**说明提供者。工具清单会随安装变（面板装一个技能，
+        # 宿主上就多几个工具），而 `TOOL_HELP` 是模块级字符串、装载时读一次
+        # 就固化了 —— 于是"新装的技能没进提示词，模型不知道它存在"。
+        # 插件提供 TOOL_HELP_FN(native=False) 就能每轮现取（一般自己带缓存）。
+        self.tool_help_fn = getattr(mod, "TOOL_HELP_FN", None)
         self.routes = list(getattr(mod, "ROUTES", []) or [])
         self.err = ""
 
@@ -307,15 +313,23 @@ def _call(p, hook_name, *args):
                            % (hook_name, type(e).__name__, str(e)[:100]))
 
 
-def prompt_block(ctx=None):
+def prompt_block(ctx=None, native=False):
     """所有插件的 prompt 拼成一段，塞进 system。
 
     只拼"她有什么本事、怎么用"，不教"什么场景必须用" ——
     场景映射是那种永远补不完的规则（见 docs/插件系统.md 第二节）。
+
+    native=True（原生 function calling）：**跳过带 TOOLS 的工具类插件**。
+    它们的 prompt 是 `[tool:...]` 标签语法教学，和结构化 tool_calls 通道
+    冲突，模型看了可能两套都写。工具能力此时由 tools schema 的
+    description 承载。react / gate 这类没有 TOOLS 的纯行为插件照常保留
+    （react 教的 think 格式仍需要）。
     """
     parts = []
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if not _enabled(p):
+            continue
+        if native and p.tools:
             continue
         ok, v = _call(p, "prompt", ctx)
         if ok and isinstance(v, str) and v.strip():
@@ -368,8 +382,12 @@ def on_reply(ctx, text):
     return cur
 
 
-def run_tool(name, arg):
+def run_tool(name, arg, src=None, arg_dict=None):
     """插件的工具。名字不在册返回 None（tools.run_tool 负责先问内置那三个）。
+
+    arg       单字符串参数（旧链路，[tool:name:arg] 标签和单参数原生工具用）
+    arg_dict  多参数 dict（原生 FC 多参数工具用，如 skill_call 的 name+args）。
+              传了 arg_dict 就忽略 arg，调用 fn(ctx, **arg_dict)。
 
     🔴 **索引是装载时的快照，会有永远查不到的合法工具名。**
     技能插件每次真调只有一个正确形状，而宿主上的工具名（`包名__工具名`）
@@ -382,12 +400,14 @@ def run_tool(name, arg):
     n = str(name or "").lower()
 
     p = get_by_tool(n)
-    if p and _enabled(p):
+    if p and _enabled(p, src):
         fn = p.tools.get(n)
         if fn:
-            ctx = Turn(text=arg or "")
+            ctx = Turn(text=(arg or "") if not arg_dict else "")
             ctx._owner = p.name
             try:
+                if arg_dict is not None:
+                    return fn(ctx, **{k: v for k, v in arg_dict.items()}) or None
                 return fn(arg) or None
             except Exception as e:
                 return _log(p.name, "工具 %s 失败：%s" % (n, str(e)[:100]))
@@ -426,19 +446,108 @@ def get_by_tool(name):
     return _TOOL_INDEX.get(str(name or "").lower())
 
 
-def tool_help():
+def tool_specs(src=None):
+    """插件自报的原生 function calling 规格（name -> spec）。
+
+    声明形状和 `tools._STATIC_SPECS` 的一项一样：
+
+        TOOL_SPECS = {"名字": {"desc": "给模型看的说明",
+                               "params": [("参数名", "参数说明", 是否必填)],
+                               "arg_param": "参数名"}}
+
+    🔴 **不声明 = 她看不到这个工具。** 原生工具清单本来是核心写死的一张表，
+    插件里 `TOOLS` 写得再全，也只进得了老的 `[tool:...]` 标签那条路；
+    而主链路走的是原生 FC —— 没有 schema 的工具，模型压根不知道它存在，
+    表现就是"装了、列表里有、开关能点、她就是不用"。
+    所以插件要真被调到，得自己把规格报上来（由 tools 那边来问）。
+    """
+    out = {}
+    for p in all_plugins().values():
+        if not _enabled(p, src):
+            continue
+        try:
+            got = getattr(p.mod, "TOOL_SPECS", {}) or {}
+            # 支持 TOOL_SPECS 是函数：插件可以按渠道返回不同的工具集
+            # （比如 remote 插件在微信渠道返回空——微信没有本地文件系统）。
+            # 调用形式 TOOL_SPECS(src)，src 可能是 None。
+            if callable(got):
+                got = got(src)
+            got = dict(got)
+        except Exception:
+            continue
+        for n, s in got.items():
+            key = str(n or "").strip()
+            if key and isinstance(s, dict) and s.get("desc") and key not in out:
+                out[key] = s
+    return out
+
+
+_TAG_EXAMPLE_RE = re.compile(r"\[tool[:：][^\]]*\]")
+
+
+def _native_help(p, tag_line):
+    """把一段标签式的工具说明换成原生 function calling 版。
+
+    插件自己写了 `TOOL_HELP_NATIVE` 就用它 —— 手写的说法比正则抠出来的干净。
+    没写就把 `[tool:x:y]` 这类示例抠掉：**标签语法必须消失**
+    （线上链路不执行它，留着只会让模型照着写），
+    而"什么时候用它"那些话要**留着**（那才是真正有用的部分）。
+    """
+    alt = getattr(p.mod, "TOOL_HELP_NATIVE", "")
+    if isinstance(alt, str) and alt.strip():
+        return alt
+    return _TAG_EXAMPLE_RE.sub("", tag_line)
+
+
+def _help_text(p, native):
+    """一个插件这一段说明的正文（可能来自动态提供者）。
+
+    插件给了 `TOOL_HELP_FN` 就用它现取 —— 那是"工具清单会变"的插件
+    （典型是 skill：面板装一个技能，宿主上就多几个工具）。取不到/报错
+    一律回落到静态的 `TOOL_HELP`：**提示词少一段也不能拼不出来**。
+    """
+    fn = getattr(p, "tool_help_fn", None)
+    if callable(fn):
+        try:
+            try:
+                v = fn(native=native)      # 想按协议分叉就接这个参数
+            except TypeError:
+                v = fn()
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        except Exception as e:
+            _log(p.name, "TOOL_HELP_FN 出错，改用静态说明：%r" % (e,))
+    if not p.tool_help:
+        return ""
+    return _native_help(p, p.tool_help) if native else p.tool_help
+
+
+def tool_help(native=False):
     """插件工具的用法说明，拼进"工具"那一段提示。
 
     每条以换行开头而不是直接接在分号后面 —— 拼进去的位置前面是
     "[tool:tracking:单号] 查物流；"，不加换行会读成"；- 算式：…���"，
     模型对这种黏在一起的列表分辨力明显变差。
+
+    ## native=True（线上走的就是这条）
+
+    **换成不带 `[tool:...]` 标签语法的说法。** 不要安排成"工具表由 tools
+    schema 承载、插件这段说明整段跳过"（见 prompt_block），可是这套说明里
+    除了标签示例，还写着**什么时候该用它**（"他嘴里蹦出个你没见过的说法就查一下"）
+    —— 那部分 schema 的 description 装不下，一跳过就没了。
+    结果是：工具在表里、可她不知道该什么时候用。所以这里不是"跳过"，
+    而是**同一份说明换一种说法**：标签示例去掉，"什么时候用"留下。
     """
     out = []
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
-        if not _enabled(p) or not (p.tool_help or p.tools):
+        if not _enabled(p):
             continue
-        line = p.tool_help or ("、".join("[tool:%s]" % t
-                                     for t in sorted(p.tools)))
+        if not (p.tool_help or p.tools or callable(getattr(p, "tool_help_fn", None))):
+            continue
+        line = _help_text(p, native)
+        if not line:
+            # 动态提供者没给出东西、又没静态说明时，退回"有哪些工具"
+            line = "、".join("[tool:%s]" % t for t in sorted(p.tools))
         if line:
             out.append("\n" + line.strip())
     return "".join(out)
@@ -469,12 +578,16 @@ def start_all(brain):
         _log("启动", "%d 个插件的后台循环已起" % n)
 
 
-def _enabled(p):
-    """这个插件此刻开没开。没声明 FEATURE = 永远开。"""
+def _enabled(p, src=None):
+    """这个插件此刻开没开。没声明 FEATURE = 永远开。
+
+    src 不传就按"当前渠道"（features 的 ambient 语义）判；**调用方能传就传** ——
+    当前渠道是个进程级全局，两个渠道并发时它可能已经被另一个请求改掉了。
+    """
     if not p.feature:
         return True
     try:
         import features
-        return bool(features.on(p.feature))
+        return bool(features.on(p.feature, src))
     except Exception:
         return True

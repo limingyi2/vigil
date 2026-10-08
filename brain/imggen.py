@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生图：自拍 / [gen:描述] / 朋友圈配图最终都走这里。
+"""生图：自拍 / [gen:描述] 最终都走这里。
 
 两条铁律（实测踩出来的）：
 - 参考图（她本人的照片）是"脸像不像"的唯一依据，且**提示词里绝对不要描写长相**
@@ -90,7 +90,7 @@ def _cloud_gen_image(prompt, model=None, negative_prompt=None, size=None,
         from paths import UPLOAD_DIR
         d = str(UPLOAD_DIR)
     except Exception:
-        d = r"C:\Vigil\data\upload"
+        d = r"C:\vigil\data\upload"
     os.makedirs(d, exist_ok=True)
     name = "gen_" + time.strftime("%Y%m%d_%H%M%S") + ".png"
     with open(os.path.join(d, name), "wb") as f:
@@ -99,7 +99,7 @@ def _cloud_gen_image(prompt, model=None, negative_prompt=None, size=None,
 
 
 # --- 她的标准长相 ---
-# 实测：参考图只给脸（上半身裁切）效果最好，整张沙滩照会把海景一起带进结果
+# 参考图只给脸（上半身裁切）效果最好，整张沙滩照会把海景一起带进结果
 # 缓存键带 mtime：换人设换了参考图、或者手动替换了 look_face.jpg 之后，
 # 不重启进程也必须立刻用新脸。写死"切换时清缓存"意味着每个换参考图的入口
 # 都要记得清，漏一个就出图还是旧脸 —— 让缓存自己比对文件指纹更省事。
@@ -123,7 +123,7 @@ def _look_ref_path():
     here = os.path.dirname(os.path.abspath(__file__))
     cands += [os.path.join(here, "look_refs"),
               os.path.join(here, "config", "look_refs"),
-              r"C:\Vigil\look_refs"]
+              r"C:\vigil\look_refs"]
     for d in cands:
         # prepared/ 是本机整理参考图时的暂存子目录，正式放法是与 look_refs 平铺
         # （云端就是平铺），这里多认一层，免得两种放法有一种读不到。
@@ -162,7 +162,7 @@ def _look_ref_uri():
         if fresh and _LOOK_CACHE["uri"]:
             return _LOOK_CACHE["uri"]
     elif _LOOK_CACHE["uri"]:
-        # 之前找到过、现在找不到了（参考图被删）：缓存作废，别再拿旧的凑
+                # 能找到过、现在找不到了（参考图被删）：缓存作废，别再拿旧的凑
         _look_cache_reset()
 
     try:
@@ -255,7 +255,15 @@ def _cloud_sticker(name):
                      os.path.join(data_root, "upload", c)]
             for cp in cands:
                 cand = os.path.abspath(cp)
-                if cand.startswith(data_root) and os.path.isfile(cand):
+                # 🔴 前缀比较必须带上路径分隔符。
+                                # 用 cand.startswith(data_root) 判不出这一类，而
+                # "data" 和 "data_secret" 只是前缀相同 ——
+                # name="../data_secret/x.png" 拼出来是
+                # <brain>/data_secret/x.png，它**以 data 开头**，检查就过了，
+                # 于是能读到 DATA_DIR 任何兄弟目录下的文件。
+                # 加个 os.sep 之后 "…\data_secret" 不再以 "…\data\" 开头。
+                if (cand == data_root or cand.startswith(data_root + os.sep)) \
+                        and os.path.isfile(cand):
                     with open(cand, "rb") as f:
                         return f.read()
     except Exception:

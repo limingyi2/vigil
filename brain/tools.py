@@ -1,32 +1,22 @@
 # -*- coding: utf-8 -*-
-"""模型的工具箱：她可以自己决定调免费 API 查实时数据。
+"""模型的工具箱（原生 function calling 版）。
 
-用法在 persona 规则里教：回复里单独一行写 [tool:名] 或 [tool:名:参数]，
-server 执行后把结果作为系统提示再喂回给她，她重新组织语言回答（最多两轮）。
-标签绝不能漏进给用户看的正文 —— run_chat_with_tools 末尾负责兜底清扫。
-查询失败不装懂，工具函数返回 None，提示里就让她照实说"查不到"。
+唯一通道：`all_specs()` 产出 OpenAI tools 数组（JSON Schema），模型在响应的
+`tool_calls` 结构化字段里请求调用，`invoke_spec()` 验证后执行。
+参数有 schema、可并行、不靠正则。
+
+旧的 `[tool:名:参数]` 手写标签链路已移除（2026-10-08）。
+`TOOL_TAG_ANY_RE` 保留，仅用于 server.py 兜底清扫模型输出里残留的标签文本。
+
+工具分三类：
+- 内置：weather / tracking（本文件实现）
+- 静态插件：calc / search / reminder_*（plugin_host 加载）
+- 动态技能：`包名__工具名`，运行时从 Node 技能宿主拉取（skill 模块）
 """
 import re
 
-# 全角冒号一起吃（模型爱混用）；参数段可有可无
-#
-# 🔴 工具名字符集**必须容得下连字符和数字**。
-# 原来写的是 `[A-Za-z_]+` —— 内置工具（ip_city / tracking / weather）
-# 恰好全是纯字母下划线，所以这个洞一直没暴露。
-# 但**技能工具名全带连字符**（`daily-fortune__today`、`hot-trends__hot_brief`、
-# `valorant-match__recent_schedule`），于是模型哪怕在提示词里看见了工具名、
-# 也规规矩矩写了 `[tool:daily-fortune__today:...]`，这条标签**匹配不上**：
-# finditer 返回空 → 循环 break → 工具从没执行 → 而 `[tool:...]` 会被
-# 兜底的 TOOL_TAG_ANY_RE 扫掉 → 用户只看到"她压根没调"。
-# 症状是"提示词里有名字、工具也在线、就是没用"，查起来极难往正则上想。
-#
-# 放宽到"不含分隔符和方括号"即可，参数段仍由后面的 `[:：]` 切分。
-TOOL_TAG_RE = re.compile(
-    r"\[tool[:：]([^\]:：\[\]]+)(?:[:：]([^\]]*))?\]", re.IGNORECASE)
-
 # 兜底清扫用的宽口径：只要看着像 [tool:...] 就扫掉，名字不限字符集。
-# 执行用上面那个严的（名字必须在册），清扫用这个宽的 —— 模型会编名字甚至编个
-# 中文名（[tool:不存在:xx]），匹配不到就会原样发到用户眼前
+# 原生 FC 模型偶尔会在正文里写出这种格式（训练数据残留），输出前清掉。
 TOOL_TAG_ANY_RE = re.compile(r"\[tool[:：][^\]]*\]", re.IGNORECASE)
 
 
@@ -57,17 +47,6 @@ def _locate():
         return weather_cache.city(), ip, True
     except Exception:
         return "", ip, True
-
-
-def _t_ip_city(arg):
-    """他在哪：拿他最近的公网 IP 现查归属地（快递地址 ≠ 人在哪）。"""
-    city, ip, cached = _locate()
-    if not ip and not city:
-        return "查不到：他还没用手机连过来，没有 IP 可定位"
-    if city:
-        tag = "IP实时定位" if not cached else "最近一次缓存定位（可能过期）"
-        return "他的手机当前%s在：%s" % (tag, city)
-    return "IP定位查不到，别猜，让他自己说他现在在哪儿"
 
 
 def _t_weather(arg):
@@ -105,23 +84,20 @@ def _t_tracking(arg):
         ("，最新一条：" + latest) if latest else "")
 
 
+# 内置工具：名 -> 执行函数（接收字符串参数）
 TOOLS = {
-    "ip_city": _t_ip_city,
     "weather": _t_weather,
     "tracking": _t_tracking,
 }
 
-# 教给 persona 规则的一行清单（tools 规则在 persona_store 里，两处必须对得上）
-PROMPT_LINE = ("[tool:ip_city] 查他现在的实时位置；"
-               "[tool:weather:城市] 查某地实时天气（不写城市=自动定位他的）；"
-               "[tool:tracking:快递单号] 查快递物流")
 
+def run_tool(name, arg, src=None):
+    """执行一个工具调用（字符串参数版）；名字不在册/失败返回 None。
 
-def run_tool(name, arg):
-    """执行一个工具调用；名字不在册/执行失败都返回 None（让她说查不到）。
+    先问内置三个，再问插件（plugin_host 下各功能块）。
+    插件工具名不要跟内置重名 —— 重名了插件那个永远不会被调到。
 
-    先问核心那三个，再问插件（plugins/ 下各功能块自己带的工具）。
-    插件里的工具名不要跟这三个重名 —— 重名了插件那个永远不会被调到。
+    src 是渠道（app / wechat）：插件开关按渠道判，不传就退化成"当前渠道"。
     """
     n = str(name or "").lower()
     fn = TOOLS.get(n)
@@ -132,71 +108,334 @@ def run_tool(name, arg):
             return None
     try:
         import plugin_host
-        return plugin_host.run_tool(n, arg)
+        return plugin_host.run_tool(n, arg, src)
     except Exception:
         return None
 
 
-def tool_help_extra():
-    """插件工具的用法说明（persona_store 拼进"工具"那一段用）。"""
+def tool_help_extra(native=False):
+    """插件工具的用法说明（拼进"工具"那一段用）。
+
+    native=True 时给的是**不带 `[tool:...]` 标签语法**的说法 ——
+    线上跑的是原生 function calling，教标签等于教一套执行不了的东西。
+    """
     try:
         import plugin_host
-        return plugin_host.tool_help()
+        return plugin_host.tool_help(native=native)
     except Exception:
         return ""
 
 
-def run_chat_with_tools(chat_fn, text, max_rounds=4):
-    """带工具循环的聊天外层。
+# ============================================================
+# 原生 function calling：工具规格（JSON Schema）
+# ============================================================
+# 每个静态工具：
+#   desc      给模型看的说明
+#   params    [("参数名", "参数说明", 是否必填)]；空列表 = 无参
+#   arg_param 模型传 dict，执行时取哪个参数还原成旧函数的字符串 arg；
+#             None = 无参
+# 静态插件工具（calc/search/reminder_*/skill_list）也集中在这里声明，
+# 执行时 run_tool 会自动路由到 plugin_host —— 插件函数无需改动。
 
-    chat_fn(t) -> (ans, mode)。她第一轮的回复里带 [tool:...] 就执行，
-    结果拼进系统提示再问一轮（img 描述已在 text 里，第二轮不重看图）。
+_STATIC_SPECS = {
+    # --- 内置 ---
+    "weather": {
+        "desc": "查某城市的实时天气（天气状况、气温、风向、湿度）。不填城市就自动定位他所在的城市。"
+                "🔴 查天气就用它，**不要用 search** —— 这是专门的天气接口，更快也更准。",
+        "params": [("location", "要查天气的城市名；留空=自动定位他所在城市", False)],
+        "arg_param": "location",
+    },
+    "tracking": {
+        "desc": "查某个快递单号的实时物流状态与最新轨迹。",
+        "params": [("tracking_number", "快递单号", True)],
+        "arg_param": "tracking_number",
+    },
+    # --- 静态插件（执行路由到 plugin_host）---
+    "calc": {
+        "desc": "数学计算（加减乘除、括号、百分比、幂）。涉及具体数字一律用它，不要自己心算。",
+        "params": [("expression", "要计算的算式，如 128*3、(12+8)/2、15%", True)],
+        "arg_param": "expression",
+    },
+    "search": {
+        "desc": "联网搜索实时信息：新闻、股价、最新版本、近期事件等训练数据里没有或会过时的东西。"
+                "🔴 **天气不要用它**（用 weather）、**快递单号不要用它**（用 tracking）、"
+                "某个网页的正文不要用它（用网页抓取类工具）。"
+                "它管的是「泛泛地查一下公开信息」。",
+        "params": [("query", "要搜索的内容，直接写中文", True)],
+        "arg_param": "query",
+    },
+    "reminder_set": {
+        "desc": "设一个到点主动提醒他的事项。把他说的原话传进来（需包含时间，如“20分钟后”“明天早上八点”）。",
+        "params": [("text", "他说的原话，要包含时间和要提醒的事，如：20分钟后叫我起床", True)],
+        "arg_param": "text",
+    },
+    "reminder_list": {
+        "desc": "查看当前还记着哪些未到点的提醒。无参数。",
+        "params": [], "arg_param": None,
+    },
+    "reminder_cancel": {
+        "desc": "取消提醒。传关键词来匹配要取消的事项；要清空全部就传“全部”。",
+        "params": [("keyword", "要取消的事项关键词，或“全部”", True)],
+        "arg_param": "keyword",
+    },
+}
 
-    ## 为什么默认给 4 轮而不是 2
 
-    2 轮的意思是"她最多只能调一次工具"。而现实里一次常常不够：
-    "上海和杭州现在哪个热" 要两次天气，"我这单到哪了顺便看看天气" 要两个工具。
-    一次机会用掉她就没辙了，只能回"我查一下"然后拿一个结果硬答 ——
-    表现为答不全、或者干脆不调。**给她多次机会比教她一次调两个便宜**。
+def _parameters_schema(params):
+    """把 [("名","说明",必填)] 转成 JSON Schema 的 parameters 对象。"""
+    props = {}
+    required = []
+    for pname, pdesc, preq in params:
+        props[pname] = {"type": "string", "description": pdesc}
+        if preq:
+            required.append(pname)
+    schema = {"type": "object", "properties": props}
+    if required:
+        schema["required"] = required
+    return schema
 
-    ## 一轮里写了多个标签怎么办
 
-    全跑完（TOOL_TAG_RE.findall，不是 search）。她如果一次写
-    "[tool:weather:杭州] [tool:search:杭州新闻]"，两个都该执行。
-    以前只跑第一个，第二个标签被后面的清扫扫掉 —— 她明明写了却没执行。
+def _plugin_specs(src=None):
+    """插件自报的原生工具规格（name -> spec），取不到就当没有。
 
-    返回 (最终回复, mode, 用过的工具名列表)，没用到第三个返回 []。
+    没有它，插件工具就只进得了老的 `[tool:...]` 标签那条路，而主链路走的是
+    原生 function calling —— 模型看不见 schema 里没有的工具，于是"插件装了
+    却不生效"。所以插件声明 `TOOL_SPECS` 后由这里并进工具表。
+
+    拿不到插件清单不能连带把内置工具也弄丢，所以整段包在 try 里。
     """
-    used = []
-    ans, mode = chat_fn(text)
-    for _ in range(max(0, max_rounds - 1)):
-        # findall 带两个捕获组时返回的是元组 [(名字, 参数), ...] 而不是
-        # Match 对象 —— 想拿 .group() 就得用 finditer，别混用
-        tags = [(m.group(1) or "", m.group(2) or "")
-                for m in TOOL_TAG_RE.finditer(ans or "")]
-        if not tags:
-            break
-        # 同一轮里重复调同一个工具没有意义（结果一样），去重但保持顺序
-        seen, todo = set(), []
-        for name, arg in tags:
-            n = name.strip().lower()
-            if n and n not in seen:
-                seen.add(n)
-                todo.append((n, arg))
-        if not todo:
-            break
-        results = []
-        for name, arg in todo:
-            result = run_tool(name, arg)
-            if name not in used:
-                used.append(name)
-            results.append("[%s] %s" % (
-                name, result if result else "查询失败，照实说查不到，别编"))
-        hint = ("（系统提示：你刚才调用了工具，结果：\n%s\n"
-                "现在用这些结果直接回答他，别再写任何工具标签）"
-                % "\n".join(results))
-        ans, mode = chat_fn(text + "\n" + hint)
-    # 兜底清扫：循环跑完还残留的（或压根没触发循环的）不能漏给用户。
-    # 这里用宽口径，连模型编出来的名字一起扫
-    ans = TOOL_TAG_ANY_RE.sub("", ans or "").replace("  ", " ").strip()
-    return ans, mode, used
+    try:
+        import plugin_host
+        return plugin_host.tool_specs(src)
+    except Exception:
+        return {}
+
+
+# 静态工具名 → features 开关名。None = 始终启用（没有专门开关）。
+# 插件工具已经在 plugin_host.tool_specs(src) 里按 _enabled(p, src) 过滤了，
+# 这里只管 _STATIC_SPECS 里核心写死的那几个。
+# 映射必须跟 config.json features / features_by_src 里的键名对得上。
+_STATIC_FEATURE_MAP = {
+    "weather": "weather",
+    "tracking": "packages",
+    "calc": "calc",
+    "search": "websearch",
+    "reminder_set": "reminder",
+    "reminder_list": "reminder",
+    "reminder_cancel": "reminder",
+}
+
+
+def _feature_on(name, src=None):
+    """安全版 features.on：任何异常都当开（开关系统坏了不能把工具弄丢）。"""
+    try:
+        import features
+        return bool(features.on(name, src))
+    except Exception:
+        return True
+
+
+def _static_tool_array(src=None):
+    """内置 + 插件自报规格的 OpenAI tools 数组。"""
+    specs = {}
+    # 静态工具按 features_by_src 过滤：被当前渠道关掉的不放进工具表。
+    # 否则模型看得到、调了被拦返回 None，会困惑并重试浪费 token。
+    for n, s in _STATIC_SPECS.items():
+        feat = _STATIC_FEATURE_MAP.get(n)
+        if feat is not None and not _feature_on(feat, src):
+            continue
+        specs[n] = s
+    for n, s in _plugin_specs(src).items():
+        # 核心写死的优先：插件不许顶掉内置/已有工具，重名就整条不要 ——
+        # 静默覆盖会让"某个工具突然行为变了"变成查不出根因的 bug
+        specs.setdefault(n, s)
+    out = []
+    for name in sorted(specs):
+        spec = specs[name]
+        out.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": spec["desc"],
+                "parameters": _parameters_schema(spec["params"]),
+            },
+        })
+    return out
+
+
+def _dynamic_tool_array(brain=None, src=None):
+    """动态 JS 技能工具（`包名__工具名`）的 OpenAI tools 数组。
+
+    运行时从 skill 模块拉取；Node 宿主没起 / 没装技能 / 当前渠道被关时
+    返回空列表。技能自带的 parameters 直接作为 schema。
+    """
+    try:
+        import skill as _skill
+    except Exception:
+        return []
+    try:
+        got = _skill.tools(src)       # 已按**指定渠道**过滤、带 60s 缓存
+    except Exception:
+        return []
+    out = []
+    for name, t in sorted(got.items()):
+        params = t.get("params")
+        # Node 给的 parameters 可能为空 / 不是合法 schema，兜底成无参 object
+        if not isinstance(params, dict) or "type" not in params:
+            params = {"type": "object", "properties": {}}
+        out.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": (t.get("title") or name)
+                               + ("：" + t.get("desc") if t.get("desc") else ""),
+                "parameters": params,
+            },
+        })
+    return out
+
+
+def all_specs(brain=None, src=None):
+    """全部可用工具的 OpenAI tools 数组（静态 + 动态技能）。
+
+    brain / src 用于动态技能的渠道过滤与插件开关判定；不传则不附加动态工具。
+
+    🔴 **features.tools 的总开关必须在这里判，不能只在某一条链路上判。**
+    这个开关原来只在 server._chat_with_tools 里判一次，那处守卫删掉之后
+    唯一还读它的地方是 brain.draft_native ——
+    结果 App 里把"工具"关掉**完全没用**，内置的 ip_city/weather/tracking
+    照挂上去。放在这个唯一出口上，谁调都关得掉。
+    """
+    try:
+        import features as _feat
+        if not _feat.on("tools", src):
+            return []
+    except Exception:
+        pass
+    tools = _static_tool_array(src)
+    if brain is not None:
+        tools.extend(_dynamic_tool_array(brain, src))
+    return tools
+
+
+# --- 要不要给这一轮挂工具表 ------------------------------------------------
+#
+# 工具表 10 个约 2200 字符 ≈ 1100 token，**每轮都跟着请求走**。纯闲聊那几轮
+# 白付这份钱（"在吗"那轮 ~1440 token，其中大头就是工具表）。
+#
+# 但判错的代价**不对称**：
+#   该挂没挂 → 她答不上来，用户看得见（坏）
+#   不该挂却挂了 → 白花 token，用户看不见（只是贵）
+# 所以只在**明确是寒暄**时才省，宁可不省。规则两条，任一条不满足就照挂：
+#   1. 整句短（≤ 8 字，去掉标点）
+#   2. 句子里没有任何"可能要查/要算"的字
+_CHAT_ONLY = (
+    "在吗", "在么", "在不在", "晚安", "早安", "早上好", "晚上好", "中午好",
+    "睡了吗", "睡啦", "吃了吗", "吃了", "好梦", "么么", "抱抱",
+    "哈哈哈", "哈哈", "嘿嘿", "呵呵", "嘻嘻", "嗯嗯", "嗯哼", "哦哦",
+    "你好", "谢谢", "谢啦", "多谢", "辛苦了", "拜拜", "再见", "回头聊",
+)
+# 出现任何一个就照挂 —— 单字也算，宁可多挂
+_QUERY_HINT = (
+    "查", "搜", "算", "几", "多", "哪", "谁", "什么", "多少", "是不是",
+    "天气", "气温", "温度", "快递", "单号", "提醒", "位置", "城市",
+    "币", "股", "价", "点", "号", "帮", "告诉我", "看看",
+)
+# 单字的语气词/标点。🔴 **这些必须整串相等判，不能像 _CHAT_ONLY 那样子串匹配**
+# —— "啊""哈"这类字几乎会出现在任何一句话里（"今天好累啊"），
+# 子串匹配会把整句判成寒暄，于是工具表和记忆检索一起被砍掉。
+_CHAT_EXACT = ("嗯", "哦", "啊", "呃", "唉", "诶", "哈", "嘿", "喂",
+               "？", "?", "。", "…", "。。。", "...")
+
+
+def _norm_chat(text):
+    """去掉首尾标点和空白，用于判断"是不是寒暄"。"""
+    return (text or "").strip().strip("！!。.~～?？,，… \t\r\n")
+
+
+def is_smalltalk(text):
+    """这句是不是**纯寒暄**（本身不带任何信息）。
+
+    ## 为什么要单独一个函数
+
+    它原来是 `schema_needed()` 里的实现细节，而那个名字的语义是
+    "要不要挂工具表"。后来记忆检索图省事直接复用了 `schema_needed()` ——
+    于是**一个布尔同时管了两件不同的事**：
+
+      * 要不要挂工具表 = "这句话里有没有需要**外部**信息的东西"
+      * 要不要检索记忆 = "这句话有没有可能**勾起**点什么"
+
+    前者为否**不蕴含**后者为否。名字骗人 + 两件事共用一个判据，
+    就是"改一处、坏另一处"的经典配方（这轮已经因为这个耦合栽过一次）。
+    所以判据抽出来、按它**真正在判什么**命名，各调用方自己决定怎么用。
+
+    ## 判据（保守，宁可不判成寒暄）
+
+    1. 去标点后为空 → 算
+    2. 超过 8 个字 → **不算**（长句一律当有事）
+    3. 出现任何 `_QUERY_HINT` 里的字 → **不算**（"谁""哪""几""查"…）
+    4. 两个以内的字，且整串在 `_CHAT_EXACT` 里 → 算（"嗯""哦""？"）
+    5. 否则：命中 `_CHAT_ONLY` 才算（"在吗""哈哈哈""晚安"…）
+    """
+    t = _norm_chat(text)
+    if not t:
+        return True
+    if len(t) > 8:
+        return False
+    if len(t) <= 2 and t in _CHAT_EXACT:
+        return True
+    if any(k in t for k in _QUERY_HINT):
+        return False
+    return any(k in t for k in _CHAT_ONLY)
+
+
+def schema_needed(text):
+    """这一轮要不要挂工具表。见上面那段：只在明确是寒暄时才返回 False。"""
+    return not is_smalltalk(text)
+
+
+def invoke_spec(name, args, ctx=None):
+    """执行一次原生 function calling 工具调用。
+
+    name      工具名
+    args      模型给的参数 dict
+    ctx       动态技能需要的 plugin_host.Turn（含 brain / src）
+    返回结果字符串；任何失败返回 None（调用方让她照实说查不到）。
+
+    动态技能（名字含 "__"）走 skill.invoke_tool，参数转成 JSON 字符串；
+    静态工具按 arg_param 从 dict 取出主参数，还原成字符串后走 run_tool。
+    """
+    n = str(name or "").strip()
+    if not n:
+        return None
+    args = args if isinstance(args, dict) else {}
+
+    # 动态 JS 技能
+    if "__" in n:
+        try:
+            import skill as _skill
+            import json as _json
+            arg_str = _json.dumps(args, ensure_ascii=False) if args else ""
+            return _skill.invoke_tool(n, arg_str, ctx) or None
+        except Exception:
+            return None
+
+    # 静态（内置 / 插件）
+    _src = getattr(ctx, "src", None) if ctx is not None else None
+    spec = _STATIC_SPECS.get(n) or _plugin_specs(_src).get(n)
+    if spec is None:
+        return None
+    # 多参数工具（如 skill_call 的 name+args）：整个 args dict 传给 plugin_host，
+    # 不按 arg_param 还原成单字符串。plugin_host.run_tool 收到 arg_dict 会
+    # 调用 fn(ctx, **arg_dict)。
+    if spec.get("multi_args"):
+        try:
+            import plugin_host
+            return plugin_host.run_tool(n, "", src=_src, arg_dict=args) or None
+        except Exception:
+            return None
+    arg_param = spec.get("arg_param")
+    arg = ""
+    if arg_param:
+        arg = str(args.get(arg_param) or "").strip()
+    return run_tool(n, arg, src=_src)

@@ -16,6 +16,13 @@ DEFAULTS 里除核心功能外，插件声明了 FEATURE 的也会登记进来�
     "features_by_src": {"wechat": {"weather_alert": false, "packages": false}}
 
 **没写的键跟全局走**，所以只写要关的那几个就够，不用抄一整份。
+全局那份 `features` 是"任何渠道都没覆盖时"的初值。
+
+🔴 **app 跟其它渠道一样，也是一份覆盖**（和 `chatty` 那套"每渠道一份"
+同构）。写和读必须是同一套规则 —— 曾经读取侧单独跳过 app（注释写着
+"app 就是基线"），写入侧却照写 `features_by_src.app`：面板在 App 渠道
+点开关"点了跟没点一样"，还往配置里攒了一堆永远读不出来的"幽灵覆盖"
+（界面上显示已关、运行时全是开的）。详见 `_test_features_src.py`。
 
 为什么不复制一套渠道专属开关：复制的话每加一个功能要改两处，漏一处就出
 bug（"她在群里提醒你加衣服"就是这么来的）。覆盖是**只写差异**，
@@ -29,16 +36,18 @@ try:
     from paths import CONFIG_PATH
     _CFG = str(CONFIG_PATH)
 except Exception:
-    _CFG = r"C:\Vigil\config\config.json"
+    _CFG = r"C:\vigil\config\config.json"
 
 # 核心开关与默认值（插件的由 plugin_host._sync_features 追加）
 DEFAULTS = {
-    "hotboard": True,         # 热搜进她的世界
+        # 🔴 这里曾有一个 "hotboard": True（热搜进她的世界），现已移除。
+    # 已经删掉：那套 hotboard_cache + 抖音榜被「百度热梗榜」取代了，
+    # 数据由 meme 插件现拉（hot_list / hot_note）。开关也归 meme 自己那个 FEATURE，
+    # 两个开关管同一件事 = 迟早有人关了一个还纳闷为什么没生效。
     "weather": True,          # 天气进她的世界
     "weather_alert": True,    # 天气变化主动提醒
     "packages": True,         # 快递监控与提醒
     "rand_img_chat": True,    # 聊天里她可以甩 [rand:] 图
-    "rand_img_moment": True,  # 朋友圈配图优先用随机图
     "tools": True,            # 模型可自选调免费 API（查他在哪/天气/快递）
     "voice": True,            # 语音条（App 能渲染音频条；群里发不了 mp3，要关）
 }
@@ -120,15 +129,17 @@ def _reload():
 
 
 def all_features(src=None):
-    """当前全部开关（30 秒缓存）。传 src 拿该渠道覆盖后的结果。"""
+    """当前全部开关（30 秒缓存）。传 src 拿该渠道覆盖后的结果。
+
+    🔴 `src` 一律参与覆盖合并，**不跳过 app**。和写入侧 set_features
+    必须同规则：那边写了 features_by_src.app，这边就得读它。
+    """
     with _lock:
         if time.time() - _cache["t"] > 30:
             _reload()
         d = dict(_cache["d"])
         src = str(src or "").strip().lower()
-        # app 是基线，不查它的覆盖（省一次字典查找，也避免手滑写出
-        # features_by_src.app 之后两边互相盖）
-        if src and src != "app":
+        if src:
             d.update(_cache["by"].get(src) or {})
     return d
 
@@ -149,30 +160,37 @@ def set_features(patch, src=None):
 
     带 src 时写进 features_by_src.<src>，**只写这几个键**（覆盖语义），
     不动全局那一份。写失败返回 None。
+
+    🔴 写和读必须同一套规则。这里曾经不一致：读取侧跳过 app 的覆盖
+    （当它是基线），写入侧却老老实实照渠道名写 features_by_src.app ——
+    于是面板在 App 渠道点开关"点了跟没点一样"，还往配置里攒了一堆
+    读不出来的"幽灵覆盖"：界面上显示已关，运行时全是开的。
     """
     try:
         cfg = json.load(open(_CFG, encoding="utf-8"))
+        src = str(src or "").strip().lower()
+        # 只认 DEFAULTS 里登记过的键。一个都没有（或者 patch 是空的）就直接
+        # 返回：别在配置里留空壳（{"app": {}} 这种没意义又碍眼），也别白写一次盘。
+        add = {k: bool(v) for k, v in (patch or {}).items() if k in DEFAULTS}
+        if not add:
+            return all_features(src)
         if src:
-            src = str(src).strip().lower()
             by = cfg.get("features_by_src") or {}
             cur = dict(by.get(src)) if isinstance(by.get(src), dict) else {}
-            for k, v in (patch or {}).items():
-                if k in DEFAULTS:
-                    cur[k] = bool(v)
+            cur.update(add)                     # 只并进这几个键，别的留着
             by[src] = cur
             cfg["features_by_src"] = by
-            out = all_features(src)
         else:
             f = cfg.get("features") or {}
-            for k, v in (patch or {}).items():
-                if k in DEFAULTS:
-                    f[k] = bool(v)
+            f.update(add)
             cfg["features"] = f
-            out = all_features()
         with open(_CFG, "w", encoding="utf-8", newline="\n") as fp:
             json.dump(cfg, fp, ensure_ascii=False, indent=2)
+        # 🔴 顺序要紧：**先**让缓存失效，**再**回读。
+        # 反过来的话返回的是 30 秒前的旧缓存 —— 调用方（面板）拿到的
+                # 是"修改前"的答案，界面上看着就像开关没写进去。
         invalidate()
-        return out
+        return all_features(src)
     except Exception:
         return None
 
@@ -200,6 +218,7 @@ def drop(key):
         f = cfg.get("features")
         if isinstance(f, dict) and key in f:
             f.pop(key, None)
+            n += 1                          # 全局那份也算一处，别少报
             dirty = True
         by = cfg.get("features_by_src")
         if isinstance(by, dict):

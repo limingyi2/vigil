@@ -15,11 +15,12 @@ ReAct 是一步看一步的，复杂任务容易漏：「算一下这个再搜�
 """
 import json
 import re
+import threading
 
 NAME = "planner"
 DESC = "Plan-and-Execute：复杂任务先规划再执行"
 
-# 两张表都只放多字词。实测过的反例：
+# 两张表都只放多字词。反例：
 #   跳过词里的「早」砍掉「帮我查一下早上的会议」，「啊」砍掉「帮我总结一下啊」
 #   规划词里的「三个」拖「我运行了三个小时」进规划，「再」拖「她再也不会来了」
 # 单字命中率太高，一个字就能左右判断。漏判只是走回ReAct，不会出错。
@@ -43,22 +44,130 @@ _SKIP_KEYWORDS = (
     "哈哈哈", "嘿嘿", "呵呵", "嘻嘻", "嗯嗯", "嗯哼",
 )
 
+# 长消息只有在带这些"并列/递进"痕迹时才当成多目标任务（见 should_plan）。
+# 单纯的长几乎都是情绪或叙述，不是任务。
+_MULTI_TASK_HINTS = (
+    "再", "然后", "顺便", "以及", "还要", "另外", "分别", "逐一", "都", "各",
+)
+
+
+def plan_decision(text):
+    """返回 `(要不要规划, 为什么)`。`should_plan` 是它的薄封装。
+
+    ## 为什么要把"为什么"也返回
+
+    规划分支现在还在观察期（见文件末的 `note`）：将来判它"删还是留"，
+    光知道"触发了多少次"不够，还得知道**它为什么触发** ——
+    是关键词一刀切中的（`帮我查`这种实词），还是长度+并列兜底中的。
+    后者才是最容易误判的那一类（长情绪句子），要盯的就是它。
+
+    返回的字符串直接进 trace，所以写得短、能 grep。
+    """
+    t = (text or "").strip()
+    if not t:
+        return False, "空"
+    for kw in _SKIP_KEYWORDS:
+        if kw in t:
+            return False, "跳过词:" + kw
+    for kw in _PLAN_KEYWORDS:
+        if kw in t:
+            return True, "规划词:" + kw
+    if len(t) >= 120:
+        for kw in _MULTI_TASK_HINTS:
+            if kw in t:
+                return True, "长句+并列:%s(%d字)" % (kw, len(t))
+        return False, "长句但没并列(%d字)" % len(t)
+    # 说"没命中"而不是"短句" —— 120 字以下都走这里，80 字的情绪句
+    # 直接标成"短句"会让人以为它很短，看数据时会误判。
+    return False, "没命中规划词(%d字)" % len(t)
+
 
 def should_plan(text):
     """要不要为这句话规划。启发式，不调模型。
 
-    跳过词 → 规划词 → 长度。四条都按顺序判，不合并成一个大 if：
+    跳过词 → 规划词 → 长度。按顺序判，不合并成一个大 if：
     跳过词必须优先，「帮我总结一下啊」里既有跳过词也有规划词，按谁先算都行，
     但「在吗，帮我查天气」只能跳过。
+
+    长度兜底这条要卡得很紧。
+    原来写的是 `len(t) >= 40` —— 40 字的中文就是一句正常的聊天。实测一句
+    纯情绪的"你还记得我们上次说的那个事吗，我最近一直在想……"（正好 40 字）
+    会被判成复杂任务，于是多花两次 flash 调用、而且最终回答还被套上
+    「你已经按计划完成了以下步骤」的任务框架。对一个陪伴型 agent，**用户最
+    在意的长情绪句子恰好全都命中这条规则**，方向正好反了。
+    判错的代价是不对称的：漏判只是走回普通 ReAct（他们自己的注释里也写了
+    "漏判只是走回 ReAct，不会出错"），误判要花钱、还会改变她的说话方式。
+    所以宁可漏：把长度门槛提到"确实像在交代一长串事"，并且要求话里带点
+    并列/递进的痕迹（再、然后、顺便、以及……），而不是单纯的长。
     """
-    t = (text or "").strip()
-    if not t:
+    # 🔴 判据只有 plan_decision 一处。这里再抄一遍的话，两个函数迟早会分叉
+    # —— 而这个文件里"两处各写一份判断"已经出过事了（见 note 的说明）。
+    return plan_decision(text)[0]
+
+
+# ---------------------------------------------------------------------------
+# 观测：这一节不改变任何行为，只为"将来判它删还是留"攒数据
+# ---------------------------------------------------------------------------
+# 规划分支现在是**观察期**。要回答的问题有三个：
+#   1. 它到底触发多少次？（会不会绝大多数长消息都被它截走）
+#   2. 触发了之后**成不成**？plan() 返回空、或者中途抛异常回退 ——
+#      这两种只打一行日志、trace 里看不见，等于白花。
+#   3. 它值不值？多花几次模型调用、多花多少毫秒。
+# 攒够再决定删还是留。**这段没有任何行为副作用**，删它不影响功能。
+def enabled():
+    """规划分支开着没有（`plan_and_execute.enabled`）。
+
+    单独抽出来是给 server 用的：关掉之后**不能再走 `plan()`**（它自己也会
+    返回 None，但那样 server 会把它记成"判要规划却没解析出步骤"，
+    等于把"配置关了"记成"它失败了"，观测数据就废了）。
+    """
+    try:
+        return bool(_planner_config().get("enabled", False))
+    except Exception:
         return False
-    if any(kw in t for kw in _SKIP_KEYWORDS):
-        return False
-    if any(kw in t for kw in _PLAN_KEYWORDS):
-        return True
-    return len(t) >= 40
+
+
+_STATS = {
+    "decided": 0,       # should_plan 判"要规划"的次数（真走了这条路的）
+    "would": 0,         # **关掉期间**本来会触发的次数（将来要不要重开的依据）
+    "ok": 0,            # 规划出来并正常答完
+    "empty": 0,         # 判要规划，但 plan() 一步都没解析出来（回退直答）
+    "error": 0,         # 规划途中抛异常（回退直答）
+    "revised": 0,       # 被检查器打回改过一次
+    "steps_total": 0,   # 累计步骤数（除以 ok 就是平均步数）
+    "ms_total": 0,      # 累计规划+执行+收尾的耗时
+    "calls_total": 0,   # 累计额外模型调用次数（规划/检查/修正各算一次）
+}
+_STATS_LOCK = threading.Lock()
+_LAST = {}              # {"why": …, "kind": …} 最近一次，给面板/排查看
+
+
+def note(**kw):
+    """给统计加一笔。**任何异常都吞掉** —— 观测代码绝不能弄坏聊天。"""
+    try:
+        with _STATS_LOCK:
+            for k, v in kw.items():
+                if isinstance(v, (int, float)):
+                    _STATS[k] = _STATS.get(k, 0) + v
+                else:
+                    _LAST[k] = v
+    except Exception:
+        pass
+
+
+def stats():
+    """给 /api/stats 看的一份快照。"""
+    try:
+        with _STATS_LOCK:
+            d = dict(_STATS)
+            d["last"] = dict(_LAST)
+        d["rate"] = (round(d["ok"] / float(d["decided"]), 3)
+                     if d.get("decided") else 0.0)
+        d["avg_steps"] = (round(d["steps_total"] / float(d["ok"]), 2)
+                          if d.get("ok") else 0.0)
+        return d
+    except Exception:
+        return {}
 
 
 def _planner_config():
@@ -75,12 +184,19 @@ def _planner_config():
 def _available_tools_text():
     """获取所有可用工具的说明文本，拼进规划提示词。
 
-    跟聊天提示词里的工具清单保持一致：核心工具 + 插件工具。
+    从原生 FC 工具表（all_specs）生成，替代旧的 PROMPT_LINE（只列了三个内置工具）。
+    规划阶段是纯文本调用（不传 tools 参数），所以需要在提示词里列工具清单。
     """
     parts = []
     try:
         import tools
-        parts.append(tools.PROMPT_LINE)
+        specs = tools.all_specs(src="app")
+        lines = []
+        for t in specs:
+            fn = t["function"]
+            lines.append("- %s：%s" % (fn["name"], fn["description"]))
+        if lines:
+            parts.append("可用工具（原生 function calling）：\n" + "\n".join(lines))
         extra = tools.tool_help_extra()
         if extra:
             parts.append(extra)
@@ -156,6 +272,18 @@ def _ask_flash(prompt, temperature, max_tokens, timeout):
             pass
     if not api_base or not api_key:
         return None
+    # 🔴 模型和 base 必须同家：planner_model 默认是 DeepSeek flash，主服务商
+    # 切回小米后这里会 400「Unsupported model」（跟 gate 一样）。失败虽然只是
+    # 静默回退 ReAct，但那两次 flash 调用就白花了。换家规则跟 gate._judge_api
+    # 共用一份实现（plugins/gate.py），别在这再抄一遍 —— 抄两遍必漂移。
+    try:
+        from plugins.gate import _judge_api
+        api_base, api_key, model = _judge_api(
+            {"api_base": api_base, "api_key": api_key, "model": model}, cfg)
+    except Exception:
+        pass
+    if not api_base or not model:
+        return None
     try:
         import httpx
         r = httpx.post(
@@ -175,7 +303,7 @@ def _ask_flash(prompt, temperature, max_tokens, timeout):
 
 
 def _split_tool(tool, arg):
-    """把 "weather:北京" 拆成 ("weather", "北京")。
+    """把 "weather:北京" / "[tool:weather:北京]" 拆成 ("weather", "北京")。
 
     模型很爱照着提示词里的示例写全名（PROMPT_LINE 就是
     "[tool:weather:城市]"），但 tools.TOOLS 的键是裸名
@@ -183,9 +311,22 @@ def _split_tool(tool, arg):
     返回 None，一路落到 plugin_host.run_tool 也查不到，最后她只能跟用户说
     「查不到」—— 而工具明明有。
 
+    括号形态必须一起处理。 原来只 partition(":") 切第一个冒号，
+    而提示词里的示例**就是带括号的**，模型照抄时进来的是
+    "[tool:weather:北京]" —— 切出来是 ("[tool", "weather:北京]")，
+    名字变成 "[tool"、参数里还挂着个 "]"。等于上面那段注释想修的问题
+    只修了一半：模型越"守规矩地照抄示例"，越必然失败。
+    多冒号（"tool:weather:北京"）同理，所以先剥壳再切。
+
     arg 已经给了就以 arg 为准：模型把参数写两遍时它通常更具体。
     """
     tool = str(tool or "").strip().lower()
+    if not tool:
+        return None, arg
+    # 剥掉 [tool:...] 的外壳与可能重复的 "tool:" 前缀
+    m = re.match(r"^\[?\s*(?:tool\s*[:：]\s*)?(.*?)\s*\]?$", tool, re.S)
+    if m:
+        tool = m.group(1).strip()
     if not tool:
         return None, arg
     name, _, inline = tool.partition(":")
@@ -308,11 +449,22 @@ def verify_result(text, results, answer):
 
     检查器用 flash 模型，跟规划同一个。只在 Plan-and-Execute 路径调用，
     闲聊不走这里，0 额外成本。
+
+    **复杂度过滤（2026-10-08 新增）**：简单任务跳过检查，省一次 flash 调用。
+    判断标准：实际调用了工具的步骤 <= 2 且 涉及的不同工具数 <= 1 → 跳过。
+    比如"查一下天气"（1步1工具）、"帮我算个数"（1步1工具）都不需要检查。
+    多步骤、多工具的复杂任务才跑检查器，保证质量。
     """
     if not _planner_config().get("enabled", False):
         return None
     # 没有工具调用的纯回答不用检查（规划结果里全是 tool=None 的步骤）
-    if not any(tool for _, tool, _, _ in results):
+    used_tools = [tool for _, tool, _, _ in results if tool]
+    if not used_tools:
+        return None
+    # 简单任务跳过：工具步骤 <= 2 且 不同工具数 <= 1
+    if len(used_tools) <= 2 and len(set(used_tools)) <= 1:
+        print("[检查器] 简单任务（%d步/%d工具），跳过检查" %
+              (len(used_tools), len(set(used_tools))), flush=True)
         return None
 
     raw = _ask_flash(_verify_prompt(text, results, answer), 0.0, 300, 20)

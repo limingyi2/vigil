@@ -105,7 +105,7 @@ def _proactive_quota_file():
 
 def _proactive_stats_file():
     return data_file("proactive_stats.json",
-                     r"C:\Vigil\data\proactive_stats.json")
+                     r"C:\vigil\data\proactive_stats.json")
 
 
 def _proactive_stats_load():
@@ -210,7 +210,7 @@ def _recent_her_texts(n=12):
     （或截一段）再吐一次 —— 用户看到的就是"她把同一句话发两遍"。
     """
     from runtime import data_file as _df
-    p = _df("chat_history.jsonl", r"C:\Vigil\data\chat_history.jsonl")
+    p = _df("chat_history.jsonl", r"C:\vigil\data\chat_history.jsonl")
     out = []
     try:
         with open(p, encoding="utf-8") as f:
@@ -262,7 +262,7 @@ def _is_repeat_of_recent(text, n=12):
 def _cloud_append_assistant(text):
     """往聊天存档追加一条她说的话（主动搭话用）。"""
     from runtime import data_file as _df
-    p = _df("chat_history.jsonl", r"C:\Vigil\data\chat_history.jsonl")
+    p = _df("chat_history.jsonl", r"C:\vigil\data\chat_history.jsonl")
     row = {"t": time.strftime("%Y-%m-%d %H:%M"), "role": "assistant",
            "text": text}
     os.makedirs(os.path.dirname(p), exist_ok=True)

@@ -77,10 +77,16 @@ class TestBuildSystemText(unittest.TestCase):
         self.assertIn("【你和他是什么关系】", t)
 
     def test_no_signature_param(self):
-        """第二参数删了 —— 关系不再是外部传进来的档位。"""
+        """关系档位参数删了 —— 关系不再是外部传进来的。
+
+        第二个参数是 src（2026-10-08 加的）：底线按渠道选，PC 客户端走
+        助手规则、其余渠道走陪伴规则（见 persona_store.ASSISTANT_SRCS）。
+        它有默认值，不传仍按 app 处理 —— 所以老调用方一行都不用改。
+        """
         import inspect
-        self.assertEqual(len(inspect.signature(ps.build_system_text)
-                             .parameters), 1)
+        params = inspect.signature(ps.build_system_text).parameters
+        self.assertEqual(list(params), ["p", "src"])
+        self.assertEqual(params["src"].default, "app")
 
     def test_empty_relation_still_has_default(self):
         """空值走默认，所以标题和默认文案都在 —— 这跟"真留空"的预期相反，
@@ -105,6 +111,25 @@ class TestBuildSystemText(unittest.TestCase):
             self.assertNotIn(frag, ps.CORE_RULES)
 
 
+def _tracked_persona_files():
+    """**入库**的 personas/*.json（相对仓库根的路径）。
+
+    不能扫工作目录：作者本机放着好几份本地实验用的人设（真实角色、各种
+    preset），它们**都没有入库**。扫目录就会把这些当成"仓库里预置了角色"
+    而报红 —— 本机红、CI 绿，正好反了，而且会把人往"隐私泄露了"的方向带。
+    这个类的本意是"仓库不预置角色"，那就只能看入库清单。
+    """
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        r = subprocess.run(["git", "ls-files", "brain/config/personas"],
+                           cwd=root, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    return [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
+
+
 class TestPersonaFiles(unittest.TestCase):
     """预设已删，只留当前这套 + 空模板"""
 
@@ -113,8 +138,12 @@ class TestPersonaFiles(unittest.TestCase):
                               "..", "brain", "config", "personas")
 
     def test_no_presets(self):
-        left = [f for f in os.listdir(self.d) if f.startswith("preset_")]
-        self.assertEqual(left, [], "预设还在：%s" % left)
+        tracked = _tracked_persona_files()
+        if not tracked:
+            self.skipTest("不在 git 工作区（或没有 git），看不到入库清单")
+        left = [os.path.basename(x) for x in tracked
+                if os.path.basename(x).startswith("preset_")]
+        self.assertEqual(left, [], "预设还入库着：%s" % left)
 
     def test_template_has_relation_field(self):
         import json
@@ -175,8 +204,17 @@ class TestFrontendEditor(unittest.TestCase):
     """App 里有人设编辑器了"""
 
     def setUp(self):
-        self.src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     "..", "_chat.html"), encoding="utf-8").read()
+        # 读**入库**的那份（assets/chat.html）。
+        # 原来读根目录 _chat.html —— 那是打包母本，被 .gitignore 挡着，
+        # 任何克隆和 CI 上都不存在，于是这个类必然 FileNotFoundError（8 个测试
+        # 全变 error），本机看着绿只是因为作者手上有那个文件。
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "android-app", "app", "src", "main",
+                         "js", "pages.js")
+        if not os.path.isfile(p):
+            self.skipTest("assets/chat.html 不在")
+        with open(p, encoding="utf-8") as f:
+            self.src = f.read()
 
     def test_no_relation_tier_ui(self):
         for frag in ("relationList", "relationCur", "applyRelation",
@@ -184,9 +222,15 @@ class TestFrontendEditor(unittest.TestCase):
             self.assertNotIn(frag, self.src, frag)
 
     def test_editor_has_all_fields(self):
-        for k in ("name", "nicknames", "relation", "background", "scene",
-                  "personality", "notes", "appearance"):
+        # notes 现在**没有独立输入框**了：改成"粘一整份角色卡"那个框（pf_raw）
+        # 来填，保存时整段写回 out.notes。所以这里查的是"每个字段都有出处"，
+        # 而不是"每个字段都有一个 k: 'xxx'"。
+        for k in ("name", "nicknames", "call_user", "relation", "background",
+                  "scene", "personality", "appearance"):
             self.assertIn("k: '%s'" % k, self.src)
+        # notes 的出处：整份粘贴框，保存时写回
+        self.assertIn("pf_raw", self.src)
+        self.assertIn("out.notes = ", self.src)
 
     def test_editor_calls_new_endpoints(self):
         self.assertIn("/api/persona/save", self.src)
@@ -238,23 +282,84 @@ class TestSaveKeepsUnsentFields(unittest.TestCase):
 
 
 class TestDraftRulesNotBindingRelation(unittest.TestCase):
-    """draft_rules 每轮必发，权重比人设字段高 —— 里面不能焊死关系形态"""
+    """原来这里钉的是"规则别把人设绑死"（不许写死异地/同城、不许许诺见面）。
+
+    2026-10-08 起约束整体移进人设文件，`build_draft_rules` 恒返回空串 ——
+    所以这两类绑死在代码里的约束**整个不存在了**，也就无从"绑"。
+    这条现在钉的是新现实：规则为空，且这些关系判断只可能来自人设。
+    """
 
     def setUp(self):
-        self.rules = ps.build_draft_rules({"call_user": ""})
+        import persona_store
+        self.rules = persona_store.build_draft_rules({})
 
-    def test_no_hardcoded_long_distance(self):
-        """关系改成自由文本了，"异地"这种前提不该还写在必发的规则里。"""
-        self.assertNotIn("重要：异地", self.rules)
+    def test_rules_are_gone(self):
+        self.assertEqual(self.rules, "",
+                         "代码里又开始拼关系约束了；该写进人设文件")
 
-    def test_still_guards_unexpected_meeting_promises(self):
-        """不能见面时别随口承诺，但这条得保留（换个说法）。"""
-        for frag in ("我陪你", "能不能见面"):
-            self.assertIn(frag, self.rules)
+    def test_no_hardcoded_distance_or_meeting_promise(self):
+        """异地/同城这类判断不该由代码决定，更不该出现在任何拼接文本里。"""
+        for frag in ("重要：异地", "我马上过来", "假装看得见他身边"):
+            self.assertNotIn(frag, self.rules)
 
-    def test_still_blocks_faking_sees_his_room(self):
-        """删"异地"那句时别把这条一起带走 —— 它跟异地无关。"""
-        self.assertIn("假装看得见他身边", self.rules)
+
+class TestAssistantChannel(unittest.TestCase):
+    """PC 客户端（src=pc）走助手底线，其余渠道仍是陪伴底线。
+
+    2026-10-08 加的。为什么要分渠道：CORE_RULES 第一句就是"你是一个具体的
+    人，不是助手"，而且它固定缀在提示词**最末尾**（权重最高）。人设文件里
+    写"你是 AI 助手"压不过它 —— 不换底线的话，人设写了、行为没变。
+    """
+
+    def _txt(self, src):
+        return ps.build_system_text({"name": "Vigil", "relation": "搭档"},
+                                    src=src)
+
+    def test_pc_gets_the_assistant_rules(self):
+        t = self._txt("pc")
+        self.assertIn("你是 AI 助手", t)
+
+    def test_pc_does_not_get_the_companion_rules(self):
+        """陪伴底线与助手底线互斥 —— 两套同时在场等于没指定身份。
+
+        断言这两句（身份定义 + 段标题），别用"不是谁的情绪出口"那种
+        两边措辞相同的句子 —— 助手版本来也要说"不提供情绪价值"。
+        """
+        t = self._txt("pc")
+        self.assertNotIn("你是一个具体的人", t)
+        self.assertNotIn("你有不想聊的时候", t)
+        self.assertNotIn("【你是谁（优先级最高", t)
+
+    def test_pc_has_no_relation_block(self):
+        """助手渠道不写"你和他是什么关系"。
+
+        那套问法是她扮演某个人的伴侣时用的；助手是干活的，加这一段
+        等于把她往「女朋友」上带（人设文件的字段就是这么写的）。
+        """
+        self.assertNotIn("【你和他是什么关系】", self._txt("pc"))
+
+    def test_assistant_may_admit_being_a_program(self):
+        """陪伴底线里明写"你不知道自己是程序"，助手渠道必须反过来。"""
+        self.assertIn("允许谈", ps.ASSISTANT_RULES)
+        self.assertNotIn("你不知道自己是程序", ps.ASSISTANT_RULES)
+
+    def test_other_channels_keep_the_companion_rules(self):
+        """换渠道不能把手机/微信那边也变成助手。"""
+        for src in ("app", "wechat"):
+            t = self._txt(src)
+            self.assertIn("你是一个具体的人", t)
+            self.assertIn("【你和他是什么关系】", t)
+            self.assertNotIn("你是 AI 助手", t)
+
+    def test_pc_is_the_only_assistant_channel(self):
+        """渠道名单是显式的 —— 加渠道要改这里，别让别处悄悄走错底线。"""
+        self.assertEqual(ps.ASSISTANT_SRCS, ("pc",))
+
+    def test_the_two_rule_sets_do_not_overlap(self):
+        """两套底线不许共享句子：共享的部分会变成"两套身份都成立"。"""
+        a = set(l.strip() for l in ps.CORE_RULES.splitlines() if l.strip())
+        b = set(l.strip() for l in ps.ASSISTANT_RULES.splitlines() if l.strip())
+        self.assertEqual(a & b, set())
 
 
 if __name__ == "__main__":

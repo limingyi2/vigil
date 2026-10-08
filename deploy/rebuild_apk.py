@@ -106,7 +106,7 @@ finally:
 print("RC", p.returncode)
 
 apk = os.path.join(ROOT, "app", "build", "outputs", "apk", "debug", "app-debug.apk")
-dst = os.path.join(HERE, "zhixia.apk")
+dst = os.path.join(HERE, "vigil.apk")
 
 # 构建失败时必须先把错误打出来再退出。之前这里只在"APK 文件不存在"时才
 # 打印 stdout，而 APK 是上一次成功留下的旧文件 —— 于是失败也照样打印一行

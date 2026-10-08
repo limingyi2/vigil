@@ -334,7 +334,7 @@ def main():
     group("14. 🔴🔴 附属文件必须落在 plugins/ 下，绝不许落 CWD")
     # 曾经的 bug：拼附属文件落盘路径时写成 dst = "_" + os.path.basename(dst)，
     # 那是"给绝对路径加前缀"，得到一个相对路径 → 文件掉进大脑根目录（也就是
-    # 云端 C:\Vigil\），而且被 except: pass 静默吞掉，安装照样报成功。
+    # 云端 C:\vigil\），而且被 except: pass 静默吞掉，安装照样报成功。
     # 两个后果叠加：文件位置不对 + 没人知道出过错。所以这里既查落点，也查 CWD。
     cwd_before = set(os.listdir(HERE))
     p = os.path.join(TMP, "wx.zip")

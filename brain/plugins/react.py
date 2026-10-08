@@ -1,18 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ReAct 显式化 + 思维链落盘：把"她想什么"和"她说什么"拆成两条路。
-
-## 解决什么
-
-`tools.py` 现有的 `run_chat_with_tools` 已经是 ReAct 循环了
-（写标签 → 执行 → 结果回喂 → 再问一轮）。但**推理和答案是混在一起输出的**，
-带来三个实测过的毛病：
-
-1. **推理泄漏**：她想的过程会跟着回复一起发出去。群里一发出去就穿帮。
-2. **无法观测**：`trace.tool` 对内置工具常为空，事后看不出她为什么没调。
-3. **无法定位病因**：不调工具 / 调了失败 / 判错了，是三种病，
-   没有留痕就只能靠猜。
-
-## 改了什么（只改输出侧，不改调用方式）
+"""ReAct 显式化：把"她想什么"和"她说什么"拆成两条路。
 
 提示词里教她这样写：
 
@@ -20,37 +7,14 @@
     [tool:weather:北京]
     北京现在 3 度，冻得慌。
 
-本插件挂 `on_reply`，把这一段拆成三块：
+本插件挂 `on_reply`，把这一段拆三块：
 
-- **think** → 只进 trace 文件，**永不出现在回复里，永不进群**
-- **tool 标签** → 已经在 tools.py 里被清扫过一遍，这里不再管
+- **think** → 只进 trace 文件，**永不出现在回复里**
+- **tool 标签** → `tools.py` 已清扫过，这里不管
 - **rest** → 给用户看的
 
-## 关键：没解析出来怎么办
-
-**回落老行为，一个字都不变。**
-
-模型不会稳定输出 `<think>`，格式没出来是常态而不是异常。所以：
-
-- 解析成功 → 剥离 think，落 trace
-- 解析失败 → 原样返回，`think` 记空字符串
-
-绝不能因为"格式没出来"就让她哑掉或丢内容。这个插件的失败模式
-只能是"没变得更聪明"，不能是"坏了"。
-
-## 为什么零成本
-
-解析是正则，落盘是本地写文件，**一次模型调用都不加**。
-和Plan-and-Execute 不同 —— 那个每次规划都要调便宜模型。
-
-## 思维链里绝对不放什么
-
-- 完整 prompt（太长，且含记忆库内容）
-- API key
-- 记忆库原文
-- 她的系统人设
-
-只放：用户说了什么、她想了什么、调了什么、成没成、答了什么、多久。
+不这么拆的话：推理过程会跟着回复发出去（群里一穿帮），
+而且"不调工具 / 调了失败 / 判错了"三种病没有留痕，只能靠猜。
 """
 
 import json
@@ -216,20 +180,33 @@ def on_reply(ctx, reply, meta=None):
     if not _cfg().get("enabled", False):
         return reply
     src = getattr(ctx, "src", "") or "app"
-    # think 已经在 brain.draft() 里被 _clean() 之前提取到 self.last_think 了
+        # think 已在 draft_native 里、_clean() 之前提取到 self.last_think
     # 这里优先从 brain 读，因为 _clean() 之后回复文本里已经没有 think 了
     think = ""
+    tools = []
     try:
         brain = getattr(ctx, "brain", None)
         if brain is not None:
             think = getattr(brain, "last_think", "") or ""
+            # 🔴 **工具名从 brain 读，不要只靠解析正文。**
+            # 线上是原生 function calling：工具走结构化 tool_calls，
+            # 正文里**根本没有** `[tool:...]` —— 只解析标签的话，
+            # 这里的 tools 永远是空列表，"她到底调没调工具"就看不出来。
+            # `last_tools_used` 是原生链路自己记的（见 draft_native），
+            # 那才是真数据。标签解析留着当兜底（规划分支还走标签）。
+            try:
+                tools = [(str(t), "") for t in
+                         (getattr(brain, "last_tools_used", None) or [])]
+            except Exception:
+                tools = []
     except Exception:
         pass
-    # 工具标签和 rest 从回复文本里解析（工具标签没被 _clean 删）
-    # 如果 brain 里没拿到 think（某些路径没走 brain.draft），parse_react 解析的 think 作兜底
-    parsed_think, tools, rest = parse_react(reply)
+    # 兜底：正文里的工具标签（老链路 / 规划分支）
+    parsed_think, tag_tools, rest = parse_react(reply)
     if not think:
         think = parsed_think
+    if not tools:
+        tools = tag_tools
 
     # 没解析出 think 也没工具就原样返回，绝不动内容
     final = rest if think or tools else (reply or "")
@@ -307,6 +284,29 @@ def last_for(src=None):
         return dict(_last.get(src or "", {}) or _last.get("app", {}))
 
 
+def prompt(ctx=None):
+    """教她在回答前先写一段 <think>，把思考过程留在本地、不发给用户。
+
+    🔴 这个函数之前缺失，导致 think 格式教学从来没被注入系统提示词——
+    模型不知道要输出 <think>，于是 brain.last_think 永远为空，
+    react.on_reply 只能落一个空 think，"思维链落盘"形同虚设。
+    config.json 里写的"提示词已加 think 格式教学"是错的，实际没加。
+
+    原生 FC 模式下工具调用走结构化 tool_calls，所以这里**不教** [tool:...]
+    标签，只教 think 格式。工具标签教学在老链路（已删除）里才有。
+    """
+    return (
+        "\n【思考格式】在你给出最终回复之前，先写一段思考过程，用 <think> 和 "
+        "</think> 包起来，放在回复的最开头。think 里写你打算怎么做、要不要调工具、"
+        "为什么这么判断——这段内容只会留在本地日志里，**不会**发给他看。"
+        "think 写完之后另起一行，再写你真正要发给他的话。\n"
+        "示例：\n"
+        "<think>他让我算 128×256 还要查北京天气。先算数学：128×256=32768。"
+        "天气得调 weather 工具，不能凭记忆编。</think>\n"
+        "128×256 等于 32768。北京天气我帮你查一下。"
+    )
+
+
 def _r_stats(body, query):
     """看板：思维链统计 + 最近一轮拆解。只读，不改任何状态。
 
@@ -327,7 +327,7 @@ def _r_recent(body, query):
     return {"ok": True, "items": recent(limit, src)}
 
 
-# 🔴 原来两项都只有 (method, path)，缺第三个 handler，route_table() 会判
+# 🔴 两项都只写 (method, path) 而缺第三个 handler 时，route_table() 会判
 # "ROUTES 项不完整"直接跳过，两个接口全 404。补齐 handler（签名 (body,query)）。
 ROUTES = [
     ("POST", "/api/react/stats", _r_stats),

@@ -1,0 +1,1373 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vigil 客户端 · 排版方案 v2</title>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   Token 取自 DeepSeek Harness 的 dsw 变量表：
+   中性偏蓝灰阶 + 近黑主按钮 + 蓝色强调 + 0.5px 发丝描边。
+   规矩：不用渐变、不用毛玻璃、不用发光阴影、不用大圆角。
+   ═══════════════════════════════════════════════════════════ */
+:root{
+  --bg:#ffffff; --bg-sub:#f9fafb; --bg-sunken:#f0f2f5; --bg-hover:rgba(15,17,21,.045); --bg-active:rgba(15,17,21,.075);
+  --text:#0f1115; --text-2:#61666b; --text-3:#81858c; --text-4:#adb2b8;
+  --line:rgba(0,0,0,.10); --line-soft:rgba(0,0,0,.055); --line-strong:rgba(0,0,0,.16);
+  --accent:#4176e6; --accent-soft:rgba(65,118,230,.10);
+  --ok:#16a34a; --warn:#d97706; --err:#dc2626; --info:#4176e6;
+  --fill:#0f1115; --on-fill:#ffffff; --fill-hover:#43454a;
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:12px;
+  --sh-1:0 1px 2px rgba(15,17,21,.06);
+  --sh-2:0 4px 12px rgba(15,17,21,.10);
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Helvetica,Arial,sans-serif;
+  --mono:"SF Mono","Cascadia Code",Consolas,"Liberation Mono",Menlo,monospace;
+  --rail:56px; --panel:240px; --right:264px; --title:36px; --top:46px; --status:24px;
+  /* 头像宽与正文缩进：一处定义。工具卡、正文、时间共用它，
+     谁都不许再写死一个 36px —— 两个数分别算就会漂。 */
+  --ava:26px; --gap:10px; --indent:calc(var(--ava) + var(--gap));
+  --ease:cubic-bezier(.32,.72,0,1);
+}
+[data-theme="dark"]{
+  --bg:#131417; --bg-sub:#0f1115; --bg-sunken:#1c1e22; --bg-hover:rgba(255,255,255,.055); --bg-active:rgba(255,255,255,.09);
+  --text:#f2f3f5; --text-2:#a3a8af; --text-3:#7f848a; --text-4:#5c6066;
+  --line:rgba(255,255,255,.12); --line-soft:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.22);
+  --accent:#7aaaff; --accent-soft:rgba(122,170,255,.14);
+  --fill:#f9fafb; --on-fill:#0f1115; --fill-hover:#e1e5ee;
+  --sh-1:0 1px 2px rgba(0,0,0,.4); --sh-2:0 6px 18px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;overflow:hidden}
+svg.i{width:17px;height:17px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+svg.i.sm{width:15px;height:15px}svg.i.xs{width:13px;height:13px}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:99px;border:3px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--line-strong);background-clip:content-box;border:3px solid transparent}
+::-webkit-scrollbar-track{background:transparent}
+::selection{background:var(--accent-soft)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:var(--r-xs)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+
+/* ═══ 骨架 ═══ */
+.app{display:grid;grid-template-rows:var(--title) minmax(0,1fr) var(--status);height:100vh}
+.titlebar{display:flex;align-items:center;gap:8px;padding-left:12px;background:var(--bg-sub);border-bottom:1px solid var(--line-soft);-webkit-app-region:drag;user-select:none}
+.brand{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;letter-spacing:-.01em}
+.brand .mark{width:17px;height:17px;border-radius:5px;background:var(--fill);color:var(--on-fill);display:grid;place-items:center;font-size:10px;font-weight:700}
+.titlebar .sp{flex:1}
+.tbtn{-webkit-app-region:no-drag;height:22px;padding:0 9px;border-radius:var(--r-xs);color:var(--text-2);font-size:11.5px;display:inline-flex;align-items:center;gap:5px;transition:background 150ms var(--ease),color 150ms var(--ease)}
+.tbtn:hover{background:var(--bg-hover);color:var(--text)}
+.wctl{display:flex;-webkit-app-region:no-drag;align-self:stretch}
+.wctl button{width:42px;display:grid;place-items:center;color:var(--text-3)}
+.wctl button:hover{background:var(--bg-hover);color:var(--text)}
+.wctl button.close:hover{background:#e5484d;color:#fff}
+
+.body{display:grid;grid-template-columns:var(--rail) var(--panel) minmax(0,1fr);min-height:0;position:relative}
+/* ── 分栏拖拽把手：左边列表 ↔ 聊天区、聊天区 ↔ 右侧上下文 ── */
+.gutter{position:absolute;top:0;bottom:0;width:7px;z-index:40;cursor:col-resize;background:transparent;transition:background 140ms ease-out}
+.gutter::after{content:'';position:absolute;left:3px;top:0;bottom:0;width:1px;background:var(--line-soft)}
+.gutter:hover,.gutter:focus-visible,.gutter.drag{background:var(--accent-soft)}
+.gutter:hover::after,.gutter:focus-visible::after,.gutter.drag::after{background:var(--accent)}
+#gPanel{left:calc(var(--rail) + var(--panel) - 3px)}
+#gChat{right:calc(var(--right) - 3px)}
+@media (max-width:1120px){ #gChat{display:none} }
+@media (max-width:860px){ #gPanel{display:none} }
+body.no-rp #gChat{display:none}
+body.no-panel #gPanel{display:none}
+.rail{background:var(--bg-sub);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:2px;min-height:0}
+.rbtn{width:38px;height:38px;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--text-3);position:relative;transition:background 150ms var(--ease),color 150ms var(--ease)}
+.rbtn:hover{background:var(--bg-hover);color:var(--text)}
+.rbtn.on{background:var(--bg-active);color:var(--text)}
+.rbtn[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:46px;z-index:50;background:var(--text);color:var(--bg);padding:3px 8px;border-radius:var(--r-xs);font-size:11.5px;white-space:nowrap;box-shadow:var(--sh-2)}
+.rail .sp{flex:1}
+.rail-me{width:26px;height:26px;border-radius:50%;background:var(--bg-sunken);color:var(--text-2);display:grid;place-items:center;font-size:11.5px;font-weight:600;margin-top:6px}
+.led{width:6px;height:6px;border-radius:50%;background:var(--ok);margin-top:8px}
+.led.off{background:var(--text-4)}
+
+.panel{background:var(--bg);border-right:1px solid var(--line-soft);display:flex;flex-direction:column;min-height:0;min-width:0}
+.phead{height:var(--top);display:flex;align-items:center;gap:6px;padding:0 10px 0 14px;flex:none}
+.phead h2{font-size:13px;font-weight:600;flex:1;letter-spacing:-.01em}
+.psearch{padding:0 10px 8px;flex:none}
+.pseg{display:flex;gap:2px;padding:0 10px 8px;flex:none}
+.pseg button{flex:1;min-width:0;height:26px;border-radius:var(--r-sm);color:var(--text-2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background 150ms var(--ease),color 150ms var(--ease)}
+.pseg button:hover{background:var(--bg-hover);color:var(--text)}
+.pseg button.on{background:var(--bg-active);color:var(--text);font-weight:500}
+.plist{flex:1;overflow-y:auto;padding:0 8px 10px;min-height:0}
+.gtitle{padding:12px 6px 4px 12px;font-size:11px;color:var(--text-4);font-weight:500;letter-spacing:.02em}
+.li{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--r-sm);color:var(--text-2);cursor:pointer;min-height:32px;transition:background 140ms var(--ease),color 140ms var(--ease)}
+.li:hover{background:var(--bg-hover);color:var(--text)}
+.li.on{background:var(--bg-active);color:var(--text)}
+.li .ic{width:18px;height:18px;flex:none;display:grid;place-items:center}
+.li .ic .m{width:18px;height:18px;border-radius:50%;background:var(--bg-sunken);color:var(--text-2);display:grid;place-items:center;font-size:10px;font-weight:600}
+.li .tx{flex:1;min-width:0}
+.li .tx b{display:block;font-size:13px;font-weight:450;color:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li.on .tx b{font-weight:550}
+.li .tx span{display:block;font-size:11.5px;color:var(--text-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .meta{font-size:11px;color:var(--text-4);flex:none}
+.li .unread{min-width:16px;height:16px;border-radius:99px;background:var(--err);color:#fff;font-size:10px;font-weight:600;display:grid;place-items:center;padding:0 4px;flex:none}
+
+/* ═══ 主区 ═══ */
+.main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
+.topbar{height:var(--top);display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line-soft);flex:none}
+/* 聊天页顶栏：左=人设名，中=状态与模型地址（居中），右=操作 */
+.topbar.center{display:grid;grid-template-columns:1fr auto 1fr}
+.topbar.center .tc{display:flex;align-items:center;gap:8px;justify-self:center}
+.topbar.center .tr{display:flex;align-items:center;gap:4px;justify-self:end}
+.topbar h1{font-size:13.5px;font-weight:600;letter-spacing:-.012em;white-space:nowrap}
+.topbar .sub{font-size:12px;color:var(--text-4);white-space:nowrap}
+.sp{flex:1}
+.page{display:none;flex-direction:column;min-height:0;flex:1}
+.page.on{display:flex}
+.scroll{flex:1;overflow-y:auto;padding:18px 20px 28px;min-height:0}
+.wide{max-width:760px}
+.colwrap{max-width:760px;margin:0 auto;width:100%}
+
+/* 按钮 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:28px;padding:0 10px;border-radius:var(--r-sm);color:var(--text);font-size:12px;font-weight:500;white-space:nowrap;transition:background 160ms ease-out,color 160ms ease-out,border-color 160ms ease-out,transform 120ms var(--ease)}
+.btn:hover{background:var(--bg-hover)}
+.btn:active{transform:scale(.97)}
+.btn.oline{border:.5px solid var(--line-strong)}
+.btn.fill{background:var(--fill);color:var(--on-fill)}
+.btn.fill:hover{background:var(--fill-hover)}
+.btn.md{height:36px;padding:0 14px;font-size:13.5px;border-radius:var(--r-md)}
+.ibtn{width:28px;height:28px;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--text-3);transition:background 150ms ease-out,color 150ms ease-out}
+.ibtn:hover{background:var(--bg-hover);color:var(--text)}
+
+/* 标签 */
+.tag{display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 8px;border-radius:99px;font-size:11px;font-weight:500;color:var(--text-3);white-space:nowrap}
+.tag.outline{border:.5px solid var(--line-strong)}
+.tag.solid{background:var(--fill);color:var(--on-fill)}
+.tag.neutral{background:var(--bg-sunken);color:var(--text-2)}
+.tag.ok{background:color-mix(in srgb,var(--ok) 12%,transparent);color:var(--ok)}
+.tag.warn{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
+.tag.err{background:color-mix(in srgb,var(--err) 12%,transparent);color:var(--err)}
+.tag.info{background:color-mix(in srgb,var(--info) 12%,transparent);color:var(--info)}
+
+/* 表单 */
+.card{background:var(--bg);border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:14px}
+.card.hd{padding:0}
+.card.hd>.h{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-soft)}
+.card.hd>.h h3{font-size:13px;font-weight:600;flex:1}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.field>label{font-size:12px;color:var(--text-2);font-weight:500}
+.input{height:32px;width:100%;padding:0 10px;background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm);font-size:13px;outline:none;transition:border-color 160ms ease-out,box-shadow 160ms ease-out}
+textarea.input{height:auto;padding:8px 10px;line-height:1.55;resize:vertical;font-family:inherit}
+select.input{padding-right:6px}
+.input:hover{border-color:var(--line-strong)}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-soft);min-height:48px}
+.row:last-child{border-bottom:0}
+.row .lb{flex:1;min-width:0}
+.row .lb b{display:block;font-size:13px;font-weight:500}
+.row .lb span{font-size:11.5px;color:var(--text-4)}
+.sw{width:40px;height:23px;border-radius:99px;background:var(--bg-sunken);border:.5px solid var(--line);position:relative;flex:none;transition:background 200ms var(--ease)}
+.sw::after{content:'';position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform 200ms var(--ease)}
+.sw.on{background:var(--fill);border-color:var(--fill)}
+.sw.on::after{transform:translateX(17px)}
+.seg{display:inline-flex;background:var(--bg-sunken);border-radius:var(--r-sm);padding:2px;gap:2px}
+.seg button{height:24px;padding:0 11px;border-radius:var(--r-xs);font-size:12px;color:var(--text-2);transition:all 160ms var(--ease)}
+.seg button.on{background:var(--bg);color:var(--text);box-shadow:var(--sh-1);font-weight:500}
+.chip{height:26px;padding:0 10px;border-radius:99px;border:.5px solid var(--line);font-size:12px;color:var(--text-2);display:inline-flex;align-items:center;transition:all 160ms var(--ease)}
+.chip:hover{border-color:var(--line-strong);color:var(--text)}
+.chip.on{background:var(--accent-soft);border-color:transparent;color:var(--accent);font-weight:500}
+
+/* 表格 */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;padding:8px 12px;background:var(--bg-sub);color:var(--text-2);font-weight:600;font-size:11.5px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.tbl .c{text-align:center}
+.tbl .mono{font-family:var(--mono);font-size:12px}
+.grid{display:grid;gap:12px}
+/* 页面容器：铺满可用宽度。表单页靠 grid 自己分栏，不靠限宽 */
+.wrap{width:100%}
+/* auto-fit 而不是 auto-fill：卡片少的时候把空轨道收掉、卡片自己撑满，
+   否则一页三张卡全挤在左边、右边空一大块 */
+.g3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.muted{color:var(--text-4)}
+.sec{font-size:11.5px;color:var(--text-4);font-weight:600;letter-spacing:.02em;margin:18px 0 8px}
+.sec:first-child{margin-top:0}
+
+/* ═══ 聊天（本次重点：头像与首行文字对齐、从上往下排）═══ */
+.split{display:grid;grid-template-columns:minmax(0,1fr) var(--right);min-height:0;flex:1}
+.split.no-right{grid-template-columns:minmax(0,1fr)}
+.rp{border-left:1px solid var(--line-soft);background:var(--bg-sub);overflow-y:auto;min-height:0}
+.rp .in{padding:12px;display:flex;flex-direction:column;gap:10px}
+.rp.no{display:none}
+.rp h4{font-size:11px;color:var(--text-4);font-weight:600;margin-bottom:6px}
+.rp .card{background:var(--bg);padding:10px 12px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:2px 0;color:var(--text-2)}
+.kv b{color:var(--text);font-weight:500}
+
+.chat{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+/* ── 唯一的列：消息区和输入框装在同一个 .col 里，列**铺满聊天区**（不封宽度上限、不居中）──
+   为什么必须是同一个盒子：早先是「两个列各自 margin:0 auto 居中」= 两次独立居中计算，
+   父容器宽度、滚动条、小数像素取整、引擎差异任一变量都会让两者错开。
+   现在整个聊天只有一个 .col，左缘/右缘/宽度是同一次计算的结果 —— 结构上不可能错开。
+   为什么不封上限：封了就变成居中的窄列，消息浮在画面中间，她的在左、你的在右都够不着边。
+   铺满后：她在聊天区左缘，你的消息贴聊天区右缘，输入框同宽。
+   正文另有 66ch / 62ch 的上限，所以再宽也不会拉成难看的长行。 */
+.col{width:100%;padding:0 20px;display:flex;flex-direction:column;flex:1;min-height:0}
+/* 预留滚动条槽：聊天记录变长冒出滚动条时，列宽也不会变 */
+.plist,.rp,.scroll,.msgs{scrollbar-gutter:stable}
+.msgs{flex:1;overflow-y:auto;min-height:0;padding:16px 0 6px;display:flex;flex-direction:column;gap:18px}
+/* 头像**绝对定位，不参与排版**。
+   正文的左边距（.turn 的 padding-left）和工具卡的左边距（.tool 的 margin-left）
+   用的是同一个表达式 --indent，所以两者永远在同一条竖线上 ——
+   头像宽多少、gap 怎么解析，都影响不到这件事。
+   之前是「正文靠 flex 排出来、工具卡写死 36px」，两个数分别算；有人的浏览器里
+   头像那一截没算进去，两者就差了 13px。 */
+.turn{position:relative;display:flex;align-items:flex-start;padding-left:var(--indent)}
+.ava{position:absolute;left:0;top:-2px;width:var(--ava);height:var(--ava);border-radius:50%;background:var(--bg-sunken);color:var(--text-2);display:grid;place-items:center;font-size:11px;font-weight:600}
+.turn .bdy{min-width:0;flex:1;max-width:66ch}
+.turn.me .bdy{flex:0 1 auto;max-width:62ch}
+.turn .txt{font-size:13.5px;line-height:1.62;white-space:pre-wrap;overflow-wrap:anywhere}
+.turn .foot{display:flex;align-items:center;gap:10px;margin-top:3px;font-size:11.5px;color:var(--text-4)}
+.turn .foot button{font-size:11.5px;color:var(--text-4);opacity:0;transition:color 140ms ease-out,opacity 140ms ease-out}
+.turn:hover .foot button{opacity:1}
+.turn .foot button:hover{color:var(--text)}
+.turn.me{justify-content:flex-end;padding-left:0}
+.turn.me .txt{background:var(--bg-sunken);border-radius:var(--r-lg) var(--r-lg) var(--r-xs) var(--r-lg);padding:7px 12px;max-width:62ch}
+.sysline{text-align:center;font-size:11.5px;color:var(--text-4)}
+/* 工具调用卡：**水平居中**，和系统提示同一路 —— 它是"这一轮的机械动作"，
+   不属于她说的那句话，所以既不跟正文同缩进，也不占满整行。
+   margin 用 auto 而不是靠父容器居中：flex 列里 auto 外边距会吸收空余空间，
+   卡片按内容宽度收缩后居中，宽度随内容变，永远居中。 */
+.tool{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:.5px solid var(--line);border-radius:var(--r-sm);background:var(--bg-sub);font-size:12px;margin-left:auto;margin-right:auto;width:fit-content;max-width:min(620px,100%)}
+.tool .nm{font-family:var(--mono);font-size:11.5px;color:var(--text)}
+.tool .ar{font-family:var(--mono);font-size:11.5px;color:var(--text-4);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.caret{display:inline-block;width:2px;height:1em;background:var(--text);vertical-align:-2px;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+
+/* 输入框在同一个 .col 内，不再有自己的宽/边距；分隔线用 ::before 拉满整条聊天区 */
+.composer{position:relative;flex:none;padding:10px 0 12px;background:var(--bg)}
+.composer::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:100vw;height:1px;background:var(--line-soft)}
+.cbox{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--bg);padding:6px 8px 5px;transition:border-color 160ms ease-out,box-shadow 160ms ease-out}
+.cbox:focus-within{border-color:var(--line-strong);box-shadow:0 1px 2px rgba(15,17,21,.05)}
+.cbox textarea{width:100%;border:0;outline:0;resize:none;height:44px;font-size:13.5px;line-height:1.6;background:none;display:block}
+.cbar{display:flex;align-items:center;gap:2px}
+.cbar .sp{flex:1}
+.hint{display:flex;gap:12px;font-size:11px;color:var(--text-4);margin-top:6px}
+
+.statusbar{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--bg-sub);border-top:1px solid var(--line-soft);font-size:11px;color:var(--text-4)}
+.statusbar b{color:var(--text-2);font-weight:500}
+
+/* ═══ 响应式：三档收窄，核心是 minmax(0,1fr) 让列能被压扁 ═══ */
+@media (max-width:1240px){ :root{--panel:216px;--right:236px} }
+/* 超宽屏：两列一起加大左内边距（同一个值，左边缘依旧相同），免得贴着左侧面板 */
+/* 超宽屏：只给列加同一份左内边距，左缘依旧相同 */
+@media (min-width:1600px){ .col{padding-left:32px;padding-right:24px} }
+@media (max-width:1120px){ .rp{display:none} .split{grid-template-columns:minmax(0,1fr)} }
+@media (max-width:980px){ :root{--panel:196px} .topbar .sub{display:none} }
+@media (max-width:860px){
+  .body{grid-template-columns:var(--rail) minmax(0,1fr)}
+  .panel{display:none}
+}
+@media (max-width:660px){
+  :root{--rail:0px}
+  .body{grid-template-columns:minmax(0,1fr)}
+  .rail{position:fixed;left:0;right:0;bottom:var(--status);height:48px;flex-direction:row;justify-content:space-around;border-right:0;border-top:1px solid var(--line-soft);padding:0;z-index:20}
+  .rail .sp,.rail-me,.led{display:none}
+  .msgs,.composer{padding-left:12px;padding-right:12px}
+  .scroll{padding:14px 12px 70px}
+  .msgs{padding-bottom:60px}
+}
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5"/></symbol>
+  <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></symbol>
+  <symbol id="i-lib" viewBox="0 0 24 24"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></symbol>
+  <symbol id="i-set" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
+  <symbol id="i-mon" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+  <symbol id="i-img" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5v16"/><path d="M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+  <symbol id="i-cat" viewBox="0 0 24 24"><path d="M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.72.23 6.5 2.23A9.04 9.04 0 0 1 12 5Z"/><path d="M8 14v.5"/><path d="M16 14v.5"/><path d="M11.25 16.25h1.5L12 17l-.75-.75Z"/></symbol>
+  <symbol id="i-cmd" viewBox="0 0 24 24"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-smile" viewBox="0 0 24 24"><path d="M15 10V9"/><path d="M16.472 15a6 6 0 0 1-8.943 0"/><path d="M9 10V9"/><circle cx="12" cy="12" r="10"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="titlebar">
+    <div class="brand"><span class="mark">V</span>Vigil</div>
+    <div class="seg" id="chanSeg" style="margin-left:12px">
+      <button class="on">App</button><button>微信</button>
+    </div>
+    <div class="sp"></div>
+    <button class="tbtn" id="geoBtn"><svg class="i xs"><use href="#i-cmd"/></svg>对齐自检</button>
+    <button class="tbtn" id="theme"><svg class="i xs"><use href="#i-moon"/></svg>深色</button>
+    <button class="tbtn"><svg class="i xs"><use href="#i-cmd"/></svg>Ctrl K</button>
+    <div class="wctl"><button title="最小化"><svg class="i xs"><use href="#i-minus"/></svg></button><button class="close" title="关闭"><svg class="i xs"><use href="#i-x"/></svg></button></div>
+  </header>
+
+  <div class="body">
+    <nav class="rail">
+      <div class="rbtn on" data-page="chat" data-tip="对话"><svg class="i"><use href="#i-chat"/></svg></div>
+      <div class="rbtn" data-page="persona" data-tip="人设"><svg class="i"><use href="#i-user"/></svg></div>
+      <div class="rbtn" data-page="memory" data-tip="记忆"><svg class="i"><use href="#i-brain"/></svg></div>
+      <div class="rbtn" data-page="kb" data-tip="知识库"><svg class="i"><use href="#i-lib"/></svg></div>
+      <div class="rbtn" data-page="life" data-tip="生活"><svg class="i"><use href="#i-heart"/></svg></div>
+      <div class="rbtn" data-page="ability" data-tip="能力"><svg class="i"><use href="#i-puzzle"/></svg></div>
+      <div class="rbtn" data-page="data" data-tip="数据"><svg class="i"><use href="#i-chart"/></svg></div>
+      <div class="sp"></div>
+      <div class="rbtn" data-page="settings" data-tip="设置"><svg class="i"><use href="#i-set"/></svg></div>
+      <div class="rail-me" title="本机设备">夏</div>
+      <div class="led" title="已连接"></div>
+    </nav>
+
+    <aside class="panel">
+      <div class="pv" data-view="chat">
+        <div class="phead"><h2>对话</h2><button class="ibtn" title="新建话题"><svg class="i sm"><use href="#i-plus"/></svg></button></div>
+        <div class="psearch"><input class="input" placeholder="搜索话题与消息"></div>
+        <div class="plist">
+          <div class="gtitle">置顶</div>
+          <div class="li on"><span class="ic"><svg class="i sm"><use href="#i-chat"/></svg></span><div class="tx"><b>日常</b><span>刚看了下天气，下午有雨哦</span></div><span class="meta">14:32</span></div>
+          <div class="gtitle">今天</div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-chat"/></svg></span><div class="tx"><b>写代码</b><span>帮我把那段的异常吞掉改一下</span></div><span class="meta">11:08</span></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-chat"/></svg></span><div class="tx"><b>旅行计划</b><span>十一想去哪</span></div><span class="unread">2</span></div>
+          <div class="gtitle">更早</div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-chat"/></svg></span><div class="tx"><b>梦境记录</b><span>我梦见…</span></div><span class="meta">10-04</span></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-chat"/></svg></span><div class="tx"><b>语音测试</b><span>[语音 00:12]</span></div><span class="meta">10-02</span></div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="persona" hidden>
+        <div class="phead"><h2>人设</h2><button class="ibtn" title="导入"><svg class="i sm"><use href="#i-plus"/></svg></button></div>
+        <div class="plist">
+          <div class="li on"><span class="ic"><span class="m">夏</span></span><div class="tx"><b>林知夏</b><span>元气少女 · 当前使用</span></div></div>
+          <div class="li"><span class="ic"><span class="m">麦</span></span><div class="tx"><b>麦麦</b><span>说话简短，会开玩笑</span></div></div>
+          <div class="li"><span class="ic"><span class="m">结</span></span><div class="tx"><b>结衣</b><span>温柔学姐</span></div></div>
+          <div class="gtitle">操作</div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-plus"/></svg></span><div class="tx"><b>新建人设</b><span>从空白或模板开始</span></div></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>导入 .json</b><span>拖进来即可</span></div></div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="memory" hidden>
+        <div class="phead"><h2>记忆</h2></div>
+        <div class="pseg"><button class="on" data-sub="mem">记忆</button><button data-sub="recap">摘要</button><button data-sub="agenda">约定</button></div>
+        <div class="plist">
+          <div class="gtitle">分类</div>
+          <div class="li on"><div class="tx"><b>全部</b></div><span class="meta">128</span></div>
+          <div class="li"><div class="tx"><b>人物</b></div><span class="meta">32</span></div>
+          <div class="li"><div class="tx"><b>事件</b></div><span class="meta">41</span></div>
+          <div class="li"><div class="tx"><b>偏好</b></div><span class="meta">26</span></div>
+          <div class="li"><div class="tx"><b>知识</b></div><span class="meta">19</span></div>
+          <div class="li"><div class="tx"><b>其他</b></div><span class="meta">10</span></div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="kb" hidden>
+        <div class="phead"><h2>知识库</h2><button class="ibtn" title="导入文档"><svg class="i sm"><use href="#i-plus"/></svg></button></div>
+        <div class="pseg"><button class="on" data-sub="kbdocs">文档</button><button data-sub="kbsearch">检索测试</button><button data-sub="kbset">索引设置</button></div>
+        <div class="plist">
+          <div class="gtitle">集合</div>
+          <div class="li on"><span class="ic"><svg class="i sm"><use href="#i-lib"/></svg></span><div class="tx"><b>全部文档</b><span>12 个文件 · 486 块</span></div><span class="meta">3.2M</span></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>技术手册</b><span>5 个文件 · 210 块</span></div></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>项目笔记</b><span>7 个文件 · 276 块</span></div></div>
+          <div class="li" style="border:1px dashed var(--line);margin-top:8px;justify-content:center;color:var(--text-4)">把文件拖到这里导入</div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="life" hidden>
+        <div class="phead"><h2>生活</h2></div>
+        <div class="pseg"><button class="on" data-sub="diary">日记</button><button data-sub="moments">朋友圈</button><button data-sub="album">相册</button><button data-sub="pkgs">快递</button></div>
+        <div class="plist">
+          <div class="gtitle">最近</div>
+          <div class="li on"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>10-06 周一</b><span>把阳台的花搬进来了</span></div></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>10-05 周日</b><span>他一直在忙，没怎么说话</span></div></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>10-04 周六</b><span>试了新的自拍角度</span></div></div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="ability" hidden>
+        <div class="phead"><h2>能力</h2></div>
+        <div class="pseg"><button class="on" data-sub="plugins">插件</button><button data-sub="skills">技能</button><button data-sub="features">开关</button></div>
+        <div class="plist">
+          <div class="gtitle">已装 6</div>
+          <div class="li on"><span class="ic"><svg class="i sm"><use href="#i-plug"/></svg></span><div class="tx"><b>weather</b><span>查天气 · 1 个工具</span></div><span class="tag ok">启用</span></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-plug"/></svg></span><div class="tx"><b>memo</b><span>记账 · 2 个工具</span></div><span class="tag ok">启用</span></div>
+          <div class="li"><span class="ic"><svg class="i sm"><use href="#i-plug"/></svg></span><div class="tx"><b>translate</b><span>翻译 · 1 个工具</span></div><span class="tag neutral">停用</span></div>
+          <div class="li" style="border:1px dashed var(--line);margin-top:8px;justify-content:center;color:var(--text-4)">把 .zip 拖到这里安装</div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="data" hidden>
+        <div class="phead"><h2>数据</h2></div>
+        <div class="plist">
+          <div class="li d-item on" data-d="overview"><span class="ic"><svg class="i sm"><use href="#i-chart"/></svg></span><div class="tx"><b>概览</b></div></div>
+          <div class="li d-item" data-d="trace"><span class="ic"><svg class="i sm"><use href="#i-brain"/></svg></span><div class="tx"><b>对话 Trace</b></div></div>
+          <div class="li d-item" data-d="history"><span class="ic"><svg class="i sm"><use href="#i-chat"/></svg></span><div class="tx"><b>聊天历史</b></div></div>
+          <div class="li d-item" data-d="usage"><span class="ic"><svg class="i sm"><use href="#i-chart"/></svg></span><div class="tx"><b>用量</b></div></div>
+          <div class="li d-item" data-d="log"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>日志</b></div></div>
+        </div>
+      </div>
+
+      <div class="pv" data-view="settings" hidden>
+        <div class="phead"><h2>设置</h2></div>
+        <div class="plist">
+          <div class="li s-item" data-s="general"><span class="ic"><svg class="i sm"><use href="#i-set"/></svg></span><div class="tx"><b>通用</b></div></div>
+          <div class="li s-item" data-s="conn"><span class="ic"><svg class="i sm"><use href="#i-bell"/></svg></span><div class="tx"><b>连接与设备</b></div></div>
+          <div class="li s-item on" data-s="model"><span class="ic"><svg class="i sm"><use href="#i-brain"/></svg></span><div class="tx"><b>模型与服务商</b></div></div>
+          <div class="li s-item" data-s="active"><span class="ic"><svg class="i sm"><use href="#i-heart"/></svg></span><div class="tx"><b>聊天与主动性</b></div></div>
+          <div class="li s-item" data-s="pet"><span class="ic"><svg class="i sm"><use href="#i-cat"/></svg></span><div class="tx"><b>桌宠</b></div></div>
+          <div class="li s-item" data-s="local"><span class="ic"><svg class="i sm"><use href="#i-mon"/></svg></span><div class="tx"><b>本地操控与安全</b></div></div>
+          <div class="li s-item" data-s="usage"><span class="ic"><svg class="i sm"><use href="#i-chart"/></svg></span><div class="tx"><b>用量统计</b></div></div>
+          <div class="li s-item" data-s="log"><span class="ic"><svg class="i sm"><use href="#i-book"/></svg></span><div class="tx"><b>运行日志</b></div></div>
+          <div class="li s-item" data-s="about"><span class="ic"><svg class="i sm"><use href="#i-shield"/></svg></span><div class="tx"><b>关于</b></div></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- 对话 -->
+      <section class="page on" data-page="chat">
+        <div class="topbar center">
+          <h1>林知夏</h1>
+          <div class="tc">
+            <span class="tag ok">在线</span><span class="sub">mimo-v2.6-pro</span>
+          </div>
+          <div class="tr">
+            <button class="ibtn" title="搜索"><svg class="i sm"><use href="#i-search"/></svg></button>
+            <button class="btn" id="rpBtn">上下文</button>
+            <button class="ibtn" title="更多"><svg class="i sm"><use href="#i-dots"/></svg></button>
+          </div>
+        </div>
+        <div class="split" id="split">
+          <div class="chat">
+            <div class="col">
+              <div class="msgs">
+                <div class="sysline">上下文已压缩 · 命中记忆 3 条</div>
+
+                <div class="turn">
+                  <div class="ava">夏</div>
+                  <div class="bdy">
+                    <div class="txt">我在阳台晒被子呢，你那边忙完了没？</div>
+                    <div class="foot"><span>14:30</span><button>复制</button><button>重新生成</button><button>朗读</button></div>
+                  </div>
+                </div>
+
+                <div class="turn me">
+                  <div class="bdy"><div class="txt">今天想吃什么？</div></div>
+                </div>
+
+                <div class="tool">
+                  <svg class="i xs" style="color:var(--text-3)"><use href="#i-plug"/></svg>
+                  <span class="nm">weather</span>
+                  <span class="ar">{ city: "杭州" }</span>
+                  <span class="tag ok"><svg class="i xs"><use href="#i-check"/></svg>320ms</span>
+                </div>
+
+                <div class="turn">
+                  <div class="ava">夏</div>
+                  <div class="bdy">
+                    <div class="txt">刚看了下天气，下午有雨哦，出门记得带伞～要不要我给你<span class="caret"></span></div>
+                    <div class="foot"><span>14:32</span><button>停止</button></div>
+                  </div>
+                </div>
+              </div>
+              <div class="composer">
+                <div class="cbox">
+                  <textarea placeholder="说点什么…"></textarea>
+                  <div class="cbar">
+                    <button class="ibtn" title="表情包"><svg class="i sm"><use href="#i-smile"/></svg></button>
+                    <button class="ibtn" title="附件"><svg class="i sm"><use href="#i-clip"/></svg></button>
+                    <button class="ibtn" title="语音"><svg class="i sm"><use href="#i-mic"/></svg></button>
+                    <button class="ibtn" title="本地操控"><svg class="i sm"><use href="#i-mon"/></svg></button>
+                    <div class="sp"></div>
+                    <span class="tag neutral">1.2k / 128k</span>
+                    <button class="btn fill" style="margin-left:6px"><svg class="i sm"><use href="#i-send"/></svg>发送</button>
+                  </div>
+                </div>
+                <div class="hint"><span>Enter 发送 · Shift+Enter 换行</span><span>/ 命令</span><span>@ 提及人设</span></div>
+              </div>
+            </div>
+          </div>
+          <aside class="rp" id="rp">
+            <div class="in">
+              <div class="card">
+                <h4>本轮上下文</h4>
+                <div class="kv"><span>当前人设</span><b>林知夏</b></div>
+                <div class="kv"><span>命中记忆</span><b>3 条</b></div>
+                <div class="kv"><span>工具调用</span><b>1 次</b></div>
+                <div class="kv"><span>本轮 tokens</span><b>1,204</b></div>
+                <div class="kv"><span>思维链</span><b>已折叠</b></div>
+              </div>
+              <div class="card">
+                <h4>命中记忆</h4>
+                <div class="kv" style="display:block"><b style="font-size:12.5px">用户喜欢用 DeepSeek 模型</b><div class="muted" style="font-size:11.5px">偏好 · 相似度 .82</div></div>
+                <div class="kv" style="display:block;margin-top:8px"><b style="font-size:12.5px">上周说过想去看海</b><div class="muted" style="font-size:11.5px">事件 · 相似度 .74</div></div>
+              </div>
+              <div class="card">
+                <h4>上下文块</h4>
+                <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px">
+                  <i style="width:18%;background:var(--text)"></i><i style="width:26%;background:var(--accent)"></i>
+                  <i style="width:30%;background:var(--text-3)"></i><i style="width:10%;background:var(--warn)"></i><i style="width:16%;background:var(--ok)"></i>
+                </div>
+                <div class="kv"><span>风格约束</span><b>210 字</b></div>
+                <div class="kv"><span>历史摘要</span><b>480 字</b></div>
+                <div class="kv"><span>人设</span><b>620 字</b></div>
+                <div class="kv"><span>约定账本</span><b>90 字</b></div>
+                <div class="kv"><span>长期记忆</span><b>260 字</b></div>
+                <div class="kv"><span>知识库</span><b>0 段</b></div>
+              </div>
+              <div class="card">
+                <h4>技能</h4>
+                <div class="kv"><span>skill_list</span><b>6 个可用</b></div>
+                <div class="kv"><span>skill_call</span><b>0 次</b></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- 人设 -->
+      <section class="page" data-page="persona">
+        <div class="topbar"><h1>人设</h1><span class="sub">已用 3 / 5 · 切换人设会切换记忆分区</span><div class="sp"></div>
+          <button class="btn oline">重载人格</button>
+          <button class="btn oline"><svg class="i sm"><use href="#i-book"/></svg>导入</button>
+          <button class="btn fill"><svg class="i sm"><use href="#i-plus"/></svg>新建一套</button></div>
+        <div class="scroll">
+          <div class="wrap">
+            <div class="card" style="margin-bottom:16px">
+              <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+                <div style="width:44px;height:44px;border-radius:var(--r-md);background:var(--bg-sunken);color:var(--text-2);display:grid;place-items:center;font-size:18px;font-weight:600;flex:none">夏</div>
+                <div style="flex:1;min-width:180px">
+                  <div style="display:flex;align-items:center;gap:8px"><b style="font-size:15px">林知夏</b><span class="tag solid">当前</span></div>
+                  <div class="muted" style="font-size:12.5px;margin-top:2px">元气少女 · 活泼开朗 · 32 条记忆 · 3 个插件对她开放</div>
+                </div>
+                <div style="display:flex;gap:6px"><button class="btn oline">编辑人设</button><button class="btn oline">复制</button><button class="btn oline">导出</button><button class="btn">删除</button></div>
+              </div>
+            </div>
+            <div class="sec">全部人设 3 / 3</div>
+            <div class="grid g3">
+              <div class="card" style="cursor:pointer">
+                <div style="display:flex;align-items:center;gap:9px"><span class="m" style="width:24px;height:24px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;font-size:11px;font-weight:600;color:var(--text-2)">夏</span><b style="font-size:13.5px">林知夏</b></div>
+                <div class="muted" style="font-size:12.5px;margin-top:8px">元气少女 · 活泼开朗</div>
+                <div style="margin-top:10px"><span class="tag info">当前使用</span></div>
+              </div>
+              <div class="card" style="cursor:pointer">
+                <div style="display:flex;align-items:center;gap:9px"><span class="m" style="width:24px;height:24px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;font-size:11px;font-weight:600;color:var(--text-2)">麦</span><b style="font-size:13.5px">麦麦</b></div>
+                <div class="muted" style="font-size:12.5px;margin-top:8px">说话简短，会开玩笑</div>
+                <div style="margin-top:10px"><span class="tag outline">设为当前</span></div>
+              </div>
+              <div class="card" style="cursor:pointer">
+                <div style="display:flex;align-items:center;gap:9px"><span class="m" style="width:24px;height:24px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;font-size:11px;font-weight:600;color:var(--text-2)">结</span><b style="font-size:13.5px">结衣</b></div>
+                <div class="muted" style="font-size:12.5px;margin-top:8px">温柔学姐</div>
+                <div style="margin-top:10px"><span class="tag outline">设为当前</span></div>
+              </div>
+              <div class="card" style="display:grid;place-items:center;border-style:dashed;color:var(--text-4);cursor:pointer;min-height:96px"><svg class="i"><use href="#i-plus"/></svg></div>
+            </div>
+            <div class="sec">编辑器（点开卡片就地展开，不跳页）</div>
+            <div class="card">
+              <div style="display:flex;gap:16px;flex-wrap:wrap">
+                <div style="width:140px;flex:none">
+                  <div class="li on"><div class="tx"><b>基础信息</b></div></div>
+                  <div class="li"><div class="tx"><b>性格与语气</b></div></div>
+                  <div class="li"><div class="tx"><b>背景故事</b></div></div>
+                  <div class="li"><div class="tx"><b>示例对话</b></div></div>
+                  <div class="li"><div class="tx"><b>工具偏好</b></div></div>
+                </div>
+                <div style="flex:1;min-width:280px">
+                  <div class="field">
+                    <label>整份人设（角色卡直接粘进来，系统自动认名字和小名）</label>
+                    <textarea class="input" style="height:120px">她叫林知夏，小名夏夏。说话轻快，爱用颜文字，会主动关心他在做什么…</textarea>
+                    <div class="muted" style="font-size:11.5px">认成「林知夏」，小名「夏夏」· 你手改过的字段没动</div>
+                  </div>
+                  <details style="margin-bottom:12px">
+                    <summary style="cursor:pointer;font-size:12.5px;color:var(--text-2)">想分开调也行（8 个字段）</summary>
+                    <div class="grid g3" style="margin-top:10px">
+                      <div class="field"><label>她的名字</label><input class="input" value="林知夏"></div>
+                      <div class="field"><label>小名</label><input class="input" value="夏夏"></div>
+                      <div class="field"><label>她怎么叫你</label><input class="input" value="你"></div>
+                      <div class="field"><label>你们的关系</label><input class="input" value="女朋友"></div>
+                      <div class="field"><label>怎么认识的</label><input class="input" placeholder="留空就退回老朋友"></div>
+                      <div class="field"><label>现在的生活状态</label><input class="input" value="大二，住在学校附近"></div>
+                    </div>
+                  </details>
+                  <div class="field"><label>名称</label><input class="input" value="林知夏"></div>
+                  <div class="field"><label>人设正文（Markdown）</label><textarea class="input" style="height:76px">说话轻快，爱用颜文字，会主动关心他在做什么…</textarea></div>
+                  <div style="display:flex;gap:8px;align-items:center"><button class="btn fill">保存</button><button class="btn oline">测试一句话</button><div class="sp"></div><span class="muted" style="font-size:11.5px">改完立刻生效，不用重启</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 记忆 -->
+      <section class="page" data-page="memory">
+        <div class="topbar"><h1>记忆</h1><span class="sub">分区：林知夏 · desktop</span><div class="sp"></div>
+          <button class="btn"><svg class="i sm"><use href="#i-search"/></svg>语义搜索</button>
+          <button class="btn fill"><svg class="i sm"><use href="#i-plus"/></svg>手动添加</button></div>
+        <div class="scroll">
+          <div class="wrap">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+              <button class="chip on">全部 128</button><button class="chip">人物 32</button><button class="chip">事件 41</button><button class="chip">偏好 26</button><button class="chip">知识 19</button><button class="chip">其他 10</button>
+            </div>
+            <div class="card hd">
+              <div class="h"><h3>2026-10-06 周一</h3><span class="tag neutral">12 条</span></div>
+              <div class="row" style="padding:10px 14px">
+                <div class="lb"><b>用户喜欢用 DeepSeek 模型</b><span>对话提取 · 14:30 · 相似命中 12 次</span></div>
+                <span class="tag info">偏好</span><button class="ibtn"><svg class="i sm"><use href="#i-dots"/></svg></button>
+              </div>
+              <div class="row" style="padding:10px 14px">
+                <div class="lb"><b>客户端用 Electron 框架</b><span>手动添加 · 10:00</span></div>
+                <span class="tag neutral">知识</span><button class="ibtn"><svg class="i sm"><use href="#i-dots"/></svg></button>
+              </div>
+            </div>
+            <div class="card hd" style="margin-top:12px">
+              <div class="h"><h3>2026-10-05 周日</h3><span class="tag neutral">9 条</span></div>
+              <div class="row" style="padding:10px 14px">
+                <div class="lb"><b>林知夏是元气少女人设</b><span>人设同步 · 20:15</span></div>
+                <span class="tag info">人物</span><button class="ibtn"><svg class="i sm"><use href="#i-dots"/></svg></button>
+              </div>
+            </div>
+            <div class="sec">摘要与约定</div>
+            <div class="grid g3">
+              <div class="card"><b style="font-size:13.5px">日 → 周 → 月</b><div class="muted" style="font-size:12.5px;margin-top:6px">三层压缩，显示最近一次压缩时间与条目数</div><div style="margin-top:10px"><span class="tag neutral">最近压缩 10-06 03:00</span></div></div>
+              <div class="card"><b style="font-size:13.5px">约定账本</b><div class="muted" style="font-size:12.5px;margin-top:6px">到期提醒，过期自动标 missed</div><div style="margin-top:10px"><span class="tag warn">2 条待办</span></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 知识库 -->
+      <section class="page" data-page="kb">
+        <div class="topbar"><h1>知识库</h1><span class="sub">分区：默认人设 · App · bge-m3（1024 维）</span><div class="sp"></div>
+          <button class="btn oline">重建索引</button>
+          <button class="btn fill"><svg class="i sm"><use href="#i-plus"/></svg>导入文档</button></div>
+        <div class="scroll">
+          <div class="wrap">
+            <div class="grid g4" style="margin-bottom:14px">
+              <div class="card"><div class="muted" style="font-size:12px">文档</div><div style="font-size:22px;font-weight:600">12</div></div>
+              <div class="card"><div class="muted" style="font-size:12px">切块</div><div style="font-size:22px;font-weight:600">486</div></div>
+              <div class="card"><div class="muted" style="font-size:12px">索引体积</div><div style="font-size:22px;font-weight:600">3.2M</div></div>
+              <div class="card"><div class="muted" style="font-size:12px">嵌入模型</div><div style="font-size:15px;font-weight:600;margin-top:5px">bge-m3 · api</div></div>
+            </div>
+
+            <div class="card" style="margin-bottom:14px;border-style:dashed;text-align:center;color:var(--text-4);padding:18px">
+              把 .md / .txt / .pdf / 代码文件拖到这里或拖到整页导入
+            </div>
+
+            <div class="bv" data-b="kbdocs">
+            <div class="sec">文档</div>
+            <div class="card hd">
+              <table class="tbl">
+                <colgroup><col><col style="width:80px"><col style="width:70px"><col style="width:90px"><col style="width:120px"><col style="width:120px"></colgroup>
+                <tr><th>文件</th><th>类型</th><th>切块</th><th>大小</th><th>更新时间</th><th>操作</th></tr>
+                <tr><td>部署说明.md</td><td class="muted">md</td><td class="mono">42</td><td class="mono">18 KB</td><td class="mono muted">10-06 20:12</td><td><button class="btn">删除</button></td></tr>
+                <tr><td>接口手册.pdf</td><td class="muted">pdf</td><td class="mono">186</td><td class="mono">2.1 MB</td><td class="mono muted">10-06 20:14</td><td><button class="btn">删除</button></td></tr>
+                <tr><td>项目笔记.md</td><td class="muted">md</td><td class="mono">258</td><td class="mono">96 KB</td><td class="mono muted">10-05 11:03</td><td><button class="btn">删除</button></td></tr>
+              </table>
+            </div>
+
+            </div>
+            <div class="bv" data-b="kbsearch" hidden>
+            <div class="sec">检索测试（门槛设 0，方便看全貌）</div>
+            <div class="card">
+              <div style="display:flex;gap:8px;align-items:center">
+                <input class="input" placeholder="问一句话，看知识库里能翻出什么…" style="flex:1">
+                <select class="input" style="width:90px"><option>top 5</option><option>top 3</option><option>top 10</option></select>
+                <button class="btn fill">检索</button>
+              </div>
+              <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+                <div class="card" style="background:var(--bg-sub)">
+                  <div style="display:flex;align-items:center;gap:8px"><span class="tag ok">0.59</span><b style="font-size:12.5px">部署说明.md</b><span class="muted" style="font-size:11.5px">第 1 块 · 反向代理</span></div>
+                  <div style="font-size:12.5px;color:var(--text-2);margin-top:6px">Nginx 里把 8788 转发到后端，WebSocket 走 upgrade 头。</div>
+                </div>
+                <div class="card" style="background:var(--bg-sub)">
+                  <div style="display:flex;align-items:center;gap:8px"><span class="tag warn">0.36</span><b style="font-size:12.5px">接口手册.pdf</b><span class="muted" style="font-size:11.5px">第 42 块</span></div>
+                  <div style="font-size:12.5px;color:var(--text-2);margin-top:6px">连接建立后先发 token，服务端校验失败直接断连…</div>
+                </div>
+              </div>
+              <div class="muted" style="font-size:11.5px;margin-top:10px">注入门槛 0.45：低于它的不会进提示词，避免她拿不相关的段落回答。</div>
+            </div>
+
+            </div>
+            <div class="bv" data-b="kbset" hidden>
+            <div class="sec">索引设置</div>
+            <div class="grid g3">
+              <div class="card">
+                <b style="font-size:13.5px">切块</b>
+                <div class="field" style="margin-top:10px"><label>每块字数</label><input class="input" value="800"></div>
+                <div class="field" style="margin-bottom:0"><label>块间重叠</label><input class="input" value="80"></div>
+              </div>
+              <div class="card">
+                <b style="font-size:13.5px">嵌入</b>
+                <div class="field" style="margin-top:10px"><label>后端</label><select class="input"><option>api（云端 bge-m3，失败降级本地）</option><option>local（D 盘 bge-m3，走 GPU）</option><option>fastembed（本地小模型）</option></select></div>
+                <div class="field" style="margin-bottom:0"><label>模型</label><input class="input" value="BAAI/bge-m3"></div>
+              </div>
+              <div class="card">
+                <b style="font-size:13.5px">每轮注入</b>
+                <div class="row"><div class="lb"><b>自动检索并注入</b><span>关掉就只留 kb_search 工具</span></div><button class="sw on"></button></div>
+                <div class="row"><div class="lb"><b>注入条数</b></div><input class="input" style="width:70px" value="3"></div>
+                <div class="row"><div class="lb"><b>门槛</b></div><input class="input" style="width:70px" value="0.45"></div>
+              </div>
+            </div>
+            <div class="muted" style="font-size:11.5px;margin-top:10px">后端或模型一改，旧向量维度对不上会自动作废，需要点「重建索引」。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 生活 -->
+      <section class="page" data-page="life">
+        <div class="topbar"><h1>生活</h1><span class="sub">她的日记、朋友圈与自拍</span><div class="sp"></div><button class="btn oline">生成今日日记</button></div>
+        <div class="scroll">
+          <div class="wrap">
+            <div class="bv" data-b="diary">
+            <div class="card" style="margin-bottom:14px">
+              <div style="display:flex;align-items:center;gap:8px"><b style="font-size:14px">今天把阳台的花搬进来了</b><span class="tag neutral">2026-10-06 周一</span></div>
+              <div style="font-size:13px;color:var(--text-2);margin-top:8px">下雨前抢着搬的，有一盆的叶子被风吹折了，有点心疼。他今天没怎么说话，我猜在忙。</div>
+              <div style="display:flex;gap:6px;margin-top:10px"><span class="tag neutral">心情 平静</span><span class="tag outline">life_engine 推演</span></div>
+            </div>
+            </div>
+            <div class="bv" data-b="moments" hidden>
+            <div class="sec">朋友圈</div>
+            <div class="grid g3">
+              <div class="card">
+                <div style="display:flex;align-items:center;gap:8px"><span style="width:22px;height:22px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;font-size:10px;font-weight:600;color:var(--text-2)">夏</span><b style="font-size:13px">林知夏</b><div class="sp"></div><span class="muted" style="font-size:11.5px">10-06 20:14</span></div>
+                <div style="font-size:13px;margin-top:8px">雨天的窗台最好看了</div>
+                <div style="display:flex;gap:6px;margin-top:10px"><span class="tag neutral"><svg class="i xs"><use href="#i-img"/></svg>3 图</span></div>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:10px;border-top:1px solid var(--line-soft);padding-top:8px">
+                  <button class="btn" style="color:var(--accent)"><svg class="i sm"><use href="#i-heart"/></svg>赞 2</button>
+                  <button class="btn"><svg class="i sm"><use href="#i-chat"/></svg>评论 1</button>
+                  <div class="sp"></div><span class="muted" style="font-size:11.5px">我 · 小林 赞过</span>
+                </div>
+                <div class="muted" style="font-size:12px;margin-top:8px">小林：这张构图好看</div>
+              </div>
+            </div>
+            </div>
+            <div class="bv" data-b="album" hidden>
+            <div class="sec">相册</div>
+            <div class="grid g4">
+              <div class="card" style="height:92px;display:grid;place-items:center;color:var(--text-4)"><svg class="i"><use href="#i-img"/></svg></div>
+              <div class="card" style="height:92px;display:grid;place-items:center;color:var(--text-4)"><svg class="i"><use href="#i-img"/></svg></div>
+              <div class="card" style="height:92px;display:grid;place-items:center;color:var(--text-4)"><svg class="i"><use href="#i-img"/></svg></div>
+            </div>
+
+            </div>
+            <div class="bv" data-b="pkgs" hidden>
+            <div class="sec">快递 · 聊天里提单号会自动加入，30 分钟查一次</div>
+            <div class="card hd">
+              <div class="row" style="padding:11px 14px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--warn);flex:none"></span>
+                <div class="lb"><b>顺丰速运 · 运输中 <span class="muted" style="font-weight:400">（备注：耳机）</span></b><span>已到达杭州转运中心 · SF1234567890</span></div>
+                <button class="btn">复制单号</button><button class="btn">改备注</button><button class="btn">删除</button>
+              </div>
+              <div class="row" style="padding:11px 14px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none"></span>
+                <div class="lb"><b>中通快递 · 已签收</b><span>已放至丰巢柜 · ZT987654321</span></div>
+                <button class="btn">复制单号</button><button class="btn">改备注</button><button class="btn">删除</button>
+              </div>
+              <div class="row" style="padding:11px 14px">
+                <span style="width:7px;height:7px;border-radius:50%;background:var(--err);flex:none"></span>
+                <div class="lb"><b>圆通速递 · 异常</b><span>收件地址有误，请联系快递员 · YT5551234</span></div>
+                <button class="btn">复制单号</button><button class="btn">改备注</button><button class="btn">删除</button>
+              </div>
+            </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 能力 -->
+      <section class="page" data-page="ability">
+        <div class="topbar"><h1>能力</h1><span class="sub">插件 · 技能 · 功能开关</span><div class="sp"></div><button class="btn oline"><svg class="i sm"><use href="#i-plus"/></svg>安装 .zip</button></div>
+        <div class="scroll">
+          <div class="wrap">
+            <div class="bv" data-b="plugins">
+            <div class="sec">插件（Python · 进大脑进程）　只有声明 FEATURE 的才能按渠道关</div>
+            <div class="grid g3">
+              <div class="card">
+                <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13.5px">weather</b><div class="sp"></div><button class="sw on"></button></div>
+                <div class="muted" style="font-size:12.5px;margin-top:6px">查天气</div>
+                <div class="flex-wrap" style="margin-top:10px"><span class="tag ok">运行中</span><span class="tag neutral">1 工具</span><span class="tag neutral">2 钩子</span></div>
+                <div class="muted" style="font-size:11.5px;margin-top:8px;font-family:var(--mono)">weather.py · v1.2 · 装于 10-02</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:10px">
+                  <span class="muted" style="font-size:11.5px">生效于</span>
+                  <button class="chip on">App</button><button class="chip">微信</button>
+                  <div class="sp"></div><button class="btn">卸载</button>
+                </div>
+              </div>
+              <div class="card">
+                <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13.5px">memo</b><div class="sp"></div><button class="sw on"></button></div>
+                <div class="muted" style="font-size:12.5px;margin-top:6px">记账</div>
+                <div class="flex-wrap" style="margin-top:10px"><span class="tag ok">运行中</span><span class="tag neutral">2 工具</span></div>
+                <div class="muted" style="font-size:11.5px;margin-top:8px;font-family:var(--mono)">memo.py · v0.9 · 装于 09-28</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:10px">
+                  <span class="muted" style="font-size:11.5px">生效于</span>
+                  <button class="chip on">App</button><button class="chip on">微信</button>
+                  <div class="sp"></div><button class="btn">卸载</button>
+                </div>
+              </div>
+              <div class="card">
+                <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13.5px">translate</b><div class="sp"></div><button class="sw"></button></div>
+                <div class="muted" style="font-size:12.5px;margin-top:6px">翻译</div>
+                <div class="flex-wrap" style="margin-top:10px"><span class="tag err">装载失败</span><span class="tag muted" style="color:var(--text-4)">不可按渠道关</span></div>
+                <div class="muted" style="font-size:11.5px;margin-top:8px;font-family:var(--mono)">translate.py · 装于 09-21</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:10px"><div class="sp"></div><button class="btn">卸载</button></div>
+              </div>
+            </div>
+            <div class="card" style="margin-top:12px;border-style:dashed;text-align:center;color:var(--text-4);padding:18px">把 .zip 拖到这里安装（也可拖到整页任意位置）</div>
+
+            </div>
+            <div class="bv" data-b="skills" hidden>
+            <div class="sec">技能（JS · Node 宿主）</div>
+            <div class="grid g3" style="margin-bottom:12px">
+              <div class="card" style="grid-column:span 2">
+                <b style="font-size:13.5px">运行环境</b>
+                <div class="kv" style="margin-top:8px"><span>技能宿主</span><b>127.0.0.1:8790 · 运行中</b></div>
+                <div class="kv"><span>Node 版本</span><b class="mono" style="font-size:12px">v20.11.1</b></div>
+                <div class="kv"><span>技能目录</span><b class="mono" style="font-size:12px">brain/skill_host/skills</b></div>
+              </div>
+              <div class="card"><span class="tag ok">可以装</span><div class="muted" style="font-size:12px;margin-top:8px">宿主没起来时装了也不会生效，只收 .js / .mjs / .cjs，入口 index.js</div></div>
+            </div>
+            <div class="card hd">
+              <div class="h"><h3>已装技能 6</h3><div class="sp"></div><span class="muted" style="font-size:11.5px">最近调用 skill_call · 3 分钟前</span><button class="btn oline">重载宿主</button></div>
+              <div class="row" style="padding:11px 14px">
+                <div class="lb"><b>qq-music</b><span class="mono" style="font-size:11.5px">v1.0.0 · 2 个工具</span></div>
+                <div class="flex-wrap" style="flex:2"><span class="tag neutral mono">search_song</span><span class="tag neutral mono">play</span></div>
+                <button class="chip on">App</button><button class="chip">微信</button>
+                <button class="btn">卸载</button>
+              </div>
+              <div class="row" style="padding:11px 14px">
+                <div class="lb"><b>translator</b><span class="mono" style="font-size:11.5px">v0.4 · 1 个工具</span></div>
+                <div class="flex-wrap" style="flex:2"><span class="tag neutral mono">translate</span></div>
+                <button class="chip on">App</button><button class="chip on">微信</button>
+                <button class="btn">卸载</button>
+              </div>
+            </div>
+
+            </div>
+            <div class="bv" data-b="features" hidden>
+            <div class="sec">功能开关（按渠道覆盖）</div>
+            <div class="card" style="margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:12px">
+                <div style="flex:1"><b style="font-size:13.5px">说话多少</b><div class="muted" style="font-size:12px">松手才保存，最多 30 秒生效</div></div>
+                <input type="range" min="1" max="10" value="6" style="width:220px">
+                <b style="font-size:20px;width:28px;text-align:right">6</b>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-top:6px;padding-left:0" class="muted"><span>1 · 惜字如金</span><span>10 · 最黏人</span></div>
+            </div>
+            <div class="card hd">
+              <table class="tbl">
+                <colgroup><col><col style="width:160px"><col style="width:160px"></colgroup>
+                <tr><th>功能</th><th class="c">App</th><th class="c">微信</th></tr>
+                <tr><td>热搜接入</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw"></button></td></tr>
+                <tr><td>天气信息</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw on"></button></td></tr>
+                <tr><td>天气变化提醒</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw"></button></td></tr>
+                <tr><td>快递监控</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw on"></button></td></tr>
+                <tr><td>聊天甩图</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw"></button></td></tr>
+                <tr><td>朋友圈配图</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw"></button></td></tr>
+                <tr><td>工具调用</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw on"></button></td></tr>
+              </table>
+            </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 数据：概览 / Trace / 历史 / 用量 / 日志 -->
+      <section class="page" data-page="data">
+        <div class="topbar"><h1 id="dataTitle">概览</h1><span class="sub" id="dataSub">近 24 小时</span><div class="sp"></div>
+          <select class="input" style="width:120px"><option>全部</option><option>App</option><option>微信</option></select>
+          <button class="btn oline">刷新</button></div>
+        <div class="scroll">
+          <div class="wrap">
+
+            <div class="dv" data-d="overview">
+              <div class="grid g4" style="margin-bottom:14px">
+                <div class="card"><div class="muted" style="font-size:12px">今日对话轮次</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em">128<span class="muted" style="font-size:12px;font-weight:400"> · 降级 2</span></div></div>
+                <div class="card"><div class="muted" style="font-size:12px">Token 消耗</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em">42.1k</div><div class="muted" style="font-size:11.5px">入 31.2k · 出 10.9k</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">平均响应</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em">2.9s</div><div class="muted" style="font-size:11.5px">mimo-v2.6-pro</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">记忆命中率</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em">62%</div><div class="muted" style="font-size:11.5px">79 / 128 轮</div></div>
+              </div>
+              <div class="card" style="margin-bottom:14px">
+                <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13.5px">对话趋势 · 近 24 小时</b><div class="sp"></div><span class="muted" style="font-size:11.5px">每小时轮次</span></div>
+                <div style="display:flex;gap:4px;align-items:flex-end;height:96px;margin-top:14px">
+                  <div style="flex:1;height:18%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:26%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:12%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:34%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:58%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:72%;background:var(--accent);opacity:.85;border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:44%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:66%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:88%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:52%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:30%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:22%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                </div>
+              </div>
+              <div class="grid g3" style="margin-bottom:14px">
+                <div class="card" style="grid-column:span 2">
+                  <b style="font-size:13.5px">上下文块分布</b>
+                  <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;margin:14px 0 10px">
+                    <i style="width:18%;background:var(--text)"></i><i style="width:26%;background:var(--accent)"></i>
+                    <i style="width:30%;background:var(--text-3)"></i><i style="width:10%;background:var(--warn)"></i><i style="width:16%;background:var(--ok)"></i>
+                  </div>
+                  <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px" class="muted">
+                    <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--text)"></i> 风格约束 18%</span>
+                    <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--accent)"></i> 历史摘要 26%</span>
+                    <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--text-3)"></i> 人设 30%</span>
+                    <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--warn)"></i> 约定账本 10%</span>
+                    <span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--ok)"></i> 长期记忆 16%</span>
+                  </div>
+                </div>
+                <div class="card">
+                  <b style="font-size:13.5px">系统状态</b>
+                  <div class="kv" style="margin-top:8px"><span>服务</span><b>在线</b></div>
+                  <div class="kv"><span>当前模型</span><b>mimo-v2.6-pro</b></div>
+                  <div class="kv"><span>语音引擎</span><b>未启用</b></div>
+                  <div class="kv"><span>约定账本</span><b>12 条 · 待办 2 · 错过 1</b></div>
+                  <div class="kv"><span>最近错误</span><b class="tag err">vision 未配置</b></div>
+                </div>
+              </div>
+              <div class="card hd">
+                <div class="h"><h3>最近对话</h3><div class="sp"></div><button class="btn" data-jump="trace">查看全部</button></div>
+                <table class="tbl">
+                  <colgroup><col style="width:74px"><col style="width:70px"><col><col style="width:66px"><col style="width:64px"><col style="width:56px"><col style="width:74px"></colgroup>
+                  <tr><th>时间</th><th>来源</th><th>输入</th><th>Token</th><th>耗时</th><th>记忆</th><th>状态</th></tr>
+                  <tr><td class="mono muted">14:32</td><td>App</td><td>今天想吃什么？</td><td class="mono">1.2k</td><td class="mono">2.9s</td><td>3</td><td><span class="tag ok">正常</span></td></tr>
+                  <tr><td class="mono muted">14:12</td><td>微信</td><td>帮我看下那段代码</td><td class="mono">3.4k</td><td class="mono">6.1s</td><td>2</td><td><span class="tag warn">降级</span></td></tr>
+                  <tr><td class="mono muted">13:50</td><td>App</td><td>晚上几点睡</td><td class="mono">0.9k</td><td class="mono">2.2s</td><td>1</td><td><span class="tag ok">正常</span></td></tr>
+                </table>
+              </div>
+            </div>
+
+            <div class="dv" data-d="trace" hidden>
+              <div class="card hd">
+                <div class="h"><h3>对话 Trace</h3><div class="sp"></div>
+                  <select class="input" style="width:120px"><option>全部状态</option><option>正常</option><option>失败</option></select>
+                  <input class="input" placeholder="搜模型 / 工具…" style="width:170px"></div>
+                <table class="tbl">
+                  <colgroup><col style="width:26px"><col style="width:72px"><col style="width:62px"><col><col style="width:60px"><col style="width:58px"><col style="width:52px"><col style="width:110px"><col style="width:62px"></colgroup>
+                  <tr><th></th><th>时间</th><th>来源</th><th>输入</th><th>Token</th><th>耗时</th><th>记忆</th><th>工具</th><th>状态</th></tr>
+                  <tr><td class="muted">▸</td><td class="mono muted">14:32:07</td><td>App</td><td>今天想吃什么？</td><td class="mono">1.2k</td><td class="mono">2.9s</td><td>3</td><td class="mono">weather</td><td><span class="tag ok">正常</span></td></tr>
+                  <tr><td class="muted">▸</td><td class="mono muted">14:12:41</td><td>微信</td><td>帮我看下那段代码</td><td class="mono">3.4k</td><td class="mono">6.1s</td><td>2</td><td class="mono muted">—</td><td><span class="tag warn">降级</span></td></tr>
+                  <tr><td class="muted">▾</td><td class="mono muted">13:50:02</td><td>App</td><td>晚上几点睡</td><td class="mono">0.9k</td><td class="mono">2.2s</td><td>1</td><td class="mono muted">—</td><td><span class="tag ok">正常</span></td></tr>
+                  <tr><td colspan="9" style="background:var(--bg-sub)">
+                    <div class="grid g3" style="gap:10px">
+                      <div><div class="muted" style="font-size:11.5px">模式 / 模型</div><div style="font-size:12.5px">原生 function calling · mimo-v2.6-pro</div></div>
+                      <div><div class="muted" style="font-size:11.5px">上下文块字数</div><div style="font-size:12.5px">风格 210 · 摘要 480 · 人设 620 · 约定 90 · 记忆 260</div></div>
+                      <div><div class="muted" style="font-size:11.5px">命中记忆 Top</div><div style="font-size:12.5px">· 用户喜欢用 DeepSeek 模型 (.82)<br>· 上周说过想去看海 (.74)</div></div>
+                    </div>
+                  </td></tr>
+                </table>
+              </div>
+            </div>
+
+            <div class="dv" data-d="history" hidden>
+              <div class="card hd">
+                <div class="h"><h3>聊天历史（只读）</h3><div class="sp"></div>
+                  <select class="input" style="width:100px"><option>60 条</option><option>30 条</option><option>100 条</option></select>
+                  <button class="btn oline">加载</button></div>
+                <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+                  <div class="turn"><div class="ava">夏</div><div class="bdy"><div class="txt">我在阳台晒被子呢，你那边忙完了没？</div><div class="foot"><span>14:30</span></div></div></div>
+                  <div class="turn me"><div class="bdy"><div class="txt">今天想吃什么？</div></div></div>
+                  <div class="turn"><div class="ava">夏</div><div class="bdy"><div class="txt">刚看了下天气，下午有雨哦，出门记得带伞～</div><div class="foot"><span>14:32</span></div></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dv" data-d="usage" hidden>
+              <div class="grid g4" style="margin-bottom:14px">
+                <div class="card"><div class="muted" style="font-size:12px">今日轮次</div><div style="font-size:22px;font-weight:600">128</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">Token 入 / 出</div><div style="font-size:22px;font-weight:600">31.2k / 10.9k</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">平均延迟</div><div style="font-size:22px;font-weight:600">2.9s</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">降级次数</div><div style="font-size:22px;font-weight:600">2</div></div>
+              </div>
+              <div class="card"><b style="font-size:13.5px">近 14 天</b>
+                <div style="display:flex;gap:5px;align-items:flex-end;height:104px;margin-top:14px">
+                  <div style="flex:1;height:40%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:62%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:35%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:78%;background:var(--accent);opacity:.85;border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:90%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:52%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:44%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:70%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:84%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:30%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:58%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:66%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:48%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:74%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dv" data-d="log" hidden>
+              <div class="card hd">
+                <div class="h"><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="chip on">全部</button><button class="chip">ERROR</button><button class="chip">WARN</button><button class="chip">INFO</button></div><div class="sp"></div>
+                  <input class="input" placeholder="搜关键字…" style="width:150px">
+                  <button class="btn oline">导出</button><button class="btn oline">上传手机日志</button><button class="btn">清空</button></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:07</span><span class="tag neutral">INFO</span><div class="lb"><span class="mono" style="font-size:12px">turn start · persona=linzhixia · mem=3</span></div></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:08</span><span class="tag info">INFO</span><div class="lb"><span class="mono" style="font-size:12px">tool weather({city:"杭州"}) → 320ms</span></div></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:09</span><span class="tag err">ERROR</span><div class="lb"><span class="mono" style="font-size:12px">vision model 未配置，跳过图片描述</span></div></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:10</span><span class="tag warn">WARN</span><div class="lb"><span class="mono" style="font-size:12px">stream 重试 1 次（连接超时）</span></div></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="page" data-page="settings">
+        <div class="topbar"><h1 id="setTitle">模型与服务商</h1><div class="sp"></div><span class="tag ok">已连接 23ms</span></div>
+        <div class="scroll">
+          <div class="wrap">
+            <div class="sv" data-s="model">
+              <div class="card" style="margin-bottom:14px">
+                <div class="field"><label>服务商</label><select class="input"><option>小米 MiMo</option><option>硅基流动</option><option>自定义</option></select></div>
+                <div class="field"><label>API Base</label><input class="input" style="font-family:var(--mono);font-size:12.5px" value="https://api.xiaomimimo.com/v1"></div>
+                <div class="field" style="margin-bottom:0"><label>API Key</label><input class="input" type="password" value="sk-xxxxxxxxxxxxxxxx"></div>
+              </div>
+              <div class="sec">模型分配</div>
+              <div class="grid g3">
+                <div class="card"><div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">对话</b><span class="tag solid">必填</span></div><div style="margin-top:10px"><select class="input"><option>mimo-v2.6-pro</option></select></div></div>
+                <div class="card"><b style="font-size:13px">看图</b><div style="margin-top:10px"><select class="input"><option>（未启用）</option></select></div></div>
+                <div class="card"><b style="font-size:13px">生图</b><div style="margin-top:10px"><select class="input"><option>（未启用）</option></select></div></div>
+                <div class="card"><b style="font-size:13px">语音</b><div style="margin-top:10px"><select class="input"><option>（未启用）</option></select></div></div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:14px"><button class="btn fill md">保存并生效（免重启）</button><button class="btn oline md">重新拉取模型</button><button class="btn oline md">测试连接</button></div>
+
+              <div class="sec">语音引擎</div>
+              <div class="card hd">
+                <div class="h"><h3>当前：未启用</h3><div class="sp"></div><span class="muted" style="font-size:11.5px">只影响语音条，不影响文字</span></div>
+                <div class="row" style="padding:11px 14px"><div class="lb"><b>云希 · 男声</b><span>阿里云百炼 · 通用</span></div><button class="btn oline">试听</button><button class="btn oline">切换</button></div>
+                <div class="row" style="padding:11px 14px"><div class="lb"><b>晓晓 · 女声</b><span>阿里云百炼 · 温柔</span></div><button class="btn oline">试听</button><button class="btn oline">切换</button></div>
+              </div>
+
+              <div class="sec">危险操作</div>
+              <div class="card">
+                <div class="row"><div class="lb"><b>重置对话上下文</b><span>清掉本轮上下文块，聊天记录保留</span></div><button class="btn">重置</button></div>
+                <div class="row"><div class="lb"><b>清空聊天历史</b><span>按渠道清，清完不可恢复</span></div><button class="btn">清空</button></div>
+                <div class="row"><div class="lb"><b>重置生活状态</b><span>清掉她的日记、朋友圈、经历流，重新长</span></div><button class="btn">重置</button></div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="conn" hidden>
+              <div class="card" style="margin-bottom:14px">
+                <div class="field"><label>Brain 地址</label><input class="input" style="font-family:var(--mono);font-size:12.5px" value="http://127.0.0.1:18787（SSH 隧道）"></div>
+                <div class="field" style="margin-bottom:0"><label>Brain Token</label><input class="input" type="password" value="••••••••••"></div>
+              </div>
+              <div class="sec">已绑定设备</div>
+              <div class="card">
+                <div class="row"><div class="lb"><b>这台电脑 · Windows</b><span>最近在线 刚刚 · 客户端</span></div><span class="tag info">当前设备</span></div>
+                <div class="row"><div class="lb"><b>Pixel 8 · Android</b><span>最近在线 2 小时前</span></div><button class="btn oline">解绑</button></div>
+                <div class="row"><div class="lb"><b>微信接话（独立仓库）</b><span>最近在线 昨天</span></div><button class="btn oline">解绑</button></div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="active" hidden>
+              <div class="card">
+                <div class="row"><div class="lb"><b>话痨度</b><span>1 安静 —— 10 话多</span></div><input type="range" min="1" max="10" value="6" style="width:190px"></div>
+                <div class="row"><div class="lb"><b>主动搭话</b><span>允许她在没事的时候先开口</span></div><button class="sw on"></button></div>
+                <div class="row"><div class="lb"><b>时段</b><span>只在 09:00 – 23:30 之间</span></div><input class="input" style="width:160px" value="09:00 – 23:30"></div>
+                <div class="row"><div class="lb"><b>最短间隔</b><span>两条主动消息之间至少隔多久</span></div><input class="input" style="width:110px" value="45 分钟"></div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="general" hidden>
+              <div class="card">
+                <div class="row"><div class="lb"><b>主题</b></div><div class="seg" id="themeSeg"><button class="on">浅色</button><button>深色</button><button>跟随系统</button></div></div>
+                <div class="row"><div class="lb"><b>语言</b></div><select class="input" style="width:150px"><option>简体中文</option></select></div>
+                <div class="row"><div class="lb"><b>开机自启</b><span>登录后自动在托盘待命</span></div><button class="sw on"></button></div>
+                <div class="row"><div class="lb"><b>最小化到托盘</b><span>关掉主窗口不退出进程</span></div><button class="sw on"></button></div>
+                <div class="row"><div class="lb"><b>系统通知</b><span>她主动说话时弹通知</span></div><button class="sw on"></button></div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="pet" hidden>
+              <div style="display:flex;gap:14px;flex-wrap:wrap">
+                <div class="card" style="width:280px;height:280px;display:grid;place-items:center;color:var(--text-4);gap:10px;flex:none">
+                  <svg class="i" style="width:34px;height:34px"><use href="#i-cat"/></svg>
+                  <div class="muted" style="font-size:12px">Live2D 实时预览</div>
+                  <div style="display:flex;gap:6px"><button class="btn oline">随机动作</button><button class="btn oline">暂停</button></div>
+                </div>
+                <div style="flex:1;min-width:280px">
+                  <div class="card" style="margin-bottom:12px"><b style="font-size:13.5px">模型</b><div class="muted" style="font-size:12.5px;margin-top:6px">当前：林知夏 v2</div><div style="display:flex;gap:6px;margin-top:12px"><button class="btn oline">切换</button><button class="btn oline">导入</button></div></div>
+                  <div class="card">
+                    <b style="font-size:13.5px">显示设置</b>
+                    <div class="row"><div class="lb"><b>大小</b></div><input type="range" value="100" style="width:150px"></div>
+                    <div class="row"><div class="lb"><b>位置</b></div><div class="seg"><button class="on">左下</button><button>右下</button><button>自定义</button></div></div>
+                    <div class="row"><div class="lb"><b>始终置顶</b></div><button class="sw on"></button></div>
+                    <div class="row"><div class="lb"><b>点击穿透</b></div><button class="sw on"></button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="local" hidden>
+              <div class="card" style="margin-bottom:14px">
+                <div class="row"><div class="lb"><b>本地操控总开关</b><span>关掉后所有本地工具立即失效</span></div><button class="sw on"></button></div>
+                <div class="row"><div class="lb"><b>安全等级</b><span>中 · 危险操作逐次确认</span></div><div class="seg"><button>低</button><button class="on">中</button><button>高</button></div></div>
+              </div>
+              <div class="sec">工具白名单</div>
+              <div class="card hd">
+                <table class="tbl">
+                  <colgroup><col style="width:170px"><col><col style="width:80px"><col style="width:80px"></colgroup>
+                  <tr><th>工具</th><th>说明</th><th class="c">允许</th><th class="c">需确认</th></tr>
+                  <tr><td class="mono">local_file_read</td><td class="muted">读取白名单目录内文件</td><td class="c"><button class="sw on"></button></td><td class="c muted">—</td></tr>
+                  <tr><td class="mono">local_file_list</td><td class="muted">列目录</td><td class="c"><button class="sw on"></button></td><td class="c muted">—</td></tr>
+                  <tr><td class="mono">local_screenshot</td><td class="muted">截图</td><td class="c"><button class="sw on"></button></td><td class="c muted">—</td></tr>
+                  <tr><td class="mono">local_exec</td><td class="muted">执行命令</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw on"></button></td></tr>
+                  <tr><td class="mono">local_file_write</td><td class="muted">写文件</td><td class="c"><button class="sw on"></button></td><td class="c"><button class="sw on"></button></td></tr>
+                  <tr><td class="mono">local_file_delete</td><td class="muted">删除文件</td><td class="c"><button class="sw"></button></td><td class="c"><button class="sw on"></button></td></tr>
+                </table>
+              </div>
+              <div class="sec">路径白名单 / 命令黑名单</div>
+              <div class="grid g3">
+                <div class="card"><b style="font-size:13.5px">可访问目录</b><div class="muted" style="font-size:12.5px;margin-top:6px">D:\文档 · 桌面 · 下载</div><button class="btn oline" style="margin-top:12px">编辑</button></div>
+                <div class="card"><b style="font-size:13.5px">永久禁止命令</b><div class="muted" style="font-size:12.5px;margin-top:6px">format · diskpart · reg delete …</div><button class="btn oline" style="margin-top:12px">编辑</button></div>
+              </div>
+              <div class="sec">操作日志（最近 20 条）</div>
+              <div class="card hd">
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32</span><div class="lb"><b class="mono" style="font-size:12px">local_file_read</b><span>…\test.txt</span></div><span class="tag ok">成功</span></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:30</span><div class="lb"><b class="mono" style="font-size:12px">local_exec</b><span>notepad.exe</span></div><span class="tag ok">成功</span></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:28</span><div class="lb"><b class="mono" style="font-size:12px">local_file_delete</b><span>…\temp.txt</span></div><span class="tag warn">用户拒绝</span></div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="usage" hidden>
+              <div class="grid g3" style="margin-bottom:14px">
+                <div class="card"><div class="muted" style="font-size:12px">今日 tokens</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:4px">42.1k</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">本月 tokens</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:4px">1.28M</div></div>
+                <div class="card"><div class="muted" style="font-size:12px">预估费用</div><div style="font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:4px">¥ 18.40</div></div>
+              </div>
+              <div class="card">
+                <b style="font-size:13.5px">近 14 天</b>
+                <div style="display:flex;gap:5px;align-items:flex-end;height:104px;margin-top:14px">
+                  <div style="flex:1;height:40%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:62%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:35%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:78%;background:var(--accent);opacity:.85;border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:90%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:52%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:44%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:70%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:84%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:30%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:58%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:66%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                  <div style="flex:1;height:48%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div><div style="flex:1;height:74%;background:var(--bg-sunken);border-radius:3px 3px 0 0"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="log" hidden>
+              <div class="card hd">
+                <div class="h"><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="chip on">全部</button><button class="chip">错误</button><button class="chip">工具调用</button><button class="chip">记忆</button></div><input class="input" placeholder="过滤…" style="width:160px"></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:07</span><span class="tag neutral">chat</span><div class="lb"><span class="mono" style="font-size:12px">turn start · persona=linzhixia · mem=3</span></div></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:08</span><span class="tag info">tool</span><div class="lb"><span class="mono" style="font-size:12px">weather({city:"杭州"}) → 320ms</span></div></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:09</span><span class="tag err">error</span><div class="lb"><span class="mono" style="font-size:12px">vision model 未配置，跳过图片描述</span></div></div>
+                <div class="row" style="padding:8px 14px"><span class="muted mono" style="font-size:11.5px">14:32:10</span><span class="tag neutral">reply</span><div class="lb"><span class="mono" style="font-size:12px">stream done · 412 tokens · 2.9s</span></div></div>
+              </div>
+            </div>
+
+            <div class="sv" data-s="about" hidden>
+              <div class="card">
+                <div class="kv"><span>客户端版本</span><b>v1.0.0</b></div>
+                <div class="kv"><span>大脑版本</span><b>v5.7.0</b></div>
+                <div class="kv"><span>运行时</span><b>Electron · Node 20</b></div>
+                <div class="kv"><span>更新</span><b>已是最新</b></div>
+                <div style="display:flex;gap:6px;margin-top:12px"><button class="btn oline">检查更新</button><button class="btn oline">打开日志目录</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <div class="gutter" id="gPanel" role="separator" aria-orientation="vertical" tabindex="0" aria-label="调整列表栏宽度" title="拖动调整宽度 · 双击复位 · 方向键微调"></div>
+    <div class="gutter" id="gChat" role="separator" aria-orientation="vertical" tabindex="0" aria-label="调整上下文栏宽度" title="拖动调整宽度 · 双击复位 · 方向键微调"></div>
+  </div>
+
+  <footer class="statusbar">
+    <span class="led" style="margin:0;width:6px;height:6px"></span><b>已连接</b><span>23 ms</span>
+    <span>·</span><span>人设 <b>林知夏</b></span>
+    <span>·</span><span>渠道 <b>App</b></span>
+    <div class="sp"></div>
+    <span>Ctrl+K 命令面板</span><span>v1.0.0</span>
+  </footer>
+</div>
+
+<script>
+const rail = document.querySelectorAll('.rbtn[data-page]');
+const pages = document.querySelectorAll('.page[data-page]');
+const views = document.querySelectorAll('.pv[data-view]');
+function go(page, keep){
+  rail.forEach(r=>r.classList.toggle('on', r.dataset.page===page));
+  pages.forEach(p=>p.classList.toggle('on', p.dataset.page===page));
+  views.forEach(v=>v.hidden = v.dataset.view!==page);
+  if(!keep) history.replaceState(null,'','#'+page);
+}
+rail.forEach(r=>r.addEventListener('click',()=>go(r.dataset.page)));
+
+const setTitles={general:'通用',conn:'连接与设备',model:'模型与服务商',active:'聊天与主动性',pet:'桌宠',local:'本地操控与安全',usage:'用量统计',log:'运行日志',about:'关于'};
+document.querySelectorAll('.s-item').forEach(it=>it.addEventListener('click',()=>{
+  document.querySelectorAll('.s-item').forEach(x=>x.classList.toggle('on',x===it));
+  document.querySelectorAll('.sv').forEach(v=>v.hidden = v.dataset.s!==it.dataset.s);
+  document.getElementById('setTitle').textContent = setTitles[it.dataset.s]||'设置';
+}));
+
+document.getElementById('rpBtn').addEventListener('click',()=>{
+  document.getElementById('rp').classList.toggle('no');
+  document.getElementById('split').classList.toggle('no-right');
+  document.body.classList.toggle('no-rp');
+});
+
+/* ── 分栏拖拽：左列表 ↔ 聊天区、聊天区 ↔ 右侧上下文 ── */
+const _root = document.documentElement;
+const _readVar = n => parseFloat(getComputedStyle(_root).getPropertyValue(n)) || 0;
+let _panelW = _readVar('--panel'), _rightW = _readVar('--right');
+function bindGutter(el, o){
+  let startX = 0, startW = 0, on = false;
+  const cur = () => (o.which === 'panel' ? _panelW : _rightW);
+  const put = v => {
+    v = Math.max(o.min, Math.min(o.max, Math.round(v)));
+    if (o.which === 'panel') { _panelW = v; _root.style.setProperty('--panel', v + 'px'); }
+    else { _rightW = v; _root.style.setProperty('--right', v + 'px'); }
+  };
+  el.addEventListener('pointerdown', e => {
+    on = true; startX = e.clientX; startW = cur(); el.classList.add('drag');
+    el.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => { if (on) put(startW + (e.clientX - startX) * o.dir); });
+  const stop = e => { if (!on) return; on = false; el.classList.remove('drag');
+    try { el.releasePointerCapture(e.pointerId); } catch (_) {} };
+  el.addEventListener('pointerup', stop);
+  el.addEventListener('pointercancel', stop);
+  el.addEventListener('dblclick', () => put(o.def));
+  /* 不用鼠标也能调：方向键每次 12px（拖拽必须给键盘替代） */
+  el.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    put(cur() + (e.key === 'ArrowRight' ? 12 : -12) * o.dir);
+  });
+}
+bindGutter(document.getElementById('gPanel'), { which: 'panel', min: 180, max: 460, def: 240, dir: 1 });
+bindGutter(document.getElementById('gChat'),  { which: 'right', min: 200, max: 480, def: 264, dir: -1 });
+document.querySelectorAll('.sw').forEach(t=>t.addEventListener('click',e=>{e.stopPropagation();t.classList.toggle('on')}));
+document.querySelectorAll('.pseg,.seg').forEach(s=>s.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+  s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+})));
+document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>c.classList.toggle('on')));
+
+/* 深浅色：token 全量走变量，换 data-theme 即可 */
+const themeBtn = document.getElementById('theme');
+function setTheme(t){
+  document.documentElement.dataset.theme = t;
+  themeBtn.textContent = '';
+  themeBtn.innerHTML = '<svg class="i xs"><use href="#i-moon"/></svg>' + (t==='dark'?'浅色':'深色');
+}
+themeBtn.addEventListener('click',()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'));
+
+/* ── 对齐自检 ──────────────────────────────────────────────
+   点一下，把**这台浏览器实际算出来的**左边距/坐标打在屏幕上。
+   用途：换引擎（Yandex / Firefox / 缩放不同）时肉眼判断不了，
+   让浏览器自己报数，一眼看出是哪一环没算对。 */
+(function geoCheck(){
+  let box = null;
+  function row(name, el){
+    if(!el) return name + ' = 不存在';
+    const b = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return name.padEnd(15) + ' L=' + b.left.toFixed(1).padStart(7) +
+           '  W=' + b.width.toFixed(1).padStart(7) +
+           '  padL=' + cs.paddingLeft.padStart(6) + '  marL=' + cs.marginLeft.padStart(6);
+  }
+  function toggle(){
+    if(box){ box.remove(); box = null; document.querySelectorAll('.geoline').forEach(e=>e.remove()); return; }
+    const page = document.querySelector('.page.on') || document;
+    const root = getComputedStyle(document.documentElement);
+    const lines = [
+      'viewport ' + window.innerWidth + 'x' + window.innerHeight +
+      '   dpr=' + window.devicePixelRatio + '   zoom≈' + (window.outerWidth / window.innerWidth).toFixed(3),
+      'UA ' + navigator.userAgent.slice(0, 96),
+      '',
+      '--ava    = ' + root.getPropertyValue('--ava').trim(),
+      '--gap    = ' + root.getPropertyValue('--gap').trim(),
+      '--indent = ' + root.getPropertyValue('--indent').trim(),
+      'col padding-left = ' + getComputedStyle(document.querySelector('.col')).paddingLeft,
+      '',
+      row('.col',        document.querySelector('.col')),
+      row('.msgs',       page.querySelector('.msgs')),
+      row('.turn',       page.querySelector('.turn')),
+      row('.turn .ava',  page.querySelector('.turn .ava')),
+      row('.turn .txt',  page.querySelector('.turn .txt')),
+      row('.tool',       page.querySelector('.tool')),
+      row('.composer',   page.querySelector('.composer')),
+      row('.cbox',       page.querySelector('.cbox')),
+      '',
+      '判定：.ava.L 应等于 .cbox.L ；.turn .txt.L 应等于 .tool.L ；差值应等于 36',
+      '实测 ava-cbox = ' + ((page.querySelector('.turn .ava')||{getBoundingClientRect:()=>({left:NaN})}).getBoundingClientRect().left
+                            - (document.querySelector('.cbox')||{getBoundingClientRect:()=>({left:NaN})}).getBoundingClientRect().left).toFixed(1),
+      '实测 txt-tool = ' + ((page.querySelector('.turn .txt')||{getBoundingClientRect:()=>({left:NaN})}).getBoundingClientRect().left
+                            - (page.querySelector('.tool')||{getBoundingClientRect:()=>({left:NaN})}).getBoundingClientRect().left).toFixed(1),
+    ];
+    box = document.createElement('pre');
+    box.style.cssText = 'position:fixed;z-index:99999;left:16px;top:44px;background:#fff;color:#000;'
+      + 'font:12px/1.5 Consolas,monospace;padding:10px 12px;border:2px solid #000;white-space:pre;'
+      + 'box-shadow:0 8px 24px rgba(0,0,0,.25)';
+    box.textContent = lines.join('\n');
+    document.body.appendChild(box);
+    // 画两条红线：列左缘 / 列左缘 + 36
+    const col = document.querySelector('.col');
+    if(col){
+      const L = col.getBoundingClientRect().left + parseFloat(getComputedStyle(col).paddingLeft || 0);
+      [L, L + 36].forEach((x, i) => {
+        const g = document.createElement('div');
+        g.className = 'geoline';
+        g.style.cssText = 'position:fixed;top:36px;bottom:24px;width:' + (i ? 1 : 2) + 'px;z-index:99998;'
+          + 'background:' + (i ? '#e5484d' : '#0f1115') + ';left:' + x + 'px';
+        document.body.appendChild(g);
+      });
+    }
+  }
+  document.getElementById('geoBtn').addEventListener('click', toggle);
+})();
+
+/* 二级导航：左栏分段器切换主区内容块（每页只显示一件事）。
+   作用域必须落在同一个页面：面板是 .pv[data-view=X]，主区是 .page[data-page=X]，
+   两边用同一个 key，所以要先从面板找到对应的主区，不能全局扫 .bv ——
+   全局扫会把别的页面的块一起藏掉，切过去就是空白页。 */
+document.querySelectorAll('.pseg').forEach(seg => {
+  const btns = seg.querySelectorAll('button[data-sub]');
+  if (!btns.length) return;
+  const view = seg.closest('.pv');
+  const scope = view
+    ? document.querySelector('.page[data-page="' + view.dataset.view + '"]')
+    : document;
+  if (!scope) return;
+  btns.forEach(b => b.addEventListener('click', () => {
+    btns.forEach(x => x.classList.toggle('on', x === b));
+    scope.querySelectorAll('.bv').forEach(v => { v.hidden = v.dataset.b !== b.dataset.sub; });
+  }));
+});
+
+/* 数据页二级导航（概览 / Trace / 历史 / 用量 / 日志） */
+const dTitles={overview:'概览',trace:'对话 Trace',history:'聊天历史',usage:'用量',log:'日志'};
+function goData(d){
+  document.querySelectorAll('.d-item').forEach(x=>x.classList.toggle('on',x.dataset.d===d));
+  document.querySelectorAll('.dv').forEach(v=>v.hidden = v.dataset.d!==d);
+  document.getElementById('dataTitle').textContent = dTitles[d]||'数据';
+}
+document.querySelectorAll('.d-item').forEach(it=>it.addEventListener('click',()=>goData(it.dataset.d)));
+document.querySelectorAll('[data-jump]').forEach(b=>b.addEventListener('click',()=>goData(b.dataset.jump)));
+
+/* 深链：#persona / #settings/model；?theme=dark 便于出图核对 */
+if(new URLSearchParams(location.search).get('theme')==='dark') setTheme('dark');
+const _h = location.hash.replace('#','').split('/');
+if(_h[0] && document.querySelector('.page[data-page="'+_h[0]+'"]')) go(_h[0], true);
+if(_h[1]){
+  const _s = document.querySelector('.s-item[data-s="'+_h[1]+'"]');
+  const _b = document.querySelector('.pseg button[data-sub="'+_h[1]+'"]');
+  if(_s) _s.click(); else if(_b) _b.click();
+}
+</script>
+</body>
+</html>

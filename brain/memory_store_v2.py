@@ -26,7 +26,21 @@ EMBED_API_MODEL = os.environ.get("EMBED_API_MODEL", "BAAI/bge-m3")
 LOCAL_EMBED_MODEL = "BAAI/bge-small-zh-v1.5"
 
 _embedder = None
-_embed_dead = False     # 本进程内已确认 embedding 不可用，别再每轮白等
+# 确认 embedding 不可用之后，早于这个时间点就不再每轮白等。
+#
+# 这里必须是**带截止时间的冷却**，不能用布尔闩锁：少装了 fastembed、
+# HuggingFace 连不上、或者云端只是一次瞬时抖动，闩锁就永久置位、再也不复位 ——
+# 语义检索对这个进程彻底死了，retrieve() 永远退化成"最近几条"，
+# 之后每条新记忆也都不带向量。设成"多久之后允许再试"才有自愈能力。
+_embed_dead_until = 0.0
+EMBED_RETRY_SEC = 300       # 失败后隔 5 分钟再试一次
+# 云端嵌入单独一笔退避：云端挂了、本地兜底还能用的时候，这里如果不单独记，
+# 每一轮都会先白等一次云端超时（_api_embed timeout=30s）再降级 —— 延迟永远下不来。
+# 它只决定"要不要试云端那一次"，本地兜底照走，所以不会把语义检索整体关掉。
+_cloud_dead_until = 0.0
+CLOUD_RETRY_SEC = 120       # 云端失败后 2 分钟内直接走本地，别再白等超时
+# 实际产出这些向量的模型。meta 要记这个，不能一律记云端那个名字（见 _write_meta）
+_embed_model_used = None
 
 
 # ============================================================================
@@ -35,7 +49,7 @@ _embed_dead = False     # 本进程内已确认 embedding 不可用，别再每�
 # 以前只抽用户的话，她说的承诺/计划/约定一律不记 —— 于是她说过"明天要去望江楼
 # 拍银杏"，转头自己检索不到；上下文一被裁掉，那条就彻底没了。
 #
-# 但反过来全抽也不行：她会凭空造事。实测她主动搭话时说过"下午那个高铁，你去接我
+# 但反过来全抽也不行：她会凭空造事（她主动搭话时说过"下午那个高铁，你去接我
 # 啊"，历史里从没这回事，记忆库里也没有 —— 是她编的。这种话存进去更糟：下次她
 # 会"记得"自己说过高铁。
 #
@@ -85,7 +99,12 @@ _PAST_MARK = (
 )
 
 # 天气/状态播报 —— 固定套路（"你那边17度，出门记得穿外套"），不是安排
-_FORECAST = ("出门记得", "记得穿", "带伞", "天气", "气温", "度", "下雨", "降温")
+#
+# 这里**不能**放裸的"度"。它是单个汉字，任何含"度"的正常句子都会被
+# 当成天气播报剔掉 —— "我明天下午去接你，顺便把上次那个进度跟你说一下"
+# 被判成 forecast 而不是 promise，一句真实的约定就这么没进库。要温度就说全：
+_FORECAST = ("出门记得", "记得穿", "带伞", "天气", "气温", "温度", "几度",
+             "多少度", "下雨", "降温")
 
 
 def _fix_third_person(text, subject="她"):
@@ -124,9 +143,9 @@ def _fix_third_person(text, subject="她"):
 # ============================================================================
 # 🟠 这是**过滤器的判据**，不是白名单式映射：给「什么样的东西不该记」，
 #    具体一条长什么样由这里说了算，上面调用方不用各自判断。
-#    踩过的坑是反过来做的：先在抽取提示词里写「不要记工具调用指令」，
-#    结果规则降级路径（extract_rule）和承诺抽取路径都不经过那个提示词，
-#    库里照样进了六条「查询英伟达最新股价」——最后还是在add() 里兜的底。
+#    🔴 兜底必须放在 add() 里，不能只在抽取提示词里写「不要记工具调用指令」：
+#    规则降级路径（extract_rule）和承诺抽取路径都不经过那个提示词，
+#    库里照样会进六条「查询英伟达最新股价」。
 
 # 内部标记。__scope_init__ 这类是她自己的作用域初始化产物，
 # 不是聊天内容，但抽取时被当成一句话喂进去了（库里混进过一条）。
@@ -141,7 +160,7 @@ _MEM_TOOL_VERB = (
     "查询", "查一下", "查查", "查找", "搜索", "搜一下", "搜一搜",
     "检索", "查找一下", "联网搜索", "帮我查", "帮忙查",
 )
-# 祈使句前面常挂语气词/客套前缀，不剥掉就漏判（实测「顺便查询一下汇率」）。
+# 祈使句前面常挂语气词/客套前缀，不剥掉就漏判（如「顺便查询一下汇率」）。
 # 只剥这几个，别写成「去掉所有非中文」—— 那会把正常句子的主语也剥掉。
 _MEM_LEAD_NOISE = ("顺便", "帮我", "帮忙", "麻烦", "能不能", "可以", "试着",
                    "我要", "我想", "你去", "替我", "给我")
@@ -152,18 +171,48 @@ _MEM_LEAD_NOISE = ("顺便", "帮我", "帮忙", "麻烦", "能不能", "可以"
 # 只砍后半句，不整条丢。
 _MEM_EXEC_HINT = re.compile(
     # 「需要/要 + （联网）+ 搜索/查询」，后面可以跟任意内容。
-    # 原来锚在 $ 上且限 8 字，结果「搜索DeepSeek最新模型信息」这种
-    # 「搜索 + 长宾语」的句子压根匹配不上 —— 而这正是最常见的形态。
+    # 🔴 宾语不能限字数。「搜索DeepSeek最新模型信息」这种「搜索 + 长宾语」
+    # 是最常见的形态，限 8 字会压根匹配不上。
     r"(?:需要?|要|得|需)\s*(?:联网|上网|在线)?\s*(?:搜索|查询|查一下|查一查|检索)\s*\S*"
     r"|[（(]\s*需?(?:联网|上网)\s*(?:搜索|查询|检索)[^)）]*[)）]"
 )
 # 单号 / 订单号这类一次性查询串。记了也没用 —— 物流状态会变，
 # 而记忆是永久的，这类条目纯占检索额度。
-# ⚠️ 别写成 SF\d{8,}：真实样本是「中通快递单号79144766431485」，
+# 别写成 SF\d{8,}：真实样本是「中通快递单号79144766431485」，
 # 品牌和数字中间隔着「快递单号」四个字，要求紧邻就永远匹配不上。
 _MEM_TRACKING_NO = re.compile(
     r"(?:SF|YT|JD|ZT|SS|单号|运单|快递|订单)\s*[:：]?\s*[A-Za-z]{0,4}\d{10,}"
     r"|\b\d{12,}\b"
+)
+
+# --- 下面三条是 2026-10-06 补的：把云端那 62 条当样本跑出来的漏网类型 ---
+#
+# 只按 `你/请/帮我` 判断时 62 条只拦下 13 条，剩下 50 条里还混着这些残渣。
+# 每一条都是**真实进过库**的样本（不是我编的用例），所以判据照着它们写。
+
+# ① 技能调用执行说明：「使用 daily-fortune__today 技能工具抽取今日运势」。
+#    技能工具名的形态是 `包名__工具名`（必带双下划线），这个特征够硬，
+#    锚在句首因为前面可能挂「帮我」之类的前缀（下面统一剥）。
+#    别只按「技能」两个字判 —— "使用技能表里那个运势"是真句子。
+_MEM_SKILL_CALL = re.compile(
+    r"^\s*(?:使用|调用|运行|执行)\s*[A-Za-z0-9_\-]+__[A-Za-z0-9_\-]+"
+)
+
+# ② 提醒工具的祈使句：「20分钟后提醒用户」。
+#    **不能只按「提醒」二字判** —— 「明天上午10点提醒起床学习」是用户
+#    自己的安排，值得记；「去图书馆前提醒用户带充电宝」也是真约定。
+#    区别在于：前面是**纯相对时长**（20分钟后）且主语是「用户/他/她」，
+#    那才是一条被抽取出来的工具调用描述，不是他说的话。
+_MEM_REMINDER_IMP = re.compile(
+    r"^\s*\d+\s*(?:分钟|分|小时|天)后\s*(?:提醒|通知|告诉|喊)\s*"
+    r"(?:用户|他|她|你)\s*$"
+)
+
+# ③ 图片工具的执行说明：「从网上随便存一张新的趣图」。
+#    同样要贴着「一张图」这个量词，别把「他发来一张图片」这类真事误杀。
+_MEM_RANDIMG = re.compile(
+    r"(?:从网上|在网上|网上)(?:随便)?\s*(?:存|找|抓|拉|取|换)"
+    r"\s*(?:一|1)?\s*张\s*(?:新)?\s*(?:的)?\s*(?:趣|图|图片|照片|壁纸)"
 )
 # 「查询记录显示…」这类是**陈述句**不是祈使句 —— 查询动作已经发生完了，
 # 而且带主语信息，值得记。判祈使句时必须排除这种。
@@ -175,6 +224,25 @@ _MEM_DONE_MARK = re.compile(r"(?:已|已经|刚|方才)(?:经)?\s*"
 
 # 最近被拦下的条目，留个尾巴给面板/日志看。不落盘：这是诊断信息不是记忆。
 _MEM_SKIPPED = []
+
+# 近义去重阈值：两条记忆的向量余弦超过这个值，就当"说的是同一件事"，不再新增。
+# 只按 == 逐字拦，挡不住"换了措辞的同一条"——记忆抽取每轮都会把"用户对 Agent
+# 开发感兴趣"重新抽一遍，三次就是三条近义条，面板上看着就是重复。太松会误杀
+# 真正的新细节，太紧拦不住换说法，0.90 附近比较稳。
+NEAR_DUP_COS = 0.90
+
+
+def _strip_lead_noise(s):
+    """剥掉句首的语气词/客套前缀。叠着的也一起剥（"帮我顺便…"）。"""
+    probe = s
+    changed = True
+    while changed:
+        changed = False
+        for nz in _MEM_LEAD_NOISE:
+            if probe.startswith(nz):
+                probe = probe[len(nz):]
+                changed = True
+    return probe
 
 
 def _memory_should_skip(text):
@@ -193,6 +261,17 @@ def _memory_should_skip(text):
     if _MEM_TRACKING_NO.search(t):
         return "快递单号"
 
+    # --- 2026-10-06 补：技能调用 / 提醒祈使 / 图片工具 ---
+    # 都排在执行说明**之前**：这些是更硬的特征（带工具名的形态），
+    # 而执行说明那条的匹配面更宽，先跑它会抢掉一部分。
+    _lead = _strip_lead_noise(t)
+    if _MEM_SKILL_CALL.match(_lead):
+        return "技能调用"
+    if _MEM_REMINDER_IMP.match(_lead):
+        return "提醒指令"
+    if _MEM_RANDIMG.search(t):
+        return "图片工具"
+
     # 执行说明：「需要联网搜索X」。但动作已经完成的不算 ——
     # 「已查到V4.1 Flash和V4 Pro」是结果本身，值得记；
     # 「需要联网搜索」只是当时打算用什么手段，不该进库。
@@ -203,14 +282,7 @@ def _memory_should_skip(text):
     # 否则「查询快递单号记录显示…」这种正常陈述句会被误杀。
     head = re.split(r"[，。！？\s]", t)[0]
     if len(head) <= 24:
-        probe = head
-        changed = True
-        while changed:                      # 前缀可能叠着（"帮我顺便查…"）
-            changed = False
-            for nz in _MEM_LEAD_NOISE:
-                if probe.startswith(nz):
-                    probe = probe[len(nz):]
-                    changed = True
+        probe = _strip_lead_noise(head)
         if (any(probe.startswith(v) for v in _MEM_TOOL_VERB)
                 and not _MEM_PAST_MARK.search(t)):
             return "工具调用指令"
@@ -360,7 +432,9 @@ def _due_date(text, base=None, written=None):
                 y -= 1
         return None
 
-    for w, off in _RE_RELDAY.items():
+    # 长的先匹配：字典按插入序迭代，"后天"排在"大后天"前面的话，
+    # "大后天我要去接他"会在"后天"上命中，算成 2 天后（应该是 3 天）。
+    for w, off in sorted(_RE_RELDAY.items(), key=lambda kv: -len(kv[0])):
         if w in text:
             return anchor + datetime.timedelta(days=off)
     return None
@@ -383,7 +457,7 @@ def _agenda_missed_texts():
     global _AGENDA_MISSED, _AGENDA_MTIME
     import json as _json
     # agenda.json 与 memory/ 都挂在 data/ 下。这里不 import paths（那段 import 在
-    # 文件后段，本函数位置在它之前），从记忆库目录往上退一层就是 data/。
+        # 文件后段，本函数位于它之前），从记忆库目录往上退一层就是 data/。
     try:
         d = os.path.dirname(os.path.abspath(configured_mem_dir()))
         p = os.path.join(d, "agenda.json")
@@ -463,10 +537,18 @@ def _weight(item):
 
 
 def _cfg_api():
-    """拿 config.json 里的 api_base / api_key（跟聊天用的是同一份凭据）"""
+    """拿 embedding 专用的 embed_base / embed_key；没配就退回聊天那份凭据。
+
+    解耦的意义：聊天服务商换一家（小米没有 /embeddings，会 404 白等）不该
+    把向量检索一起带下水。embed_* 单独配一次，之后随便换聊天模型都不受影响。
+    """
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             c = json.load(f)
+        base = str(c.get("embed_base") or "").rstrip("/")
+        key = str(c.get("embed_key") or "")
+        if base and key:
+            return base, key
         base = str(c.get("api_base") or "").rstrip("/")
         key = str(c.get("api_key") or "")
         if base and key:
@@ -474,6 +556,18 @@ def _cfg_api():
     except Exception:
         pass
     return "", ""
+
+
+def _embed_model_name():
+    """embedding 用哪个模型：embed_model 配置优先，没配用默认 bge-m3。"""
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            m = str((json.load(f) or {}).get("embed_model") or "").strip()
+        if m:
+            return m
+    except Exception:
+        pass
+    return EMBED_API_MODEL
 
 
 def _api_embed(texts, timeout=30):
@@ -484,7 +578,7 @@ def _api_embed(texts, timeout=30):
     r = httpx.post(base + "/embeddings",
                    headers={"Authorization": "Bearer " + key,
                             "Content-Type": "application/json"},
-                   json={"model": EMBED_API_MODEL, "input": texts},
+                   json={"model": _embed_model_name(), "input": texts},
                    timeout=timeout)
     r.raise_for_status()
     data = (r.json() or {}).get("data") or []
@@ -520,29 +614,40 @@ def get_embedder():
 def embed_texts(texts):
     """把文本变成向量。云端优先，失败降级本地 fastembed，再失败返回 []。
 
-    返回 [] 时调用方会走"最近几条"的降级检索，不会崩。_embed_dead 是进程内开关：
-    确认挂了之后就不再每轮重试，否则每句话都要白等一次连不上的请求。
+    返回 [] 时调用方会走"最近几条"的降级检索，不会崩。_embed_dead_until 是
+    进程内的退避开关：确认挂了之后先歇一会儿，别每句话都白等一次连不上的请求
+    —— 但**要能自己恢复**，不能像原来那样一次失败就永久放弃语义检索。
     """
-    global _embed_dead
+    global _embed_dead_until, _embed_model_used, _cloud_dead_until
     if not texts:
         return []
-    if _embed_dead:
+    if time.time() < _embed_dead_until:
         return []
     # 1) 云端 API（云上服务器下不动 HF，这条是主力）
-    try:
-        vecs = _api_embed(texts)
-        if vecs:
-            return vecs
-    except Exception as e:
-        print(f"[记忆] 云端 embedding 失败，降级本地：{type(e).__name__} {e}", flush=True)
+    #    云端刚失败过就跳过这一次尝试（见 _cloud_dead_until）—— 否则每一轮都要
+    #    先等满 30s 超时才降级，延迟永远下不来。退避只决定"要不要试云端"，
+    #    本地兜底照走，所以不会把语义检索整体关掉。
+    if time.time() >= _cloud_dead_until:
+        try:
+            vecs = _api_embed(texts)
+            if vecs:
+                _embed_model_used = _embed_model_name()
+                _cloud_dead_until = 0.0          # 云端恢复，清掉退避
+                return vecs
+        except Exception as e:
+            _cloud_dead_until = time.time() + CLOUD_RETRY_SEC
+            print(f"[记忆] 云端 embedding 失败，降级本地：{type(e).__name__} {e}", flush=True)
     # 2) 本地 fastembed（要能连 HuggingFace）
     try:
         vecs = list(get_embedder().embed(texts))
+        # 本地模型维度跟云端不一样，必须如实记下来 —— 否则 meta 写着云端模型名、
+        # 矩阵却是本地维度，之后每个云端查询都对不上，检索静默降级且不自愈。
+        _embed_model_used = LOCAL_EMBED_MODEL
         return [np.asarray(v, dtype=np.float32) for v in vecs]
     except Exception as e:
         print(f"[记忆] 本地 embedding 也不可用，本次放弃向量检索："
               f"{type(e).__name__} {e}", flush=True)
-        _embed_dead = True
+        _embed_dead_until = time.time() + EMBED_RETRY_SEC
         return []
 
 
@@ -574,13 +679,34 @@ def get_default_store(persona_key=None, src="app"):
     """
     d = configured_mem_dir()
     if persona_key is None:
-        return MemoryStore(os.path.join(d, "memory.json"))
+        return _cached_store(os.path.join(d, "memory.json"))
     import paths
     p = paths.scoped(os.path.join(d, "memory.json"), persona_key, src)
     return _cached_store(p)
 
 
+def _embed_dir_for(path):
+    """每个记忆分区一个**独立**的向量索引目录。
+
+    为什么必须分：embed_dir 原来就是 memory.json 所在的目录（dirname），于是
+    default / wechat / yui.app / yui.wechat 四份记忆**共用同一个
+    data/memory/vectors.npy + ids.json**（实测四个分区解析到同一个文件）。
+    每个 store 缓存自己那份索引快照、保存时整体重写文件 —— 后写的那份把别的
+    分区的向量全抹掉；再加上 id 会跨分区撞号，新条目会被当成"已经有了"而
+    永久不被向量化，检索里永远看不到它。分区是后加的功能，索引也得跟着分。
+
+    默认分区（memory.json）**保持老路径不迁**：它已经有真实向量，换目录等于
+    全部重建一次（要花钱重新 embedding），没必要。
+    """
+    d = os.path.dirname(os.path.abspath(path))
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if stem == "memory":
+        return d
+    return os.path.join(d, stem + ".idx")
+
+
 _stores = {}
+_stores_lock = threading.Lock()      # 见 _cached_store
 
 
 def _cached_store(path):
@@ -588,12 +714,17 @@ def _cached_store(path):
 
     必须复用：每个 store 各自持有一把 RLock 和一份内存索引，
     两个实例写同一个文件会互相覆盖（后写的赢，前面的白写）。
+
+    🔴 查表也得在锁里：MemoryStore.__init__ 要读盘（_load），窗口很宽 ——
+    两个线程同时第一次要同一个分区时，都会看到 _stores 里没有，各建一个实例、
+    各拿一把锁，然后互相覆盖。这正是本函数存在的理由，却原来没防住。
     """
-    st = _stores.get(path)
-    if st is None:
-        st = MemoryStore(path)
-        _stores[path] = st
-    return st
+    with _stores_lock:
+        st = _stores.get(path)
+        if st is None:
+            st = MemoryStore(path, _embed_dir_for(path))
+            _stores[path] = st
+        return st
 
 
 def _synchronized(fn):
@@ -611,6 +742,28 @@ def _synchronized(fn):
     return wrapper
 
 
+def _atomic_write_bytes(path, data):
+    """先写同目录临时文件、再 os.replace 原子替换。
+
+    为什么：原来这些持久化全是 open("w") 直接截断覆盖。写到一半崩了（进程被
+    kill、磁盘满、断电）原文件就已经没了，而且新文件是半截的。os.replace 在
+    同一文件系统上是原子的 —— 要么是旧内容，要么是新内容，没有中间态。
+    """
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    tmp = "%s.tmp%d" % (path, os.getpid())
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _atomic_write_json(path, obj):
+    _atomic_write_bytes(
+        path, json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
 class MemoryStore:
     """一个记忆库实例。
 
@@ -625,6 +778,7 @@ class MemoryStore:
 
     def __init__(self, path, embed_dir=None):
         self._lock = threading.RLock()      # 先于 _load()：读盘也要在锁里
+        self._readonly = False              # 原文件坏了又留不了档时置位（见 _load）
         self.path = path
         self.embed_dir = embed_dir or os.path.dirname(os.path.abspath(path))
         self.data = {"items": [], "meta": {"created": time.strftime("%Y-%m-%d %H:%M")}}
@@ -647,8 +801,26 @@ class MemoryStore:
             try:
                 with open(self.path, encoding="utf-8") as f:
                     self.data = json.load(f)
-            except Exception:
-                self.data = {"items": [], "meta": {"created": time.strftime("%Y-%m-%d %H:%M")}}
+            except Exception as e:
+                # **解析失败不能静默当成"空库"。**
+                                # 只把 self.data 换成 {"items": []} 是不够的 —— 磁盘
+                # 满、进程被 kill、手改错一个字符之后，下次启动记忆库看着是空的，
+                # 紧接着第一次 add() 的 save() 把原文件截断覆盖，几百条记忆
+                # 一句话都不留。
+                # 现在：先把坏文件改名留档（内容还在，能手救），出声，再以空库
+                # 继续跑 —— 不能因为一次解析失败就让她彻底没有记忆。
+                bad = "%s.bad_%s" % (self.path, time.strftime("%Y%m%d_%H%M%S"))
+                try:
+                    os.replace(self.path, bad)
+                    print("[记忆] %s 解析失败（%s），已留档到 %s，本次以空库启动"
+                          % (self.path, str(e)[:80], bad), flush=True)
+                except OSError as e2:
+                    # 留档都失败就别写盘了：再写下去就是拿空库覆盖唯一的一份数据
+                    self._readonly = True
+                    print("[记忆] %s 解析失败且留档失败（%s）—— 为避免覆盖原文件，"
+                          "本次运行不落盘" % (self.path, e2), flush=True)
+                self.data = {"items": [],
+                             "meta": {"created": time.strftime("%Y-%m-%d %H:%M")}}
         # 兼容 v1 格式：facts/events -> items
         if "items" not in self.data:
             items = []
@@ -660,9 +832,9 @@ class MemoryStore:
 
     @_synchronized
     def save(self):
-        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        if self._readonly:
+            return                      # 原文件坏了又留不了档：绝不用空库覆盖它
+        _atomic_write_json(self.path, self.data)
 
     # --- 向量索引 ---
     @_synchronized
@@ -672,12 +844,19 @@ class MemoryStore:
             return
         ids, rows = [], []
         # 换过 embedding 模型（维度会变）就别读旧矩阵了，直接重建
-        if self._meta_matches() and os.path.isfile(self.vec_path) \
-                and os.path.isfile(self.ids_path):
+        meta = self._read_meta()
+        if meta and os.path.isfile(self.vec_path) and os.path.isfile(self.ids_path):
             try:
                 ids = json.load(open(self.ids_path, encoding="utf-8"))
                 mat = np.load(self.vec_path)
-                if mat.ndim == 2 and len(ids) == mat.shape[0]:
+                                # 三个条件都得满足，**其中维度这一条容易被漏掉** ——
+                # 本地兜底模型是 384 维、云端 bge-m3 是 1024 维，而 _write_meta
+                # 不管向量是谁产生的都写云端那个模型名。于是兜底跑过一次之后，
+                # meta 说"bge-m3"、矩阵其实是 384 维，之后每个 1024 维的查询都
+                # 跟矩阵对不上，检索静默退化成"最近几条"，而且不会自愈。
+                if (mat.ndim == 2 and len(ids) == mat.shape[0]
+                        and meta.get("model") == EMBED_API_MODEL
+                        and int(meta.get("dim") or 0) == int(mat.shape[1])):
                     rows = [mat[i] for i in range(mat.shape[0])]
                     self._dim = mat.shape[1]
                 else:
@@ -692,19 +871,28 @@ class MemoryStore:
         self._index_loaded = True
         self._backfill()
 
-    def _meta_matches(self):
-        """索引是不是当前这个 embedding 模型建的。换模型 → 返回 False → 重建"""
+    def _read_meta(self):
+        """读 embed_meta.json（读不到返回 {}）。"""
         try:
             with open(self.meta_path, encoding="utf-8") as f:
                 m = json.load(f)
-            return m.get("model") == EMBED_API_MODEL
+            return m if isinstance(m, dict) else {}
         except Exception:
-            return False
+            return {}
+
+    def _meta_matches(self):
+        """索引是不是当前这个 embedding 模型建的。换模型 → 返回 False → 重建"""
+        return self._read_meta().get("model") == EMBED_API_MODEL
 
     def _write_meta(self, dim):
         try:
+            # 记**实际**产出这些向量的模型，不是一律记云端那个名字。
+            # 本地兜底跑过之后，如果这里还写 EMBED_API_MODEL，加载时的模型校验
+            # 就形同虚设（名字对得上、维度对不上），检索会静默降级。记对了名字，
+            # 云端一恢复就会因为"模型不匹配"整体重建。
+            model = _embed_model_used or EMBED_API_MODEL
             with open(self.meta_path, "w", encoding="utf-8") as f:
-                json.dump({"model": EMBED_API_MODEL, "dim": int(dim)},
+                json.dump({"model": model, "dim": int(dim)},
                           f, ensure_ascii=False)
         except Exception as e:
             print(f"[记忆] 写 embed_meta.json 失败：{e}", flush=True)
@@ -766,12 +954,19 @@ class MemoryStore:
     def _save_index(self):
         os.makedirs(self.embed_dir, exist_ok=True)
         if self._rows:
-            np.save(self.vec_path, np.vstack(self._rows).astype(np.float32))
+            arr = np.vstack(self._rows).astype(np.float32)
             self._dim = self._rows[0].shape[0]
         else:
-            np.save(self.vec_path, np.zeros((0, self._dim or 1), dtype=np.float32))
-        with open(self.ids_path, "w", encoding="utf-8") as f:
-            json.dump(self._ids, f, ensure_ascii=False)
+            arr = np.zeros((0, self._dim or 1), dtype=np.float32)
+                # 原子落盘。直接用 np.save / open("w") 覆盖是不行的：崩在中间会留下半截矩阵，
+        # 或"矩阵与 ids 条数不配对"的中间态 —— 加载时看不出来就是静默错位。
+        # np.save 到 BytesIO 上写（不是路径）才不会自作主张补 .npy 后缀。
+        import io as _io
+        buf = _io.BytesIO()
+        np.save(buf, arr)
+        _atomic_write_bytes(self.vec_path, buf.getvalue())
+        _atomic_write_bytes(
+            self.ids_path, json.dumps(self._ids, ensure_ascii=False).encode("utf-8"))
         if self._dim:
             self._write_meta(self._dim)
 
@@ -781,6 +976,39 @@ class MemoryStore:
                          if self._rows else np.zeros((0, self._dim or 1),
                                                      dtype=np.float32))
         return self._mat
+
+    def _near_dup(self, vec, mtype=None, chan=None, thresh=NEAR_DUP_COS):
+        """"换了措辞的同一条"检测：返回最相近且超过阈值的旧记忆文本，否则 None。
+
+        只跟**同类型**（fact/event/agenda…）、**同渠道**的比：类型不同多半不是
+        一回事（"用户对 Agent 感兴趣"的事实 vs "明天提醒他学 Agent"的约定），
+        渠道不同也不该互相算重复（手机与微信认得的人/事本就可能不一样，见 add）。
+        """
+        if vec is None:
+            return None
+        mat = self._matrix()
+        if mat.shape[0] == 0 or mat.shape[1] != vec.shape[0]:
+            return None
+        a = np.asarray(vec, dtype=np.float32)
+        na = float(np.linalg.norm(a))
+        if na == 0:
+            return None
+        denom = np.linalg.norm(mat, axis=1) * na
+        sims = np.divide(mat @ a, denom,
+                         out=np.zeros(mat.shape[0], dtype=np.float32),
+                         where=denom > 0)
+        best, best_txt = 0.0, None
+        for it in self.data["items"]:
+            if mtype and it.get("type") != mtype:
+                continue
+            if chan and it.get("chan") and it.get("chan") != chan:
+                continue
+            r = self._imap.get(it.get("id"))
+            if r is None:
+                continue
+            if float(sims[r]) > best:
+                best, best_txt = float(sims[r]), it.get("text")
+        return best_txt if best >= thresh else None
 
     # --- 写入 ---
     def add(self, text, mtype="event", src="", chan=None):
@@ -818,7 +1046,19 @@ class MemoryStore:
             for it in self.data["items"]:
                 if it["text"] == text:
                     return
-            item = {"id": f"m{int(time.time()*1000)}{len(self.data['items'])}",
+            # 逐字不同但意思相同的，也拦一道（近义去重），见 _near_dup。
+            dup = self._near_dup(vs[0] if vs else None, mtype, chan)
+            if dup:
+                _MEM_SKIPPED.append({"text": text[:80], "why": "近义重复"})
+                print(f"[记忆] 不入库（近义重复 ≈「{dup[:30]}」）：{text[:40]}", flush=True)
+                return
+                        # id 必须全局唯一（跨分区也唯一）。时间戳加随机数即可，
+            # f"m{毫秒}{len(items)}" —— 同一毫秒内、又恰好长度相同的两条会撞号，
+            # 而跨分区共用一个索引文件时更容易撞。撞了以后 _imap 里已经有的 id
+            # 会被当成"这条已经向量化过"，新记忆就永久没有向量、检索永远看不到。
+            item = {"id": "m%d%d%s" % (int(time.time() * 1000),
+                                       len(self.data["items"]),
+                                       os.urandom(3).hex()),
                     "type": mtype, "text": text,
                     "time": time.strftime("%Y-%m-%d %H:%M")}
             if src:
@@ -926,7 +1166,7 @@ class MemoryStore:
         def _ok(item):
             if not want:
                 return True
-            # 没标渠道的条目算主渠道 —— 分渠道之前写的记忆全是"她在手机上
+                        # 没标渠道的条目算主渠道 —— 加渠道字段之前写入的记忆全是"她在手机上
             # 认识的那些"，归到微信侧等于让她把 App 那边的人全忘了。
             return (str((item or {}).get("chan") or "").strip().lower()
                     or "app") == want
@@ -963,7 +1203,7 @@ class MemoryStore:
         # 过期/存疑的那批放最后，正常的那批在前 —— 模型对列表末尾更敏感，
         # 放末尾等于降权，和截断思路一致。
         # 用反向排序（reverse=True）：权重低的在后面。写成升序会把过期的顶到最前
-        # —— 实测「今天学习了Python一天」直接排到第一条了。
+                # —— 例如「今天学习了Python一天」会直接排到第一条。
         rows.sort(key=lambda x: x[1], reverse=True)
         return ("你记得他的事（这些是真的，聊天时自然地用上）：\n"
                 + "；".join(t for t, _w in rows))

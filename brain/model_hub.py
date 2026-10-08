@@ -6,7 +6,7 @@ vision.model、server.py 里把生图模型写死），App 想换个模型就得
 抽到这里之后："现在用哪个模型"只有一份定义，分类规则也只有一份。
 
 几类模型（App 里就是这几个下拉）：
-chat 对话   vision 看图（把图翻译成一句中文给她看）   image 生图（自拍、朋友圈配图）
+chat 对话   vision 看图（把图翻译成一句中文给她看）   image 生图（自拍）
 audio 语音（还没做，位置先留着）   embed 向量（记忆检索用，App 里不显示）
 
 分类从哪来：先问服务商 /v1/models 要真实列表，按名字关键字归类；拉不到（没网 /
@@ -15,6 +15,7 @@ App 会提示"这是内置清单，可能不全"。
 """
 import os
 import json
+import re
 import time
 import urllib.request
 
@@ -36,6 +37,11 @@ PROVIDERS = {
         "base": "https://api.siliconflow.cn/v1",
         "models_doc": "https://docs.siliconflow.cn",
     },
+    "xiaomi": {
+        "name": "小米 MiMo",
+        "base": "https://api.xiaomimimo.com/v1",
+        "models_doc": "https://mimo.mi.com/docs",
+    },
     "custom": {
         "name": "自定义（OpenAI 兼容）",
         "base": "",
@@ -48,36 +54,68 @@ PROVIDERS = {
 _IMAGE_HINTS = ("kolors", "flux", "stable-diffusion", "sdxl", "sd3",
                 "z-image", "zimage", "hidream", "playground", "wanx",
                 "dall-e", "gpt-image", "recraft", "kandinsky", "lumina",
-                "imagen", "majicflus", "sd-turbo", "sana")
+                "imagen", "majicflus", "sd-turbo", "sana",
+                # 通义自己的文生图/编辑模型就叫 Qwen-Image —— 名字里没有
+                # flux/kolors 那种关键字，不加这条会被当成对话模型列进对话栏
+                "qwen-image")
 _AUDIO_HINTS = ("whisper", "sensevoice", "funaudio", "fish-speech",
                 "fishspeech", "indextts", "maskgct", "step-tts", "tts",
                 "asr", "voice", "audio", "speech", "emotion2vec")
 _VISION_HINTS = ("-vl", "vl-", "vision", "internvl", "minicpm-v", "llava",
                  "glm-4v", "cogvlm", "omni", "qwen-vl", "yi-vl")
+# 智谱视觉版这两年改过命名：老的是 glm-4v，现在是 glm-4.5v / glm-4.1v 这种
+# "版本号后面直接跟 v" 的写法 —— 子串关键字根本钉不住（要穷举到哪年？），
+# 所以这里用一条正则兜住 glm-<版本号>v 这一种形状。
+_GLM_VISION_RE = re.compile(r"glm-[\d.]+v\b")
 _EMBED_HINTS = ("bge-", "bce-", "gte-", "jina-", "embedding", "rerank",
                 "reranker", "text-embedding")
 
 # 兜底清单：在线拉不到时给 App 用，至少能选。
+#
+# 2026-10-06 晚按真目录整表重刷：用硅基流动自己的 key 打 /v1/models 拉到
+# **97 个真实 id**（全量存 C:\Vigil\_sf_catalog.txt），再逐类抽样实测 ——
+# GLM-5.3 / DeepSeek-V4-Flash / Qwen3.6-35B-A3B 文字对话 OK，
+# Qwen3-VL-30B/32B/8B、GLM-4.5V 带图 OK。
+# 小米那几���是同天拿小米的 key 打它自己的 /v1/models 验证的（小米一共就 9 个 id：
+# 5 个对话 + 1 个 asr + 3 个 tts）。文档里写的 mimo-v2-flash / mimo-7b-instruct
+# 在真实列表里并不存在，别照文档抄。
+# 2026-10-07 二次订正：mimo v2.6 全系 + v2.5 是**原生全模态**，能看图（官方
+# 文档 + 实测，usage 里有 image_tokens）——之前写"小米没有任何 VL"是错的。
+# 错因：mimo 思考默认开启，探测时 max_tokens 只给 40，全被推理吃掉、正文为空，
+# 看着像"不支持图"。**拿 mimo 当看图模型必须把 max_tokens 给大**（>=1024）。
+# 另：mimo-v2.5-pro 带图会 404「No endpoints found that support image input」，
+# omni 系列不存在（400 Unsupported model）。
+# 顺带清掉一批已下架、选了必报错的：meta-llama-3.1-8B、THUDM/glm-4-9b-chat、
+# Qwen2.5-VL-32B/72B、InternVL3-14B、FLUX.1、SD3、fish-speech-1.5。
 FALLBACK = {
     "chat": [
-        "Qwen/Qwen3-8B", "Qwen/Qwen3-14B", "Qwen/Qwen3-32B",
-        "Qwen/Qwen2.5-7B-Instruct", "Qwen/Qwen2.5-72B-Instruct",
-        "deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1",
-        "zai-org/GLM-4.6", "zai-org/GLM-5.3", "THUDM/glm-4-9b-chat",
-        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "zai-org/GLM-5.3", "zai-org/GLM-5.2", "zai-org/GLM-4.5-Air",
+        "deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro",
+        "deepseek-ai/DeepSeek-V3.2", "deepseek-ai/DeepSeek-R1",
+        "Qwen/Qwen3.6-35B-A3B", "Qwen/Qwen3.5-122B-A10B",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507", "Qwen/Qwen3-8B",
+        "moonshotai/Kimi-K2.7-Code", "stepfun-ai/Step-3.5-Flash",
+        "tencent/Hunyuan-A13B-Instruct", "meituan-longcat/LongCat-2.0",
+        "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed", "mimo-v2.6-flash",
+        "mimo-v2.5-pro", "mimo-v2.5",
     ],
     "vision": [
-        "Qwen/Qwen3-VL-8B-Instruct", "Qwen/Qwen3-VL-30B-A3B-Instruct",
-        "Qwen/Qwen2.5-VL-32B-Instruct", "Qwen/Qwen2.5-VL-72B-Instruct",
-        "OpenGVLab/InternVL3-14B",
+        # 只放"看得懂一张照片"的通用视觉模型。OCR 专用那几个（DeepSeek-OCR、
+        # PaddleOCR）**不进这里**：它们只会把图里的字读出来，问它"照片里有什么"
+        # 得到的是一串 OCR 文本，塞进她的上下文就成了胡话。
+        "Qwen/Qwen3-VL-30B-A3B-Instruct", "Qwen/Qwen3-VL-32B-Instruct",
+        "Qwen/Qwen3-VL-8B-Instruct", "zai-org/GLM-4.5V",
     ],
     "image": [
-        "Tongyi-MAI/Z-Image-Turbo", "Kwai-Kolors/Kolors",
-        "black-forest-labs/FLUX.1-schnell", "black-forest-labs/FLUX.1-dev",
-        "stabilityai/stable-diffusion-3-medium",
+        "Tongyi-MAI/Z-Image-Turbo", "Tongyi-MAI/Z-Image",
+        "Kwai-Kolors/Kolors", "Qwen/Qwen-Image",
+        "Qwen/Qwen-Image-Edit-2509",
     ],
     "audio": [
-        "FunAudioLLM/SenseVoiceSmall", "fishaudio/fish-speech-1.5",
+        "FunAudioLLM/SenseVoiceSmall", "FunAudioLLM/CosyVoice2-0.5B",
+        "Qwen/Qwen3-ASR-1.7B", "fnlp/MOSS-TTSD-v0.5",
+        "mimo-v2.5-tts", "mimo-v2.5-tts-voicedesign",
+        "mimo-v2.5-tts-voiceclone", "mimo-v2.5-asr",
     ],
     "embed": [
         "BAAI/bge-m3",
@@ -102,6 +140,8 @@ def classify(mid):
     for h in _VISION_HINTS:
         if h in s:
             return "vision"
+    if _GLM_VISION_RE.search(s):
+        return "vision"
     return "chat"
 
 
@@ -196,9 +236,20 @@ def current(cfg):
     vis = cfg.get("vision") if isinstance(cfg.get("vision"), dict) else {}
     provider = str(cfg.get("provider") or "")
     if provider not in PROVIDERS:
-        # 老配置没有 provider 字段：按 base 反推，认不出来就算自定义
-        b = str(cfg.get("api_base") or "")
-        provider = "siliconflow" if "siliconflow" in b else "custom"
+        # 老配置没有 provider 字段：按 base 反推，认不出来就算自定义。
+        # ⚠️ 反推要按 base 的 host 判，别用 `in` 匹配整串 ——
+        # "siliconflow" 那种字面匹配在多两个provider 之后就成了隐形坑：
+        # 用户切到小米但 provider 字段没落盘时，会被算成"自定义"，
+        # 界面显示的名字和实际用的服务对不上。
+        b = str(cfg.get("api_base") or "").lower()
+        provider = "custom"
+        for pid, meta in PROVIDERS.items():
+            if pid == "custom":
+                continue
+            host = str(meta.get("base") or "").lower()
+            if host and host in b:
+                provider = pid
+                break
     return {
         "provider": provider,
         "provider_name": PROVIDERS.get(provider, {}).get("name", provider),
@@ -228,6 +279,20 @@ def public_current(cfg):
     k = d.get("api_key") or ""
     d["api_key_set"] = bool(k)
     d["api_key"] = mask_key(k)
+    # 🔴 这里**不能**调 adopt_current_key：那会让"刚切过去、还没配key"的
+    # 厂商把眼下这把（属于别家的）认领走 —— 于是它变成"已存密钥"，
+    # 切换看着成功而她拿着别家的 key 去调，必然 401。
+    # 迁移只在 run_server 启动时做一次（那时还没切过，key 就是它自己的）。
+    # 哪���自己存过密钥 —— 前端据此在服务商名字上标"已存"，
+    # 让"点一下就切换"这件事是看得见的：有 key 才切得动。
+    d["keys_by_provider"] = {
+        pid: has_provider_key(cfg, pid) for pid in PROVIDERS}
+    # 🔴 当前服务商**自己没有**存过密钥 = 这家是"切过来但没配 key"。
+    # 这时配置里的 api_key 是别家的那把，照它发请求必然被拒。
+    # 前端要能识别这种情况并要 key，别让它显示成"已切换"。
+    d["key_belongs_to"] = (d.get("provider")
+                            if has_provider_key(cfg, d.get("provider"))
+                            else "")
     return d
 
 
@@ -235,6 +300,45 @@ def mask_key(k):
     """给界面看的密钥样子。短于 12 位的一律全盖 —— 那个长度露头露尾没有意义。"""
     k = k or ""
     return ("%s…%s" % (k[:6], k[-4:])) if len(k) > 12 else ("*" * len(k))
+
+
+def provider_key(cfg, prov):
+    """取某个服务商自己的那把密钥；没有就回退到当前那把。
+
+    为什么要按家存：各家 key 不通用。配置里只有一把 `api_key` 时，
+    "切到硅基流动"换的只是地址和模型名，密钥还是小米那把 ——
+    切换看着成功了，她下一句就调不动（401）。要真能一键切换，
+    必须把每家的密钥分别记下来：`api_keys = {"siliconflow": "sk-…"}`。
+    """
+    bag = cfg.get("api_keys")
+    if isinstance(bag, dict):
+        k = str(bag.get(prov) or "").strip()
+        if k:
+            return k
+    return str(cfg.get("api_key") or "")
+
+
+def has_provider_key(cfg, prov):
+    """这家是不是已经存过密钥（回退的那把不算数）。"""
+    bag = cfg.get("api_keys")
+    return bool(isinstance(bag, dict) and str(bag.get(prov) or "").strip())
+
+
+def adopt_current_key(cfg):
+    """把当前那把密钥登记到当前服务商名下（原地改，只在缺这一次时写）。
+
+    为什么需要：`api_keys` 是后来才有的，老配置里只有一把 `api_key`。
+    不补这一步的话，界面会把每一家都显示成"还没存密钥"——
+    而其中一家明明正拿着那把 key 在用。判据里要能区分"没配"和"配了没登记"。
+    """
+    prov = str((cfg or {}).get("provider") or "").strip()
+    k = str((cfg or {}).get("api_key") or "").strip()
+    if not prov or not k or has_provider_key(cfg, prov):
+        return False
+    bag = dict(cfg.get("api_keys") or {})
+    bag[prov] = k
+    cfg["api_keys"] = bag
+    return True
 
 
 def is_masked(k):
@@ -265,28 +369,68 @@ def apply_cfg(cfg, p):
     changed = []
 
     prov = str(p.get("provider") or "").strip()
-    if prov and prov in PROVIDERS and prov != cfg.get("provider"):
+    # 🔴 原服务商和切换前那把密钥必须在改 provider **之前**抓住。
+    # 下面第一行就把 cfg["provider"] 覆盖了，之后再想"换走的是哪家"
+    # 拿到的已经是新家 —— 于是 `api_keys` 里永远登记不上，
+    # 切回去时 `provider_key(原家)` 回退到 api_key，拿到的是别家的密钥。
+    prev_prov = str(cfg.get("provider") or "").strip()
+    prev_key0 = cfg.get("api_key")
+    prev_base = str(cfg.get("api_base") or "").strip().rstrip("/")
+    switched = bool(prov and prov in PROVIDERS and prov != prev_prov)
+    if switched:
         cfg["provider"] = prov
         changed.append(f"服务商 → {PROVIDERS[prov]['name']}")
-        # 换服务商就该换地址，除非用户自己填了
-        if not str(p.get("api_base") or "").strip() and prov != "custom":
-            cfg["api_base"] = PROVIDERS[prov]["base"]
-            changed.append("接口地址 → " + PROVIDERS[prov]["base"])
 
-    base = str(p.get("api_base") or "").strip().rstrip("/")
-    if base and base != cfg.get("api_base"):
-        cfg["api_base"] = base
-        changed.append("接口地址 → " + base)
+    # 接口地址：只认"用户真的改了地址"（填了个跟旧地址不同的值）。留空、或提交的
+    # 还是**旧地址**都算没改 —— 前端下拉原先不联动，保存时会把旧 base 原样带上，
+    # 于是老写法里"换服务商"先把 base 设成新家、紧接着又被下面那段用旧地址覆盖回去：
+    # 服务商名字换了、地址没换，界面看着切了，实际还在打上一家（小米名字 + 硅基地址）。
+    # 合并成一处判断，避免自我覆盖。
+    p_base = str(p.get("api_base") or "").strip().rstrip("/")
+    user_base = bool(p_base and p_base != prev_base)
+    if user_base:
+        if p_base != cfg.get("api_base"):
+            cfg["api_base"] = p_base
+            changed.append("接口地址 → " + p_base)
+    elif switched and prov != "custom":
+        new_base = PROVIDERS[prov]["base"]
+        if new_base and new_base != cfg.get("api_base"):
+            cfg["api_base"] = new_base
+            changed.append("接口地址 → " + new_base)
 
     key = str(p.get("api_key") or "").strip()
+    # 🔴 判据一律用**提前捕获**的 prev_prov/prev_key0。
+    # 上面第一行已经把 cfg["provider"] 改成新的了，再用 cfg.get("provider")
+    # 比恒为 False —— 于是这段代码整段不执行，小米的key 永远登记不上，
+    # 切回去时 provider_key 只能回退到 api_key（那时已是别家的）。
+    # 先把"换走的是哪家、它眼下用哪把"记进 api_keys，再谈换密钥 ——
+    # 顺序反了的话 want_key 会取到还没登记时的回退值。
+    if switched and prev_key0 and prev_prov in PROVIDERS \
+            and not has_provider_key(cfg, prev_prov):
+        bag = dict(cfg.get("api_keys") or {})
+        bag[prev_prov] = prev_key0
+        cfg["api_keys"] = bag
+    want_key = provider_key(cfg, prov) if switched else ""
+
     # 打码串绝不能写进去：它 != 真 key，会通过下面的 != 判断，然后覆盖掉真的那把，
     # 之后 AI 一句也说不出来。空串（前端留空 = 沿用当前）和打码串在这里都要放过。
     if key and not is_masked(key) and key != cfg.get("api_key"):
         cfg["api_key"] = key
         changed.append("密钥已更新")
+        # 同时记进按家那份，否则下次切走再切回来还得重填一遍
+        if prov in PROVIDERS:
+            bag = dict(cfg.get("api_keys") or {})
+            bag[prov] = key
+            cfg["api_keys"] = bag
     elif is_masked(key):
-        # 不静默吞掉 —— 用户看到"保存成功"却发现密钥没换成他填的那把会以为见鬼了
         changed.append("密钥没改（填的是打码后的样子，服务器上那把没动）")
+
+    # 切了服务商就换上那把已存的密钥；那家一把都没存就不换 ——
+    # 沿用别家的密钥等于换完她立刻调不动，而界面显示"已切换"。
+    if switched and want_key and want_key != cfg.get("api_key") \
+            and not (key and not is_masked(key) and key == cfg.get("api_key")):
+        cfg["api_key"] = want_key
+        changed.append("已换上%s的密钥" % PROVIDERS[prov]["name"])
 
     chat = str(p.get("chat") or "").strip()
     if chat and chat != cfg.get("model"):

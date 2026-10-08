@@ -46,15 +46,6 @@ def fetch_year_holidays(year, token):
         return None
 
 
-def fetch_hotboard(platform, token):
-    """某平台实时热榜：[{title, hot_value, index, url}...]，失败 None。"""
-    try:
-        d = _get("/misc/hotboard", {"type": platform}, token)
-        return d.get("list") or []
-    except Exception:
-        return None
-
-
 def fetch_tracking(number, token, phone=""):
     """快递物流：{carrier_name, status, status_code, is_completed,
     tracks:[{time, context}]}（tracks 按时间倒序，tracks[0] 是最新），失败 None。"""
@@ -83,7 +74,7 @@ def fetch_random_image(category, token, timeout=8):
     """随机图片：接口直接回图片二进制（302 到图床后返回 image/*）。
     成功返回 bytes，失败/返回的不是图返回 None。
 
-    **超时给 8 秒而不是更久**：实测这个接口约 25% 概率把连接挂死 —— 表现是
+        **超时给 8 秒而不是更久**：这个接口约 25% 概率把连接挂死 —— 表现是
     一次数据都收不到、耗满整个 timeout 才抛；而成功的请求只要 0.2~0.4 秒。
     给 15 秒并不会让更多图拉下来，只会让每次失败多白等 7 秒（聊天主链路在等）。
 

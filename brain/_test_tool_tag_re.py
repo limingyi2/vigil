@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""工具标签的正则必须容得下**在册工具名**。
+r"""工具标签的正则必须容得下**在册工具名**。
 
 ## 症状
 
@@ -32,11 +32,12 @@ finditer 返回空 → 工具循环直接 break → 工具从没执行 →
   ② 真实技能名（带连字符 + 双下划线 + JSON 参数）能匹配
   ③ 边界不许回归：空名不匹配（否则 `[tool::x]` 会切出空工具名）、
      多个标签在一轮里都要抓到
-另外钉死"编造的名字仍会匹配、从而走到『没有这个工具』的分支" ——
-这是**故意**的：宁可让她得到一句"没这个技能工具"，
-也不能让标签原样发到用户眼前（那个由 TOOL_TAG_ANY_RE 兜底）。
+另外钉死字符集的**边界**：工具名收在 ASCII（字母数字下划线短横线），
+模型编出来的中文名（`[tool:根本不存在:xx]`）**故意不认** ——
+不认它不影响什么，因为 `TOOL_TAG_ANY_RE` 会把看着像标签的东西一律扫掉，
+用户永远看不到。这条才是"不许漏标签"的真正保障。
 
-用法：F:/Vigil/venv/Scripts/python.exe _test_tool_tag_re.py
+用法：F:/vigil/venv/Scripts/python.exe _test_tool_tag_re.py
 """
 import io
 import os
@@ -95,7 +96,7 @@ def main():
         check("  %s 能匹配" % n, bool(RE.findall("[tool:%s:{}]" % n)))
 
     print("\n[2] 真实技能调用长什么样")
-    # ⚠️ **判据必须用 finditer，不能用 findall**（这是我自己踩的假失败）：
+    # **判据必须用 finditer，不能用 findall**（这是我自己踩的假失败）：
     # findall 对"没参与匹配的组"返回 ''，而 `Match.group()` 返回 None。
     # 生产代码（tools.py 的 run_chat_with_tools）走的是 finditer + group(2)，
     # 所以判据要跟生产同一条路，否则测的是 findall 的返回格式、
@@ -128,13 +129,27 @@ def main():
           tricky and tricky[0][0] == "search" and "v:1" in (tricky[0][1] or ""),
           tricky)
 
-    print("\n[4] 编造的名字仍要匹配（故意），好走到「没有这个工具」")
+    print("\n[4] 字符集边界：ASCII 之外的名字不当工具名；但绝不许漏到正文")
+    # 字符集收在 [A-Za-z0-9_-]，够覆盖内置 + 插件 + 技能名。中文名基本都是
+    # 模型自己编的（它爱写 [tool:根本不存在:xx]）—— 不认它是对的，
+    # 但**必须**被 TOOL_TAG_ANY_RE 扫掉。这条判据真正要保护的是"用户看不见标签"，
+    # 不是"必须把编的名字当工具去查一遍"。
     fake = parse("[tool:根本不存在:xx]")
-    check("编造的名字被匹配（否则会原样发到用户眼前）",
-          bool(fake) and fake[0][0] == "根本不存在", fake)
-    # 而清扫必须能把它扫掉
-    check("TOOL_TAG_ANY_RE 能扫掉编造的标签",
-          bool(tools.TOOL_TAG_ANY_RE.sub("", "[tool:根本不存在:xx]") == ""))
+    check("编造的中文名不被当成工具名（窄字符集，故意）", not fake, fake)
+    stripped = tools.TOOL_TAG_ANY_RE.sub("", "[tool:根本不存在:xx]")
+    check("但它照样被兜底正则扫干净（不许原样发到用户眼前）",
+          stripped == "", repr(stripped))
+    # 而"看着像工具标签"的东西不能因为匹配不上就留在正文里
+    check("半截/畸形标签也不会漏出去",
+          tools.TOOL_TAG_ANY_RE.sub("", "好[tool:中文名]的") == "好的",
+          tools.TOOL_TAG_ANY_RE.sub("", "好[tool:中文名]的"))
+    # 已知边界（不是回归，先记着）：技能**包名**允许点号
+    # （skill.py 的 _pkg_name_ok = [A-Za-z0-9][A-Za-z0-9._-]*），
+    # 所以理论上存在 `my.skill__today` 这种合法工具名，而当前字符集没有点号。
+    # 实际在册的技能包名全是连字符（daily-fortune / hot-trends …），暂不受影响。
+    dot = parse("[tool:my.skill__today:x]")
+    print("  备注：带点号的技能名匹配 -> %s（包名允许点号，但现有技能都用连字符）"
+          % ("能" if dot else "不能"))
 
     print("\n== %d pass / %d fail ==" % (PASS[0], len(FAIL)))
     for f in FAIL:

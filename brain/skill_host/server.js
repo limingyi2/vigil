@@ -46,7 +46,7 @@ const HOST = process.env.ZX_SKILL_HOST || '127.0.0.1'
 const CALL_TIMEOUT = Number(process.env.ZX_SKILL_TIMEOUT || 25000)
 
 // 🔴 不用 console.log 直接转发：它**不认 %s 占位符**，
-// 多参数转发过去会打成字面量 "装载 %s 失败：%s"（实测踩过）。
+// 多参数转发过去会打成字面量 "装载 %s 失败：%s"（已知问题）。
 // 自己拼字符串，顺便统一加前缀。
 const log = (...a) => console.log('[skill-host]', ...a.map(x => (typeof x === 'string' ? x : String(x))))
 
@@ -151,14 +151,29 @@ async function loadOne(name, dir) {
   // 源文件一改时间戳就变，于是拿到的是新模块。
   const bust = Date.now()
   const mod = await import(pathToFileURL(main).href + '?v=' + bust)
-  if (typeof mod.setup !== 'function') throw new Error('这个包没有 setup(api)，不是 skill')
+  // 🔴 **入口函数认两个名字：setup（本宿主契约）和 register（QQ Agent 契约）。**
+  //
+  // 这不是"顺手兼容一下"。QQ Agent 的 skill 一律是
+  // `export function register(api)`，而这层 api 本来就是**照着 QQ Agent 垫出来的**
+  // （见文件头那段）—— 也就是说这类包除了入口函数叫什么以外，全都能跑。
+  // 只认 setup 的后果很不显眼：包被判"不是 skill"，而**安装接口已经报了成功**
+  // （文件确实写进去了），用户看到的是"提示安装成功、列表里没有"。
+  // agent-reach 遇到的就是这个：宿主日志
+  // `装载 agent-reach 失败：这个包没有 setup(api)，不是 skill`。
+  const boot = (typeof mod.setup === 'function') ? mod.setup
+    : (typeof mod.register === 'function') ? mod.register
+      : null
+  if (!boot) throw new Error('这个包没有 setup(api) 也没有 register(api)，不是 skill')
+  if (typeof mod.setup !== 'function') {
+    log(fmt('%s 用的是 register(api)（QQ Agent 契约），按 register 装载', name))
+  }
 
   const tools = {}
   // 垫出来的 api：形状照 QQ Agent 那套，够 skill 认，但每个方法都另有用处。
   const api = {
     config: () => ({ ...(meta.settings || {}) }),
     // 不加 '[' ']'：log 已经带了 '[skill-host]' 前缀，技能自己又加一层
-    // 的话日志里会出现 "[[daily-fortune] ...]" 这种双括号（实测出现过）。
+    // 的话日志里会出现 "[[daily-fortune] ...]" 这种双括号。
     log: (...a) => log(a.map(x => (typeof x === 'string' ? x : String(x))).join(' ')),
     registerTool: (def) => {
       // 🔴 registerTool 强制要求 name：QQ Agent 的 src/tool-registry.js 会直接抛
@@ -174,7 +189,7 @@ async function loadOne(name, dir) {
     },
   }
 
-  await mod.setup(api)
+  await boot(api)
   // 技能自称不可用（缺依赖等）就别收 —— 收进来等于给模型一个必然失败的工具。
   if (typeof mod.available === 'function') {
     let ok = true
@@ -195,19 +210,15 @@ async function loadOne(name, dir) {
 // 🔴 **必须传数字，不能传 'group' / 'mentioned' 这种字符串。**
 // skill 侧是 `Number(ctx.session.contextTier)`，字符串会变成 NaN，
 // 而作者为此写了条兜底「宿主没给档位就不拦」——于是传字符串等于闸门全程失效：
-// 群里没被点名照样给签。原skill 的 `gate()` 实测过这个组合，判据 4 就是这么挂的。
+// 群里没被点名照样给签。原 skill 的 `gate()` 就是这个组合，判据 4 由此而来。
 // 传错格式的代价不是"拦错"，是"完全不拦"，所以宁可多写一个转换。
 // 🔴 档位数字必须跟技能作者看到的一致，也就是 QQ Agent 的 resolveContextTier：
 //   1 = 被 @ / 拍了拍我   2/3 = 群里随便聊   4 = 私聊消息
 //
-// 原来这张表把 private 映射成 0，是错的：它只对下面那行
-// `tierOf(src.tier) === 0 ? 'private' : 'group'` 自洽，而技能那边只判
-// `tier === 1`（被点名放行）、`ctx.kind === 'private'`（私聊放行）。
-// 于是传 private 进来：kind 判成 'group'（因为拿到的是 0，0 !== 0 不成立…
-// 实际是 0 === 0 成立才判 private，但数字 0 又不等于技能认的任何私聊档位），
-// 结果**私聊里调用被当成"群里没被点名"拒掉**，回复是
-// "这次在群里没被点名（档位 0）" —— 私聊里冒出这句话，蠢得没法解释。
-// 实测：tier=4 传进去，回复写"档位 4"并且照样拒绝。
+// 🔴 私聊必须映射成 **4**，不能是 0。技能那边只认 `tier === 1`（被点名放行）
+// 和 `ctx.kind === 'private'`（私聊放行）；映射成 0 时两边都不成立，
+// 私聊里调用会被当成"群里没被点名"拒掉，回复一句
+// "这次在群里没被点名（档位 0）"。tier=4 传进来也照样拒。
 const TIER = { private: 4, mentioned: 1, group: 2, keyword: 2, random: 3 }
 
 /** python 传tier（字符串），转成 skill 认的数字。认不出来按 2（群里随便聊）算 ——
@@ -244,9 +255,8 @@ function makeCtx(src) {
     // 这几个字段 skill 会读，缺了会走 undefined 分支。
     // kind 和 session.contextTier 是两套判据，QQ Agent 上两个都给，
     // 这里也两个都给 —— 只给一个的话，换个 skill 换了写法就漏。
-    // 🔴 私聊是 tier 4（跟着上面 TIER 表的修正）。原来写的是 `=== 0`，
-    // 那只对旧的错误映射自洽；映射改成 4 之后这里会永远判成 group，
-    // 于是连 kind 这条更宽松的判据也一起失效了 —— 技能里
+    // 🔴 这里的 4 必须跟上面 TIER 表一致。写错的话 kind 永远判成 'group'，
+    // 连 kind 这条更宽松的判据也一起失效 —— 技能里
     // `if (ctx?.kind === 'private') return ''` 就再也走不到。
     kind: tierOf(src.tier) === 4 ? 'private' : 'group',
     chatKey: src.chatKey || '',
@@ -263,7 +273,7 @@ function makeCtx(src) {
     //
     // 起因：daily-fortune 要判「群里被点名时，他到底有没有在问运势」——
     // 「@麦麦 在吗」不该抽签，「@麦麦 今日运势」才该。这个判断只能看原文。
-    // 而 makeCtx 原来只给了 kind / sender / session / _zx，**一个字原文都没有**，
+    // 而 makeCtx 只给了 kind / sender / session / _zx，**一个字原文都没有**，
     // 于是那个判断永远读到空串 → 等于「没问运势」→ 群里被点名也一律不给。
     //
     // 放最外层而不是塞进 sender：QQ Agent 的契约里 sender 是"人"（id、名字、

@@ -89,7 +89,7 @@ class RemoteBrain:
     def _get(self, path, timeout=10):
         """GET 一份 JSON（同样走 Authorization 头）。
 
-        这里走的是 /api/persona、/api/history、/api/diary/* 这类**纯 JSON 接口**，
+        这里走的是 /api/persona、/api/history 这类**纯 JSON 接口**，
         全都能带请求头 —— 所以 token 不该再出现在 URL 上。真正带不了头的只有
         <img>/<audio> 的媒体地址，那些在客户端侧单独拼 ?token=。
         """
@@ -164,12 +164,12 @@ class RemoteBrain:
 
 
 class RemoteLife:
-    """她的生活的远程视图 —— 给日记窗口和后台补算用。
+    """她的生活的远程视图 —— 只剩后台补算用（生活只有云上那一份在过）。
 
-    生活只有云上那一份在过，所以四个方法全打到云上：
-    list_diaries / read_diary 读，catch_up / write_diary 写。
-    以前后两个是**空操作**，于是 LifeWorker 每次开机都空转一趟、
-    托盘里的"让她现在写篇日记"永远只会报失败。接口和 life_engine.LifeEngine 对齐。
+    2026-10-08：日记模块整体移除，这里跟着只剩 catch_up 一个方法。
+    原来还有 list_diaries / read_diary / write_diary 三个，打的 /api/diary/*
+    接口已经在 brain 侧删掉 —— 留着就是个 except 里吞掉 404、永远静默失败
+    的假方法（右键"她的日记"会开一个空窗口就是它干的）。
     """
 
     def __init__(self, base, token=""):
@@ -196,22 +196,6 @@ class RemoteLife:
         with opener.open(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
 
-    # --- DiaryDialog 用 ---
-    def list_diaries(self):
-        try:
-            return self._get("/api/diary/list").get("days") or []
-        except Exception:
-            return []
-
-    def read_diary(self, date_str):
-        try:
-            sep = "&" if "?" in "/api/diary/read" else "?"
-            d = self._get("/api/diary/read" + sep + "date=" +
-                          urllib.parse.quote(str(date_str)))
-            return d.get("body") or ""
-        except Exception:
-            return ""
-
     # --- pet.py 会调到的 ---
     def catch_up(self, force=False):
         """让云上把她的生活补到当前时刻（会调模型，可能几十秒，超时给到 180s）。"""
@@ -220,16 +204,7 @@ class RemoteLife:
             if not d.get("ok"):
                 return {}
             return {"events": int(d.get("events") or 0),
-                    "diary": int(d.get("diary") or 0),
                     "skip": d.get("skip") or ""}
         except Exception:
             return {}
 
-    def write_diary(self, date_str):
-        """让云上给她写某天的日记，返回正文（失败返回 ""）。"""
-        try:
-            d = self._post("/api/diary/write",
-                           {"date": str(date_str or "")}) or {}
-            return d.get("body") or ""
-        except Exception:
-            return ""

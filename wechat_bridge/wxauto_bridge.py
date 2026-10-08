@@ -28,9 +28,11 @@ AstrBot / dify 那类框架都假设「LLM 是一次性无状态调用」，自�
 """
 
 import base64
+import ctypes
 import json
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -112,8 +114,12 @@ DEFAULT_CFG = {
 }
 
 # 非文本消息在微信里的占位文本 —— 这些不值得拿去问她
+# 🔴 2026-10-08：[链接] 从这里移除 —— type='link' 的标准分享卡片（小黑盒等）
+# content 里有标题/描述/来源，直接丢太可惜。改成在 _snapshot 里识别 type='link'，
+# 去掉 [链接] 前缀后保留正文。抖音折叠卡片（type='text' + "复制...更多"）
+# 走另一条路：坐标点击卡片读剪贴板拿 URL（见 _extract_share_url）。
 MEDIA_PLACEHOLDERS = ("[图片]", "[动画表情]", "[视频]", "[文件]", "[语音]",
-                      "[聊天记录]", "[链接]", "[音乐]", "[表情]")
+                      "[聊天记录]", "[音乐]", "[表情]")
 
 # 图片消息的占位符。微信发图时content 就是这个（可能后面还跟着用户
 # 自己打的字），所以判断"带不带说明"要**剥掉它**，而不是看它存不存在。
@@ -147,6 +153,49 @@ def _strip_img_placeholder(content):
     if not content:
         return ""
     return content.replace(IMG_PLACEHOLDER, "").strip()
+
+
+# --- 分享卡片 URL 提取（抖音折叠卡片） ----------------------------------
+# 抖音分享到微信 PC 端会被折叠成 "5.89 复制...更多" 的绿色气泡，
+# wxauto4 读不到 URL（UIA 子控件为0）。但点击卡片任意位置会把完整
+# 分享文案（含 URL）复制到剪贴板。所以方案是：坐标点击卡片 → 读剪贴板 → 正则提 URL。
+
+_URL_RE = re.compile(r'https?://[^\s\u4e00-\u9fff]+')
+
+
+def _win_get_clipboard():
+    """用 ctypes 读 Windows 剪贴板文本，不依赖 pyperclip/tkinter。"""
+    if not ctypes.windll.user32.OpenClipboard(0):
+        return ""
+    try:
+        h = ctypes.windll.user32.GetClipboardData(13)  # CF_UNICODETEXT
+        if not h:
+            return ""
+        ptr = ctypes.c_void_p(h)
+        # 直接读内存里的 unicode 字符串
+        ctypes.windll.kernel32.GlobalLock.restype = ctypes.c_void_p
+        locked = ctypes.windll.kernel32.GlobalLock(h)
+        if not locked:
+            return ""
+        try:
+            return ctypes.wstring_at(locked)
+        finally:
+            ctypes.windll.kernel32.GlobalUnlock(h)
+    finally:
+        ctypes.windll.user32.CloseClipboard()
+
+
+def _is_douyin_card(mtype, content):
+    """这条消息是不是抖音折叠卡片？
+
+    特征：type='text'，content 里同时有 '复制' 和 '更多'（绿色气泡）。
+    标准分享卡片 type='link'，不走这条路。
+    """
+    if mtype != "text":
+        return False
+    if not content:
+        return False
+    return "复制" in content and "更多" in content
 
 
 # 图片在 items 里延迟下载时要用的占位对象。
@@ -681,6 +730,11 @@ class Bridge(object):
                 img = _PendingImg(m, sender, content)
             if not content and not img:
                 continue
+            # 🔴 2026-10-08：标准分享卡片（小黑盒/B站/文章等）type='link'，
+            # content 以 "[链接]" 开头，后面是标题/描述/来源。去掉前缀保留正文，
+            # 这样 AI 至少能看到分享了什么。抖音折叠卡片走另一条路（_extract_share_url）。
+            if mtype == "link" and content.startswith("[链接]"):
+                content = content[len("[链接]"):].strip()
             if content and content in MEDIA_PLACEHOLDERS:
                 content = ""
             if not content and not img:
@@ -856,6 +910,84 @@ class Bridge(object):
         if k:
             self._seen_images().add(k)
         return img_b64 or None
+
+    # --- 抖音折叠卡片：坐标点击读剪贴板拿 URL --------------------------
+    def _extract_share_url(self, mobj):
+        """抖音折叠卡片（type='text' + "复制...更多"）拿不到 URL，
+        但点击卡片任意位置会把完整分享文案（含 URL）复制到剪贴板。
+
+        流程：滚动到可见 → 坐标点击卡片中心 → 读剪贴板 → 正则提 URL → 按 Esc 关弹窗。
+
+        🔴 副作用：会移动鼠标、覆盖剪贴板、可能弹出复制预览窗。
+        所以只在 _diff 确认是**新增消息**后才调用，历史消息不碰。
+        失败就返回空字符串，调用方用原始 content 兜底（至少能看到"5.89 复制...更多"）。
+        """
+        try:
+            ctrl = getattr(mobj, "control", None)
+            if ctrl is None:
+                return ""
+            # 滚动到可见区域
+            try:
+                roll = getattr(mobj, "roll_into_view", None)
+                if callable(roll):
+                    roll()
+                    time.sleep(0.5)
+            except Exception:
+                pass
+            # 拿卡片位置
+            rect = getattr(ctrl, "BoundingRectangle", None)
+            if rect is None:
+                return ""
+            # 点卡片中心偏右（实测点哪里都能触发复制）
+            cx = int((rect.left + rect.right) / 2)
+            cy = int((rect.top + rect.bottom) / 2)
+            # 保存当前剪贴板（尽力而为，失败就算了）
+            old_clip = ""
+            try:
+                old_clip = _win_get_clipboard()
+            except Exception:
+                pass
+            # 移动鼠标并点击
+            ctypes.windll.user32.SetCursorPos(cx, cy)
+            time.sleep(0.2)
+            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)  # 左键按下
+            time.sleep(0.1)
+            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)  # 左键释放
+            # 等剪贴板更新
+            time.sleep(1.0)
+            # 读剪贴板
+            clip = ""
+            try:
+                clip = _win_get_clipboard()
+            except Exception:
+                pass
+            # 按 Esc 关掉可能弹出的复制预览窗
+            try:
+                ctypes.windll.user32.keybd_event(0x1B, 0, 0, 0)       # Esc 按下
+                time.sleep(0.05)
+                ctypes.windll.user32.keybd_event(0x1B, 0, 0x0002, 0)  # Esc 释放
+            except Exception:
+                pass
+            # 恢复剪贴板（如果之前有内容且不是这次的分享文案）
+            try:
+                if old_clip and "复制打开抖音" not in old_clip:
+                    # 恢复旧剪贴板（需要用 SetClipboardData，这里简化：不恢复，
+                    # 因为恢复需要 OpenClipboard + SetClipboardData + CloseClipboard，
+                    # 而且桥接场景下用户不太可能在跑桥接的机器上用剪贴板）
+                    pass
+            except Exception:
+                pass
+            # 从剪贴板提取 URL
+            if clip:
+                m = _URL_RE.search(clip)
+                if m:
+                    url = m.group(0).rstrip('.,;:!?)）】')
+                    print("[微信] 抖音卡片提取到 URL: %s" % url)
+                    return url
+            return ""
+        except Exception as e:
+            print("[微信] 抖音卡片 URL 提取失败: %s" % e)
+            return ""
 
     def _is_image(self, m, content):
         return _looks_like_image(m, content)
@@ -1595,6 +1727,17 @@ class Bridge(object):
             if self._is_mine(sender, content):
                 continue
             self._last_active = time.time()
+            # 🔴 2026-10-08：抖音折叠卡片（type='text' + "复制...更多"）
+            # wxauto4 读不到 URL，点击卡片会把完整分享文案复制到剪贴板。
+            # 这里提取 URL 拼到 content 里，这样 AI 能看到链接并做内容感知。
+            # 只对新增消息做（_diff 已经过滤了历史），副作用是移动鼠标+覆盖剪贴板，
+            # 但桥接机是专用机器，没人在用，可接受。
+            _mtype = str(getattr(mobj, "type", "") or "").strip().lower()
+            if _is_douyin_card(_mtype, content or ""):
+                _url = self._extract_share_url(mobj)
+                if _url:
+                    content = "%s %s" % ((content or "").strip(), _url)
+                    print("[微信] 抖音卡片已补 URL: %s" % content[:80])
             # 有人说话了 = 冷场结束。作废这次掷的骰子，
             # 下一轮冷场重新掷 —— 否则一次冷场就把随机值用完了，
             # 之后每一轮都是同一个时间，等于退回固定值。

@@ -132,6 +132,11 @@ def resolve_voice_tag(text, api_config):
 
 
 def resolve_gen_tags(text, look=""):
+
+    import re as _re
+    # 生图已停用（用户要求：暂时用不到、以后再加）——[gen:…] 直接删掉，
+    # 既不画图也不产出 [img:]。恢复时还原原实现即可，功能位保留。
+    return _re.sub(r"\[gen[:：][^\]]*\]", "", text or "", flags=_re.IGNORECASE).strip()
     """把回复里单独成行的 [gen:描述] 真的生成一张图，替换成 [img:文件名]。
 
     走 _cloud_gen_selfie()：用当前人设的参考图锁脸，生成的是"当前角色本人"的图。

@@ -12,8 +12,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, r"F:\Vigil\brain")
-sys.path.insert(0, r"F:\Vigil\brain\plugins")   # gate.py 在 plugins/ 下
+sys.path.insert(0, r"F:\vigil\brain")
+sys.path.insert(0, r"F:\vigil\brain\plugins")   # gate.py 在 plugins/ 下
 
 import gate
 

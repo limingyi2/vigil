@@ -292,6 +292,22 @@ TOOL_HELP = (
 )
 
 
+TOOL_HELP_NATIVE = (
+    "- 联网搜索：真的去网上查，中文直接写（如查「英伟达最新股价」）。\n"
+    "  返回是一段文本，每条形如「· 标题：摘要（来源：网址）」。\n"
+    "  它查的是会变的东西：现在的天气股价新闻、某个库最新的版本和报错、"
+    "他正在学的技术最近出了什么、他哪天提到过的某件事后来怎么样了 —— "
+    "这些你训练时没吃过、或者吃的时候还没发生，搜一下比凭印象说准得多。\n"
+    "  可选参数（写在查询词后面，不写就用通用搜索）：\n"
+    "    信源=code 限定领域（general/code/tech/finance/academic/legal/"
+    "health/business/security/news/travel/gaming/energy/environment/education）\n"
+    "    类型=news 限定内容类型（web/news/code/doc/academic/data/image）\n"
+    "    新鲜度=week 只要这段时间内的（day/week/month/year）\n"
+    "    区域=cn 国内（cn）或国际（intl）信源\n"
+    "    条数=6 要几条（1-10）\n"
+)
+
+
 # --- 上下文钩子 ---
 
 def prompt(ctx=None):

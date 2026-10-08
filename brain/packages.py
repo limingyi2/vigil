@@ -14,7 +14,7 @@ try:
     import paths
     _DB = os.path.join(str(paths.DATA_DIR), "packages.json")
 except Exception:
-    _DB = r"C:\Vigil\data\packages.json"
+    _DB = r"C:\vigil\data\packages.json"
 
 POLL_SEC = 30 * 60
 

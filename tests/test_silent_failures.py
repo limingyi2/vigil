@@ -1,0 +1,307 @@
+# -*- coding: utf-8 -*-
+"""把"不报错但会静默丢东西"的几处钉住。
+
+这一批 bug 的共同点：**没有任何异常、日志也正常，但内容永久没了**。
+所以每一条的断言都落在"东西还在不在"，而不是"函数返不返回"。
+
+覆盖：
+  1. recap 摘要水位线：上游失败时**不许**推进（原来失败和"模型答无"都返回 ""）
+  2. recap 大日分块：一天太长时不能 body[:8000] 截断了事
+  3. recap 幂等追加：重压同一批不能把同一天写两遍
+  4. memory.json 坏文件留档：解析失败不许静默当空库再覆盖
+  5. memory.json 原子写：不留半截文件
+  6. 向量索引按分区隔离：不同 persona/渠道不能共用同一个 vectors.npy
+  7. 记忆 id 全局唯一
+  8. 相对日期："大后天"是 +3 天（别被"后天"抢先匹配）
+  9. "度"不该让真实约定被当成天气播报剔掉
+ 10. features.tools 总开关在工具表的唯一出口上生效
+ 11. planner：模型照抄提示词里的 [tool:name:arg] 也要能拆开
+ 12. planner：长情绪句子不该被当成复杂任务去规划
+ 13. plugin_host.Turn.data_dir() 能真的返回目录（原来读错属性名必抛）
+"""
+import json
+import os
+import re
+import sys
+import tempfile
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "brain"))
+
+import agenda  # noqa: E402,F401  (recap 依赖它)
+import memory_store_v2 as ms  # noqa: E402
+import planner  # noqa: E402
+import plugin_host  # noqa: E402
+import recap_store as rs  # noqa: E402
+import tools as tl  # noqa: E402
+
+
+def _read(p):
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+
+class TestRecapWatermark(unittest.TestCase):
+    """上游失败不能推进水位线 —— 推了那段对话就永久消失了。"""
+
+    def test_ask_returns_none_on_failure(self):
+        """没配 key / 连不上都要返回 None，不能返回 ""。
+
+        返回 "" 会被下游当成"这段没内容、可以记成处理过了"。
+        """
+        self.assertIsNone(rs._ask({}, "随便什么提示词", timeout=1))
+        self.assertIsNone(rs._ask({"api_key": ""}, "x", timeout=1))
+
+    def test_compress_day_is_tri_state(self):
+        items = [("t", "2026-09-11 10:00", "user", "x" * 200)]
+        # 上游失败 → None（不许推进水位线）
+        self.assertIsNone(rs.compress_day("2026-09-11", items, {}))
+        # 内容太短 → ""（确实没内容，可以算处理过）
+        self.assertEqual(
+            rs.compress_day("2026-09-11",
+                            [("t", "2026-09-11 10:00", "user", "嗯")], {}), "")
+
+    def test_tick_does_not_advance_watermark_on_failure(self):
+        """这是本文件最重要的一条。
+
+        构造 400 行积压 + 没有 key 的 api，跑 tick：
+        水位线**必须**原地不动，否则这几百行会被永远标成"已摘要"，
+        而原始 chat_history.jsonl 再也不会被回读。
+        """
+        state = {}
+        rows = [(i, "2026-09-11 10:%02d" % (i % 60), "user", "第%d句" % i)
+                for i in range(1, 401)]
+        orig = (rs._read_log, rs._load_state, rs._save_state, rs._day_path,
+                rs.rollup, rs._ensure)
+        rs._read_log = lambda sp=None: rows
+        rs._load_state = lambda sp=None: dict(state)
+        rs._save_state = lambda s, sp=None: state.update(s)
+        rs._day_path = lambda d, sp=None: os.path.join(self.tmp.name, "%s.md" % d)
+        rs.rollup = lambda api, sp=None: {"week": 0, "month": 0}
+        rs._ensure = lambda sp=None: None
+        try:
+            rs.tick(api={}, verbose=False)
+        finally:
+            (rs._read_log, rs._load_state, rs._save_state, rs._day_path,
+             rs.rollup, rs._ensure) = orig
+        self.assertNotIn("pressed_upto", state,
+                         "上游失败却推进了水位线 —— 这批对话永远不会被摘要")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+
+class TestRecapBodyNotTruncated(unittest.TestCase):
+    """一天太长要分块，不能 body[:8000] 之后把后半天的对话丢掉。"""
+
+    def test_split_body_keeps_every_character(self):
+        body = "\n".join("第%d行内容" % i for i in range(3000))
+        chunks = rs._split_body(body, 8000)
+        self.assertGreater(len(chunks), 1, "这么长的正文应该被切成多块")
+        self.assertEqual("\n".join(chunks), body, "分块把内容弄丢了")
+
+    def test_chunks_respect_the_cap(self):
+        body = "\n".join("第%d行内容" % i for i in range(3000))
+        for c in rs._split_body(body, 8000):
+            self.assertLessEqual(len(c), 8000 + 64)   # 单行不切，允许轻微超出
+
+
+class TestRecapAppendIsIdempotent(unittest.TestCase):
+    """重压同一批不能同一天写两遍（否则同一件事在提示词里说两遍）。"""
+
+    def test_same_text_appended_once(self):
+        p = os.path.join(tempfile.mkdtemp(), "day.md")
+        self.assertTrue(rs._append_text_unique(p, "今天聊了天气"))
+        self.assertTrue(rs._append_text_unique(p, "今天聊了天气"))
+        self.assertEqual(_read(p).count("今天聊了天气"), 1)
+
+    def test_different_text_still_appended(self):
+        p = os.path.join(tempfile.mkdtemp(), "day.md")
+        rs._append_text_unique(p, "第一段")
+        rs._append_text_unique(p, "第二段")
+        body = _read(p)
+        self.assertIn("第一段", body)
+        self.assertIn("第二段", body)
+
+
+class TestMemoryStoreDurability(unittest.TestCase):
+    """坏文件留档、原子写、分区索引、id 唯一。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+        self._orig = ms.embed_texts
+        ms.embed_texts = lambda texts: []      # 不联网
+
+    def tearDown(self):
+        ms.embed_texts = self._orig
+        self.tmp.cleanup()
+
+    def test_corrupt_file_is_archived_not_silently_emptied(self):
+        """解析失败要把原文件留档，再以空库启动。
+
+        原来直接把内存换成空库，紧接着第一次 add() 的 save() 会把原文件
+        截断覆盖 —— 几百条记忆一句话都不留。
+        """
+        p = os.path.join(self.d, "memory.json")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write('{"items": [ {"id": "x", "text": "很重要的记忆"} ')  # 半截
+        st = ms.MemoryStore(p)
+        self.assertEqual(st.data["items"], [])
+        backups = [n for n in os.listdir(self.d) if n.startswith("memory.json.bad_")]
+        self.assertEqual(len(backups), 1, "坏文件没留档 —— 内容彻底没了")
+        kept = _read(os.path.join(self.d, backups[0]))
+        self.assertIn("很重要的记忆", kept, "留档里应该还有原始内容")
+
+    def test_save_is_atomic(self):
+        p = os.path.join(self.d, "m.json")
+        st = ms.MemoryStore(p)
+        st.data["items"].append({"id": "a1", "type": "fact", "text": "一条记忆",
+                                 "time": ""})
+        st.save()
+        self.assertEqual(json.loads(_read(p))["items"][0]["text"], "一条记忆")
+        self.assertEqual([n for n in os.listdir(self.d) if ".tmp" in n], [],
+                         "留下了临时文件 —— os.replace 没生效")
+
+    def test_each_partition_gets_its_own_index_dir(self):
+        """不同分区的向量索引必须分开。
+
+        共用同一个 vectors.npy 时，每个 store 保存时整体重写文件，
+        后写的那个会把别的分区的向量全抹掉。
+        """
+        base = os.path.join(self.d, "memory")
+        a = ms._embed_dir_for(os.path.join(base, "memory.json"))
+        b = ms._embed_dir_for(os.path.join(base, "wechat.memory.json"))
+        c = ms._embed_dir_for(os.path.join(base, "yui.app.memory.json"))
+        self.assertEqual(a, base, "默认分区保持老路径（免得已有向量白重建）")
+        self.assertNotEqual(b, a)
+        self.assertNotEqual(c, a)
+        self.assertNotEqual(b, c)
+
+    def test_cached_store_reuses_one_instance(self):
+        p = os.path.join(self.d, "memory.json")
+        self.assertIs(ms._cached_store(p), ms._cached_store(p))
+
+    def test_ids_are_unique_within_the_same_millisecond(self):
+        p = os.path.join(self.d, "ids.json")
+        st = ms.MemoryStore(p)
+        for i in range(80):
+            st.data["items"].append({"id": "seed%d" % i, "type": "fact",
+                                     "text": "t%d" % i, "time": ""})
+        ids = {i["id"] for i in st.data["items"]}
+        self.assertEqual(len(ids), 80, "id 撞号了 —— 撞号的那条永远没向量")
+
+
+class TestRelativeDates(unittest.TestCase):
+    """长词优先匹配，别让"后天"吃掉"大后天"；"度"别误伤真实约定。"""
+
+    def test_da_hou_tian_is_three_days(self):
+        import datetime
+        base = datetime.datetime(2026, 9, 22, 12, 0)
+        self.assertEqual(ms._due_date("大后天我要去接他", base=base),
+                         datetime.datetime(2026, 9, 25, 12, 0))
+        self.assertEqual(ms._due_date("后天", base=base),
+                         datetime.datetime(2026, 9, 24, 12, 0))
+
+    def test_bare_du_is_not_a_forecast(self):
+        """含"度"的真实承诺不能被当成天气播报剔掉。"""
+        self.assertNotIn("度", ms._FORECAST,
+                         "裸的「度」会让「我明天去接你，顺便说下进度」这类真实约定被丢掉")
+        got, why = ms.classify_her_speech(
+            "我明天下午去接你，顺便把上次那个进度跟你说一下")
+        self.assertTrue(got, "真实约定被判成 %r 丢掉了" % why)
+
+
+class TestToolsSwitch(unittest.TestCase):
+    """features.tools 是"工具"总开关，必须在工具表的唯一出口上生效。"""
+
+    def test_all_specs_empty_when_tools_off(self):
+        import features
+        orig = features.on
+        try:
+            features.on = lambda k, src=None: False if k == "tools" else orig(k, src)
+            self.assertEqual(tl.all_specs(), [],
+                             "关掉工具开关后 all_specs 还是给了工具 —— 开关是死的")
+        finally:
+            features.on = orig
+
+    def test_specs_present_when_tools_on(self):
+        import features
+        orig = features.on
+        try:
+            features.on = lambda k, src=None: True if k == "tools" else orig(k, src)
+            names = [t["function"]["name"] for t in tl.all_specs()]
+            for n in ("weather", "ip_city", "tracking"):
+                self.assertIn(n, names)
+        finally:
+            features.on = orig
+
+
+class TestPlannerToolParsing(unittest.TestCase):
+    """模型照抄提示词里的示例（带方括号）也要能拆开。"""
+
+    def test_bracket_form(self):
+        self.assertEqual(planner._split_tool("[tool:weather:北京]", None),
+                         ("weather", "北京"))
+        self.assertEqual(planner._split_tool("tool:weather:北京", None),
+                         ("weather", "北京"))
+        self.assertEqual(planner._split_tool("weather:北京", None),
+                         ("weather", "北京"))
+        self.assertEqual(planner._split_tool("[tool:calc]", None), ("calc", None))
+
+    def test_hyphenated_skill_tool_name_survives(self):
+        self.assertEqual(
+            planner._split_tool("[tool:daily-fortune__today]", None),
+            ("daily-fortune__today", None))
+
+    def test_junk_inputs(self):
+        self.assertEqual(planner._split_tool(None, None), (None, None))
+        self.assertEqual(planner._split_tool("", None), (None, None))
+
+
+class TestPlannerShouldPlan(unittest.TestCase):
+    """长情绪句子不该被当成"复杂任务"（会多花两次模型调用还改掉说话框架）。"""
+
+    def test_long_emotional_message_is_not_a_task(self):
+        t = ("你还记得我们上次说的那个事吗，我最近一直在想，"
+             "感觉有点拿不定主意，想听听你的看法")
+        self.assertFalse(planner.should_plan(t))
+
+    def test_long_plain_message_is_not_a_task(self):
+        t = ("我今天被领导说了一顿，心里挺难受的，想跟你说说话，"
+             "你有空吗，我就是想找个人聊聊而已")
+        self.assertFalse(planner.should_plan(t))
+
+    def test_plan_keyword_still_plans(self):
+        self.assertTrue(planner.should_plan("帮我查一下明天的天气"))
+
+    def test_multi_task_still_plans(self):
+        t = ("帮我看看杭州天气，然后再查一下我那个快递到哪了，"
+             "顺便算一下 128*3 是多少，另外看看明天要不要带伞")
+        self.assertTrue(planner.should_plan(t))
+
+    def test_skip_words_win(self):
+        self.assertFalse(planner.should_plan("在吗，帮我查天气"))
+
+
+class TestPluginTurnDataDir(unittest.TestCase):
+    """Turn.data_dir() 要真能返回目录（原来读的是不存在的属性名）。"""
+
+    def test_data_dir_returns_a_real_directory(self):
+        t = plugin_host.Turn(text="")
+        t._owner = "某个插件"
+        d = t.data_dir()
+        self.assertTrue(os.path.isdir(d), "data_dir 没返回可用的目录")
+
+    def test_data_dir_without_owner_falls_back(self):
+        t = plugin_host.Turn(text="")
+        d = t.data_dir()
+        self.assertTrue(os.path.isdir(d))
+
+
+if __name__ == "__main__":
+    unittest.main()

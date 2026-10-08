@@ -62,7 +62,15 @@ class TestSingleSourceOfVersion(unittest.TestCase):
         self.assertIn("还原", s, "注入后没还原，仓库那份会脏")
 
     def test_两份chat_html一致(self):
-        # 版本号占位符改动如果只改了一份，打包出来的和仓库里的会对不上
+        # 版本号占位符改动如果只改了一份，打包出来的和仓库里的会对不上。
+        #
+        # 但根目录 _chat.html 是**打包母本**，被 .gitignore 挡着 —— 克隆/CI 上
+        # 本来就没有，读它必然 FileNotFoundError（这个测试对所有人都是红的，
+        # 只有作者本机例外，而作者删掉母本之后连本机也红了）。
+        # 没有母本时明确跳过，而不是让它报错。
+        root_copy = os.path.join(ROOT, "_chat.html")
+        if not os.path.isfile(root_copy):
+            self.skipTest("根目录 _chat.html 不在（它不入库，克隆后本就没有）")
         a = _read("_chat.html")
         b = _read("android-app/app/src/main/assets/chat.html")
         self.assertEqual(a, b, "_chat.html 与 assets 那份不一致")

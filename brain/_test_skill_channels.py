@@ -202,8 +202,12 @@ def main_logic():
 
 
 def main_http():
-    """起真大脑打真 HTTP。地址和 token 走环境变量。"""
-    host = os.environ.get("ZX_API", "http://203.0.113.10:8788")
+    """起真大脑打真 HTTP。地址和 token 走环境变量。
+
+    🔴 默认值故意是**回环地址**，不是云机 —— 这里原来写死了云机 IP，
+    等于把服务器地址印在公开仓库里。要打云端就 `set ZX_API=http://<你的云机>:8788`。
+    """
+    host = os.environ.get("ZX_API") or "http://127.0.0.1:8788"
     tok = os.environ.get("ZX_TOK", "")
     if not tok:
         print("需要 ZX_TOK")

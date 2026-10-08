@@ -30,7 +30,7 @@
 而"宿主活着"恰恰是本文件要验的另一件事；用 import 会出现
 "因为宿主没起所以测不到提示词"的自证循环。
 
-用法：F:/Vigil/venv/Scripts/python.exe _test_skill_prompt.py
+用法：F:/vigil/venv/Scripts/python.exe _test_skill_prompt.py
 """
 import ast
 import io
