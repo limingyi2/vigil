@@ -543,6 +543,38 @@ ipcMain.handle('cfg:set', (_e, patch) => writeCfg(patch));
 // ── 本地大脑（sidecar）────────────────────────────────────────────
 ipcMain.handle('sidecar:status', () => sidecar.status());
 ipcMain.handle('sidecar:restart', () => { sidecar.restart(readCfg()); return { ok: true }; });
+
+// ── M3 转发通道（微信消息 → 云端 → 这台电脑的本地大脑）───────────
+const forward = require('./forward');
+const LOOPBACK_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/?$/i;
+
+/** 条件满足就起转发：本地大脑就绪 + 云地址已知（且不是本地回环）。
+ *  cfg.forward === false 是总闸（设置页可关）；云地址取 cloud_base，
+ *  没填过就借用 autoConnect 写下的 base —— 但 base 指向本地大脑时
+ *  毫无意义（自己连自己），直接不起。 */
+async function maybeStartForward() {
+  const cfg = readCfg();
+  const st = sidecar.status();
+  if (cfg.forward === false || !sidecar.ready() || !st.port) {
+    forward.stop();
+    return;
+  }
+  let cloud = String(cfg.cloud_base || '').trim();
+  if (!cloud && cfg.base && !LOOPBACK_RE.test(cfg.base)) cloud = cfg.base;
+  if (!cloud) return;                       // 没有云地址，无从转发
+  const tok = await getToken();
+  forward.start({
+    cloudBase: cloud,
+    token: tok,
+    brainBase: sidecar.base(),
+    brainToken: tok,
+  });
+}
+// sidecar 每次变 ready 都试一把（重启本地大脑后转发自动恢复）
+sidecar.onState((s) => { if (s.status === 'ready') maybeStartForward(); });
+ipcMain.handle('forward:status', () => forward.status());
+ipcMain.handle('forward:restart', () => maybeStartForward());
+
 // 向导的"填 key 即用"：走大脑现成的 /api/models/apply —— 它会落盘 + 热加载，
 // 内存/磁盘两边一起到位，不用重启 sidecar
 ipcMain.handle('sidecar:apply-model', async (_e, patch) => {

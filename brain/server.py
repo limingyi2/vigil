@@ -446,6 +446,49 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
     return _tools.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
 
 
+# ── M3 双大脑路由（wechat_route = cloud | local）────────────────────
+# cloud（默认）：微信消息由云上她自己答 —— 现状，随时可回。
+# local：微信消息转发给用户电脑上的本地大脑（经 /ws/brain 长连），
+#        本地不在线就落回云端直答，本地 25s 没答就用超时话术顶着。
+# flag 是运行时热改的（POST /api/route 秒切 + 落盘），为的是"一键切回"。
+_TIMEOUT_REPLY = "（我这边的脑子好像掉线了，消息先记下了，等会儿回来补你～）"
+
+
+def _wechat_route():
+    try:
+        v = (API_CFG or {}).get("wechat_route")
+        return v if v in ("cloud", "local") else "cloud"
+    except Exception:
+        return "cloud"
+
+
+def _set_wechat_route(v):
+    """热改 + 落盘。落盘照 /api/persona/apply 的写法：整份读出、改键、写回。"""
+    if v not in ("cloud", "local"):
+        raise ValueError("wechat_route 只能是 cloud | local")
+    API_CFG["wechat_route"] = v
+    cfg = {}
+    try:
+        cfg = json.load(open(config_path(), encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    cfg["wechat_route"] = v
+    with open(config_path(), "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def _late_to_history(src, display, reply):
+    """本地大脑的迟到答案：话术已经顶出去了，这条**只写历史不外发** ——
+    她事后翻聊天记录能看到自己真正回了什么，微信端却不会冒出一条迟到的
+    复读。挂到 ws_forward.HUB.on_late_result（run_server 装配完大脑后接上）。"""
+    try:
+        _LOCAL["brain"].use_src(_norm_src(src))
+        _LOCAL["brain"]._log_turn(display, reply, img=None)
+        print("[转发] 迟到答案已入历史（src=%s）" % src, flush=True)
+    except Exception as e:
+        print("[转发] 迟到答案写历史失败：%s" % e, flush=True)
+
+
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                    dry_run=False):
     """让她回一句话。
@@ -1161,6 +1204,20 @@ def start_remote_api(brain):
                     self._json(200 if ok else 404,
                                {"ok": ok, "err": "" if ok else "没有这台设备"})
                     return
+                if path == "/api/route":
+                    # M3：一键切"微信消息谁答"。热改 + 落盘，秒生效不重启。
+                    _v = str(body.get("wechat_route") or "")
+                    try:
+                        _set_wechat_route(_v)
+                    except Exception as e:
+                        self._json(400, {"ok": False, "err": str(e)[:80]})
+                        return
+                    import ws_forward as _fwd
+                    print("[路由] wechat_route -> %s（本地在线：%s）"
+                          % (_v, _fwd.HUB.online()), flush=True)
+                    self._json(200, {"ok": True, "wechat_route": _v,
+                                     "forward": _fwd.HUB.stats()})
+                    return
                 if path == "/api/chat":
                     _in_text = str(body.get("text") or "")
                     _disp = _in_text          # 存档用原文，注入的系统提示不带
@@ -1176,6 +1233,70 @@ def start_remote_api(brain):
                         _feat.set_current_src(_src)
                     except Exception:
                         pass
+                    # ── M3 双大脑路由：微信渠道可转发给本地大脑 ──
+                    # 拦截点必须在云端自己的注入链（快递/插件/记忆）之前：
+                    # 本地大脑会跑**它自己的**全链路，两边都跑一遍就成了
+                    # 双重注入（快递单号注册两次、插件提醒说两遍）。
+                    # 只有 wechat / wechat_group 参与路由；app 渠道的客户端
+                    # 连的就是云端，永远直答。离线 → 落到下面正常直答。
+                    if _src in ("wechat", "wechat_group") \
+                            and _wechat_route() == "local":
+                        import ws_forward as _fwd
+                        if _fwd.HUB.online():
+                            _loc = _fwd.HUB.ask_local(
+                                {"text": _in_text, "display": _disp,
+                                 "src": _src, "img": body.get("img") or "",
+                                 "dry_run": bool(body.get("dry_run"))},
+                                timeout=_fwd.ACK_TIMEOUT)
+                            if _loc.get("ok"):
+                                _fans = _loc.get("reply") or ""
+                                # 云端权威历史：本地答的这段也要写进云上存档
+                                # （本地大脑只写它自己那一份）。dry_run 照旧不写。
+                                if not body.get("dry_run"):
+                                    try:
+                                        _LOCAL["brain"].use_src(_src)
+                                        _LOCAL["brain"]._log_turn(
+                                            _disp, _fans, img=None)
+                                    except Exception:
+                                        pass
+                                try:
+                                    _trace_write({
+                                        "t": time.strftime("%Y-%m-%d %H:%M"),
+                                        "kind": "chat", "src": _src,
+                                        "mode": "本地大脑",
+                                        "in_len": len(_in_text)})
+                                except Exception:
+                                    pass
+                                self._json(200, {
+                                    "reply": _fans,
+                                    "messages": split_messages(_fans),
+                                    "mode": "本地大脑", "err": "",
+                                    "t": time.strftime("%Y-%m-%d %H:%M"),
+                                    "trace": {"mode": "本地大脑"}})
+                                return
+                            if _loc.get("reason") in ("timeout", "local_err"):
+                                # 超时：话术顶着（**不写存档**——迟到的真答案
+                                # 会由 on_late_result 补进历史，话术和真答
+                                # 都入档就成了两条复读）。
+                                _msg = _TIMEOUT_REPLY if _loc.get("reason") == "timeout" \
+                                    else "（本地大脑出了点小差子：%s）" \
+                                    % str(_loc.get("err") or "")[:60]
+                                try:
+                                    _trace_write({
+                                        "t": time.strftime("%Y-%m-%d %H:%M"),
+                                        "kind": "chat", "src": _src,
+                                        "mode": "本地大脑超时",
+                                        "in_len": len(_in_text)})
+                                except Exception:
+                                    pass
+                                self._json(200, {
+                                    "reply": _msg,
+                                    "messages": split_messages(_msg),
+                                    "mode": "本地大脑超时", "err": "",
+                                    "t": time.strftime("%Y-%m-%d %H:%M"),
+                                    "trace": {"mode": "本地大脑超时"}})
+                                return
+                            # reason=offline / send → 掉到下面云端直答
                     # 话里带单号就进监控（每 30 分钟自动查），现状也塞给模型，
                     # 她回话时能顺口说一句"刚发出去了"
                     try:
@@ -1752,6 +1873,19 @@ def start_remote_api(brain):
                     pass
 
         def _do_GET(self):
+            # M3 转发通道：/ws/brain 的 WebSocket 升级在鉴权之前接管
+            # （它自带 token 校验；普通 HTTP 鉴权对升级请求没有意义）。
+            # 握手成功后这个 handler 线程就被帧循环占住了。
+            try:
+                import ws_forward as _fwd_up
+                if _fwd_up.try_upgrade(
+                        self, (api_config or {}).get("brain_token")
+                        or BRAIN_TOKEN or ""):
+                    return
+            except (BrokenPipeError, ConnectionResetError):
+                raise
+            except Exception:
+                pass
             # 🔴 /api/health 在鉴权之前放行：sidecar 的启动壳（server_launch）
             # 和 Electron 壳靠它做就绪探测 —— 此时可能还没配 token，
             # 走鉴权就永远探测不到。只回存活信息，不吐任何配置。
@@ -2094,6 +2228,11 @@ def start_remote_api(brain):
                 self.end_headers()
                 self.wfile.write(blob)
                 return
+            elif path == "/api/route":
+                # M3：当前路由 + 转发通道状态（客户端设置页显示用）
+                import ws_forward as _fwd
+                self._json(200, {"wechat_route": _wechat_route(),
+                                 "forward": _fwd.HUB.stats()})
             elif path.startswith("/api/sync/"):
                 # 同步拉取（权威源 → 本地）。只读接口，设备 token 也能用：
                 # 本地大脑拿的是主人钥匙，但将来别的只读端可能拿设备 token
@@ -2165,6 +2304,13 @@ def run_server():
                   flush=True)
         # 她的全部后台循环：历史摘要 / 主动搭话 / 事件提醒
         start_background(_LOCAL["brain"])
+        # M3：本地大脑的迟到答案只写云端历史（话术已经顶出去了，不外发）
+        try:
+            import ws_forward as _fwd
+            _fwd.HUB.on_late_result = _late_to_history
+        except Exception as e:
+            print("[转发] ws_forward 初始化失败（不影响聊天）：%s" % e,
+                  flush=True)
         # 插件（plugins/）：装完就起后台线程。装载失败只少几个功能，不影响主服务
         try:
             import plugin_host
