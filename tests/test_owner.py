@@ -192,6 +192,28 @@ def test_call_client_refusal(owner_only):
     assert "拒绝" in out
 
 
+def test_call_fast_fail_when_no_client_polling(owner_only, monkeypatch):
+    """🔴 2026-10-09 架构坑回归：客户端连的是本地大脑，云端队列没人来
+    take（_LAST_POLL 过期）→ call 必须**秒回**"没有在线的电脑"，
+    不能干等 DEFAULT_WAIT 把整条对话吊死到桥接超时。"""
+    monkeypatch.setattr(localtools, "_LAST_POLL", 0.0)   # 从没客户端来过
+    localtools.set_context("wechat", OWNER)
+    t0 = time.time()
+    out = localtools.call("local_process_list", {}, wait=30)
+    dt = time.time() - t0
+    assert "没有在线的电脑" in out
+    assert dt < 3, "应该秒回，实际等了 %.1fs" % dt
+    events = localtools.audit()
+    assert events[0]["event"] == "timeout"
+
+
+def test_call_poll_freshness_updated_by_take(owner_only, monkeypatch):
+    """take() 一发生，_LAST_POLL 就刷新 → call 恢复正常排队等待。
+    （防止有人把 _LAST_POLL 写成常量让 fast-fail 永远触发。）"""
+    localtools.take("dev_probe")            # 模拟客户端来过一次
+    assert time.time() - localtools._LAST_POLL < 5
+
+
 # ── cancel 修复回归（_CANCEL 曾被局部赋值架空）────────────────────
 
 def test_cancel_breaks_pending_call(owner_only):

@@ -133,7 +133,7 @@ async function setToken(token) {
 }
 
 // ── HTTP：一个入口，鉴权头在这里统一加 ──────────────────────────────
-function request(method, urlStr, body, token) {
+function request(method, urlStr, body, token, timeoutMs) {
   return new Promise((resolve) => {
     let u;
     try {
@@ -156,7 +156,9 @@ function request(method, urlStr, body, token) {
         port: u.port || (u.protocol === 'https:' ? 443 : 80),
         path: u.pathname + (u.search || ''),
         headers,
-        timeout: 120000,           // 对话生成可能跑几十秒，别按默认 2 分钟一刀切
+        // 对话生成可能跑几十秒（默认 120s）；轮询这类心跳请求应该传短的，
+        // 不然目标一掉线每次都要等满超时才回来
+        timeout: timeoutMs || 120000,
       },
       (res) => {
         const chunks = [];
@@ -373,6 +375,7 @@ async function autoConnect() {
 // 60 秒没人理就当拒绝（人不在电脑前，不该替他把文件删了）。
 let pollTimer = null;
 let pollBusy = false;
+let cloudFailAt = 0;        // 云端轮询最近一次失败的时间戳（歇 30s 再试）
 let asking = null;
 
 /** 一句话说清这一步要干什么（进度条上显示的） */
@@ -418,6 +421,61 @@ ipcMain.on('local:answer', (_e, msg) => {
   }
 });
 
+/** 向一个大脑要活：有活就执行，结果送回同一个大脑。
+ *  🔴 本地和云端**各来一遍**（2026-10-09 的架构坑）：微信消息打到云端
+ *  大脑，工具调用入的是**云端**的队列；客户端只轮询本地的话，云端
+ *  的活永远没人领 —— 她在微信里说"帮我看看桌面"就会卡到超时。
+ *  双轮询之后微信渠道的本地操控才真正成立。 */
+async function pollBrain(base, token, device, caps) {
+  const url = base + '/api/plugin/remote/poll?caps=' + encodeURIComponent(caps.join(',')) +
+    '&device=' + encodeURIComponent(device || '');
+  const r = await request('GET', url, null, token, 8000);
+  const call = r.json && r.json.call;
+  if (!call) return;                            // 没活是常态
+  let result;
+  let backup = null;
+  // 三档 risk（M4）：safe 直接干；confirm 普通确认；dangerous 强确认。
+  // 老服务端只有 danger 布尔 → risk 缺失时按老逻辑（danger 才问）。
+  const risk = String(call.risk || (call.danger ? 'confirm' : 'safe'));
+  const needsAsk = risk !== 'safe' || call.danger ||
+    localtool.DANGER.has(call.name);
+  // 让她那边/你这边都能看见"正在做第几步"：先报"要做什么"，
+  // 危险操作在等确认时也报一条（否则界面上会静默几十秒）。
+  if (needsAsk) {
+    send('local:step', { name: call.name, args: call.args, kind: 'danger',
+                         risk,
+                         text: describeCall(call.name, call.args) });
+    // 自动模式（权限菜单里选了"白名单内自动执行/完全访问"）不再逐条问：
+    // 拦截靠系统目录硬拦 + 白名单，出事靠备份撤销 + 操作日志兜底。
+    const allow = readCfg().localAuto ? true : await askLocal(call);
+    if (!allow) {
+      result = '__refused__';
+      oplog.append({ tool: call.name, args: call.args, source: 'her',
+                     ok: false, text: '你拒绝了这次操作', backup: null });
+      send('local:step', { name: call.name, kind: 'err', text: '你拒绝了' });
+    } else {
+      const r = await localtool.run(call.name, call.args, readCfg());
+      result = r.text;
+      backup = r.backup;
+      send('local:step', { name: call.name, kind: /出错|失败|拒绝/.test(r.text) ? 'err' : 'ok',
+                           text: r.text.split('\n')[0] });
+    }
+  } else {
+    const r = await localtool.run(call.name, call.args, readCfg());
+    result = r.text;
+    backup = r.backup;
+    send('local:step', { name: call.name, kind: 'ok', text: r.text.split('\n')[0] });
+  }
+  if (result !== '__refused__') {
+    // 她做的每一件事都留痕：不然你根本不知道她动过什么
+    oplog.append({ tool: call.name, args: call.args, source: 'her',
+                   ok: true, text: result, backup: backup });
+  }
+  await request('POST', base + '/api/plugin/remote/result',
+    { call_id: call.call_id, result: result }, token);
+  send('local:done', { name: call.name });
+}
+
 async function pollOnce() {
   if (pollBusy || asking) return;
   const cfg = readCfg();
@@ -428,53 +486,20 @@ async function pollOnce() {
   try {
     const token = await getToken();
     const base = String(cfg.base).replace(/\/+$/, '');
-    const url = base + '/api/plugin/remote/poll?caps=' + encodeURIComponent(caps.join(',')) +
-      '&device=' + encodeURIComponent(cfg.device_id || '');
-    const r = await request('GET', url, null, token);
-    const call = r.json && r.json.call;
-    if (!call) return;                            // 没活是常态
-    let result;
-    let backup = null;
-    // 三档 risk（M4）：safe 直接干；confirm 普通确认；dangerous 强确认。
-    // 老服务端只有 danger 布尔 → risk 缺失时按老逻辑（danger 才问）。
-    const risk = String(call.risk || (call.danger ? 'confirm' : 'safe'));
-    const needsAsk = risk !== 'safe' || call.danger ||
-      localtool.DANGER.has(call.name);
-    // 让她那边/你这边都能看见"正在做第几步"：先报"要做什么"，
-    // 危险操作在等确认时也报一条（否则界面上会静默几十秒）。
-    if (needsAsk) {
-      send('local:step', { name: call.name, args: call.args, kind: 'danger',
-                           risk,
-                           text: describeCall(call.name, call.args) });
-      // 自动模式（权限菜单里选了"白名单内自动执行/完全访问"）不再逐条问：
-      // 拦截靠系统目录硬拦 + 白名单，出事靠备份撤销 + 操作日志兜底。
-      const allow = cfg.localAuto ? true : await askLocal(call);
-      if (!allow) {
-        result = '__refused__';
-        oplog.append({ tool: call.name, args: call.args, source: 'her',
-                       ok: false, text: '你拒绝了这次操作', backup: null });
-        send('local:step', { name: call.name, kind: 'err', text: '你拒绝了' });
-      } else {
-        const r = await localtool.run(call.name, call.args, readCfg());
-        result = r.text;
-        backup = r.backup;
-        send('local:step', { name: call.name, kind: /出错|失败|拒绝/.test(r.text) ? 'err' : 'ok',
-                             text: r.text.split('\n')[0] });
+    await pollBrain(base, token, cfg.device_id, caps);
+    // 云端大脑：配了 sync 凭据才轮（微信那边的活从这来）。
+    // 云端不可达时歇 30 秒再试 —— 别让它把 1.5s 的轮询节奏拖垮。
+    const sync = cfg.sync || {};
+    const cbase = String(sync.cloud_url || '').replace(/\/+$/, '');
+    if (cbase && sync.cloud_token && cbase !== base &&
+        Date.now() - (cloudFailAt || 0) > 30000) {
+      try {
+        await pollBrain(cbase, sync.cloud_token, '', caps);
+        cloudFailAt = 0;
+      } catch (e) {
+        if (!cloudFailAt) cloudFailAt = Date.now();
       }
-    } else {
-      const r = await localtool.run(call.name, call.args, readCfg());
-      result = r.text;
-      backup = r.backup;
-      send('local:step', { name: call.name, kind: 'ok', text: r.text.split('\n')[0] });
     }
-    if (result !== '__refused__') {
-      // 她做的每一件事都留痕：不然你根本不知道她动过什么
-      oplog.append({ tool: call.name, args: call.args, source: 'her',
-                     ok: true, text: result, backup: backup });
-    }
-    await request('POST', base + '/api/plugin/remote/result',
-      { call_id: call.call_id, result: result }, token);
-    send('local:done', { name: call.name });
   } catch (e) {
     // 轮询失败不打扰用户：网络抖一下很正常，下一轮接着来
   } finally {

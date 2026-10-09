@@ -228,6 +228,16 @@ REMOTE_TOOLS = {
 # 等你确认"的。
 DEFAULT_WAIT = 300
 
+# 客户端多久没来轮询（take）就算"肯定不在线"。客户端 1.5s 一轮，
+# 60 秒都没有一次 = 它根本没连上**这个大脑**，等 DEFAULT_WAIT 也等不来人。
+# 🔴 2026-10-09 实锤的架构坑：桌面客户端连的是**本地大脑**（sidecar），
+# 而微信消息打到**云端大脑**——云端入队的活客户端永远看不见，call()
+# 在云端干等 300 秒，桥接那边 ask 只等 120 秒，整条对话直接超时丢失。
+# 有了这个检查，云端在没人轮询时**秒回**"没有在线的电脑"，模型当场
+# 就能告诉用户"电脑客户端没连上"，不再吊死一条对话。
+POLL_STALE = 60
+_LAST_POLL = 0.0     # 最近一次 take() 的时间戳（本地内存，重启归零）
+
 
 # ── 身份与权限（M4）──────────────────────────────────────────────
 # 以前默认"能连上客户端的都是主人"，工具集按渠道一裁了事（微信渠道
@@ -398,6 +408,16 @@ def call(name, args, wait=None):
                  why), flush=True)
         return "这个操作被安全策略拦下了，不能做。%s【别重试】" % why
     w = max(5, int(wait or DEFAULT_WAIT))
+    # 客户端最近没来轮询过（连这个大脑都不在线）→ 等也白等，秒回。
+    # 注意 take() 记的是**本进程**的轮询时间：客户端连本地大脑时，
+    # 云端这份 _LAST_POLL 就是旧的 —— 这恰好正确：云端确实没人来取。
+    if time.time() - _LAST_POLL > POLL_STALE:
+        _STATS["timeout"] = _STATS.get("timeout", 0) + 1
+        _audit("timeout", name, args,
+               "没有在线的电脑（%d 秒内没有任何客户端来轮询过）" % POLL_STALE)
+        return ("没有在线的电脑能执行「%s」—— 他电脑上的客户端没连上来。"
+                "【别重试】跟他说一声，让他把电脑上的 Vigil 客户端打开再试。"
+                % name)
     c = _Call(name, args)
     _audit("queued", name, args)
     with _COND:
@@ -456,9 +476,11 @@ def call(name, args, wait=None):
 
 def take(device_id, capabilities=None):
     """客户端轮询时调用：认领一条它能干的活。没有就返回 None。"""
+    global _LAST_POLL
     caps = set(capabilities or [])
     now = time.time()
     with _COND:
+        _LAST_POLL = now                # 这台大脑刚被客户端看过：在线证据
         for cid, c in list(_QUEUE.items()):
             if caps and c.name not in caps:
                 continue                      # 这台设备没声明这个能力，别派给它
