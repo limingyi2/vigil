@@ -11,11 +11,14 @@
  *    Vigil / 渠道切换 / 窗口按钮要能落地，就不能用系统标题栏。
  *    代价是拖拽、最小化、关闭都要自己实现（见下面的 win:* 通道）。
  */
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const os = require('os');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 // 这个客户端就是表单+列表+聊天气泡，用不上 GPU 合成。禁掉硬件加速：
 // ① 核显/驱动有毛病的机器（GPU 进程反复崩溃会把整个渲染进程拖死）
@@ -73,6 +76,159 @@ function createTray() {
     else showMainWindow();
   });
 }
+
+// ── 推送更新（2026-10-09）：跟手机 App 一套思路 ─────────────────────
+// 云端 C:\Vigil\app\client\ 放安装包 + client_version.json（code 递增），
+// 大脑加两条只读路由 /api/client/version、/api/client/setup。
+// 客户端启动 15s 后查一次、之后每小时查一次；有新版先问、同意了后台
+// 下载（sha256 校验），完成后弹窗 —— 走安装向导覆盖装，配置不会丢。
+// 本地包里的 version.json（打进 asar）是"我是谁"：code 就是版本号。
+const UPD_DL = path.join(os.tmpdir(), 'vigil-setup-download.exe');
+let updBusy = false;
+let updDeclinedCode = 0;   // 用户这轮会话里拒绝过的版本，别每小时弹一次
+
+function readLocalCode() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'version.json'), 'utf8'));
+    return Number(j.code) || 0;
+  } catch (e) {
+    return 0;   // 老包没有 version.json，永远是 0 → 第一次有版就能收到推送
+  }
+}
+
+function sha256File(p) {
+  return new Promise((resolve) => {
+    try {
+      const h = crypto.createHash('sha256');
+      fs.createReadStream(p).on('data', (c) => h.update(c))
+        .on('end', () => resolve(h.digest('hex')))
+        .on('error', () => resolve(''));
+    } catch (e) { resolve(''); }
+  });
+}
+
+function downloadFile(urlStr, token, dest, onProgress) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(urlStr); } catch (e) { return resolve({ ok: false, status: 0, err: '地址不合法' }); }
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request(
+      {
+        method: 'GET', hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: u.pathname + (u.search || ''),
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+        timeout: 600000,   // 76MB 家宽场景可能要几分钟
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return resolve({ ok: false, status: res.statusCode, err: 'HTTP ' + res.statusCode });
+        }
+        const total = Number(res.headers['content-length']) || 0;
+        let got = 0;
+        const out = fs.createWriteStream(dest);
+        res.on('data', (c) => { got += c.length; onProgress && onProgress(got, total); });
+        res.pipe(out);
+        out.on('finish', () => out.close(() => resolve({ ok: true, size: got })));
+        out.on('error', (e) => resolve({ ok: false, status: res.statusCode, err: e.message }));
+      });
+    req.on('timeout', () => req.destroy(new Error('下载超时')));
+    req.on('error', (e) => resolve({ ok: false, status: 0, err: e.message }));
+    req.end();
+  });
+}
+
+async function checkUpdate(mode) {
+  // mode='status' → 只查版本状态，绝不弹窗不下载（关于页进页展示用）
+  // mode='ask'    → 关于页按钮：查 → 有新版先问 → 下载 → 问安装
+  // mode=false    → 启动/定时自动查：全静默，有新版也先问（拒绝过这版就不再烦）
+  const interactive = mode === 'ask';
+  const cur = readLocalCode();
+  const base = { current: cur, ver: app.getVersion() };
+  const cfg = readCfg();
+  const sync = cfg.sync || {};
+  const cb = String(sync.cloud_url || '').replace(/\/+$/, '');
+  if (!cb || !sync.cloud_token) {
+    return Object.assign(base, { ok: false, update: false, err: '还没配云端（设置 → 云端同步）' });
+  }
+  if (updBusy) return Object.assign(base, { ok: true, update: false, busy: true });
+  const v = await request('GET', cb + '/api/client/version', null, sync.cloud_token, 15000);
+  const j = (v && v.json) || {};
+  if (!v.ok || !j.code) {
+    return Object.assign(base, { ok: false, update: false, err: (j && j.err) || (v ? v.err || ('HTTP ' + v.status) : '无响应') });
+  }
+  const latest = Number(j.code) || 0;
+  if (latest <= cur) {
+    return Object.assign(base, { ok: true, update: false, latest, ver: j.ver || '' });
+  }
+  const have = { ok: true, update: true, latest, ver: j.ver || '', notes: j.notes || '' };
+  if (mode === 'status') return have;                       // 只报状态
+  if (!interactive && updDeclinedCode === latest) {
+    return Object.assign(have, { declined: true });         // 这版已经拒绝过，别再弹
+  }
+  // 有新版：先问一次（自动检查也问 —— 装不装什么时候装是用户的事）
+  updBusy = true;
+  try {
+    const ask = await dialog.showMessageBox(win || undefined, {
+      type: 'info', title: '发现新版本',
+      message: '客户端有更新：v' + (j.ver || ('code ' + latest)) + '（当前 code ' + cur + '）',
+      detail: String(j.notes || '修复与改进。') + '\n\n现在开始下载吗？下载完成后可以再选安装时间。',
+      buttons: ['下载', '下次再说'], defaultId: 0, cancelId: 1, noLink: true,
+    });
+    if (ask.response !== 0) {
+      updDeclinedCode = latest;
+      return Object.assign(base, { ok: true, update: true, latest, ver: j.ver || '', declined: true });
+    }
+    // 已下载过且校验通过的就不重下（sha 一致 = 就是这个版本）
+    const wantSha = String(j.sha256 || '').toLowerCase();
+    let dl = { ok: false };
+    if (fs.existsSync(UPD_DL) && wantSha && (await sha256File(UPD_DL)) === wantSha) {
+      dl = { ok: true, cached: true };
+    } else {
+      dl = await downloadFile(cb + '/api/client/setup', sync.cloud_token, UPD_DL,
+        (got, total) => {
+          // 进度写进窗口标题（没有专门的进度页，title 不打扰界面）
+          if (win && !win.isDestroyed() && total) {
+            win.setTitle('正在下载更新 ' + Math.round((got / total) * 100) + '%');
+          }
+        });
+      if (win && !win.isDestroyed()) win.setTitle('');
+    }
+    if (!dl.ok) {
+      dialog.showErrorBox('更新下载失败', String(dl.err || '网络错误'));
+      return Object.assign(base, { ok: false, update: true, latest, err: dl.err });
+    }
+    if (wantSha) {
+      const sha = await sha256File(UPD_DL);
+      if (sha && sha !== wantSha) {
+        fs.unlinkSync(UPD_DL);
+        dialog.showErrorBox('更新失败', '安装包校验不一致，已删除重试下次。');
+        return Object.assign(base, { ok: false, update: true, latest, err: 'sha256 不匹配' });
+      }
+    }
+    const go = await dialog.showMessageBox(win || undefined, {
+      type: 'question', title: '更新就绪',
+      message: '新版本已下载，现在安装吗？',
+      detail: '安装会退出客户端（配置和数据都在，不会丢）。装完从开始菜单或桌面重新打开。',
+      buttons: ['立即安装', '下次启动再说'], defaultId: 0, cancelId: 1, noLink: true,
+    });
+    if (go.response === 0) {
+      updDeclinedCode = 0;
+      // 不带参数跑安装向导（assisted NSIS）：静默覆盖运行中的程序有锁文件风险，
+      // 向导点两下但一定成功。退出客户端前把安装器先拉起来。
+      spawn(UPD_DL, [], { detached: true, stdio: 'ignore' }).unref();
+      quitting = true;
+      setTimeout(() => app.quit(), 300);
+      return Object.assign(base, { ok: true, update: true, latest, installing: true });
+    }
+    updDeclinedCode = latest;   // 装包留在临时目录，下次弹窗直接可装
+    return Object.assign(base, { ok: true, update: true, latest, ver: j.ver || '', downloaded: true });
+  } finally {
+    updBusy = false;
+  }
+}
+
 
 // ── 配置：地址、渠道这些非机密放普通文件；token 单独进钥匙串 ──────────────
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
@@ -353,7 +509,6 @@ function createWindow() {
 // 2. 拿到的这把是"主人钥匙"（brain_token）。**不直接用它聊天**，而是换一把
 //    本机专用的设备 token：能单独吊销、设备列表里看得见是哪台，
 //    主人钥匙也不再落在客户端上。换不到（老版 brain）才退回用主人钥匙。
-const os = require('os');
 const localtool = require('./localtool');
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
@@ -633,8 +788,11 @@ ipcMain.handle('local:reveal', (_e, p) => {
   catch (e) { return { ok: false, err: String(e && e.message || e) }; }
 });
 
-ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null }) => {
-  if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
+// 手动检查更新（关于页按钮）。结果回给渲染层画状态，弹窗逻辑在 checkUpdate 里。
+// 渲染层只能给 'ask' 或默认 'status'——不会绕过弹窗直接下载。
+ipcMain.handle('updater:check', (_e, mode) => checkUpdate(mode === 'ask' ? 'ask' : 'status'));
+
+ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null }) => {  if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
   const cfg = readCfg();
   // 🔴 数据页云端视角（2026-10-09）：base='cloud' 改走云端大脑，鉴权用
   // 云端同步凭据（跟本机设备 token 是两把钥匙）。微信渠道的账全在云端，
@@ -795,6 +953,9 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();                    // 常驻托盘：点关闭只是隐藏（2026-10-09）
     startPolling();                  // 本地操控的活从这儿进来
+    // 推送更新：启动 15s 后查一次（错开启动时的连接风暴），之后每小时
+    setTimeout(() => { checkUpdate(false); }, 15000);
+    setInterval(() => { checkUpdate(false); }, 3600000);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

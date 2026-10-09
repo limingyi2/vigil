@@ -2053,13 +2053,49 @@
     async function about() {
       ctx.topbar.querySelector('h1').textContent = '关于';
       v.innerHTML = '<div class="card">' +
-        '<div class="kv"><span>客户端</span><b>v0.1.0（骨架）</b></div>' +
+        '<div class="kv"><span>客户端</span><b>v0.1.0（code <span id="abCode">…</span>）</b></div>' +
         '<div class="kv"><span>桌面框架</span><b>Electron ' + esc(String((global.process && process.versions && process.versions.electron) || '')) + '</b></div>' +
         '<div class="kv"><span>Brain 地址</span><b class="mono">' + esc(state.base || '—') + '</b></div>' +
         '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
         '<div class="kv"><span>token 存储</span><b>系统钥匙串（keytar）</b></div>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
+        '<button class="btn oline md" id="abCheck">检查更新</button>' +
+        '<span class="muted" style="font-size:12px" id="abMsg">启动时和每小时也会自动检查（走云端）</span>' +
+        '</div>' +
         '<div class="muted" style="font-size:11.5px;margin-top:10px">本地操控已并入聊天页：确认在气泡里，权限/目录/工具在输入框旁的盾牌面板里。桌宠 Live2D（阶段5）未开始。</div>' +
         '</div>';
+
+      const show = (u) => {
+        v.querySelector('#abCode').textContent = String(u.current != null ? u.current : '0');
+        const m = v.querySelector('#abMsg');
+        if (u.busy) { m.textContent = '上一次检查还没跑完…'; return; }
+        if (u.err) { m.textContent = '检查失败：' + u.err; return; }
+        if (!u.update) { m.textContent = '已是最新。'; return; }
+        if (u.installing) { m.textContent = '安装器已启动，客户端即将退出。'; return; }
+        if (u.downloaded) { m.textContent = '新版本已下载，下次启动会再提醒。'; return; }
+        if (u.declined) { m.textContent = '发现新版本 v' + (u.ver || '') + '（你这次先不更）。'; return; }
+        m.textContent = '发现新版本 v' + (u.ver || '') + '。';
+      };
+
+      v.querySelector('#abCheck').addEventListener('click', async () => {
+        const btn = v.querySelector('#abCheck');
+        const msg = v.querySelector('#abMsg');
+        btn.disabled = true;
+        msg.textContent = '检查中…';
+        try {
+          const u = await global.vigil.updater.check('ask');
+          show(u || { err: '无响应' });
+        } catch (e) {
+          msg.textContent = '检查失败：' + String(e && e.message || e);
+        }
+        if (btn && !btn.isDestroyed) btn.disabled = false;
+      });
+
+      // 进页只查状态（不弹窗不下载）；版本号和"有没有新版"顺便画上
+      try {
+        const u = await global.vigil.updater.check();
+        if (u) show(u);
+      } catch (e) { /* 无云端配置等，静默 */ }
     }
 
     // ── 云端同步（M5）：本地大脑 ↔ 云端权威源 ─────────────────

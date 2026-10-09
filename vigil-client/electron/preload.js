@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('vigil', {
   // 自动找大脑：探本机隧道/本机服务，命中就注册本机并收下设备 token（见 main.js）
   autoConnect: () => ipcRenderer.invoke('auto:connect'),
 
+  // 推送更新：mode 省略=只查状态；'ask'=发现新版就弹窗引导下载安装
+  updater: { check: (mode) => ipcRenderer.invoke('updater:check', mode || 'status') },
+
   // 本地大脑（sidecar）：状态 / 重启 / 向导的模型配置
   sidecar: {
     status: () => ipcRenderer.invoke('sidecar:status'),

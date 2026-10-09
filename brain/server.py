@@ -2344,6 +2344,35 @@ def start_remote_api(brain):
                     self.wfile.write(blob)
                 except Exception as e:
                     self._json(404, {"err": str(e)[:60]})
+            elif path == "/api/client/version":
+                # 桌面客户端推送更新（2026-10-09，跟 App 一套思路）：
+                # C:\Vigil\app\client\ 放安装包 + client_version.json
+                # （code 递增，发布新包时一起更新）
+                try:
+                    vf = r"C:\Vigil\app\client\client_version.json"
+                    self._json(200, json.load(open(vf, encoding="utf-8")))
+                except Exception as e:
+                    self._json(200, {"code": 0, "err": str(e)[:60]})
+            elif path == "/api/client/setup":
+                # 桌面客户端安装包下载。**分块流式**：安装包 70MB+，
+                # 不能学 app.apk 整块 read() 进内存——每次更新都吃一次内存峰值
+                fp = r"C:\Vigil\app\client\VigilSetup.exe"
+                try:
+                    import os as _os
+                    n = _os.path.getsize(fp)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self._cors()
+                    self.send_header("Content-Length", str(n))
+                    self.end_headers()
+                    with open(fp, "rb") as f:
+                        while True:
+                            chunk = f.read(262144)   # 256KB
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                except Exception as e:
+                    self._json(404, {"err": str(e)[:60]})
             elif path == "/api/packages":
                 # App 快递管理页：监控中的单号列表
                 try:
