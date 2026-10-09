@@ -1188,6 +1188,17 @@ def start_remote_api(brain):
                                      "me": me[1] if me[0] == "device" else "",
                                      "who": me[0]})
                     return
+                if path == "/api/device/audit":
+                    # M4：本地操控的操作日志（谁在哪个渠道动了什么、结果）。
+                    # 只给主人钥匙 —— 设备 token 看别的设备的日志等于越权。
+                    who = getattr(self, "_who", ("", ""))[0]
+                    if who != "brain":
+                        self._json(403, {"ok": False,
+                                         "err": "只有主人钥匙能看操作日志"})
+                        return
+                    import localtools as _lt
+                    self._json(200, {"ok": True, "items": _lt.audit()})
+                    return
                 if path == "/api/device/revoke":
                     import devices
                     did = str(body.get("device_id") or "").strip()
@@ -1231,6 +1242,15 @@ def start_remote_api(brain):
                     try:
                         import features as _feat
                         _feat.set_current_src(_src)
+                    except Exception:
+                        pass
+                    # M4：本地操控的身份上下文 —— 这条消息是谁、从哪个渠道
+                    # 发的。localtools.call() 里的 clearance() 靠它判
+                    # （sender_id 是微信端透传的发送者微信号；app/pc 渠道没有
+                    # sender，clearance 对这些渠道天然放行——坐在电脑前的人）。
+                    try:
+                        import localtools as _lt
+                        _lt.set_context(_src, str(body.get("sender_id") or ""))
                     except Exception:
                         pass
                     # ── M3 双大脑路由：微信渠道可转发给本地大脑 ──
@@ -1928,6 +1948,18 @@ def start_remote_api(brain):
                 self._json(200, {"ok": True, "items": devices.list_all(),
                                  "me": me[1] if me[0] == "device" else "",
                                  "who": me[0]})
+                return
+            if path == "/api/device/audit":
+                # M4：本地操控的操作日志（只读，GET 版本 —— 和 device/list
+                # 一样读接口走 GET；POST 分支里那份留着管后台兼容）。
+                # 只给主人钥匙 —— 设备 token 看别的设备的日志等于越权。
+                who = getattr(self, "_who", ("", ""))[0]
+                if who != "brain":
+                    self._json(403, {"ok": False,
+                                     "err": "只有主人钥匙能看操作日志"})
+                    return
+                import localtools as _lt
+                self._json(200, {"ok": True, "items": _lt.audit()})
                 return
             if path == "/api/persona/full":
                 # 给人设编辑器用：读人设的全部字段（不是摘要）。

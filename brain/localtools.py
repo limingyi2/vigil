@@ -42,6 +42,7 @@ REMOTE_TOOLS = {
         "params": [],
         "arg_param": None,
         "danger": False,
+        "risk": "safe",
         "group": "system",
     },
     "local_file_list": {
@@ -50,6 +51,7 @@ REMOTE_TOOLS = {
         "params": [("path", "目录路径，可以是 ~/Desktop 这种写法", True)],
         "arg_param": "path",
         "danger": False,
+        "risk": "safe",
         "group": "files",
     },
     "local_file_read": {
@@ -59,6 +61,7 @@ REMOTE_TOOLS = {
         "params": [("path", "文件路径", True)],
         "arg_param": "path",
         "danger": False,
+        "risk": "safe",
         "group": "files",
     },
     "local_file_find": {
@@ -67,6 +70,7 @@ REMOTE_TOOLS = {
         "params": [("name", "文件名或其中一段", True)],
         "arg_param": "name",
         "danger": False,
+        "risk": "safe",
         "group": "files",
     },
     "local_file_grep": {
@@ -82,6 +86,7 @@ REMOTE_TOOLS = {
         ],
         "arg_param": "path",
         "danger": False,
+        "risk": "safe",
         "group": "files",
     },
     "local_file_recent": {
@@ -89,6 +94,7 @@ REMOTE_TOOLS = {
         "params": [("hours", "最近多少小时，默认 24", False)],
         "arg_param": "hours",
         "danger": False,
+        "risk": "safe",
         "group": "files",
     },
     "local_process_list": {
@@ -97,6 +103,7 @@ REMOTE_TOOLS = {
         "params": [("filter", "只要名字含这个词，可留空", False)],
         "arg_param": "filter",
         "danger": False,
+        "risk": "safe",
         "group": "system",
     },
     "local_active_window": {
@@ -104,6 +111,7 @@ REMOTE_TOOLS = {
         "params": [],
         "arg_param": None,
         "danger": False,
+        "risk": "safe",
         "group": "system",
     },
     "local_clipboard_read": {
@@ -111,6 +119,7 @@ REMOTE_TOOLS = {
         "params": [],
         "arg_param": None,
         "danger": False,
+        "risk": "safe",
         "group": "system",
     },
     "open_url": {
@@ -118,6 +127,7 @@ REMOTE_TOOLS = {
         "params": [("url", "要打开的网址", True)],
         "arg_param": "url",
         "danger": False,
+        "risk": "safe",
         "group": "net",
     },
     "local_screenshot": {
@@ -125,6 +135,7 @@ REMOTE_TOOLS = {
         "params": [],
         "arg_param": None,
         "danger": False,
+        "risk": "safe",
         "group": "system",
     },
     "local_file_write": {
@@ -132,6 +143,7 @@ REMOTE_TOOLS = {
         "params": [("path", "文件路径", True), ("text", "要写入的内容", True)],
         "arg_param": "path",
         "danger": True,
+        "risk": "confirm",
         "group": "files",
     },
     "local_file_append": {
@@ -139,6 +151,7 @@ REMOTE_TOOLS = {
         "params": [("path", "文件路径", True), ("text", "要追加的内容", True)],
         "arg_param": "path",
         "danger": True,
+        "risk": "confirm",
         "group": "files",
     },
     "local_mkdir": {
@@ -146,6 +159,7 @@ REMOTE_TOOLS = {
         "params": [("path", "目录路径", True)],
         "arg_param": "path",
         "danger": True,
+        "risk": "confirm",
         "group": "files",
     },
     "local_move": {
@@ -154,6 +168,7 @@ REMOTE_TOOLS = {
                    ("overwrite", "目标存在时是否覆盖，默认否", False)],
         "arg_param": "from",
         "danger": True,
+        "risk": "confirm",
         "group": "files",
     },
     "local_copy": {
@@ -162,6 +177,7 @@ REMOTE_TOOLS = {
                    ("overwrite", "目标存在时是否覆盖，默认否", False)],
         "arg_param": "from",
         "danger": True,
+        "risk": "confirm",
         "group": "files",
     },
     "local_file_delete": {
@@ -169,6 +185,7 @@ REMOTE_TOOLS = {
         "params": [("path", "要删的路径", True)],
         "arg_param": "path",
         "danger": True,
+        "risk": "dangerous",
         "group": "files",
     },
     "local_clipboard_write": {
@@ -176,6 +193,7 @@ REMOTE_TOOLS = {
         "params": [("text", "要放进剪贴板的文字", True)],
         "arg_param": "text",
         "danger": True,
+        "risk": "confirm",
         "group": "system",
     },
     "local_process_kill": {
@@ -183,6 +201,7 @@ REMOTE_TOOLS = {
         "params": [("name_or_pid", "进程 PID，或进程名", True)],
         "arg_param": "name_or_pid",
         "danger": True,
+        "risk": "dangerous",
         "group": "system",
     },
     "local_exec": {
@@ -195,6 +214,7 @@ REMOTE_TOOLS = {
         "params": [("cmd", "要执行的命令", True)],
         "arg_param": "cmd",
         "danger": True,
+        "risk": "dangerous",
         "group": "system",
     },
 }
@@ -209,15 +229,104 @@ REMOTE_TOOLS = {
 DEFAULT_WAIT = 300
 
 
+# ── 身份与权限（M4）──────────────────────────────────────────────
+# 以前默认"能连上客户端的都是主人"，工具集按渠道一裁了事（微信渠道
+# 直接给空）。M4 起微信渠道也开放本地操控 —— 反正活最终派到的是**他
+# 自己的电脑**，但谁能下指令要按（渠道，发送者，风险档）判定：
+#
+#   risk 三档：safe（只读/低危） confirm（改动但可逆） dangerous（不可逆/高危）
+#   - app/pc 渠道（他自己的电脑上聊）：主人本人，三档全放（confirm/
+#     dangerous 仍有客户端弹窗兜底）
+#   - wechat 私聊：sender_id 在 owner_ids 才放行（三档全放，弹窗兜底）；
+#     非 owner 一律拒
+#   - wechat_group 群聊：**即使 owner 也只放 safe** —— 群里一句话就能
+#     删文件的世界太危险，而且群里确认弹窗没有意义（人不在电脑前）
+#
+# 🔴 这是服务端的最终关卡。客户端的确认弹窗、白名单、能力开关是第二道；
+#   两道各自独立工作，谁也不依赖谁。
+_CTX = {"src": "", "sender_id": ""}
+
+AUDIT_MAX = 200
+_AUDIT = []          # 最近 N 条操作日志：谁在哪个渠道动了什么、结果如何
+
+
+def set_context(src, sender_id=""):
+    """每轮 /api/chat 开头设置：这条消息来自哪个渠道、谁发的。
+    工具调用（call）发生在同一轮的 FC 循环里，读的就是这份上下文。"""
+    _CTX["src"] = str(src or "")
+    _CTX["sender_id"] = str(sender_id or "").strip()
+
+
+def get_context():
+    return dict(_CTX)
+
+
+def _owner_ids():
+    """主人微信号清单。config 键 owner_ids（列表），不在就空 —— 空表示
+    微信渠道谁都不放行（宁可错过不可错杀，配好再说）。"""
+    try:
+        import runtime as _rt
+        ids = (_rt.api_config or {}).get("owner_ids") or []
+        return [str(i).strip() for i in ids if str(i).strip()]
+    except Exception:
+        return []
+
+
+def clearance(risk, src=None, sender_id=None):
+    """这一档工具在这条消息上能不能放。返回 (ok, reason)。
+
+    reason 是给模型看的拒绝话术 —— 要让它转述得出口，别是内部黑话。
+    """
+    risk = risk if risk in ("safe", "confirm", "dangerous") else "safe"
+    src = _CTX["src"] if src is None else str(src or "")
+    sender_id = (_CTX["sender_id"] if sender_id is None
+                 else str(sender_id or "").strip())
+    if src in ("wechat", "wechat_group"):
+        owners = _owner_ids()
+        if not sender_id or sender_id not in owners:
+            return False, ("这个操作要在他的电脑上动东西，只有他本人（微信私聊）"
+                           "叫你做才行。")
+        if src == "wechat_group" and risk != "safe":
+            return False, ("群聊里只能做查询类的安全操作（看看状态、读读文件），"
+                           "改动和危险操作只在他本人私聊时才做。")
+        return True, ""
+    # app / pc / 其他带客户端的渠道：能在这条渠道聊天的就是主人本人
+    return True, ""
+
+
+def _audit(event, tool="", args=None, result=""):
+    """操作日志：谁在哪个渠道动了什么、结果如何。只留最近 AUDIT_MAX 条。"""
+    _AUDIT.append({
+        "t": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "event": event,                       # denied | queued
+        "tool": tool,
+        "args": args or {},
+        "src": _CTX.get("src", ""),
+        "sender_id": _CTX.get("sender_id", ""),
+        "result": str(result)[:120],
+    })
+    del _AUDIT[:-AUDIT_MAX]
+
+
+def audit():
+    """给管理接口读的操作日志（新→旧）。"""
+    return list(reversed(_AUDIT))
+
+
 class _Call(object):
-    __slots__ = ("id", "name", "args", "danger", "device_id", "created",
-                 "claimed_at", "done", "result", "err", "refused")
+    __slots__ = ("id", "name", "args", "danger", "risk", "device_id",
+                 "created", "claimed_at", "done", "result", "err", "refused")
 
     def __init__(self, name, args):
         self.id = "c_" + uuid.uuid4().hex[:10]
         self.name = name
         self.args = args or {}
-        self.danger = bool(REMOTE_TOOLS.get(name, {}).get("danger"))
+        self.risk = (REMOTE_TOOLS.get(name, {}).get("risk")
+                     or ("dangerous" if REMOTE_TOOLS.get(name, {}).get("danger")
+                         else "safe"))
+        # danger = 旧二档（!=safe 就弹确认），保留给老客户端；
+        # 新客户端拿 risk 分级弹窗（confirm 普通确认 / dangerous 强提醒）
+        self.danger = self.risk != "safe"
         self.device_id = ""
         self.created = time.time()
         self.claimed_at = 0.0
@@ -228,7 +337,8 @@ class _Call(object):
 
     def public(self):
         return {"call_id": self.id, "name": self.name, "args": self.args,
-                "danger": self.danger, "created": self.created}
+                "danger": self.danger, "risk": self.risk,
+                "created": self.created}
 
 
 _LOCK = threading.RLock()
@@ -239,16 +349,23 @@ _STATS = {"calls": 0, "ok": 0, "timeout": 0, "refused": 0, "errors": 0, "busy": 
 _CANCEL = False      # 全局取消标志：用户点"停止"时置 True，下一次 wait 检查到就提前返回
 
 
-def specs(names=None):
+def specs(names=None, src=None):
     """给插件用的工具规格（TOOL_SPECS 的形状）。
 
     names 为 None 时给全部；传了名字就只给这些 —— 能力裁剪用得上。
+    src 是渠道：群聊（wechat_group）只暴露 safe 档 —— 模型**看不到**
+    改动类工具，比"调了再拒"更稳（省得它在群里许诺一件做不了的事）。
     """
+    if src in ("wechat_group",):
+        names = [k for k, v in REMOTE_TOOLS.items()
+                 if v.get("risk") == "safe"] if names is None else \
+            [n for n in names if REMOTE_TOOLS.get(n, {}).get("risk") == "safe"]
     out = {}
     for k, v in REMOTE_TOOLS.items():
         if names is not None and k not in names:
             continue
-        out[k] = {"desc": v["desc"], "params": list(v["params"]), "arg_param": v["arg_param"]}
+        out[k] = {"desc": v["desc"], "params": list(v["params"]),
+                  "arg_param": v["arg_param"], "risk": v.get("risk") or "safe"}
     return out
 
 
@@ -261,13 +378,28 @@ def call(name, args, wait=None):
     失败恢复策略：
     - 客户端忙（上一件没做完）：排队等最多 30 秒，排上了就正常执行
     - 超时（客户端没响应）：不重试——已经等了几分钟，再等也没用
-    - 被拒绝：不重试——他明确说不，重试等于逼他
+    -     被拒绝：不重试——他明确说不，重试等于逼他
     - 执行出错：返回文本里明确标「可重试」或「别重试」，让模型自己判断
     """
+    # 🔴 必须 global：函数里下方有 `_CANCEL = False` 赋值，没有这行声明，
+    #   _CANCEL 会变成局部变量，419 行的 `if _CANCEL:` 永远读到刚赋的 False
+    #   —— cancel()（用户点"停止"）对这个调用就完全失效了。
+    global _CANCEL
     if name not in REMOTE_TOOLS:
         return "没有这个本地工具：%s" % name
+    spec = REMOTE_TOOLS[name]
+    risk = spec.get("risk") or ("dangerous" if spec.get("danger") else "safe")
+    ok, why = clearance(risk)
+    if not ok:
+        _audit("denied", name, args, why)
+        _STATS["denied"] = _STATS.get("denied", 0) + 1
+        print("[本地操控] 拒绝 %s（%s@%s）：%s"
+              % (name, _CTX.get("sender_id") or "?", _CTX.get("src") or "?",
+                 why), flush=True)
+        return "这个操作被安全策略拦下了，不能做。%s【别重试】" % why
     w = max(5, int(wait or DEFAULT_WAIT))
     c = _Call(name, args)
+    _audit("queued", name, args)
     with _COND:
         # 每次新的工具调用开始时，清掉上一次的取消标志
         _CANCEL = False

@@ -25,8 +25,11 @@ DESC = "本地操控：她可以用这台电脑看文件、截图、打开网页
 FEATURE = None               # 始终启用——这是 agent 的核心能力，不是可选功能
 
 # 没有本地文件系统的渠道：这些渠道不应该出现 local_* 工具。
-# 微信是手机端聊天，没有"操作本地电脑"这个概念。
-_NO_LOCAL_SRC = {"wechat"}
+# 🔴 M4 起 wechat 从这个名单里**摘掉了**：活最终派到的是他自己的电脑，
+# 谁能下令由 localtools.clearance() 按（渠道，sender_id，风险档）把关 ——
+# 私聊 owner 全放、非 owner 全拒。群聊在 specs() 里只暴露 safe 档，
+# call() 里仍是最终关卡。
+_NO_LOCAL_SRC = set()
 
 
 def tool_specs(src=None):
@@ -36,7 +39,8 @@ def tool_specs(src=None):
     """
     if src and str(src).lower() in _NO_LOCAL_SRC:
         return {}
-    return localtools.specs()
+    # 把渠道传下去：群聊只给 safe 档（模型看不到改动类工具）
+    return localtools.specs(src=str(src).lower() if src else None)
 
 
 # 兼容旧引用：有些地方可能直接读 remote.TOOL_SPECS（当字典用）。

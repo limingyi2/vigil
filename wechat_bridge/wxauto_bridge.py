@@ -336,7 +336,7 @@ class Brain(object):
         print("")
         return False
 
-    def ask(self, text, img_b64=None, src="wechat"):
+    def ask(self, text, img_b64=None, src="wechat", sender_id=None):
         """问一次。返回她说的话；出错返回 None（不抛，抛了群里就刷错误）。
 
         img_b64：这一轮带的图片（纯 base64，不带 data: 前缀）。
@@ -347,12 +347,19 @@ class Brain(object):
         🔴 群和私聊**必须**分开（2026-10-08 多会话改造）—— 合在一起，
         她会把她在群里的反应拿去回答私聊（或者反过来），说话方式会串，
         而且两边的记忆会互相污染。
+
+        sender_id：发送者微信号（wxid）。云端本地操控的 owner 鉴权用——
+        私聊里只有主人微信号的本地工具请求才放行。取不到就别传（None），
+        云端按"无身份"拒绝，绝不误放行。老服务端不认这个字段，直接忽略，
+        向后兼容。
         """
         if not self.picked:
             return None
         payload = {"text": text, "src": src}
         if img_b64:
             payload["img"] = img_b64
+        if sender_id:
+            payload["sender_id"] = str(sender_id)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         url = self.picked + "/api/chat"
         if self.token:
@@ -1805,9 +1812,13 @@ class Bridge(object):
             # 会话名一起送上去：云端那边 memories/chat_history 按渠道分区，
             # 群里的对话和私聊**必须**分开存 —— 合在一起她会把她在群里的
             # 反应拿去回答私聊（或反过来），说话方式会串。
+            # sender_id（发送者 wxid）一起透传：云端本地操控按它做 owner
+            # 鉴权，群聊即使.owner 也只放 safe 级工具。取不到就 None。
             answer = self.brain.ask(text, img or None,
                                    src=("wechat" if self._is_private(chat)
-                                        else "wechat_group"))
+                                        else "wechat_group"),
+                                   sender_id=(self._sender_ident(mobj).get("wxid")
+                                              or None))
             if not answer:
                 # 🔴 空回复必须留痕（2026-10-08 教训：云端闸门插件把私聊
                 # 全判成 PASS 返回空 reply，这里静默 continue，
