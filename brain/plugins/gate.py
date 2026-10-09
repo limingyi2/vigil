@@ -81,6 +81,27 @@ def _cfg():
         return {}
 
 
+def _chatty_level(src):
+    """「说话多少」档位（1~10，config.json 的 chatty 段按渠道存）。
+
+    gate 拿它做**硬闸**：
+      * 1  = 只 @。被 @（含 @所有人）或被叫名字才开口，其余一票否决，
+             连模型都不用问 —— 这才叫"调到最低"。以前的"只 @"其实是
+             判定模型判出来的，偶尔仍会插话，用户要的是确定性。
+      * ≥2 = 模型判定照旧，判 PASS 后再按档位给一次救回概率
+             （(lvl-1)/9 × 0.45：2 档 ~5%，10 档 45%），
+             档位越高越爱插话，和滑条的直觉一致。
+
+    读不到就按 5：闸门宁可退回原来的纯判定行为，也不能因为 chatty
+    那边炸了把整个群关成哑巴。
+    """
+    try:
+        import chatty as _ch
+        return int(_ch.level(src))
+    except Exception:
+        return 5
+
+
 def _model(api_config, cfg):
     """用哪个模型判定。没配就用主模型 —— 宁可用贵的模型，也不能不判。"""
     return str(cfg.get("model") or api_config.get("model") or "")
@@ -288,6 +309,12 @@ def _nicknames(ctx):
             import persona_store
             data = persona_store.load(key) or {}
             out.extend(data.get("nicknames") or [])
+            # 人设名字本身也是"她在被叫什么"：只认 nicknames 字段的话，
+            # 换一套 nicknames 没写全的人设（比如"老吴猫"），
+            # 群里 @老吴猫 就判不出被点名 —— 只 @ 模式下直接哑掉。
+            nm = str(data.get("name") or "").strip()
+            if nm:
+                out.append(nm)
     except Exception:
         pass
     seen = set()
@@ -677,6 +704,22 @@ def on_turn_in(ctx):
 
     scope = _scope(ctx)
 
+    # ── 「说话多少」= 1：只 @ 模式（2026-10-09，用户拍板）──
+    # 被 @（含 @所有人）或被叫名字才开口，其余一票否决、**连模型都不问**。
+    # 以前"群里只 @"是判定模型判出来的，偶尔仍会插话；用户要的是确定性，
+    # 所以接了 chatty 旋钮当硬闸（滑条在客户端"能力 → 功能开关"）。
+    lvl = _chatty_level(src)
+    if lvl <= 1:
+        if _called_by_name(ctx, msg) or any(
+                n in _AT_ALL for n in _at_names(msg)):
+            _bump(src, "open")
+            _pass_streak[scope] = 0
+            _last_judge[scope] = "OPEN · 只@模式，被点名"
+            return None
+        _bump(src, "pass")
+        _last_judge[scope] = "PASS · 只@模式（说话多少=1）"
+        return ctx.veto("只 @ 模式（说话多少=1）：没人点名，不开口")
+
     # 🔴 **@ 的是别人：直接拦，而且不花模型调用、不计入强制放行。**
     #
     # 两个"不计入"都是有意的：
@@ -706,6 +749,14 @@ def on_turn_in(ctx):
         ok, reason = _judge(ctx, cfg)
     except Exception as e:
         ok, reason = True, "判定出错，放行：%s" % (str(e)[:60])
+    # 「说话多少」≥2：判 PASS 后按档位给一次救回概率 —— 档位越高越爱插话
+    # （2 档约 5%，10 档 45%）。只救"模型判出来的 PASS"；"在 @ 别人"那种
+    # 代码层的事实拦在更早的 return，概率翻不了案。
+    if not ok and lvl >= 2:
+        import random
+        if random.random() < (lvl - 1) / 9.0 * 0.45:
+            ok = True
+            reason = "搭话率放行（说话多少=%d）" % lvl
     try:
         _last_judge[scope] = ("OPEN" if ok else "PASS") + " · " + str(reason)
         if ok:

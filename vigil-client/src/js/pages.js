@@ -885,26 +885,31 @@
   }
 
   // ═══ 2. 人设 ═══════════════════════════════════════════════
-  // 卡片式：选一个渠道（App / 微信），点卡片上的「应用」把她在那边换掉。
+  // 卡片式：选一个渠道（App / 微信私聊 / 微信群），点卡片上的「应用」把她在那边换掉。
   // 本机控制台不参与 —— 控制台是干活的工具，不扮演角色（走全局默认）。
+  // 🔴 全部接口直达**云端**：微信真身在云端，以前打到本地 sidecar，
+  // 改的是本地的账 —— 云端那只根本不知道，"切了人设没变"就是这么来的。
   async function renderPersona(ctx) {
     const CHANS = [['app', 'App', '全局默认（没单独设置的渠道都跟它）'],
-                   ['wechat', '微信', '私聊 / 群里那一个']];
-    let curChan = 'app';
-    const r = pick(await get('/api/persona'));
+                   ['wechat', '微信私聊', '私聊那一个'],
+                   ['wechat_group', '微信群', '群里那一个（@ 她 / 她搭话的）']];
+    const CB = { base: 'cloud' };   // 人设账本在云端，这一页全走云端
+    let curChan = 'wechat_group';
+    const r = pick(await get('/api/persona', CB));
     const list = r.templates || r.personas || r.presets || [];
     const per = {};
     for (const [c] of CHANS) {
-      const pr = pick(await get('/api/persona?src=' + c));
+      const pr = pick(await get('/api/persona?src=' + c, CB));
       per[c] = { key: pr.src_persona_key || pr.key || '', name: pr.name || '' };
     }
 
     ctx.topbar.className = 'topbar';
-    ctx.topbar.innerHTML = topbar('人格与语气', '已用 ' + (r.used || list.length) + ' / ' + (r.max || 5) + ' · 换渠道的人设 = 换记忆分区，切换即时生效',
+    ctx.topbar.innerHTML = topbar('人格与语气', '微信真身在云端 · 应用/编辑直接写云端，下一句话就是新人设',
       '<button class="btn oline" id="reloadP">' + icon('refresh', 'sm') + '重载人格</button>');
     ctx.panel.innerHTML = '<div class="phead"><h2>人设</h2></div>' +
-      '<div class="pseg"><button data-sub="app"' + (curChan === 'app' ? ' class="on"' : '') + '>App</button>' +
-      '<button data-sub="wechat"' + (curChan === 'wechat' ? ' class="on"' : '') + '>微信</button></div>' +
+      '<div class="pseg"><button data-sub="wechat_group"' + (curChan === 'wechat_group' ? ' class="on"' : '') + '>微信群</button>' +
+      '<button data-sub="wechat"' + (curChan === 'wechat' ? ' class="on"' : '') + '>微信私聊</button>' +
+      '<button data-sub="app"' + (curChan === 'app' ? ' class="on"' : '') + '>App</button></div>' +
       '<div class="plist"><div class="empty" style="text-align:left;padding:14px 10px">' +
       '在左边选渠道，点卡片上的「应用」。<br>本机控制台不设人设。</div></div>';
 
@@ -938,7 +943,7 @@
 
     async function drawEditor(key) {
       const [, n] = CHANS.find(([x]) => x === curChan);
-      const f = pick(await get('/api/persona/full?key=' + encodeURIComponent(key)));
+      const f = pick(await get('/api/persona/full?key=' + encodeURIComponent(key), CB));
       const fields = f.fields || {};
       const val = (k) => {
         const v = fields[k];
@@ -966,12 +971,15 @@
         const fields2 = {};
         ctx.view.querySelectorAll('[data-pf]').forEach((el) => { fields2[el.dataset.pf] = el.value; });
         if (!String(fields2.name || '').trim()) { toast('总得有个名字'); return; }
+        // 卡片标题显示的是 label（列表元数据），编辑器里没有这一栏 ——
+        // 不跟着 name 走的话，改了名字卡片还挂旧名（"老吴猫"就是这么赖着不走的）
+        fields2.label = String(fields2.name || '').slice(0, 20);
         const btn = ctx.view.querySelector('#pfSave');
         btn.disabled = true;
-        const rr = pick(await post('/api/persona/save', { key: key, src: curChan, fields: fields2 }));
+        const rr = pick(await post('/api/persona/save', { key: key, src: curChan, fields: fields2 }, CB));
         btn.disabled = false;
         ctx.view.querySelector('#pfMsg').textContent = rr.ok ? '已保存' + (rr.reloaded ? '，她已切换到新设定' : '（这套人设她当前没在用，下次应用时生效）') : ('保存失败：' + (rr._err || rr.err || ''));
-        toast(rr.ok ? '人设已保存' : '保存失败');
+        toast(rr.ok ? '人设已保存（云端）' : '保存失败');
         if (rr.ok) {
           if ((per[curChan] || {}).key === key) per[curChan].name = fields2.name;
         }
@@ -999,16 +1007,16 @@
       }));
       ctx.view.querySelectorAll('[data-apply]').forEach((b) => b.addEventListener('click', async () => {
         b.disabled = true;
-        const rr = pick(await post('/api/persona/apply', { key: b.dataset.apply, src: curChan }));
+        const rr = pick(await post('/api/persona/apply', { key: b.dataset.apply, src: curChan }, CB));
         b.disabled = false;
-        toast(rr.ok ? '已切换（' + n + ' → ' + (rr.name || b.dataset.apply) + '）' : '切换失败：' + (rr._err || rr.err || ''));
+        toast(rr.ok ? '已切换（' + n + ' → ' + (rr.name || b.dataset.apply) + '），下一句话生效' : '切换失败：' + (rr._err || rr.err || ''));
         if (rr.ok) { per[curChan] = { key: b.dataset.apply, name: rr.name || b.dataset.apply }; draw(); }
       }));
     };
     U.bindSeg(ctx.panel.querySelector('.pseg'), (k) => { curChan = k; draw(); });
     ctx.topbar.querySelector('#reloadP').addEventListener('click', async () => {
-      const rr = pick(await post('/api/reload_persona', {}));
-      toast(rr.ok ? '人设已重载' : '重载失败');
+      const rr = pick(await post('/api/reload_persona', {}, CB));
+      toast(rr.ok ? '云端人设已重载' : '重载失败');
       ctx.refresh();
     });
     draw();
@@ -1464,27 +1472,71 @@
       drawCurrent = skills;
     }
 
-    // ── 功能开关（保持原样）──
+    // ── 功能开关 ──
+    // 「说话多少」滑条按渠道调：App / 微信群 / 微信私聊的真身在云端，
+    // 改动直达云端 config（1 档 = 只 @，由 gate 插件硬执行）；
+    // 本机走本地 sidecar。以前只有一根滑条管本机，微信的根本调不到。
     async function features() {
       const f = pick(await get('/api/features'));
-      const c = pick(await get('/api/chatty'));
+      const CHATS = [['app', 'App'], ['wechat_group', '微信群'], ['wechat', '微信私聊'], ['pc', '本机']];
+      let curCh = 'wechat_group';   // 用户最关心的就是群
+      const chName = () => (CHATS.find(([c]) => c === curCh) || ['', '?'])[1];
+      const chBase = () => curCh === 'pc' ? null : 'cloud';
       const feats = f.features || {};
-      const level = c.level || 5;
       const NAMES = {
         hotboard: '热搜接入', weather: '天气信息', weather_alert: '天气变化提醒',
         package: '快递监控', tools: '工具调用',
       };
       v.innerHTML =
-        '<div class="card" style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px">' +
-        '<div style="flex:1"><b style="font-size:13.5px">说话多少</b><div class="muted" style="font-size:12px">松手才保存</div></div>' +
-        '<input type="range" min="1" max="10" value="' + esc(level) + '" id="chattyRange" style="width:240px">' +
-        '<b id="chattyVal" style="font-size:20px;width:28px;text-align:right">' + esc(level) + '</b>' +
-        '</div></div>' +
+        '<div class="card" style="margin-bottom:12px">' +
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">' +
+        '<div style="flex:1;min-width:180px"><b style="font-size:13.5px">说话多少</b>' +
+        '<div class="muted" style="font-size:12px">1 档 = 只有被 @（或叫名字）才搭话；档位越高越爱插话</div></div>' +
+        '<div class="seg" id="chSrc">' + CHATS.map(([c, n]) =>
+          '<button data-ch="' + c + '"' + (c === curCh ? ' class="on"' : '') + '>' + n + '</button>').join('') + '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:12px">' +
+        '<input type="range" min="1" max="10" value="5" id="chattyRange" style="flex:1">' +
+        '<b id="chattyVal" style="font-size:20px;width:28px;text-align:right">…</b>' +
+        '</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:6px" id="chattyNote"></div>' +
+        '</div>' +
         '<div class="card hd"><table class="tbl"><tr><th>功能</th><th class="c">本机（pc）</th></tr>' +
         Object.keys(feats).map((k) => '<tr><td>' + esc(NAMES[k] || k) + '</td>' +
           '<td class="c"><button class="sw ' + (feats[k] ? 'on' : '') + '" data-f="' + esc(k) + '"></button></td></tr>').join('') +
         '</table></div>' +
         '<div class="muted" style="font-size:11.5px;margin-top:8px">开关按渠道存（features_by_src），这里是本机控制台（pc）渠道的开关，改完即时生效。App / 微信各渠道的在手机端调。</div>';
+
+      const range = v.querySelector('#chattyRange');
+      const valEl = v.querySelector('#chattyVal');
+      const noteEl = v.querySelector('#chattyNote');
+
+      async function loadLevel() {
+        valEl.textContent = '…';
+        const c = pick(await get('/api/chatty?src=' + curCh, { base: chBase() }));
+        const lvl = c.level || 5;
+        range.value = lvl;
+        valEl.textContent = lvl;
+        noteEl.textContent = curCh === 'pc'
+          ? '本机控制台的档位，存在本地。'
+          : '「' + chName() + '」的档位，存在云端大脑，改完下一句就生效。';
+      }
+      loadLevel();
+
+      v.querySelectorAll('#chSrc button').forEach((b) => b.addEventListener('click', () => {
+        if (curCh === b.dataset.ch) return;
+        curCh = b.dataset.ch;
+        v.querySelectorAll('#chSrc button').forEach((x) => x.classList.toggle('on', x === b));
+        loadLevel();
+      }));
+      range?.addEventListener('input', () => { valEl.textContent = range.value; });
+      range?.addEventListener('change', async () => {
+        const lvl = Number(range.value);
+        const r = pick(await post('/api/chatty', { level: lvl, src: curCh }, { base: chBase() }));
+        if (!r.ok && r._status === 0) { toast('保存失败：' + (r._err || '数据源不可达')); loadLevel(); return; }
+        toast('「' + chName() + '」说话多少：' + lvl + (lvl <= 1 ? '（只 @）' : ''));
+      });
+
       v.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', async () => {
         const on = !b.classList.contains('on');
         b.classList.toggle('on', on);
@@ -1492,12 +1544,6 @@
         const r = pick(await post('/api/features', patch));
         if (!r.ok) { b.classList.toggle('on', !on); toast('保存失败'); }
       }));
-      const range = v.querySelector('#chattyRange');
-      range?.addEventListener('input', () => { v.querySelector('#chattyVal').textContent = range.value; });
-      range?.addEventListener('change', async () => {
-        await post('/api/chatty', { level: Number(range.value) });
-        toast('说话多少：' + range.value);
-      });
     }
 
     const draw = { pl: plugins, sk: skills, ft: features };
