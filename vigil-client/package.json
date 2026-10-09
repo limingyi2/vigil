@@ -19,6 +19,7 @@
     "files": [
       "electron/**",
       "src/**",
+      "assets/**",
       "version.json",
       "package.json"
     ],

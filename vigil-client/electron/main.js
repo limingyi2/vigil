@@ -57,6 +57,11 @@ function showMainWindow() {
 function createTray() {
   if (tray || process.platform === 'linux') return;   // linux 没测过，不硬上
   const icon = path.join(__dirname, '..', 'assets', 'icon.ico');
+  // 2026-10-09：assets 曾经不在 build.files 里 → 打包后这个路径不存在，
+  // 托盘画出来是一块空白 —— 用户找不到入口也点不准。至少留句话在日志里。
+  if (!fs.existsSync(icon)) {
+    console.warn('[托盘] 图标不存在，会是空白图标：', icon);
+  }
   tray = new Tray(icon);
   tray.setToolTip('Vigil（点关闭只是躲到这里）');
   tray.setContextMenu(Menu.buildFromTemplate([
