@@ -330,9 +330,27 @@ def adopt_current_key(cfg):
     为什么需要：`api_keys` 是后来才有的，老配置里只有一把 `api_key`。
     不补这一步的话，界面会把每一家都显示成"还没存密钥"——
     而其中一家明明正拿着那把 key 在用。判据里要能区分"没配"和"配了没登记"。
+
+    🔴 老配置连 `provider` 字段都没有（云上实锤：api_base 有、provider 是
+    None）——不能因此直接放弃，要按 base 反推出是哪家（跟 current() 同一套
+    判断）。不然迁移永远空转：正在用的这家显示"还没存密钥"，切走再切回来
+    也得重填，"一键切换"对老用户等于没做。反推出来顺手把 provider 写回去，
+    apply_cfg 的"换走的是哪家"也靠这个字段。
     """
-    prov = str((cfg or {}).get("provider") or "").strip()
-    k = str((cfg or {}).get("api_key") or "").strip()
+    cfg = cfg or {}
+    prov = str(cfg.get("provider") or "").strip()
+    if not prov:
+        b = str(cfg.get("api_base") or "").lower()
+        for pid, meta in PROVIDERS.items():
+            if pid == "custom":
+                continue
+            host = str(meta.get("base") or "").lower()
+            if host and host in b:
+                prov = pid
+                break
+        if prov:
+            cfg["provider"] = prov
+    k = str(cfg.get("api_key") or "").strip()
     if not prov or not k or has_provider_key(cfg, prov):
         return False
     bag = dict(cfg.get("api_keys") or {})

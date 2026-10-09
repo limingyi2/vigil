@@ -1934,13 +1934,29 @@
       if (state.autoFail) v.querySelector('#autoHint').innerHTML = U.autoHintHtml(state.autoFail);
     }
 
-    async function model() {
+    async function model(pv) {
+      // pv（可选）{base, provider}：「重新拉取」后带着表单值重画 —— 不带的话
+      // 重画又按**已保存**的配置拉一遍，刚拉到的新家清单当场弹回旧家（实锤过）。
       ctx.topbar.querySelector('h1').textContent = '模型与服务商';
-      const r = pick(await get('/api/models' + (state.src !== 'app' ? '?src=' + state.src : '')));
-      if (!r.ok) { v.innerHTML = errBox('读不到模型配置', r._err || '先在「连接与设备」里把地址和 token 填对'); return; }
+      // 模型配置跟真身走：微信 / App 的她在云端，默认改云端的账；本机这份
+      // 只管 PC 控制台聊天那个大脑。跟数据页同一个套路（没配云端就只有本机）。
+      const live = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
+      const sync = (live && live.sync) || {};
+      const hasCloud = !!(sync.cloud_url && sync.cloud_token);
+      if (!state.mSrc) state.mSrc = hasCloud ? 'cloud' : 'local';
+      const mb = () => (hasCloud && state.mSrc === 'cloud') ? 'cloud' : null;
+      const mget = (p) => get(p, { base: mb() });
+      const mpost = (p, b) => post(p, b, { base: mb() });
+      const qs = [];
+      if (pv && pv.base) qs.push('base=' + encodeURIComponent(pv.base));
+      if (pv && pv.provider) qs.push('provider=' + encodeURIComponent(pv.provider));
+      const r = pick(await mget('/api/models' + (qs.length ? '?' + qs.join('&') : '')));
+      if (!r.current && !r.providers) { v.innerHTML = errBox('读不到模型配置', r._err || '先在「连接与设备」里把地址和 token 填对'); return; }
       const cur = r.current || {};
       const provs = r.providers || [];
       const groups = r.groups || {};
+      const hasKey = (p) => !!(cur.keys_by_provider && cur.keys_by_provider[p]);
+      const provName = (p) => (provs.find((x) => x.key === p) || {}).name || p;
       // 可输入的组合框：候选来自服务商的模型清单，但本地部署的 Qwen 之类
       // 清单里没有的，直接打字就行（保存时按输入原样提交）。
       const combo = (dlId, arr, sel, ph) =>
@@ -1949,12 +1965,24 @@
           const id = typeof m === 'string' ? m : (m.id || m.name);
           return '<option value="' + esc(id) + '">' + esc(id) + '</option>';
         }).join('') + '</datalist>';
-      v.innerHTML = '<div class="card" style="margin-bottom:14px">' +
+      const keyHintText = (c) => {
+        if (!c.api_key_set) return '还没配密钥。密钥一家一把（服务商后台能拿到），换家要换 key';
+        if (c.key_belongs_to && c.key_belongs_to !== c.provider)
+          return '⚠ 当前这把是「' + esc(provName(c.key_belongs_to)) + '」的密钥——这样她是调不通的，先填这一家的 key';
+        return '这把就是当前服务商的密钥。切回存过密钥的服务商不用重填';
+      };
+      v.innerHTML =
+        (hasCloud ? '<div class="seg" id="mSrc" style="margin-bottom:12px">' +
+          '<button data-ms="cloud"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>云端（微信 / App 的她）</button>' +
+          '<button data-ms="local"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑的她）</button></div>' : '') +
+        '<div class="card" style="margin-bottom:14px">' +
         '<div class="field"><label>服务商</label><select class="input" id="mProv">' +
-        provs.map((p) => '<option value="' + esc(p.key) + '"' + (p.key === cur.provider ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') +
-        '</select></div>' +
-        '<div class="field"><label>接口地址</label><input class="input mono" id="mBase" value="' + esc(cur.api_base || '') + '"></div>' +
-        '<div class="field"><label>密钥</label><input class="input" id="mKey" type="password" placeholder="' + (cur.api_key_set ? '已有一把，留空 = 不改' : '还没配') + '"></div>' +
+        provs.map((p) => '<option value="' + esc(p.key) + '"' + (p.key === cur.provider ? ' selected' : '') + '>' + esc(p.name) + (hasKey(p.key) ? '（已存密钥）' : '') + '</option>').join('') +
+        '</select><div class="muted" style="font-size:11.5px">选好服务商：地址自动填、清单自动拉；这家没存过密钥的话先填密钥</div></div>' +
+        '<div class="field"><label>接口地址</label><input class="input mono" id="mBase" value="' + esc(cur.api_base || '') + '">' +
+        '<div class="muted" style="font-size:11.5px">跟着服务商自动换，只有「自定义」才需要手填</div></div>' +
+        '<div class="field"><label>密钥</label><input class="input" id="mKey" type="password" placeholder="' + (cur.api_key_set ? '已有一把，留空 = 不改' : '还没配') + '">' +
+        '<div class="muted" style="font-size:11.5px" id="mKeyHint">' + keyHintText(cur) + '</div></div>' +
         '</div>' +
         '<div class="sec">模型分配（下拉选或直接输入；本地部署的 Qwen 填它的模型名）</div>' +
         '<div class="grid g3">' +
@@ -1969,25 +1997,64 @@
         '<button class="btn oline md" id="mPull">重新拉取模型</button>' +
         '<span class="muted" id="mRes" style="font-size:12px">来源：' + esc(r.source || '') + ' · 共 ' + esc(r.count || 0) + ' 个' +
         (r.err ? ' · ' + esc(String(r.err).slice(0, 60)) : '') + '</span></div>';
-      // 下拉换服务商：把「接口地址」联动成这一家的默认地址（自定义除外，保留手填）。
-      // 不做这一步的话，选完只改了服务商的名字，地址还停在上一家 —— 保存后
-      // 服务端拿旧地址 + 新服务商名去调，看着切了其实没切。
       const provSel = v.querySelector('#mProv');
       const baseInp = v.querySelector('#mBase');
-      provSel.addEventListener('change', () => {
-        const p = provs.find((x) => x.key === provSel.value);
-        if (p && p.key !== 'custom') baseInp.value = p.base || '';
-      });
-      v.querySelector('#mPull').addEventListener('click', async () => {
-        const base = v.querySelector('#mBase').value.trim();
-        const key = v.querySelector('#mKey').value.trim();
-        const rr = await get('/api/models?force=1&base=' + encodeURIComponent(base) + '&key=' + encodeURIComponent(key));
-        toast(rr.ok ? '已重新拉取' : '拉取失败');
+      const keyInp = v.querySelector('#mKey');
+      const keyHint = v.querySelector('#mKeyHint');
+      const mRes = v.querySelector('#mRes');
+      // 清单就地换血：只刷四个下拉的候选和来源行，不整页重画 —— 整页重画
+      // 会把用户刚输到一半的密钥洗掉。
+      const applyList = (rr) => {
+        const K = { mChat: 'chat', mVision: 'vision', mImage: 'image', mAudio: 'audio' };
+        Object.keys(K).forEach((id) => {
+          const dl = v.querySelector('#' + id + '_dl');
+          if (dl) dl.innerHTML = ((rr.groups || {})[K[id]] || []).map((m) => {
+            const mid = typeof m === 'string' ? m : (m.id || m.name);
+            return '<option value="' + esc(mid) + '">' + esc(mid) + '</option>';
+          }).join('');
+        });
+        mRes.textContent = '来源：' + esc(rr.source || '') + ' · 共 ' + esc(rr.count || 0) + ' 个' +
+          (rr.err ? ' · ' + esc(String(rr.err).slice(0, 60)) : '');
+      };
+      // 云端/本机切换：两边是两份独立配置，整页重画
+      if (hasCloud) v.querySelectorAll('#mSrc button').forEach((b) => b.addEventListener('click', () => {
+        if (state.mSrc === b.dataset.ms) return;
+        state.mSrc = b.dataset.ms;
         model();
+      }));
+      // 下拉换服务商：地址自动填 + 清单自动拉。这家没存过密钥、密钥框又空着
+      // 就先不拉 —— 服务端只能拿别家的 key 去试，必然 401，白拉一轮还吐出
+      // 一份兜底清单冒充这家的模型（"换了家模型却不变"就是它干的）。
+      const provPull = async () => {
+        const pk = provSel.value;
+        const p = provs.find((x) => x.key === pk);
+        if (p && p.key !== 'custom') baseInp.value = p.base || '';
+        if (pk === 'custom') return;
+        if (!hasKey(pk) && !keyInp.value.trim()) {
+          keyHint.innerHTML = '「' + esc(provName(pk)) + '」还没存过密钥——先在密钥框填它的 key，再点「重新拉取模型」';
+          return;
+        }
+        const rr = pick(await mget('/api/models?base=' + encodeURIComponent(baseInp.value.trim()) + '&provider=' + encodeURIComponent(pk)));
+        if (rr.groups) applyList(rr);
+        else mRes.textContent = '清单没拉到：' + (rr.err || rr._err || '先填这一家的密钥');
+      };
+      provSel.addEventListener('change', provPull);
+      v.querySelector('#mPull').addEventListener('click', async () => {
+        const base = baseInp.value.trim();
+        const pk = provSel.value;
+        const key = keyInp.value.trim();
+        const rr = pick(await mget('/api/models?force=1&base=' + encodeURIComponent(base) +
+          '&provider=' + encodeURIComponent(pk) +
+          (key ? '&key=' + encodeURIComponent(key) : '')));
+        toast(rr.groups && rr.source !== 'fallback' ? '已重新拉取'
+          : (rr.err ? '拉取失败：' + String(rr.err).slice(0, 60) : '拉取失败'));
+        // 带上刚用的 base/provider 重画，清单别弹回已保存的旧家；
+        // key 不回传（明文不进 URL），服务端存过这家的会自己认领。
+        model({ base: base, provider: pk });
       });
       // 语音合成音色（含训练音色）：/api/voices 是死数据清单，永远打得开。
       // pick() 返回的是普通对象不是 Promise，直接 await 拿结果。
-      const vr = pick(await get('/api/voices'));
+      const vr = pick(await mget('/api/voices'));
       const vItems = vr.items || [];
       if (vr.ok && vItems.length) {
         const card = document.createElement('div');
@@ -2014,26 +2081,48 @@
         v.appendChild(box);
         box.querySelector('#voiceApply').addEventListener('click', async () => {
           const key = box.querySelector('#voiceSel').value;
-          const rr = pick(await post('/api/voice/apply', { key: key }));
+          const rr = pick(await mpost('/api/voice/apply', { key: key }));
           toast(rr.ok ? '音色已切换：' + (rr.desc || key) : '切换失败：' + (rr._err || rr.err || ''));
           if (rr.ok) { const d = box.querySelector('.muted'); if (d) d.textContent = rr.desc || key; }
         });
       }
 
       v.querySelector('#mSave').addEventListener('click', async () => {
+        const pk = provSel.value;
+        const key = keyInp.value.trim();
+        // 护栏：切到一家"没存过密钥也没填新密钥"的，保存完她下一句就 401
+        //（服务端会保住旧 key 不乱动，但新家配别家的 key 照样调不通）。
+        if (pk !== cur.provider && !hasKey(pk) && !key) {
+          keyHint.innerHTML = '「' + esc(provName(pk)) + '」还没密钥——先填它的 key 再保存';
+          keyInp.focus();
+          return;
+        }
         const payload = {
-          provider: v.querySelector('#mProv').value,
-          api_base: v.querySelector('#mBase').value.trim(),
+          provider: pk,
+          api_base: baseInp.value.trim(),
           chat: v.querySelector('#mChat').value,
           vision: v.querySelector('#mVision').value,
           image: v.querySelector('#mImage').value,
           audio: v.querySelector('#mAudio').value,
         };
-        const key = v.querySelector('#mKey').value.trim();
         if (key) payload.api_key = key;
-        const rr = pick(await post('/api/models/apply', payload));
-        v.querySelector('#mRes').textContent = rr.ok ? '已生效' : '没保存成：' + (rr._err || '');
+        const rr = pick(await mpost('/api/models/apply', payload));
+        // 把服务端认账的改动原样亮出来（"服务商 → 小米 MiMo；已换上小米的密钥"），
+        // 切换成没成功一眼看得见，不再是干巴巴的"已生效"。
+        mRes.textContent = rr.ok
+          ? ((rr.changed && rr.changed.length) ? rr.changed.join('；') : '没有改动')
+          : '没保存成：' + (rr._err || rr.err || '');
         toast(rr.ok ? '已生效' : '保存失败');
+        if (rr.ok) {
+          cur.provider = pk;
+          if (key) {
+            (cur.keys_by_provider = cur.keys_by_provider || {})[pk] = true;
+            cur.key_belongs_to = pk;
+            cur.api_key_set = true;
+            keyInp.value = '';
+          }
+          keyHint.innerHTML = keyHintText(cur);
+        }
       });
     }
 

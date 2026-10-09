@@ -173,9 +173,11 @@ class TestAppHtml(unittest.TestCase):
         self.src = io.open(CHAT_HTML, encoding="utf-8").read()
 
     def _model_page(self):
-        """抠出模型页那段源码（含下拉与 change 处理），别整份文件里瞎找。"""
+        """抠出模型页那段源码（含下拉与 change 处理），别整份文件里瞎找。
+        2026-10-09 起模型页加了云端/本机切换和自动拉清单，函数变长了，
+        窗口跟着放宽（别掐得太紧把 change 处理截在外面）。"""
         i = self.src.index("async function model(")
-        return self.src[i:i + 6000]
+        return self.src[i:i + 12000]
 
     def test_provider_select_is_rendered_from_server_list(self):
         """下拉必须由 provs（服务端返回）渲染，不是写死的 option。"""
@@ -201,12 +203,14 @@ class TestAppHtml(unittest.TestCase):
 
         不做这一步：选完只改了服务商名字，地址还停在上一家 —— 服务端拿旧地址 +
         新服务商名去调，看着切了其实没切。
+        （2026-10-09 起处理抽进 provPull：按家查 provs 允许先用局部变量 pk
+        接住 provSel.value —— 钉的是"查了 provs"这件事本身。）
         """
         page = self._model_page()
         self.assertIn("provSel.addEventListener('change'", page,
                       "服务商下拉没有 change 处理")
-        self.assertIn("provs.find((x) => x.key === provSel.value)", page,
-                      "换服务商时没按 key 去 provs 里查这一家")
+        self.assertRegex(page, r"provs\.find\(\(x\) => x\.key === (provSel\.value|pk)\)",
+                         "换服务商时没按 key 去 provs 里查这一家")
         self.assertIn("baseInp.value = p.base", page,
                       "换服务商时没把这一家的默认地址带出来")
 

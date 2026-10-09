@@ -2220,10 +2220,20 @@ def start_remote_api(brain):
                     force = str(_query_param(self.path, "force") or "") == "1"
                     p_base = str(_query_param(self.path, "base") or "").strip()
                     p_key = str(_query_param(self.path, "key") or "").strip()
+                    p_prov = str(_query_param(self.path, "provider") or "").strip()
                     cur = model_hub.current(api_config)
                     if p_base:
+                        # 预拉用哪把 key：显式传的 > 这家**自己存的** > 当前那把。
+                        # 中间这层是给"切回存过密钥的老家"用的 —— 没有它，明知道
+                        # 用户切到了某家、那家的 key 也存着，却还拿当前家（别家）
+                        # 的 key 去试拉，必然 401，客户端只能看到一份兜底清单
+                        # 冒充这家的模型（"换了服务商模型列表不变"的元凶）。
+                        k = p_key
+                        if not k and p_prov in model_hub.PROVIDERS \
+                                and model_hub.has_provider_key(api_config, p_prov):
+                            k = model_hub.provider_key(api_config, p_prov)
                         cur = dict(cur, api_base=p_base,
-                                   api_key=p_key or cur.get("api_key") or "")
+                                   api_key=k or cur.get("api_key") or "")
                     lst = model_hub.list_models(cur["api_base"],
                                                 cur["api_key"], force=force)
                     # 回客户端用脱敏版：cur 里的真 key 只留在这一次调用里
