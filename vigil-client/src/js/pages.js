@@ -1565,7 +1565,11 @@
     // 微信真身的 stats/trace/history/log 账都在云端大脑（8788），本地 sidecar
     // 只有 pc 渠道的账 —— 这就是数据页曾经全 0 的根因。已配云端（设置 →
     // 云端同步）时默认看云端，没配则只有本机、不显示切换。
-    const sync = (state.cfg && state.cfg.sync) || {};
+    // 🔴 state.cfg 启动流程里没人填（loadCfg 只在设置页保存后被调），
+    // 直接从主进程拿实时配置 —— 用 state.cfg 的话 hasCloud 恒 false，
+    // 切换永远不出现、永远看本机的零（2026-10-09 实锤过）。
+    const live = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
+    const sync = (live && live.sync) || {};
     const hasCloud = !!(sync.cloud_url && sync.cloud_token);
     if (!state.dataSrc) state.dataSrc = hasCloud ? 'cloud' : 'local';
     const dget = (p) => get(p, { base: state.dataSrc === 'cloud' ? 'cloud' : null });
