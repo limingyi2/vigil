@@ -447,6 +447,18 @@ class Brain(object):
             return None
 
 
+# 🔴 微信"时间标签"（2026-10-09 用户报障）：聊天窗中间那种灰色居中的
+# "15:43 / 昨天 15:41 / 星期四 20:14 / 10月9日 16:00 / 下午 3:43"，
+# GetAllMessage 也会把它读回来 —— 不滤的话她会把时间当成一条消息去接话。
+# 必须整条匹配才滤（普通消息里带时间的句子不受影响）。
+TIME_LABEL_RE = re.compile(
+    r"^(?:昨天|前天|今天|去年|前年)?\s*"
+    r"(?:星期[一二三四五六日天]|\d{1,2}月\d{1,2}日)?\s*"
+    r"(?:上午|中午|下午|凌晨|晚上)?\s*"
+    r"\d{1,2}:\d{2}$"
+)
+
+
 class Bridge(object):
     def __init__(self, cfg):
         self.cfg = cfg
@@ -507,6 +519,9 @@ class Bridge(object):
         # 她最近发过的话。用来判断「这条是不是我自己说的」——
         # 昵称别人也能改，只认昵称会把同名的人误判成她自己。
         self._my_recent = set()
+        # 她最后一次发图（SendFiles 成功）的时刻 —— step() 里的自图回读
+        # 守卫靠它认出"这张图其实是他自己刚发的"（2026-10-09"发两遍"根因）。
+        self._last_self_img_ts = 0.0
         # 每个会话的**最近消息缓冲**（2026-10-09 群聊上下文修复）。
         # 触发她之前，群里可能已经聊了十句别的 —— 以前她只看到命中
         # 关键词的那一条，自然"分不清你们在聊什么、以为在跟她说话"。
@@ -1661,6 +1676,9 @@ class Bridge(object):
                     for _p in img_paths:
                         _tgt.SendFiles(_p)
                         print("[发送] 斗图已发: %s" % os.path.basename(_p))
+                    # 记下发图时刻 —— step() 的自图回读守卫靠它把下一轮
+                    # 读回来的这张图认出来跳过（2026-10-09"发两遍"修复）。
+                    self._last_self_img_ts = time.time()
                 except Exception as e:
                     print("[发送] 斗图发送失败: %s" % e)
                 finally:
@@ -1958,6 +1976,30 @@ class Bridge(object):
             # 判断"要不要理他"只需要 sender 和 content，不需要图本身。
             if self._is_mine(sender, content):
                 continue
+            # 🔴 时间标签过滤（2026-10-09）：聊天窗中间的灰色时间标签
+            # （"15:43"、"昨天 15:41"、"星期四 20:14"、"10月9日 16:00"）
+            # GetAllMessage 也会读回来，她会拿它当一条消息接话。
+            # type=time 直接认；内容整条长得像时间的也滤（防版本差异）。
+            _mt0 = str(getattr(mobj, "type", "") or "").strip().lower()
+            _ct0 = (content or "").strip()
+            if _mt0 == "time" or (_ct0 and TIME_LABEL_RE.match(_ct0)):
+                continue
+            # 🔴 自图回读守卫（2026-10-09"发两遍"真根因）：她 SendFiles
+            # 发出去的表情包，下一轮 GetAllMessage 又把这张图当新消息读回
+            # 来。sender 常常不是 'self' 而是她的昵称（或空）——文字路靠
+            # _my_recent 认内容，图认不了 → 被当成"他发来的图"再问一遍
+            # 视觉 → 她又回一条 + 又发一张 → 还会循环。
+            # 双保险：sender 是她昵称的图直接跳过；刚发完图 90 秒内的图
+            # 一律跳过（私聊里这 90 秒只有两个人，误伤远小于自问循环）。
+            if isinstance(img, _PendingImg):
+                _sd = str(sender or "").strip()
+                _now = time.time()
+                _mine_img = bool(self.my_name) and _sd == self.my_name
+                _ago = _now - getattr(self, "_last_self_img_ts", 0.0)
+                if _mine_img or _ago < 90:
+                    print("[跳过][%s] 她自己发的图读回来了（sender=%r，%.0fs 前发图）"
+                          % (chat, _sd or "?", _ago))
+                    continue
             self._last_active = time.time()
             # 上下文缓冲：**每条**群消息都记（含没触发她的）——她自己的
             # 发言由 _send 成功后记。放这里而不是各 continue 路径之后，
@@ -1997,6 +2039,7 @@ class Bridge(object):
                     try:
                         _tgt = self._sub if getattr(self, "_sub", None) is not None else self.wx
                         _tgt.SendFiles(_ipath)
+                        self._last_self_img_ts = time.time()
                         print("[console] screenshot sent")
                     except Exception as _e:
                         print("[console] send file failed: %s" % _e)
@@ -2013,6 +2056,7 @@ class Bridge(object):
                     try:
                         _tgt = self._sub if getattr(self, "_sub", None) is not None else self.wx
                         _tgt.SendFiles(_aimg)
+                        self._last_self_img_ts = time.time()
                     except Exception as _e:
                         print("[agent] send file failed: %s" % _e)
                 continue

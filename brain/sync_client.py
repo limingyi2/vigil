@@ -120,7 +120,10 @@ def _save_state(st):
         pass
 
 
-# --- 行为段（config.json 的 features / features_by_src / chatty）---
+# --- 行为段（config.json 的 features / features_by_src / chatty / persona_by_src）---
+# 🔴 persona_by_src 必须进同步（2026-10-09 用户踩坑）：渠道人设绑定是在
+# App 里改的（写本地 config），而微信消息真正由云端处理 —— 不同步的话，
+# App 里换人设永远"不生效"，云端还挂着旧的绑定（当时挂着麦麦群测人设）。
 
 def behavior_snapshot():
     """本地行为段的当前内容。云和本地用同一函数取，保证哈希口径一致。"""
@@ -129,6 +132,7 @@ def behavior_snapshot():
         "features": c.get("features") or {},
         "features_by_src": c.get("features_by_src") or {},
         "chatty": c.get("chatty") or {},
+        "persona_by_src": c.get("persona_by_src") or {},
     }
 
 
@@ -145,7 +149,7 @@ def behavior_apply(data):
         return False
     try:
         cfg = _read_cfg()
-        for k in ("features", "features_by_src", "chatty"):
+        for k in ("features", "features_by_src", "chatty", "persona_by_src"):
             if k in data:
                 cfg[k] = data.get(k)
         tmp = "%s.tmp%d" % (_CFG, os.getpid())

@@ -11,7 +11,7 @@
  *    Vigil / 渠道切换 / 窗口按钮要能落地，就不能用系统标题栏。
  *    代价是拖拽、最小化、关闭都要自己实现（见下面的 win:* 通道）。
  */
-const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -34,6 +34,45 @@ const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App �
 const CLIENT_SRC = 'pc';
 
 let win = null;
+
+// ── 托盘：点关闭 = 隐藏，不退出（2026-10-09 用户要求）──────────────
+// 她是常驻的：微信消息、本地操控轮询、转发通道都在这个进程里跑着。
+// 点 ✕ 把整个客户端杀掉 = 微信渠道的本地工具全断。所以：
+//   · 点关闭 → 窗口隐藏，进程照常活着（托盘图标还在）
+//   · 托盘单击 → 窗口回来；右键菜单 → 显示 / 退出
+//   · 只有托盘菜单里的"退出"才真正结束进程（quitting 放行 close）
+let tray = null;
+let quitting = false;
+
+function showMainWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function createTray() {
+  if (tray || process.platform === 'linux') return;   // linux 没测过，不硬上
+  const icon = path.join(__dirname, '..', 'assets', 'icon.ico');
+  tray = new Tray(icon);
+  tray.setToolTip('Vigil（点关闭只是躲到这里）');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示主界面', click: () => showMainWindow() },
+    { type: 'separator' },
+    { label: '退出', click: () => {
+        // 唯一的真退出入口：先放行 close，再走正常生命周期
+        quitting = true;
+        if (win && !win.isDestroyed()) win.close();
+        else app.quit();
+      } },
+  ]));
+  // 单击托盘图标 = 收起/唤回（Windows 习惯）
+  tray.on('click', () => {
+    if (!win || win.isDestroyed()) { createWindow(); return; }
+    if (win.isVisible() && !win.isMinimized()) win.hide();
+    else showMainWindow();
+  });
+}
 
 // ── 配置：地址、渠道这些非机密放普通文件；token 单独进钥匙串 ──────────────
 const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
@@ -289,6 +328,16 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+  // 🔴 点关闭 = 隐藏（2026-10-09）：拦截 close，窗口藏起来、进程活着。
+  // 真退出只走托盘菜单的"退出"（它先把 quitting 置真再 close）。
+  // 不拦的话 window-all-closed → app.quit()，微信渠道的本地工具
+  // 轮询、转发通道全部跟着一起死。
+  win.on('close', (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      win.hide();
+    }
   });
   win.on('closed', () => {
     win = null;
@@ -712,6 +761,8 @@ ipcMain.on('win:maximize', () => {
   win.isMaximized() ? win.unmaximize() : win.maximize();
   send('win:state', win.isMaximized());
 });
+// 自绘标题栏的 ✕：走 win.close() → 被 close 拦截器接住 → 隐藏进托盘
+// （真退出在托盘右键菜单，见 createTray。2026-10-09 起"点关闭=隐藏"）
 ipcMain.on('win:close', () => win && win.close());
 
 // ── 生命周期 ──────────────────────────────────────────────────────
@@ -722,7 +773,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     if (win) {
       win.isMinimized() && win.restore();
-      win.focus();
+      showMainWindow();
     }
   });
   app.whenReady().then(() => {
@@ -731,12 +782,17 @@ if (!app.requestSingleInstanceLock()) {
     sidecar.maybeStart(readCfg());   // 本地大脑先跑起来，窗口同时开
     sidecar.onState((s) => send('sidecar:state', s));
     createWindow();
+    createTray();                    // 常驻托盘：点关闭只是隐藏（2026-10-09）
     startPolling();                  // 本地操控的活从这儿进来
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 }
+
+// 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
+// 也会走 before-quit —— 那时必须放行 close，不然关不了机）
+app.on('before-quit', () => { quitting = true; });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
