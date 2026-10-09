@@ -1,12 +1,15 @@
 # Vigil
 
-一个常驻云端的对话 Agent。云端跑着它的大脑，桌面和手机是纯客户端。
+一个双大脑架构的常驻对话 Agent：**真身跑在云端**（微信 / App 的她），本机还有
+一份可以独立运行、离线也能聊的本地大脑。桌面客户端是控制台，手机 App 和微信
+是另外两个入口。
 
 **人格与项目无关。** 人格是 `brain/config/personas/*.json` 里各自定义的配置，
 仓库不预置角色。项目叫 Vigil，人格叫什么是人格自己的事。
 
-技术栈：Python 3.12 · PyQt6（桌面）· Android WebView（手机）·
-LLM 走 OpenAI 兼容接口 · 语音走阿里云百炼
+技术栈：Python 3.12 · Electron（桌面客户端）· PyQt6（桌宠，旧版）·
+Android WebView（手机）· Node（JS 技能宿主）· LLM 走 OpenAI 兼容接口 ·
+语音走阿里云百炼
 
 ---
 
@@ -14,8 +17,12 @@ LLM 走 OpenAI 兼容接口 · 语音走阿里云百炼
 
 | 章节 | 内容 |
 |---|---|
-| [装起来跑通](#装起来跑通) | 三个端各怎么启动 |
-| [配 API 与模型](#配-api-与模型) | 接哪个服务商、怎么换 |
+| [架构总览](#架构总览) | 双大脑怎么分工、谁权威 |
+| [装起来跑通](#装起来跑通) | 各端怎么启动 |
+| [双大脑与云端同步](#双大脑与云端同步) | 本地优先：改了什么怎么上云、微信怎么路由 |
+| [配 API 与模型](#配-api-与模型) | 接哪个服务商、密钥怎么管 |
+| [说话多少与搭话](#说话多少与搭话) | 话痨度滑条与 1 档只@ |
+| [桌面客户端](#桌面客户端) | Electron 控制台有什么、怎么发版 |
 | [写插件](#写插件) | 加一个工具/一个功能 |
 | [装技能（JS）](#装技能js) | 另一条通道 |
 | [本地知识库](#本地知识库) | 让她翻你自己的文档 |
@@ -27,9 +34,38 @@ LLM 走 OpenAI 兼容接口 · 语音走阿里云百炼
 
 ---
 
-## 装起来跑通
+## 架构总览
 
-三个端：大脑在云上，桌宠和手机都是纯客户端，自己那份本地存储只存界面状态。
+```
+   ┌──────────────────────┐                        ┌──────────────────┐
+   │ 桌面客户端 (Electron) │── HTTP（token 鉴权）──►│                  │
+   │  · 工作台 / 数据 / 设置 │                        │    云端大脑       │
+   │  · 自带本地大脑 sidecar │                        │   brain/server   │
+   └──────────────────────┘                        │      :8788       │
+                                                   │                  │
+   ┌──────────────────────┐                        │  记忆/人设/日记    │
+   │  Android App          │── HTTP ──────────────►│  朋友圈/图片      │
+   └──────────────────────┘                        │                  │
+                                                   │  ← 微信双大脑路由  │
+   ┌──────────────────────┐   独立仓库，见文末       │    ws_forward    │
+   │ 微信桥（wxauto 驱动）  │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ► └──────────────────┘
+   └──────────────────────┘
+
+   桌面客户端里的本地大脑（sidecar）↔ 云端大脑：单向推 + 定时拉的云端同步
+```
+
+三条原则：
+
+1. **云端是权威源**。记忆、人设、聊天分区、日记、朋友圈的账在云端大脑；
+   本地大脑是能独立运行的副本（本地优先架构，M1–M5）。
+2. **微信说的话在谁的脑子里想，是可以切的**（双大脑路由）。默认云端优先，
+   本地掉线云端自动接管直答，消息不丢。
+3. **客户端是壳**。桌面客户端、App 都不含人格与记忆，凭 token 连大脑；
+   每个客户端用主人钥匙换一把设备 token，能单独吊销。
+
+---
+
+## 装起来跑通
 
 ### 云端大脑
 
@@ -39,20 +75,20 @@ cp brain/config/config.example.json brain/config/config.json   # 填 api_key / t
 python brain/server.py                                          # 监听 :8788
 ```
 
-`brain_token` 没配时接口只接受本机回环。手机要连就得配，配完用
+`brain_token` 没配时接口只接受本机回环。公网要连就得配，配完用
 `Authorization: Bearer <token>` 走请求头。
 
 `fastembed` 第一次跑会下载 bge-m3 模型（记忆检索用），需要联网。
 
-### 桌面端
-
-桌宠走 SSH 隧道连云端，本地只监听 127.0.0.1:18787。
+### 桌面客户端（Electron）
 
 ```bash
-ssh -L 18787:127.0.0.1:8788 <user>@<server>       # 或双击 pet/launchers/run_pet_cloud.bat
-pip install -r pet/requirements.txt
-python pet/pet.py
+cd vigil-client && npm install && npm start
 ```
+
+启动后自动探测大脑：本机隧道 127.0.0.1:18787 → 本机 8788 → 自带的本地大脑
+（sidecar，PyInstaller 打包的 `vigil-brain.exe`，客户端会把它当子进程养起来）。
+没有云端时它就是一台完整的单机版：本地大脑独立跑，聊天照常。
 
 ### 手机端
 
@@ -62,28 +98,56 @@ python deploy/rebuild_apk.py
 
 装好后「我 → 设置」里填服务地址与 token，只需填一次。
 
+### 旧版桌宠（PyQt6）
+
+`pet/` 还在，能连云端跑，维护优先级已让位给 Electron 客户端。
+
 ---
+
+## 双大脑与云端同步
+
+本地优先架构（M1–M5）落成后的分工：
+
+| 能力 | 在哪 |
+|---|---|
+| 记忆 / 人设 / 聊天分区 / 日记 / 朋友圈 | **云端权威源**，本地一份可运行副本 |
+| 微信（私聊/群）谁作答 | 双大脑路由：`GET/POST /api/route` 秒切 |
+| 记忆/人设改动怎么上云 | 本地大脑 outbox → `/api/sync/flush`；seq 账本 + 墓碑 + 幂等 upsert |
+| 主人鉴权 | 工具按风险三档分级；私聊主人全放、群聊只放 safe 级 |
+
+- **同步凭据是两把钥匙**：客户端的设备 token 连本机大脑；云端路由 / 数据页
+  云端视角用的是云端同步凭据（`sync.cloud_url` + `sync.cloud_token`）。
+  配置在客户端「设置 → 云端同步」。
+- **微信路由**由挂在云端大脑上的 `ws_forward`（最小 WebSocket 转发）实现，
+  客户端切到"本地优先"时云端会等本地作答，本地掉线自动兜底直答。
+- **记忆管理**在客户端「人格与人格 → 记忆与约定」：分区浏览、行内改删，
+  走 `/api/memory/*`，改动立即进同步账本。
 
 ## 配 API 与模型
 
 改的是 `brain/config/config.json`（从 `config.example.json` 复制）。也可以在
-App「设置 → 模型」或 Web 面板「系统配置」里改，不用重启。
+客户端「设置 → 模型与服务商」或 App「设置 → 模型」里改，不用重启。
 
 ```json
 {
-  "provider": "xiaomi",
-  "api_base": "https://api.xiaomimimo.com/v1",
+  "provider": "siliconflow",
+  "api_base": "https://api.siliconflow.cn/v1",
   "api_key": "<你的 key>",
-  "chat": "mimo-v2.6-pro",
-  "vision": "",
-  "image": "",
-  "audio": ""
+  "api_keys": { "siliconflow": "<这家的 key>" },
+  "chat": "deepseek-ai/DeepSeek-V4-Flash",
+  "vision": "Qwen/Qwen3-VL-30B-A3B-Instruct"
 }
 ```
 
-- `chat` 对话模型，**必填**
-- `vision` / `image` / `audio` 留空就是不启用那项
-- `api_base` 结尾一般是 `/v1`；自建服务按它实际的路径填
+- `chat` 对话模型，**必填**；`vision` / `image` / `audio` 留空就是不启用
+- **密钥按家各存各的**（`api_keys`）：换服务商时自动换上那一把，切回存过
+  密钥的老家不用重填。客户端会在服务商下拉里标（已存密钥），密钥框下面
+  会显示当前这把属于哪家
+- 服务端预拉模型清单时按 `provider` 参数认领密钥：显式传入 > 这家自己存的 >
+  当前那把，三级回落。拿别家的 key 去试拉只会 401，这是"换了服务商模型
+  列表不变"的老坑，已钉死（见 `tests/test_model_provider_switch.py`）
+- 老配置没有 `provider`/`api_keys` 字段也没关系：启动时按接口地址反推并
+  自动登记（`model_hub.adopt_current_key`），幂等
 
 ### 加一家服务商
 
@@ -92,33 +156,59 @@ App「设置 → 模型」或 Web 面板「系统配置」里改，不用重启�
 ```python
 PROVIDERS = {
     "siliconflow": {"name": "硅基流动", "base": "https://api.siliconflow.cn/v1",
-                    "models_doc": "..."},
+                    "models_doc": "https://docs.siliconflow.cn"},
     "xiaomi":      {"name": "小米 MiMo",  "base": "https://api.xiaomimimo.com/v1",
                     "models_doc": "https://mimo.mi.com/docs"},
     "custom":      {"name": "自定义",     "base": "", "models_doc": ""},
 }
 ```
 
-加完重启，App 和面板上的服务商列表里自动多一家 —— 前端是按服务端返回的
-`providers` 渲染的，不用改前端代码。
+加完重启，客户端和 App 的服务商列表里自动多一家 —— 前端按服务端返回的
+`providers` 渲染，不用改前端代码。选好服务商：接口地址自动带出、模型清单
+自动拉；本地部署（Ollama / LM Studio / vllm）选「自定义」手填地址。
 
-模型列表由服务端问服务商的 `/v1/models` 拉，按名字关键字自动分成
-对话 / 看图 / 生图 / 语音四栏；拉不到就退回内置清单，界面会标明这份可能不全。
-点「重新拉取」会跳过缓存重新问一次（换 key 之后必须点）。
+模型清单由服务端问服务商的 `/v1/models` 拉，按名字关键字自动分成
+对话 / 看图 / 生图 / 语音四栏（视觉版有正则兜底：`glm-<版本号>v` 这种
+命名子串匹配钉不住）；拉不到就退回内置清单，界面会标明来源。
 
 > 兜底清单里的模型 id 要照实测写，照文档抄会给出选不上的项。
+> "思考默认开启"的模型当看图模型时 `max_tokens` 要给大，不然推理把
+> token 吃光、正文为空，看着像"不支持图"。
 
-### 其他要配的
+## 说话多少与搭话
 
-| 配置项 | 在哪 | 说明 |
-|---|---|---|
-| `brain_token` | `config.json` | 主人钥匙：配了它接口就要鉴权，客户端设置页填同一个 |
-| 设备注册 | `data/devices.json` | 每个客户端用主人钥匙换一把**设备 token**，能单独吊销；表里只存哈希 |
-| 主动搭话 | `config.json` | 什么时段、间隔多久 |
-| 人格 | `brain/config/personas/*.json` | 见下面[改人设](#改人设) |
-| 版本号 | `version.json` | 构建时注入到 APK |
+`brain/chatty.py`：话痨度 1–10，按渠道（App / 微信私聊 / 微信群 / 本机）
+各存一份，客户端「能力 → 功能开关」里是滑条，App/微信渠道直改云端。
 
----
+- 2 档以上：搭话判定照旧，判定不过再按 `(档位-1)/9 × 0.45` 的概率救回
+- **1 档 = 只@硬闸**（`plugins/gate.py`）：被@、@所有人、叫名字才开口，
+  不问模型直接判；名字匹配会兜底人设的 `nicknames` 和 `name`
+
+## 桌面客户端
+
+`vigil-client/`，Electron。功能面：
+
+- **工作台**：聊天（流式）、聊天输入框旁的盾牌面板管本地操控授权
+- **数据**：云端/本机两个视角切换 —— 微信渠道的账在云端，本机只有
+  PC 控制台自己的账，全 0 不是 bug 是口径
+- **人格与记忆**：人设编辑/热切换直达云端；记忆分区管理；知识库导入
+- **能力与扩展**：功能开关（滑条按渠道）、本地操控（她在你这台电脑上干活，
+  全程确认气泡 + 操作日志 + 撤销）、生活面板
+- **连接与系统**：本地大脑状态/重启、模型与服务商、云端同步、危险操作
+- **常驻**：托盘图标（左键显示/隐藏，右键退出）、推送更新
+
+### 推送更新（桌面客户端自己的一套）
+
+发版四步：
+
+1. 改 `vigil-client/version.json` 的 `code` +1（打进 asar，`readLocalCode` 读它）
+2. `npx electron-builder --win -c.directories.output=dist_newX`（输出目录每次换新）
+3. 上传 Setup exe 到云端 `app/client/VigilSetup.exe`
+4. 更新同目录 `client_version.json`（code / ver / notes / sha256 / size）
+
+之后客户端启动 15 秒、每小时各查一次 `/api/client/version`；发现新版弹窗
+询问，同意后下载（进度写窗口标题）→ sha256 校验 → 起安装向导覆盖装。
+下载走 `/api/client/setup`，256KB 分块流式，不整块吃内存。
 
 ## 写插件
 
@@ -259,8 +349,7 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 只留工具。
 
 接口都在 `/api/plugin/kb/*`，靠插件机制接线，**没改 `server.py`**。
-零 API 成本的做法（用 D 盘那份 4.3G 的 bge-m3 本地跑）见
-[`docs/本地知识库.md`](docs/本地知识库.md)。
+零 API 成本的做法见 [`docs/本地知识库.md`](docs/本地知识库.md)。
 
 ---
 
@@ -278,62 +367,47 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 }
 ```
 
-- `name` 她自称什么
+- `name` 她自称什么（也是"叫名字"判定的兜底）
 - `nicknames` 群里 @ 她、或者直接叫名字时，靠这个判断是不是在叫她
 - `notes` 整份人设正文，粘进去就行
 
-改完热更新，不用重启。
+改完热更新，不用重启。客户端人设页的编辑/切换**直达云端**（真身在云端，
+打到本地 sidecar 就是"切了没变"），保存时卡片显示名跟随 `name`。
 
-### 换人格会换记忆分区
+### 按渠道绑不同人设
+
+`persona_by_src` 指定每个渠道用哪份人设（App / 微信私聊 / 微信群 / 本机可以
+各是不同的人）。换人设会换记忆分区：
 
 🔴 记忆、摘要、存档都按 `人设key.渠道` 算。换成另一个 key 就是**一片空白**
 ——旧记忆还在，只是不会再被检索到。所以换人格前想清楚。
 
-配置里用 `persona_file` 指定当前用哪一份，App 和面板改人设会热切换。
-
----
-
 ## 功能开关
 
-`brain/features.py`，按「人设 × 渠道」存。App 和面板都能点，改完即时生效。
+`brain/features.py`，按「人设 × 渠道」存。客户端和 App 都能点，改完即时生效。
 
 - 全局 `features` 段 = 任何渠道都没覆盖时的初值
 - `features_by_src.<渠道>` = 该渠道的覆盖
 
 ⚠️ 读写必须同一套规则。历史上读和写不一致过（界面显示已关、运行时其实全开），
-最难排查的一类坑。测试见 `_test_features_src.py`。
-
----
+最难排查的一类坑。
 
 ## 模块表
 
-```
-   ┌────────────────┐   SSH 隧道 18787 → 8788    ┌──────────────┐
-   │ 桌宠 pet（Win）│ ──────────────────────────► │              │
-   └────────────────┘                            │  云端大脑     │
-   ┌────────────────┐   HTTP :8788（token 鉴权） │ brain/server │
-   │  Android App   │ ──────────────────────────► │              │
-   └────────────────┘                            └──────┬───────┘
-                                                        │
-                         记忆 / 摘要 / 约定账本 / 日记 / 朋友圈 / 图片
-```
-
-大脑只有一份，在云端。`brain/server.py` 原来是个 2200 行的单文件，
-按领域拆成 runtime / reply / randimg / selfie / imggen / proactive /
-moment_flow / jobs 等模块，对外接口零变化。
-
 | 模块 | 作用 |
 |---|---|
-| `brain/server.py` | HTTP 服务与全部路由：装配大脑、聊天管线 |
+| `brain/server.py` | HTTP 服务与全部路由：装配大脑、聊天管线、推送更新源 |
 | `brain/brain.py` | 决策核心：上下文组装、人设注入、失败兜底 |
 | `brain/persona_store.py` | 人设：白名单字段、关系档、身份底线 |
 | `brain/memory_store_v2.py` | 长期记忆，bge-m3 向量检索 |
 | `brain/recap_store.py` | 历史摘要，日→周→月三层压缩，按人设 × 渠道分区 |
 | `brain/agenda.py` | 约定账本：到期提醒，过期标 missed |
 | `brain/tools.py` | 工具调用：原生 function calling + 兼容标签解析 |
-| `brain/model_hub.py` | 服务商表、模型列表拉取与分组 |
+| `brain/model_hub.py` | 服务商表、密钥按家存、模型清单拉取与分组 |
 | `brain/planner.py` | 多步规划：判是否需要规划、逐步执行、结果核对 |
 | `brain/chatty.py` | 话痨度（1~10），按渠道各一份 |
+| `brain/ws_forward.py` | 微信双大脑路由的 WebSocket 转发（最小 RFC6455 实现） |
+| `brain/sync_client.py` / `sync_outbox.py` | 本地 → 云端的记忆/人设同步 |
 | `brain/paths.py` | 分区路径：记忆 / 摘要 / 存档按「人设 × 渠道」算 |
 | `brain/life_engine.py` | 她的生活推演与日记 |
 | `brain/moments.py` | 朋友圈 |
@@ -343,26 +417,11 @@ moment_flow / jobs 等模块，对外接口零变化。
 | `brain/plugin_ops.py` | 插件管理面：装卸 .zip、元数据、渠道开关 |
 | `brain/kb/` | 本地知识库（RAG）：切块、嵌入、检索；`plugins/kb.py` 负责接线 |
 | `brain/skill_host/` | JS 技能的 Node 宿主 |
-| `pet/` | Windows 桌宠（PyQt6） |
-| `vigil-client/` | 桌面客户端（Electron）；排版定稿在 `docs/client-layout-v1.html` |
+| `vigil-client/` | 桌面客户端（Electron）：控制台 + 本地大脑宿主 + 推送更新 |
+| `pet/` | Windows 桌宠（PyQt6，旧版入口） |
 | `android-app/` | Android 客户端 |
 | `admin/` | Web 管理面板（单文件 html） |
-| `wechat_bridge/` | 微信接话，**独立仓库** |
-
-### 微信接话
-
-拆到 [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge) 了。
-两边没有代码级依赖，靠三个值对接：服务地址、token、微信登录态 ——
-都只存在各自机器的本地配置里。
-
-### 仓库关系
-
-| 仓库 | 放什么 |
-|---|---|
-| 本仓库 | 大脑、桌宠、App、管理面板、插件与技能 |
-| [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge) | 微信接话脚本、虚拟机控制、安全闸 |
-
----
+| `tests/` | 不联网的回归用例；发版前过 `docs/回归检查表.md` |
 
 ## 构建 APK
 
@@ -375,8 +434,6 @@ python deploy/rebuild_apk.py --version 29 --name 5.5   # 顺便升版本号
 构建脚本往里注入 `APP_CODE` 和服务地址，打完还原成空占位 ——
 所以仓库里那份看到 `APP_CODE = 0` 是正常的。
 
----
-
 ## 测试
 
 ```bash
@@ -387,9 +444,13 @@ python -m unittest discover -s tests -t tests
 不联网、不读真实配置。CI 在每个 push 上跑这套用例 + 一次全仓 `compileall`。
 
 新增用例当天就靠它抓出过多个真 bug（人设静默回退、插件静默失效、
-密钥泄露、面板改了但不生效）。
+密钥泄露、面板改了但不生效、模型页密钥错配）。
 
----
+## 微信接话
+
+拆到独立仓库 [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)。
+两边没有代码级依赖，靠三个值对接：服务地址、token、微信登录态 ——
+都只存在各自机器的本地配置里。
 
 ## 文档
 
@@ -399,13 +460,12 @@ python -m unittest discover -s tests -t tests
 | [`本地知识库.md`](docs/本地知识库.md) | 知识库和记忆为什么是两回事、嵌入三条后端怎么选、门槛为什么是 0.45 |
 | [`JS技能支持.md`](docs/JS技能支持.md) | 两条通道为什么不能合并、Node 宿主的契约 |
 | [`设计与取舍.md`](docs/设计与取舍.md) | 能力构成、踩过的坑、实测数据 |
+| [`客户端详细架构方案-v2.0.md`](docs/客户端详细架构方案-v2.0.md) | 桌面客户端的架构与演进 |
+| [`回归检查表.md`](docs/回归检查表.md) | 发版前必过的七节检查 |
+| [`微信接入方案.md`](docs/微信接入方案.md) / [`微信群聊接入.md`](docs/微信群聊接入.md) | 微信两端怎么接、坑在哪 |
 | [`推理架构方案-ReAct-Plan-思维链.md`](docs/推理架构方案-ReAct-Plan-思维链.md) | 哪些能力能挪到本地、哪些必须留在云端 |
 | [`时间感与主动性修复.md`](docs/时间感与主动性修复.md) | 她分不清"刚说的"和"六小时前说的"怎么修的 |
-| [`人设瘦身对照.md`](docs/人设瘦身对照.md) | 提示词瘦身前后的逐条对照 |
 | [`语音平台成本对比.md`](docs/语音平台成本对比.md) | 各家月成本换算 |
-| [`游戏内录音取样指南.md`](docs/游戏内录音取样指南.md) | 想换音色时怎么录、哪些角色没有公开数据集 |
-
----
 
 ## 许可
 
