@@ -636,6 +636,17 @@ ipcMain.handle('local:reveal', (_e, p) => {
 ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null }) => {
   if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
   const cfg = readCfg();
+  // 🔴 数据页云端视角（2026-10-09）：base='cloud' 改走云端大脑，鉴权用
+  // 云端同步凭据（跟本机设备 token 是两把钥匙）。微信渠道的账全在云端，
+  // 不分流的话数据页永远是本机 sidecar 的零。
+  if (base === 'cloud') {
+    const sync = cfg.sync || {};
+    const cb = String(sync.cloud_url || '').replace(/\/+$/, '');
+    if (!cb || !sync.cloud_token) {
+      return { ok: false, status: 0, err: '还没配云端（设置 → 云端同步）' };
+    }
+    return request(method, cb + p, body, sync.cloud_token);
+  }
   const b = (base || cfg.base || DEFAULT_BASE).replace(/\/+$/, '');
   const src = cfg.src || CLIENT_SRC;
   // 渠道用 query 带上：服务端按 src 分区（features / history / persona 都吃这个）。

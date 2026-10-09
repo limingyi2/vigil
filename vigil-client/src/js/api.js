@@ -23,18 +23,20 @@
     autoFail: null,      // 启动时自动探测失败的结果（设置页拿它显示原因）
   };
 
-  async function api(method, path, body) {
+  async function api(method, path, body, opts) {
     if (!global.vigil) return { ok: false, status: 0, err: '不在 Electron 里（缺少 preload 桥）' };
     try {
-      const r = await global.vigil.api(method, path, body);
+      const r = await global.vigil.api(method, path, body, opts);
       return r || { ok: false, status: 0, err: '空响应' };
     } catch (e) {
       return { ok: false, status: 0, err: String(e && e.message || e) };
     }
   }
 
-  const get = (p) => api('GET', p);
-  const post = (p, b) => api('POST', p, b || {});
+  // opts.base = 'cloud' → 主进程改打云端大脑（cfg.sync.cloud_url + cloud_token），
+  // 其余值 / 不传 → 本地 sidecar（设备 token）。云端路由见 electron/main.js。
+  const get = (p, opts) => api('GET', p, null, opts);
+  const post = (p, b, opts) => api('POST', p, b || {}, opts);
 
   /** 拿 JSON；失败时把 status/err 一起带出来，页面好显示 */
   function pick(r) {

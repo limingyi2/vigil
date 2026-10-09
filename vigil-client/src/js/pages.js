@@ -1515,14 +1515,34 @@
     ctx.panel.innerHTML = '<div class="phead"><h2>数据</h2></div><div class="plist">' +
       subs.map(([k, n], i) => li({ icon: k === 'ov' ? 'chart' : k === 'tok' ? 'activity' : k === 'lg' ? 'book' : k === 'tr' ? 'term' : 'chat', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
-    ctx.topbar.innerHTML = topbar('概览', '', '<button class="btn oline" id="dRe">' + icon('refresh', 'sm') + '刷新</button>');
+    // ── 云端 / 本机 双数据源 ──
+    // 微信真身的 stats/trace/history/log 账都在云端大脑（8788），本地 sidecar
+    // 只有 pc 渠道的账 —— 这就是数据页曾经全 0 的根因。已配云端（设置 →
+    // 云端同步）时默认看云端，没配则只有本机、不显示切换。
+    const sync = (state.cfg && state.cfg.sync) || {};
+    const hasCloud = !!(sync.cloud_url && sync.cloud_token);
+    if (!state.dataSrc) state.dataSrc = hasCloud ? 'cloud' : 'local';
+    const dget = (p) => get(p, { base: state.dataSrc === 'cloud' ? 'cloud' : null });
+    const dpost = (p, b) => post(p, b, { base: state.dataSrc === 'cloud' ? 'cloud' : null });
+    const srcSeg = () => !hasCloud ? '' :
+      '<div class="seg" id="dSrc"><button data-ds="cloud"' + (state.dataSrc === 'cloud' ? ' class="on"' : '') + '>云端</button>' +
+      '<button data-ds="local"' + (state.dataSrc === 'local' ? ' class="on"' : '') + '>本机</button></div>';
+    // 数据源够不着（云端没配 / 大脑离线）时不渲染一堆假 0，给一句能看懂的话
+    const fail = (r) => {
+      if (r && r.ok) return false;
+      v.innerHTML = '<div class="wrap">' + empty(state.dataSrc === 'cloud' ? '云端数据源不可达' : '本机数据源不可达',
+        (r && (r._err || (r._status ? 'HTTP ' + r._status : ''))) || '') + '</div>';
+      return true;
+    };
+    ctx.topbar.innerHTML = topbar('概览', '', srcSeg() + '<button class="btn oline" id="dRe">' + icon('refresh', 'sm') + '刷新</button>');
     ctx.view.innerHTML = '<div class="wrap" id="dView"></div>';
     const v = ctx.view.querySelector('#dView');
     const cur = () => ctx.topbar.querySelector('h1').textContent;
 
     async function ov() {
       ctx.topbar.querySelector('h1').textContent = '概览';
-      const s = pick(await get('/api/stats'));
+      const s = pick(await dget('/api/stats'));
+      if (fail(s)) return;
       const tIn = Number(s.tok_in) || 0, tOut = Number(s.tok_out) || 0;
       v.innerHTML = '<div class="grid g4" style="margin-bottom:14px">' +
         '<div class="card kpi"><div class="lb">今日轮次</div><div class="v">' + esc(fmtNum(s.turns || 0)) + '</div></div>' +
@@ -1550,8 +1570,9 @@
     async function tok() {
       ctx.topbar.querySelector('h1').textContent = 'Token 分析';
       v.innerHTML = '<div class="wrap"><div class="muted" style="padding:20px 0">加载中…</div></div>';
-      const [s, r] = await Promise.all([get('/api/stats'), get('/api/trace?last=500')]);
+      const [s, r] = await Promise.all([dget('/api/stats'), dget('/api/trace?last=500')]);
       const st = pick(s);
+      if (fail(st)) return;
       const items = (pick(r).items || []).slice()
         .filter((x) => x && x.t != null)
         .sort((a, b) => toMs(a.t) - toMs(b.t));
@@ -1646,7 +1667,8 @@
 
     async function tr() {
       ctx.topbar.querySelector('h1').textContent = '对话 Trace';
-      const r = pick(await get('/api/trace?last=60'));
+      const r = pick(await dget('/api/trace?last=60'));
+      if (fail(r)) return;
       const items = r.items || [];
       if (!items.length) { v.innerHTML = empty('还没有 Trace', '聊几句就有了'); return; }
       // 合计只数带 token 上报的轮次，缺字段的轮不掺进总数里（宁缺毋错）
@@ -1680,14 +1702,16 @@
     async function hi() {
       ctx.topbar.querySelector('h1').textContent = '聊天历史';
       // 控制台视角：本机是自己的会话，App / 微信的往来在这儿只读查看
-      const CHANS = [['pc', '本机'], ['app', 'App'], ['wechat', '微信']];
+      // （云端视角下微信群聊的账在 wechat_group 分区，也得能看）
+      const CHANS = [['pc', '本机'], ['app', 'App'], ['wechat', '微信'], ['wechat_group', '微信群']];
       v.innerHTML = '<div class="seg" style="margin-bottom:12px">' +
         CHANS.map(([c, n], i) => '<button data-hc="' + c + '"' + (i === 0 ? ' class="on"' : '') + '>' + n + '</button>').join('') +
         '</div><div id="hcList"></div>';
       const box = v.querySelector('#hcList');
       let curHC = 'pc';
       const load = async () => {
-        const r = pick(await get('/api/history?limit=200&src=' + curHC));
+        const r = pick(await dget('/api/history?limit=200&src=' + curHC));
+        if (fail(r)) return;
         const items = r.items || [];
         box.innerHTML = items.length ? '<div class="card" style="padding:14px">' +
           items.map((m) => {
@@ -1708,7 +1732,8 @@
 
     async function lg() {
       ctx.topbar.querySelector('h1').textContent = '日志';
-      const r = pick(await get('/api/logs?src=server&n=200'));
+      const r = pick(await dget('/api/logs?src=server&n=200'));
+      if (fail(r)) return;
       const items = r.items || [];
       v.innerHTML = '<div class="card hd"><div class="h"><h3>服务端日志</h3><div class="sp"></div>' +
         '<button class="btn oline" id="lgClear">清空</button></div>' +
@@ -1719,7 +1744,7 @@
           '</div>').join('') : empty('没有日志')) + '</div>';
       v.querySelector('#lgClear')?.addEventListener('click', async () => {
         if (!confirm('清空服务端日志？')) return;
-        await post('/api/logs/clear', { src: 'server' });
+        await dpost('/api/logs/clear', { src: 'server' });
         lg();
       });
     }
@@ -1729,11 +1754,18 @@
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[k] && draw[k]();
     });
-    ctx.topbar.querySelector('#dRe').addEventListener('click', () => {
-      const name = cur();
-      const k = { 概览: 'ov', 'Token 分析': 'tok', '对话 Trace': 'tr', 聊天历史: 'hi', 日志: 'lg' }[name] || 'ov';
+    const reRender = () => {
+      const k = { 概览: 'ov', 'Token 分析': 'tok', '对话 Trace': 'tr', 聊天历史: 'hi', 日志: 'lg' }[cur()] || 'ov';
       draw[k]();
-    });
+    };
+    ctx.topbar.querySelector('#dRe').addEventListener('click', reRender);
+    // 云端 ↔ 本机切换：按下后用新数据源重画当前子页
+    ctx.topbar.querySelectorAll('#dSrc button').forEach((b) => b.addEventListener('click', () => {
+      if (state.dataSrc === b.dataset.ds) return;
+      state.dataSrc = b.dataset.ds;
+      ctx.topbar.querySelectorAll('#dSrc button').forEach((x) => x.classList.toggle('on', x === b));
+      reRender();
+    }));
     ov();
   }
 
