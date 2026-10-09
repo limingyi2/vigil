@@ -71,20 +71,22 @@ const tokenFile = () => path.join(app.getPath('userData'), 'token.json');
 
 async function getToken() {
   const cfg = readCfg();
-  // 设备模式：用设备 token（存在 token.json），不用 keytar 里的 brain token
+  // 设备模式：用设备 token（不用 keytar 里可能还是主人钥匙的旧槽位）。
+  // 读取顺序必须和 setToken 的写入顺序**对称**（都是钥匙串优先）：
+  // 曾经这边文件优先，结果 setToken 更新了钥匙串、token.json 停在上一把
+  // token，一读到旧值就直接用 → 全部 401（2026-10-09 实锤一次：大脑设备表
+  // 重建后客户端看起来"注册成功"却永远拿旧 token 被拒）。
   if (cfg.token_kind === 'device' && cfg.device_id) {
+    if (keytar) {
+      try {
+        const t = await keytar.getPassword(KEY_SERVICE, KEY_ACCOUNT);
+        if (t) return t;
+      } catch (e) { /* 读不到就算了，往下走文件兜底 */ }
+    }
     try {
       const j = JSON.parse(fs.readFileSync(tokenFile(), 'utf8'));
       if (j.token) return j.token;
-    } catch (e) { /* 文件没有/坏了，往下走钥匙串兜底 */ }
-    // 🔴 setToken 在 keytar 可用时把设备 token 写进了钥匙串（同一个槽位），
-    // 这边却只翻文件 —— keytar 一正常，设备模式就拿空 token、全部 401。
-    // 所以两条路都得能读：文件优先（老习惯），没有再看钥匙串。
-    if (keytar) {
-      try {
-        return (await keytar.getPassword(KEY_SERVICE, KEY_ACCOUNT)) || '';
-      } catch (e) { /* 读不到就算了 */ }
-    }
+    } catch (e) { /* 文件没有/坏了 */ }
     return '';
   }
   if (keytar) {
@@ -103,21 +105,31 @@ async function getToken() {
 
 async function setToken(token) {
   const t = String(token || '');
+  let store = null;
   if (keytar) {
     try {
       if (t) await keytar.setPassword(KEY_SERVICE, KEY_ACCOUNT, t);
       else await keytar.deletePassword(KEY_SERVICE, KEY_ACCOUNT);
-      return { ok: true, store: 'keytar' };
+      store = 'keytar';
     } catch (e) {
       console.warn('[配置] 写钥匙串失败：', e.message);
     }
   }
+  // 两个存储**都写**（文件永远陪写一份）：只写钥匙串的话 token.json 会停在
+  // 上一把 token，哪天一边比另一边新，读哪边都是赌（2026-10-09 的 401 事故
+  // 就是这么来的）。
   try {
     fs.writeFileSync(tokenFile(), JSON.stringify({ token: t }), 'utf8');
-    return { ok: true, store: 'file', warn: 'keytar 不可用，token 存在本地文件里' };
+    store = store ? store + '+file' : 'file';
   } catch (e) {
-    return { ok: false, err: e.message };
+    if (!store) return { ok: false, err: e.message };
+    console.warn('[配置] 写 token 文件失败（钥匙串已更新）：', e.message);
   }
+  return {
+    ok: true,
+    store,
+    warn: store === 'file' ? 'keytar 不可用，token 存在本地文件里' : '',
+  };
 }
 
 // ── HTTP：一个入口，鉴权头在这里统一加 ──────────────────────────────
@@ -279,6 +291,20 @@ sidecar.init(app, readCfg);
 
 async function registerThisDevice(base, brainToken) {
   const cfg = readCfg();
+  // 已有设备 token 先验一下，**有效就复用、不再注册**。不然每次启动/
+  // 每次重连都发一台"新设备"，设备表一天能攒十几台同名垃圾
+  // （2026-10-09 实锤：12 台全叫 adw）。服务端故意不做同名去重
+  // （两台真电脑可能同名），所以复用只能靠客户端自觉。
+  if (cfg.token_kind === 'device' && cfg.device_id) {
+    const old = await getToken();
+    if (old) {
+      const chk = await request('GET', base + '/api/device/list', null, old);
+      if (chk.ok && chk.json && chk.json.ok && chk.json.me === cfg.device_id) {
+        return { ok: true, device_id: cfg.device_id, reused: true };
+      }
+    }
+    // 401/不匹配 → 掉到下面重新注册，正好完成自愈
+  }
   const r = await request('POST', base + '/api/device/register', {
     device_name: os.hostname() || '这台电脑',
     device_type: 'desktop',
