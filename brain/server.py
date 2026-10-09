@@ -1385,6 +1385,33 @@ def start_remote_api(brain):
                         _proactive_note_user()   # 他说话了：给自适应频率喂反馈
                     except Exception:
                         pass
+                    # ── 群聊上下文（2026-10-09）─────────────────────────
+                    # 桥接随消息透传最近几条群聊（body.context）。以前她被
+                    # 叫到名字才抬头，看到的就是孤零零一句"除了贵"——接什么
+                    # 都靠猜；闸门更惨（它找的 brain.recent_msgs 属性从来
+                    # 不存在，永远"最近在聊：（没历史）"）。
+                    # 拼进 _in_text：大脑看得到；**不进 _disp**：存档里她的
+                    # 历史仍是一句一条，不污染（display 机制，见
+                    # ask_with_retry）。注意：放快递注册之后 —— 前情里别人
+                    # 贴的单号不该被注册进监控。
+                    _ctx_for_gate = ""
+                    _raw_ctx = body.get("context")
+                    if isinstance(_raw_ctx, (list, tuple)):
+                        _ctx_lines = [str(x).strip() for x in _raw_ctx
+                                      if str(x).strip()]
+                    elif isinstance(_raw_ctx, str) and _raw_ctx.strip():
+                        _ctx_lines = [x.strip() for x in _raw_ctx.splitlines()
+                                      if x.strip()]
+                    else:
+                        _ctx_lines = []
+                    if _ctx_lines:
+                        _ctx_lines = _ctx_lines[-12:]
+                        _ctx_for_gate = "\n".join(_ctx_lines)
+                        _in_text = ("[群聊前情，仅供你了解大家在聊什么，"
+                                    "别逐条回应]\n%s\n[最新一条消息]\n%s"
+                                    % (_ctx_for_gate, _disp))
+                        print("[群聊上下文] 带了 %d 条前文" % len(_ctx_lines),
+                              flush=True)
                     # 插件的入站钩子（on_turn_in）：各插件看一句他说了什么，
                     # 需要就返回一段要注入 system 的提示（提醒插件靠它把
                     # "手上还有哪些到点要喊的事"喂进上下文）。
@@ -1401,6 +1428,11 @@ def start_remote_api(brain):
                         _tctx = _ph.Turn(text=_disp, src=_src,
                                          api_config=API_CFG,
                                          brain=_LOCAL["brain"])
+                        if _ctx_for_gate:
+                            # 闸门的上下文单独给，**不能并进 text** ——
+                            # _called_someone_else 扫全文会把前文里别人
+                            # 之间的 @ 也算成"这条在 @ 别人"，整条误拦。
+                            _tctx.context = _ctx_for_gate
                         _extra = _ph.on_turn_in(_tctx)
                         if _tctx.vetoed:
                             print("[闸门] 这一轮被否决，不问大脑"

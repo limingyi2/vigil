@@ -221,7 +221,19 @@ def _recent_context(ctx):
 
     刻意只取最近几条：闸门要判断的是**这一刻**，不需要翻历史。
     它不是记忆检索，翻多了既慢又容易让它以为该回忆旧账。
+
+    2026-10-09：server 开始随 Turn 透传桥接带来的最近群聊（ctx.context）。
+    在这之前，下面那段回退逻辑去翻 brain.recent_msgs / _recent /
+    last_msgs —— **Brain 根本没有这些属性**，闸门从上线起就一直拿到
+    "（没历史）"，判定全靠最新一条瞎猜。这就是群里"他们明明在聊别的，
+    她以为在跟她说话乱插话"的主因之一。
     """
+    v = getattr(ctx, "context", None)
+    if isinstance(v, (list, tuple)):
+        v = "\n".join(str(x) for x in v)
+    v = str(v or "").strip()
+    if v:
+        return v[-_CTX_CHARS:]
     brain = getattr(ctx, "brain", None)
     if brain is None:
         return ""
@@ -526,6 +538,10 @@ _JUDGE_PROMPT = """你在替一个人判断：群里的最新一条消息，如�
 
 （有人喊她名字的情况已经在代码里放行了，走不到你这里。）
 
+（「最近在聊」是群里最近的对话记录，「最新一条」是要你判定的那句。
+如果最新一条明显在延续前文里**别人之间**的话题、或者只是他们对话的
+半截回应，那是在跟别人说话 → PASS。）
+
 ## 一、这条消息是在跟谁说的？
 
 **只要有人 @ 了别人（不是她），就是在跟别人说话 → PASS。**
@@ -648,7 +664,11 @@ def on_turn_in(ctx):
         _bump(src, "open")
         return None
     # 群里才需要闸门；App 是一对一，她本来就该回。
-    if src not in (cfg.get("sources") or ["wechat"]):
+    # 🔴 2026-10-08 修正默认值：多会话桥接后 src 是 wechat（私聊）/ wechat_group（群）。
+    # 旧默认 ["wechat"] 写于"只有群聊"时代（当时群就是 wechat），现在它会把
+    # **私聊**拿去跑群聊的"该不该接话"判定（"111"都会被判 PASS 沉默），
+    # 而真正该判的群（wechat_group）反而不在名单里 —— 正好反转。
+    if src not in (cfg.get("sources") or ["wechat_group"]):
         _bump(src, "open")
         return None
     # 太短的（"嗯""?"）判不出东西，别为这个花一次调用

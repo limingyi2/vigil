@@ -337,7 +337,8 @@ class Brain(object):
         print("")
         return False
 
-    def ask(self, text, img_b64=None, src="wechat", sender_id=None):
+    def ask(self, text, img_b64=None, src="wechat", sender_id=None,
+            context=None):
         """问一次。返回她说的话；出错返回 None（不抛，抛了群里就刷错误）。
 
         img_b64：这一轮带的图片（纯 base64，不带 data: 前缀）。
@@ -353,6 +354,11 @@ class Brain(object):
         私聊里只有主人微信号的本地工具请求才放行。取不到就别传（None），
         云端按"无身份"拒绝，绝不误放行。老服务端不认这个字段，直接忽略，
         向后兼容。
+
+        context：最近几条群聊（["甲：xx", "乙：yy", ...]，不含当前这条）。
+        2026-10-09 群聊上下文修复：云端把它拼给大脑和闸门看、**不入档案**
+        （她翻历史看到的还是一句一条）。老服务端不认识这个字段，忽略之，
+        向后兼容。
         """
         if not self.picked:
             return None
@@ -361,6 +367,11 @@ class Brain(object):
             payload["img"] = img_b64
         if sender_id:
             payload["sender_id"] = str(sender_id)
+        if context:
+            try:
+                payload["context"] = [str(x) for x in context][:20]
+            except Exception:
+                pass
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         url = self.picked + "/api/chat"
         if self.token:
@@ -472,6 +483,13 @@ class Bridge(object):
         # 她最近发过的话。用来判断「这条是不是我自己说的」——
         # 昵称别人也能改，只认昵称会把同名的人误判成她自己。
         self._my_recent = set()
+        # 每个会话的**最近消息缓冲**（2026-10-09 群聊上下文修复）。
+        # 触发她之前，群里可能已经聊了十句别的 —— 以前她只看到命中
+        # 关键词的那一条，自然"分不清你们在聊什么、以为在跟她说话"。
+        # 现在所有消息（含没触发她的、含她自己的回复）都进缓冲，
+        # 问大脑时随 context 一起送云端（云端拼给大脑和闸门看，不入档案）。
+        # {会话名: ["发送者：内容", ...]}，长度上限 ctx_msgs（默认 12 条）。
+        self._ctx_buf = {}
         # 监听模式：用 AddListenChat 把对话拆成独立子窗口，读写都在子窗口里，
         # **不用占主窗口前台**。轮询模式必须让微信一直停在目标对话上，
         # 所以会跟你抢窗口（用户反馈过）。
@@ -1227,6 +1245,43 @@ class Bridge(object):
     def _is_private(self, chat):
         return self._chat_kind(chat) == "private"
 
+    def _ctx_push(self, chat, sender, content):
+        """往会话的上下文缓冲记一条「发送者：内容」。
+
+        谁都要记：群友聊天没 @ 她的、她自己的回复 —— 没有这些，
+        她和闸门看到的永远是孤零零一句"除了贵"，接什么都是猜。
+        content 掐到 200 字/条，缓冲条数走 ctx_msgs 配置（默认 12）。
+        """
+        sender = str(sender or "").strip()
+        content = str(content or "").strip()
+        if sender and content:
+            line = "%s：%s" % (sender, content)
+        elif content:
+            line = content
+        else:
+            line = "%s：（发了一张图/表情）" % (sender or "?")
+        buf = self._ctx_buf.setdefault(chat, [])
+        buf.append(line[:200])
+        try:
+            n = int(self.cfg.get("ctx_msgs") or 12)
+        except (TypeError, ValueError):
+            n = 12
+        if n < 2:
+            n = 2
+        if len(buf) > n:
+            del buf[:len(buf) - n]
+
+    def _ctx_snapshot(self, chat, exclude_last=False):
+        """取这个会话的上下文副本（给云端 context 字段用）。
+
+        exclude_last=True 用于 ask 之前：那时当前消息刚 push 进缓冲、
+        又会单独出现在 text 里，上下文要把它排除，否则模型看到两遍。
+        """
+        buf = list(self._ctx_buf.get(chat) or [])
+        if exclude_last and buf:
+            buf = buf[:-1]
+        return buf
+
     def _diff(self, items):
         """比对出这一轮新增的消息。
 
@@ -1534,6 +1589,12 @@ class Bridge(object):
                 # 只留最近 30 条，别无限涨
                 if len(self._my_recent) > 30:
                     self._my_recent = set(list(self._my_recent)[-30:])
+            if ok:
+                # 她自己说的话也进上下文缓冲 —— 不然下一轮"最近群聊"
+                # 里没有她刚说过的，她会接不上自己丢出去的话头。
+                _ck = chat if isinstance(chat, str) and chat else self.chat_name
+                self._ctx_push(_ck, self.my_name or "我",
+                               text + ("（表情包）" if img_paths else ""))
             if ok and img_paths:
                 # 斗图：文字发出后逐个 SendFiles。发完删临时文件。
                 try:
@@ -1838,6 +1899,10 @@ class Bridge(object):
             if self._is_mine(sender, content):
                 continue
             self._last_active = time.time()
+            # 上下文缓冲：**每条**群消息都记（含没触发她的）——她自己的
+            # 发言由 _send 成功后记。放这里而不是各 continue 路径之后，
+            # 是因为漏记任何一条，她看到的群聊就缺一块拼图。
+            self._ctx_push(chat, sender, content)
             # 🔴 2026-10-08：抖音折叠卡片（type='text' + "复制...更多"）
             # wxauto4 读不到 URL，点击卡片会把完整分享文案复制到剪贴板。
             # 这里提取 URL 拼到 content 里，这样 AI 能看到链接并做内容感知。
@@ -1926,10 +1991,16 @@ class Bridge(object):
                             or (self._owner_wxid_fallback()
                                 if _is_priv else "")
                             or None)
+            # 群聊把最近几条一起送上去（exclude_last：当前这条已在
+            # text 里，别让模型看到两遍）。私聊不用 —— 私聊云端有
+            # 完整历史分区。没有这个，她就是被叫到名字才抬头看一眼、
+            # 只看到一句话，接什么都靠猜（2026-10-09 用户报障）。
+            _ctx = None if _is_priv else self._ctx_snapshot(chat, exclude_last=True)
             answer = self.brain.ask(text, img or None,
                                    src=("wechat" if _is_priv
                                         else "wechat_group"),
-                                   sender_id=_sender_wxid)
+                                   sender_id=_sender_wxid,
+                                   context=_ctx)
             if not answer:
                 # 🔴 空回复必须留痕（2026-10-08 教训：云端闸门插件把私聊
                 # 全判成 PASS 返回空 reply，这里静默 continue，
