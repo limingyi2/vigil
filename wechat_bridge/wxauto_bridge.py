@@ -423,6 +423,30 @@ class Brain(object):
             return None
 
 
+    def collect_img(self, img_b64, src=""):
+        """把一张图送进云端表情包库（自动打标签、按内容哈希去重）。
+
+        2026-10-09 表情包改版：聊天里出现的图不再只有"触发对话"才入库
+        —— 桥接对每张图都调这个。云端按内容哈希去重（重复收藏无害），
+        新图/无标签图才花一次视觉调用打标签。失败返回 None
+        （收藏是副业，绝不打扰主对话流程）。
+        """
+        if not (img_b64 and self.picked):
+            return None
+        body = json.dumps({"img": img_b64, "src": str(src or "")}).encode("utf-8")
+        url = self.picked + "/api/stickers/collect"
+        if self.token:
+            url += "?token=" + urllib.parse.quote(self.token)
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with self._opener.open(req, timeout=60) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except Exception as e:
+            print("[大脑] 收藏表情包失败: %s" % str(e)[:80])
+            return None
+
+
 class Bridge(object):
     def __init__(self, cfg):
         self.cfg = cfg
@@ -1282,6 +1306,41 @@ class Bridge(object):
             buf = buf[:-1]
         return buf
 
+    # --- 表情包收藏 ---------------------------------------------------
+
+    # 每轮最多收几张：群里连发表情包时，右键另存一张约 0.7 秒，
+    # 收藏是副业，不能把轮询拖死。云端按内容哈希去重，漏收的下一轮
+    # 不会再遇到（_diff 只判新增），漏就漏了。
+    COLLECT_PER_TURN = 2
+
+    def _collect_pending_img(self, img, chat):
+        """把**没触发对话**的图片收进云端图库（表情包改版 2026-10-09）。
+
+        以前只有"触发她回话"的图才入库 —— 群友甩的表情包她根本不收，
+        图库永远是那几张。现在没触发的也收：下载走同一条右键另存链路
+        （**必须串行**，不能跟主轮询并发碰微信窗口），云端去重+打标签。
+        """
+        if not isinstance(img, _PendingImg):
+            return
+        n = getattr(self, "_collected_this_turn", 0)
+        if n >= self.COLLECT_PER_TURN:
+            return
+        self._collected_this_turn = n + 1
+        try:
+            b64 = self._resolve_img(img)
+        except Exception as e:
+            print("[收藏] 下载失败: %s" % e)
+            return
+        if not b64:
+            return
+        _src = "wechat_group" if not self._is_private(chat) else "wechat"
+        r = self.brain.collect_img(b64, src=_src)
+        if r:
+            print("[收藏] %s %s%s" % (
+                r.get("name") or "?",
+                "已打标签" if r.get("new") else "已在库",
+                ("｜" + str(r.get("desc") or "")[:40]) if r.get("desc") else ""))
+
     def _diff(self, items):
         """比对出这一轮新增的消息。
 
@@ -1886,6 +1945,7 @@ class Bridge(object):
             chat = self.chat_name
         if not self._switch_to(chat):
             return
+        self._collected_this_turn = 0   # 本轮表情包收藏配额（见 COLLECT_PER_TURN）
         items = self._snapshot()
         new = self._diff(items)
         for sender, content, img, mobj in new:
@@ -1962,6 +2022,10 @@ class Bridge(object):
             if not self._should_reply(content, chat):
                 print("[跳过][%s] %s：%s" % (chat, sender or "?",
                                           (content[:40] or "[图片]")))
+                # 表情包改版（2026-10-09）：没触发对话的图也收藏进图库
+                # （云端去重+打标签，每轮限 2 张）。这样群友甩的表情包
+                # 都能进她的弹药库，她才能"按需发表情包"。
+                self._collect_pending_img(img, chat)
                 continue
             if isinstance(img, _PendingImg):
                 img = self._resolve_img(img)

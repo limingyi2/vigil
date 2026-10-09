@@ -542,11 +542,14 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                         d, "u_" + time.strftime("%Y%m%d_%H%M%S") + ".jpg")
                     with open(img_path, "wb") as f:
                         f.write(base64.b64decode(img_b64))
-                    # 收藏群聊表情包：入站图片顺手入库（仅微信群渠道）
+                    # 收藏群聊表情包：入站图片顺手入库（仅微信群渠道）。
+                    # desc 直接用刚算好的视觉描述 —— 看图那步本来就有，
+                    # 零额外调用；save_bytes 按内容哈希去重，重复收藏无害。
                     try:
                         if src and str(src).startswith("wechat"):
                             import stickers as _stk
-                            _stk.save_bytes(base64.b64decode(img_b64), desc="",
+                            _stk.save_bytes(base64.b64decode(img_b64),
+                                            desc=str(desc or ""),
                                             src=str(src))
                     except Exception:
                         pass
@@ -1276,6 +1279,43 @@ def start_remote_api(brain):
                           % (_v, _fwd.HUB.online()), flush=True)
                     self._json(200, {"ok": True, "wechat_route": _v,
                                      "forward": _fwd.HUB.stats()})
+                    return
+                if path == "/api/stickers/collect":
+                    # 表情包改版（2026-10-09）：桥接把聊天里**每张**图送进
+                    # 图库（不再只有"触发对话的图"才入库）。云端按内容哈希
+                    # 去重；新图才花一次视觉调用打标签 —— 收藏是副业，
+                    # 不能每张图都白烧一次 vision。
+                    _b64 = str(body.get("img") or "").strip()
+                    _csrc = str(body.get("src") or "").strip()[:20]
+                    if not _b64:
+                        self._json(400, {"ok": False, "err": "没给 img"})
+                        return
+                    try:
+                        _blob = base64.b64decode(_b64)
+                    except Exception:
+                        self._json(400, {"ok": False, "err": "img 不是 base64"})
+                        return
+                    import stickers as _stk
+                    _name = _stk.save_bytes(_blob, src=_csrc)
+                    if not _name:
+                        self._json(200, {"ok": False, "err": "不是可识别的图片"})
+                        return
+                    # 没标签就打一次（新图、以及早期入库没打上标签的老图都
+                    # 能借这条路补齐）。打过的直接复用，不重复烧 vision。
+                    _desc = _stk.describe_of(_name)
+                    _labeled = bool(_desc)
+                    if not _desc:
+                        try:
+                            import vision as _vis
+                            _desc = str(_vis.describe_bytes(_blob, API_CFG) or "")
+                            if _desc:
+                                _stk.set_desc(_name, _desc)
+                                _labeled = True
+                        except Exception as e:
+                            print("[表情包] 打标签失败（不影响收藏）：%s"
+                                  % str(e)[:80], flush=True)
+                    self._json(200, {"ok": True, "name": _name,
+                                     "new": bool(_labeled), "desc": _desc})
                     return
                 if path == "/api/chat":
                     _in_text = str(body.get("text") or "")

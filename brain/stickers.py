@@ -53,7 +53,14 @@ def _sniff_ext(blob):
 
 def save_bytes(blob, desc="", src=""):
 
-    """收藏一张表情包，返回文件名；失败返回 ""。"""
+    """收藏一张表情包，返回文件名；失败返回 ""。
+
+    2026-10-09 改版：文件名改成**纯内容哈希**（md5 前 8 位）——同一张图
+    不管被收到几次，永远落成同一个文件，库里不再长副本。以前是
+    时间戳+哈希，同图每收一次就多一个文件（同一张黄球塞满图库就是这么
+    来的）。重复收藏直接返回已有名字，索引不动；图已在库但没标签、这次
+    又带了 desc 时顺手补上。
+    """
     if not blob:
         return ""
     idx = _ensure_loaded()
@@ -61,17 +68,41 @@ def save_bytes(blob, desc="", src=""):
     if not ext:
         return ""
     h = hashlib.md5(blob).hexdigest()[:8]
-    name = f"{datetime.datetime.now():%Y%m%d_%H%M%S}_{h}.{ext}"
-    try:
-        with open(os.path.join(_DIR, name), "wb") as f:
-            f.write(blob)
-    except OSError:
-        return ""
-    with _lock:
-        idx[name] = {"desc": (desc or "")[:80], "src": src,
-                     "t": time.strftime("%Y-%m-%d %H:%M")}
-        _save_index()
+    name = f"{h}.{ext}"
+    if name not in idx:
+        try:
+            with open(os.path.join(_DIR, name), "wb") as f:
+                f.write(blob)
+        except OSError:
+            return ""
+        with _lock:
+            idx[name] = {"desc": (desc or "")[:120], "src": src,
+                         "t": time.strftime("%Y-%m-%d %H:%M")}
+            _save_index()
+    elif desc and not idx[name].get("desc"):
+        set_desc(name, desc)
     return name
+
+
+def set_desc(name, desc):
+    """更新一张表情包的标签（视觉模型生成的描述，她在清单里按这个挑）。"""
+    idx = _ensure_loaded()
+    name = os.path.basename(str(name or "").strip())
+    if not name or name not in idx:
+        return False
+    with _lock:
+        idx[name]["desc"] = str(desc or "")[:120]
+        _save_index()
+    return True
+
+
+def describe_of(name):
+    """读一张表情包的标签；没有返回 ""。"""
+    idx = _ensure_loaded()
+    name = os.path.basename(str(name or "").strip())
+    if not name or name not in idx:
+        return ""
+    return str(idx[name].get("desc") or "")
 
 
 def path_of(name):
