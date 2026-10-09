@@ -34,6 +34,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -386,6 +387,29 @@ class Brain(object):
             print("[大脑] 出错：%s" % e)
             return None
         return (data.get("reply") or "").strip()
+
+    def fetch_img(self, name):
+        """从云端拉一张图（斗图标记 [img:xxx] 里的那个文件）。
+
+        2026-10-09：她在 App/PC 客户端里回复末尾的 [img:文件名] 标记经
+        /api/img 渲染成图，但微信这边从来没人消费这个标记 —— 用户收到的
+        就是一行文件名。修复：桥接自己把图下载下来，SendFiles 发出去。
+        下载失败返回 None（调用方静默把标记剥掉，绝不把文件名发给用户）。
+        """
+        if not (name and self.picked):
+            return None
+        url = self.picked + "/api/img?name=" + urllib.parse.quote(str(name), safe="")
+        if self.token:
+            url += "&token=" + urllib.parse.quote(self.token)
+        try:
+            with self._opener.open(
+                    urllib.request.Request(url, headers={"User-Agent": "vigil"}),
+                    timeout=30) as r:
+                blob = r.read()
+            return blob if blob else None
+        except Exception as e:
+            print("[大脑] 拉图失败 %r: %s" % (name, str(e)[:80]))
+            return None
 
 
 class Bridge(object):
@@ -1425,10 +1449,54 @@ class Bridge(object):
 
     # --- 说回去 -----------------------------------------------------
 
+    # 她回复里**单独成行**的斗图标记（sticker_pack 插件提示她这么写的）。
+    # App/PC 客户端经 /api/img 渲染成图；微信这边以前没人消费，
+    # 用户收到的就是一串文件名原文（2026-10-09 用户报障后修复）。
+    IMG_MARK_RE = re.compile(r"^[ \t]*\[img:([^\]\r\n]+)\][ \t]*$", re.M)
+
+    def _fetch_img_to(self, name):
+        """把 [img:xxx] 里的文件从云端下载到临时文件，返回路径；失败 None。"""
+        name = (name or "").strip()
+        if not name:
+            return None
+        # basename 兜一道防穿越（服务端已有白名单，这里不信任标记内容）
+        safe = os.path.basename(name.replace("\\", "/"))
+        if not safe or safe in (".", ".."):
+            return None
+        blob = self.brain.fetch_img(safe)
+        if not blob:
+            return None
+        ext = os.path.splitext(safe)[1].lower()
+        if ext not in (".gif", ".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+            ext = ".gif"
+        try:
+            fd, path = tempfile.mkstemp(prefix="zximg_", suffix=ext)
+            with os.fdopen(fd, "wb") as f:
+                f.write(blob)
+            return path
+        except Exception as e:
+            print("[发送] 斗图落盘失败: %s" % e)
+            return None
+
     def _send(self, text, chat=None):
         text = (text or "").strip()
         if not text:
             return False
+        # 🔴 斗图标记消费（2026-10-09）：先把标记里的图下载到本地临时文件，
+        # 再把标记从文字里剥掉 —— 下载失败也剥，**绝不把文件名发给用户**。
+        # 文字发出之后逐个 SendFiles（跟控制台截图同一用法）。
+        # 放在长度截断之前：截断可能把标记拦腰斩断，正则就匹配不上了。
+        img_paths = []
+        if self.IMG_MARK_RE.search(text):
+            for _m in self.IMG_MARK_RE.finditer(text):
+                _p = self._fetch_img_to(_m.group(1))
+                if _p:
+                    img_paths.append(_p)
+            text = self.IMG_MARK_RE.sub("", text).strip()
+            if not text and not img_paths:
+                # 她只回了个斗图、图又全没下下来：这条就什么都不发
+                print("[发送] 只有斗图标记且下载全失败，这条不发（不发文件名原文）")
+                return False
         cap = int(self.cfg.get("max_reply_chars") or 400)
         if len(text) > cap:
             text = text[:cap] + "…"
@@ -1455,14 +1523,32 @@ class Bridge(object):
                 target = self._sub
             else:
                 target = chat if chat is not None else self._sub
-            r = target.SendMsg(text) if target is not None else self.wx.SendMsg(text)
-            ok = bool(getattr(r, "is_success", True))
-            if ok:
+            # 她可能只回了个斗图（剥完标记文字为空）：跳过 SendMsg，只发图
+            r = None
+            if text:
+                r = target.SendMsg(text) if target is not None else self.wx.SendMsg(text)
+            ok = bool(getattr(r, "is_success", True)) if r is not None else True
+            if ok and text:
                 # 记下她说过的话 —— `_is_mine` 靠它区分「同名的那个人」
                 self._my_recent.add(text)
                 # 只留最近 30 条，别无限涨
                 if len(self._my_recent) > 30:
                     self._my_recent = set(list(self._my_recent)[-30:])
+            if ok and img_paths:
+                # 斗图：文字发出后逐个 SendFiles。发完删临时文件。
+                try:
+                    _tgt = target if target is not None else self.wx
+                    for _p in img_paths:
+                        _tgt.SendFiles(_p)
+                        print("[发送] 斗图已发: %s" % os.path.basename(_p))
+                except Exception as e:
+                    print("[发送] 斗图发送失败: %s" % e)
+                finally:
+                    for _p in img_paths:
+                        try:
+                            os.remove(_p)
+                        except OSError:
+                            pass
             print("[发送] %s %r" % ("OK" if ok else "FAIL", text[:60]))
             return ok
         except Exception as e:
@@ -1672,6 +1758,11 @@ class Bridge(object):
         微信 4.x：群成员消息带 sender_info()，返回含 'id'（=对方微信号，
         即 agent 配置 owner_ids 里填的那个值，不随昵称变）。取不到就返回 {}，
         下游按"无身份"拒绝，绝不会误放行。
+
+        🔴 私聊消息**永远没有** sender_info（那是群成员才有的东西）——
+        2026-10-09 实锤：主人私聊让她看桌面软件，云端 clearance 拿到空
+        sender_id 全拒（audit 里 sender_id=""，话术是"只有他本人叫你做
+        才行"，主人明明就在叫）。所以私聊必须走 _owner_wxid_fallback。
         """
         try:
             si = getattr(m, "sender_info", None)
@@ -1683,6 +1774,19 @@ class Bridge(object):
         except Exception:
             pass
         return {}
+
+    def _owner_wxid_fallback(self):
+        """私聊兜底身份：agent.owner_ids 里的第一个微信号。
+
+        依据：private_chats 白名单**本身就是身份验证** —— 配进去的会话
+        就是和主人的私聊，能在这会话里说话的只有主人本人（wxauto4 又
+        在私聊消息上给不出 wxid，不能因此把主人当陌生人拒掉）。
+        只给**私聊**用；群聊绝不能兜底，不然每个群友都是"主人"了。
+        """
+        ag = self.cfg.get("agent") or {}
+        ids = [x.strip() for x in (ag.get("owner_ids") or [])
+               if x and str(x).strip()]
+        return ids[0] if ids else ""
 
     def _owner_ok(self, sender, content="", ident=None):
         """身份验证：只有主人能下指令。
@@ -1813,12 +1917,19 @@ class Bridge(object):
             # 群里的对话和私聊**必须**分开存 —— 合在一起她会把她在群里的
             # 反应拿去回答私聊（或反过来），说话方式会串。
             # sender_id（发送者 wxid）一起透传：云端本地操控按它做 owner
-            # 鉴权，群聊即使.owner 也只放 safe 级工具。取不到就 None。
+            # 鉴权，群聊即使.owner 也只放 safe 级工具。
+            # 私聊消息上 wxauto4 给不出 wxid（没有 sender_info），兜底用
+            # 配置里的 owner 微信号 —— 私聊会话白名单本身就是身份（见
+            # _owner_wxid_fallback）。群聊绝不兜底，抓不到就是抓不到。
+            _is_priv = self._is_private(chat)
+            _sender_wxid = (_ident.get("wxid")
+                            or (self._owner_wxid_fallback()
+                                if _is_priv else "")
+                            or None)
             answer = self.brain.ask(text, img or None,
-                                   src=("wechat" if self._is_private(chat)
+                                   src=("wechat" if _is_priv
                                         else "wechat_group"),
-                                   sender_id=(self._sender_ident(mobj).get("wxid")
-                                              or None))
+                                   sender_id=_sender_wxid)
             if not answer:
                 # 🔴 空回复必须留痕（2026-10-08 教训：云端闸门插件把私聊
                 # 全判成 PASS 返回空 reply，这里静默 continue，

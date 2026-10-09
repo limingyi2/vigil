@@ -660,7 +660,10 @@ const PS_ACTIVE_WINDOW = [
   '  }',
   '}',
   '"@',
-  '[FgWin]::Title()',
+  // 输出走 base64：PowerShell 5.1 的 stdout 默认是控制台代码页（中文机器=GBK），
+  // node execFile 按 UTF-8 解码必然乱码（2026-10-09 她看到的"????-¼..."就是这来的）。
+  // base64 不受代码页影响，node 侧解码 100% 可靠。
+  '$b=[System.Text.Encoding]::UTF8.GetBytes([FgWin]::Title()); [Convert]::ToBase64String($b)',
 ].join('\r\n');
 
 async function tool_active_window() {
@@ -674,7 +677,13 @@ async function tool_active_window() {
         { timeout: 20000, windowsHide: true },
         (err, stdout, stderr) => res({ err, stdout: String(stdout || ''), stderr: String(stderr || '') }));
     });
-    const title = out.stdout.trim();
+    // PS 输出的是 UTF8 字节的 base64；解码失败（老版本残留/异常输出）就退回原文
+    let title = out.stdout.trim();
+    try {
+      const decoded = Buffer.from(title, 'base64').toString('utf8');
+      // 合法 base64 且解出非空可读文本才采用；避免把普通文本误当 base64
+      if (decoded && /^[A-Za-z0-9+/=]+$/.test(title) && title.length % 4 === 0) title = decoded;
+    } catch (_) { /* 保持原样 */ }
     if (title) return '当前最前面的窗口是：' + title;
     if (out.err) return '读不到前台窗口：' + (out.stderr.trim().slice(0, 200) || out.err.message);
     return '读不到前台窗口标题（可能所有窗口都最小化了）';
