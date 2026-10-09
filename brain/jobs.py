@@ -75,7 +75,7 @@ def _recap_scopes(b):
         import paths
         srcs = list(paths.CHANNELS)
     except Exception:
-        srcs = ["app", "wechat"]
+        srcs = ["wechat", "wechat_group"]
     out = []
     for s in srcs:
         try:
@@ -100,9 +100,11 @@ def _recap_loop(b):
                   flush=True)
         # 约定账本：从记忆库里把"有日期的说好的事"捞出来按日期注入。
         # 跟着摘要循环一起跑就够（20 分钟一次），纯读盘、不调模型。
+        # 按 persona+src 分区，每个渠道各刷一份，互不串台。
         try:
             import agenda
-            agenda.refresh()
+            for _pk, _s in _recap_scopes(b):
+                agenda.refresh(persona_key=_pk, src=_s)
         except Exception as e:
             print(f"[大脑] 约定账本出错（不影响聊天）：{str(e)[:80]}",
                   flush=True)
@@ -209,11 +211,11 @@ def _reminder_loop(b):
 
     def _say(prompt):
         # 事件提醒是**私聊**内容：天气变化、快递到货都是跟你一个人的事，
-        # 发到群里会出戏（"该加衣服了"当着另外三个人说）。所以显式按 app 渠道
+        # 发到群里会出戏（"该加衣服了"当着另外三个人说）。所以显式按微信私聊
         # 走，别让后台线程落在上一个处理过的渠道上。
-        with _feat_channel("app"):
+        with _feat_channel("wechat"):
             with _LOCAL["lock"]:
-                ans, _m = b.chat(prompt, proactive=True, log=False, src="app")
+                ans, _m = b.chat(prompt, proactive=True, log=False, src="wechat")
             text = strip_say_marker((ans or "").strip())
             if not text or text == "无":
                 _trace_loop("reminder", sent=0, reason="她自己不想说")

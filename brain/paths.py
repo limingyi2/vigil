@@ -51,6 +51,7 @@ STICKERS_DIR = os.path.join(DATA_DIR, "stickers")    # 她收藏的表情包
 PLUGIN_DATA_DIR = os.path.join(DATA_DIR, "plugins")  # 插件自己的持久化
 KB_DIR = os.path.join(DATA_DIR, "kb")                # 本地知识库：语料块 + 向量索引
 DEVICES_PATH = os.path.join(DATA_DIR, "devices.json")  # 已绑定设备表（只存 token 哈希）
+MANAGEMENT_PATH = os.path.join(DATA_DIR, "management.json")  # 服务器与 Agent 运行状态
 RUN_DIR = os.path.join(DATA_DIR, "run")
 CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 
@@ -59,11 +60,11 @@ CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 # 在 App 里说的"我在宿舍"会顺着微信那头的上下文往下编。
 # 每个渠道一份聊天存档，互不读取。渠道名同时用于记忆库分区（见 memory_store_v2）。
 # 生活流不分区 —— 她过的是同一种日子，分开反而不一致。
-CHANNELS = ("app", "wechat", "wechat_group", "pc")
+CHANNELS = ("wechat", "wechat_group", "pc")
 
 
-def chat_log_for(src="app"):
-    """按渠道取聊天存档路径。app 沿用老文件名，老数据不用搬。
+def chat_log_for(src="wechat"):
+    """按渠道取聊天存档路径。wechat 沿用老文件名，老数据不用搬。
 
     🔴 渠道名**不在这份白名单里也要照样分一份存档**（2026-10-08）。
     原来这里 `if src not in CHANNELS: src = "app"` —— 认不出的渠道一律
@@ -76,8 +77,8 @@ def chat_log_for(src="app"):
     拿它当准入 —— `scope_name` 那边本来也是只做字符过滤、不看白名单，
     两处不一致才让"分区名算对了、文件却写错地方"这种问题反复出现。
     """
-    src = (src or "app").strip().lower() or "app"
-    if src == "app":
+    src = (src or "wechat").strip().lower() or "wechat"
+    if src == "wechat":
         return CHAT_LOG
     return os.path.join(DATA_DIR, "chat_history.%s.jsonl" % src)
 
@@ -92,12 +93,12 @@ def chat_log_for(src="app"):
 #
 # 生活流也分区：换了人设就是换了个人，她过去那阵子过的是
 # 另一个人的日子。只有"当前人设的日常"会继续往前长。
-def scope_name(persona_key="", src="app"):
+def scope_name(persona_key="", src="wechat"):
     """算出一个人设+渠道的数据分区名。默认人设返回 ""（沿用老路径，老数据不用搬）。"""
     p = _safe(persona_key)
-    s = _safe(src) or "app"
+    s = _safe(src) or "wechat"
     if not p or p == "default":
-        return "" if s == "app" else s
+        return "" if s == "wechat" else s
     return "%s.%s" % (p, s)
 
 
@@ -117,10 +118,10 @@ def _safe(v):
     return "".join(out)[:40].strip("._-")
 
 
-def scoped(path, persona_key="", src="app"):
+def scoped(path, persona_key="", src="wechat"):
     """给一个 data/ 下的路径加上人设+渠道分区。
 
-    scope 为空（默认人设 + app）时原样返回，老数据不用搬。
+    scope 为空（默认人设 + wechat）时原样返回，老数据不用搬。
     """
     name = scope_name(persona_key, src)
     if not name:

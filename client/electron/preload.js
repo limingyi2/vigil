@@ -93,5 +93,8 @@ contextBridge.exposeInMainWorld('vigil', {
 
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
 
+  // 插件前端注入：主进程直接往渲染进程注代码，绕过 CSP 的 script-src 'self'
+  runJS: (code) => ipcRenderer.invoke('run-js', code),
+
   platform: process.platform,
 });

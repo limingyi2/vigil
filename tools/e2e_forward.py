@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """M3 e2e：转发通道 + 双大脑路由，全部跑在本机、临时家，不碰真实微信。
 
 A = 云权威（server.py，带 /ws/brain + /api/route + /api/chat 路由拦截）
-fake = python 手写的"本地客户端"（模拟 vigil-client/electron/forward.js 的行为）
+fake = python 手写的"本地客户端"（模拟 client/electron/forward.js 的行为）
 B（真本地大脑）不需要起 —— 转发链路里"答话"这一步是客户端干的，
 fake 自己回固定文本，重点验的是**路由语义**：
   在线转发 / 渠道过滤 / flag 秒切 / 离线兜底 / 超时话术 / 迟到只入历史。

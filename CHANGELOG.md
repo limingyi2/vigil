@@ -1,4 +1,4 @@
-# 更新日志
+﻿# 更新日志
 
 按时间倒序。App 的用户可见版本号记在标题里，服务端的改动记在"服务端"一栏。
 
@@ -11,7 +11,7 @@
 
 ### 工具链路四个修复：skill_call 断链 / 微信渠道不过滤 / 旧标签死代码 / 危险工具权限确认
 
-起因是"检查现在这些工具有没有过时的"，系统查了 tools.py（静态工具）、plugins/（10个插件）、localtools.py（远程工具定义）、plugin_host.py（插件宿主）、vigil-client/electron/localtool.js（客户端执行），发现四个问题。
+起因是"检查现在这些工具有没有过时的"，系统查了 tools.py（静态工具）、plugins/（10个插件）、localtools.py（远程工具定义）、plugin_host.py（插件宿主）、client/electron/localtool.js（客户端执行），发现四个问题。
 
 #### 一、P0：skill_call 断链（JS 技能系统完全用不了）
 
@@ -33,7 +33,7 @@
 
 #### 二、P0：危险远程工具默认全开 → 不需要改服务端（客户端已实现三档权限）
 
-最初怀疑 `local_exec` / `local_file_write` 等危险工具默认暴露给模型有安全风险。深入检查客户端代码后确认：**服务端只负责派活，客户端负责拦截**，三道防线已经在 `vigil-client/electron/localtool.js` 里实现了：
+最初怀疑 `local_exec` / `local_file_write` 等危险工具默认暴露给模型有安全风险。深入检查客户端代码后确认：**服务端只负责派活，客户端负责拦截**，三道防线已经在 `client/electron/localtool.js` 里实现了：
 
 1. **路径白名单**：默认只允许家/桌面/下载/文档，`allowAllPaths` 放开整台机器但系统目录（Windows / Program Files / 引导盘根目录）仍然硬拦。
 2. **命令白名单**：`local_exec` 只放行只读命令（ipconfig / tasklist / dir / findstr 等 20+ 条），其他需要 `allowAllCmds`。黑名单永远漏，白名单不会。
@@ -293,11 +293,11 @@ administrator@47…        →  已推送的 2 个提交里
 
 #### 三、顺手挖出两个更大的坑（都不是这次脱敏引起的）
 
-1. 🔴 **`vigil-client/node_modules/` 完全没被 .gitignore 挡住。**
+1. 🔴 **`client/node_modules/` 完全没被 .gitignore 挡住。**
    那个目录 **436MB、5000+ 个文件**，一次 `git add .` 就会整个吞进仓库。
    原因是 .gitignore 里只写了 `brain/skill_host/node_modules/`（限定路径）。
    → 改成通用规则 `node_modules/`。**实测 `git add .` 会收的文件从 5464 降到 177。**
-   顺带把 `vigil-client/` 整个挡住（它**只有 node_modules、连 package.json 都没有**，
+   顺带把 `client/` 整个挡住（它**只有 node_modules、连 package.json 都没有**，
    是个没长起来就废弃的空壳）。
 2. **三个新文档里有真 IP**（`client_architecture.html`、`00-客户端开发方案-待办.md`、
    `01-客户端设计系统.md`）—— 它们**还没提交**，是我把判据从"已跟踪"扩到

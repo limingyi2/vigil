@@ -71,13 +71,13 @@ DEFAULTS = {
 _cache = {"t": 0.0, "d": dict(DEFAULTS), "by": {}}
 _lock = threading.RLock()
 # 当前渠道。聊天入口在进入时 set_current_src 一次，管完这一轮。
-_cur_src = "app"
+_cur_src = "wechat"
 
 
 def set_current_src(src):
     """声明这一轮处理的是哪个渠道。"""
     global _cur_src
-    _cur_src = str(src or "app").strip().lower() or "app"
+    _cur_src = str(src or "wechat").strip().lower() or "wechat"
     return _cur_src
 
 
@@ -100,13 +100,13 @@ class with_channel(object):
         global _cur_src
         with _lock:
             self.old = _cur_src
-            _cur_src = str(self.src or "app").strip().lower() or "app"
+            _cur_src = str(self.src or "wechat").strip().lower() or "wechat"
         return self.src
 
     def __exit__(self, *a):
         global _cur_src
         with _lock:
-            _cur_src = self.old or "app"
+            _cur_src = self.old or "wechat"
         return False
 
 

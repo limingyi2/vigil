@@ -15,7 +15,7 @@
 """
 import os
 
-BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "brain"))
+BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 
 # 只带插件的 .py 源码（__pycache__、_registry.json 这类运行时垃圾不进包）
 plugin_data = []
@@ -24,11 +24,23 @@ for f in sorted(os.listdir(plugins_src)):
     if f.endswith(".py"):
         plugin_data.append((os.path.join(plugins_src, f), "plugins"))
 
+# 带 skill_host（Node.js 技能宿主）：server.js + start_host.bat + skills/ 下所有技能
+skill_host_data = []
+skill_host_src = os.path.join(BLOCK, "skill_host")
+for root, dirs, files in os.walk(skill_host_src):
+    for f in files:
+        if f.endswith(('.pyc', '.pyo')) or f == '.gitkeep' or f.endswith('.log') or f == '.host_started':
+            continue
+        src = os.path.join(root, f)
+        rel = os.path.relpath(src, skill_host_src)
+        dst = os.path.join("skill_host", os.path.dirname(rel))
+        skill_host_data.append((src, dst))
+
 a = Analysis(
     [os.path.join(BLOCK, "server_launch.py")],
     pathex=[BLOCK],
     binaries=[],
-    datas=plugin_data,
+    datas=plugin_data + skill_host_data,
     hiddenimports=[
         "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",
         "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",
@@ -50,7 +62,7 @@ exe = EXE(
     exclude_binaries=True,
     name="vigil-brain",
     debug=False,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
 )
 coll = COLLECT(

@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """sidecar 薄启动壳 —— PyInstaller 的入口（也支持源码直跑）。
 
-职责只有三件：
+职责只有四件：
 1. 把打包时带进来的 plugins/ 种到 exe 旁边的家目录（首次启动）
-2. 选一个空闲端口，经 VIGIL_PORT 环境变量交给 server.py
-3. /api/health 探活通过后往 stdout 打一行就绪标记（Electron 靠它拿端口）
+2. 启动技能宿主（skill_host，端口 8790），跟云端 server_run.bat 保持一致
+3. 选一个空闲端口，经 VIGIL_PORT 环境变量交给 server.py
+4. /api/health 探活通过后往 stdout 打一行就绪标记（Electron 靠它拿端口）
 
 大脑本体一律不碰：import server 之后 main() 会像云端一样自己转起来。
 """
 import os
 import shutil
 import socket
+import subprocess
 import sys
 import time
 import urllib.request
@@ -50,6 +52,44 @@ def _seed_plugins():
         print("[sidecar] 已铺开随包插件 -> %s" % dst, flush=True)
     except Exception as e:
         print("[sidecar] 铺插件失败（不影响聊天）：%s" % e, flush=True)
+
+
+def _start_skill_host():
+    """启动技能宿主（Node.js，端口 8790）。
+
+    跟云端 server_run.bat 保持一致：先起宿主，再起大脑，
+    这样大脑加载插件时技能已经可用。
+    start_host.bat 本身是幂等的（先查 8790 端口是否被占用），重复调用安全。
+    启动失败不致命：少了技能功能，不影响聊天。
+    """
+    # 开发环境：CODE_DIR/skill_host/start_host.bat
+    # 打包环境：HOME_DIR/skill_host/start_host.bat
+    candidates = [
+        os.path.join(HOME_DIR, "skill_host", "start_host.bat"),
+        os.path.join(CODE_DIR, "skill_host", "start_host.bat"),
+    ]
+    bat = None
+    for p in candidates:
+        if os.path.exists(p):
+            bat = p
+            break
+    if not bat:
+        print("[sidecar] 未找到 skill_host/start_host.bat，技能宿主未启动", flush=True)
+        return
+    try:
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(
+            ["cmd", "/c", bat],
+            cwd=os.path.dirname(bat),
+            creationflags=creationflags,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print("[sidecar] 已启动技能宿主 -> %s" % bat, flush=True)
+    except Exception as e:
+        print("[sidecar] 技能宿主启动失败（不影响聊天）：%s" % e, flush=True)
 
 
 def _pick_port():
@@ -92,6 +132,7 @@ def _wait_health(port, timeout=180):
 def main():
     os.chdir(HOME_DIR)          # 大脑里所有相对路径的家都在这儿
     _seed_plugins()
+    _start_skill_host()         # 先起技能宿主，大脑加载插件时技能已可用
     port = _pick_port()
     os.environ["VIGIL_PORT"] = str(port)
 

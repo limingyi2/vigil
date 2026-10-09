@@ -1,4 +1,4 @@
-# Vigil
+﻿# Vigil
 
 一个双大脑架构的常驻对话 Agent：**真身跑在云端**（微信 / App 的她），本机还有
 一份可以独立运行、离线也能聊的本地大脑。桌面客户端是控制台，手机 App 和微信
@@ -83,7 +83,7 @@ python brain/server.py                                          # 监听 :8788
 ### 桌面客户端（Electron）
 
 ```bash
-cd vigil-client && npm install && npm start
+cd client && npm install && npm start
 ```
 
 启动后自动探测大脑：本机隧道 127.0.0.1:18787 → 本机 8788 → 自带的本地大脑
@@ -186,7 +186,7 @@ PROVIDERS = {
 
 ## 桌面客户端
 
-`vigil-client/`，Electron。功能面：
+`client/`，Electron。功能面：
 
 - **工作台**：聊天（流式）、聊天输入框旁的盾牌面板管本地操控授权
 - **数据**：云端/本机两个视角切换 —— 微信渠道的账在云端，本机只有
@@ -201,7 +201,7 @@ PROVIDERS = {
 
 发版四步：
 
-1. 改 `vigil-client/version.json` 的 `code` +1（打进 asar，`readLocalCode` 读它）
+1. 改 `client/version.json` 的 `code` +1（打进 asar，`readLocalCode` 读它）
 2. `npx electron-builder --win -c.directories.output=dist_newX`（输出目录每次换新）
 3. 上传 Setup exe 到云端 `app/client/VigilSetup.exe`
 4. 更新同目录 `client_version.json`（code / ver / notes / sha256 / size）
@@ -417,7 +417,7 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 | `brain/plugin_ops.py` | 插件管理面：装卸 .zip、元数据、渠道开关 |
 | `brain/kb/` | 本地知识库（RAG）：切块、嵌入、检索；`plugins/kb.py` 负责接线 |
 | `brain/skill_host/` | JS 技能的 Node 宿主 |
-| `vigil-client/` | 桌面客户端（Electron）：控制台 + 本地大脑宿主 + 推送更新 |
+| `client/` | 桌面客户端（Electron）：控制台 + 本地大脑宿主 + 推送更新 |
 | `pet/` | Windows 桌宠（PyQt6，旧版入口） |
 | `android-app/` | Android 客户端 |
 | `admin/` | Web 管理面板（单文件 html） |

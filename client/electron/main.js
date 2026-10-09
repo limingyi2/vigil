@@ -745,6 +745,15 @@ function startPolling() {
 }
 
 // ── IPC ──────────────────────────────────────────────────────────
+// 插件前端注入：主进程直接往渲染进程注代码，绕过 CSP 的 script-src 'self'
+ipcMain.handle('run-js', async (e, code) => {
+  try {
+    return await e.sender.executeJavaScript(String(code || ''));
+  } catch (err) {
+    console.error('[run-js] 执行失败:', err);
+    return null;
+  }
+});
 ipcMain.handle('auto:connect', () => autoConnect());
 ipcMain.handle('local:defaults', () => ({
   roots: localtool.defaultRoots(),
@@ -810,7 +819,9 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
     }
     return request(method, cb + p, body, sync.cloud_token);
   }
-  const b = (base || cfg.base || DEFAULT_BASE).replace(/\/+$/, '');
+  // 本地大脑优先用 sidecar 动态发现的端口（cfg.base 可能是旧的/写死的）
+  const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
+  const b = (base || (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE).replace(/\/+$/, '');
   const src = cfg.src || CLIENT_SRC;
   // 渠道用 query 带上：服务端按 src 分区（features / history / persona 都吃这个）。
   // URL 里已经写了 src 的（数据页看别的渠道历史）尊重写死的那个。
@@ -830,7 +841,8 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
 ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null }) => {
   if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
   const cfg = readCfg();
-  const b = (base || cfg.base || DEFAULT_BASE).replace(/\/+$/, '');
+  const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
+  const b = (base || (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE).replace(/\/+$/, '');
   const src = cfg.src || CLIENT_SRC;
   const sep = p.includes('?') ? '&' : '?';
   const hasSrc = /(?:\?|&)src=/.test(p);

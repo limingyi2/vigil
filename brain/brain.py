@@ -29,16 +29,16 @@ try:
     import paths
     CHAT_LOG = paths.CHAT_LOG
 
-    def chat_log_for(src="app"):
+    def chat_log_for(src="wechat"):
         return paths.chat_log_for(src)
 except Exception:                 # 单独跑某个文件时的兜底（正常走上面）
     CHAT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "data", "chat_history.jsonl")
 
-    def chat_log_for(src="app"):
+    def chat_log_for(src="wechat"):
         return CHAT_LOG
 
-DEFAULT_SRC = "app"        # 手机App / 桌宠走这条；微信那边传 "wechat"
+DEFAULT_SRC = "wechat"        # 微信私聊走这条；群聊传 "wechat_group"，本机控制台传 "pc"
 
 
 def norm_src(src):
@@ -502,7 +502,7 @@ class Brain:
         而且症状是"人设文件改了没反应"，极难查。
         """
         key = self._persona_key_for(src)
-        ckey = "%s\x00%s" % (key, str(src or "app"))
+        ckey = "%s\x00%s" % (key, str(src or "wechat"))
         cache = getattr(self, "_ptext_cache", None)
         if cache is None:
             cache = self._ptext_cache = {}
@@ -759,7 +759,9 @@ class Brain:
             parts.append("\n" + life)
         try:
             import agenda
-            ab = agenda.block()
+            ab = agenda.block(
+                persona_key=self._persona_key_for(self._cur_src),
+                src=self._cur_src)
             if ab:
                 parts.append("\n" + ab)
         except Exception:
@@ -1146,6 +1148,9 @@ class Brain:
             "max_tokens": _mt,
             "reasoning_effort": _eff,
             "stream": True,
+            # 流式响应默认不返回 usage；加了才会在最后一条 SSE 消息里
+            # 返回 prompt_tokens / completion_tokens，token 统计才准。
+            "stream_options": {"include_usage": True},
         }
 
         think_buf = []

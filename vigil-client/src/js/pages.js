@@ -2352,8 +2352,44 @@
     };
   }
 
+
+  // ── 第一阶段：服务器与 Agent 统一管理 ─────────────────────────────
+  async function renderManagement(ctx) {
+    const draw = async () => {
+      ctx.topbar.innerHTML = topbar('服务器与 Agent 管理', '查看云端节点心跳；HTTPS 暂缓，当前复用已配置的云端连接。',
+        '<button class="btn" id="managementRefresh">刷新</button>');
+      ctx.panel.innerHTML = '<div class="phead"><h2>统一管理</h2></div><div class="plist"><div class="li on"><span class="ic">' + icon('mon', 'sm') + '</span><div class="tx"><b>运行状态</b><span>服务器 / Agent</span></div></div></div>';
+      ctx.view.innerHTML = '<div class="wrap"><div class="card">正在读取云端管理状态…</div></div>';
+      const r = pick(await get('/api/management/overview', { base: 'cloud' }));
+      if (!r.ok) {
+        ctx.view.innerHTML = '<div class="wrap">' + errBox('暂时无法读取管理状态', r._err || r.err || '请确认「连接与设备 → 云端同步」已配置云端地址和 Token。') +
+          '<div class="card" style="margin-top:12px"><b>下一步</b><p class="muted">管理接口已加入后端，但还需要在云端服务器配置 Agent 专属令牌，并在需要监控的电脑/服务器启动 management_agent.py。</p></div></div>';
+      } else {
+        const nodes = Array.isArray(r.nodes) ? r.nodes : [];
+        const statusText = (s) => s === 'online' ? '在线' : s === 'delayed' ? '延迟' : '离线';
+        const statusTag = (s) => tag(s === 'online' ? 'ok' : s === 'delayed' ? 'warn' : 'neutral', statusText(s));
+        const servers = Array.isArray(r.servers) ? r.servers : nodes;
+        const rows = servers.map((n) => '<tr><td><b>' + esc(n.name || n.id) + '</b><div class="muted">' + esc(n.hostname || n.id) + '</div></td><td>' + statusTag(n.status) + '</td><td>' + esc(n.platform || '—') + '</td><td>' + esc(n.metrics && n.metrics.cpu_percent != null ? n.metrics.cpu_percent + '%' : '—') + '</td><td>' + esc(n.metrics && n.metrics.memory_percent != null ? n.metrics.memory_percent + '%' : '—') + '</td><td>' + esc(n.last_seen ? fmtTime(n.last_seen * 1000) : '尚未上报') + '</td></tr>').join('');
+        const agents = nodes.reduce((all, n) => all.concat((n.agents || []).map((a) => ({ ...a, node_name: n.name || n.id }))), []);
+        const agentRows = agents.map((a) => '<tr><td><b>' + esc(a.name || a.id) + '</b><div class="muted">' + esc(a.id) + '</div></td><td>' + esc(a.node_name) + '</td><td>' + statusTag(a.status) + '</td><td>' + esc(a.details || '—') + '</td></tr>').join('');
+        ctx.view.innerHTML = '<div class="wrap"><div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">' +
+          '<div class="card"><div class="muted">已登记节点</div><div class="display">' + esc(r.nodes_total || 0) + '</div></div>' +
+          '<div class="card"><div class="muted">在线节点</div><div class="display">' + esc(r.nodes_online || 0) + '</div></div>' +
+          '<div class="card"><div class="muted">离线或延迟</div><div class="display">' + esc(r.nodes_offline || 0) + '</div></div></div>' +
+          '<div class="card" style="margin-top:12px;overflow:auto"><h3>服务器节点</h3>' +
+          (servers.length ? '<table><thead><tr><th>节点</th><th>状态</th><th>系统</th><th>CPU</th><th>内存</th><th>最近心跳</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p class="muted">目前还没有节点上报心跳。云端服务器 A 是管理中心；请先配置节点专属 Token，再启动对应的监控 Agent。</p>') +
+          '</div><div class="card" style="margin-top:12px;overflow:auto"><h3>运行中的 Agent</h3>' + (agents.length ? '<table><thead><tr><th>Agent</th><th>所在节点</th><th>状态</th><th>说明</th></tr></thead><tbody>' + agentRows + '</tbody></table>' : '<p class="muted">节点目前没有上报具体 Agent 状态。当前轻量监控程序先上报服务器心跳和资源指标；后续再接入微信机器人、云端大脑等进程状态。</p>') +
+          '</div><div class="card" style="margin-top:12px"><b>状态说明</b><p class="muted">最近 45 秒有心跳 = 在线；45–90 秒 = 延迟；超过 90 秒 = 离线。当前页面只读，不提供远程命令或启停按钮。</p></div></div>';
+      }
+      const btn = ctx.topbar.querySelector('#managementRefresh');
+      if (btn) btn.addEventListener('click', draw);
+    };
+    await draw();
+  }
+
   global.PAGES = [
     { id: 'chat', name: '工作台', icon: 'chat', render: renderChat },
+    { id: 'management', name: '统一管理', icon: 'mon', render: renderManagement },
     ...FUNC_GROUPS.map((g) => ({ id: g.id, name: g.name, icon: g.icon, render: makeGroupPage(g) })),
     { id: 'data', name: '数据', icon: 'chart', render: renderData },
   ];

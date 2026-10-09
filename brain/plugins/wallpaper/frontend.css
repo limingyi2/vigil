@@ -1,0 +1,6 @@
+/* wallpaper 插件：让应用背景变透明，露出壁纸层 */
+.app { background: transparent !important; }
+body { background: transparent !important; }
+
+/* 壁纸页卡片样式微调 */
+#wallpaper-bg-layer { border-radius: 0; }

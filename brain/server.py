@@ -163,9 +163,9 @@ def _norm_src(src):
         import paths
         allowed = paths.CHANNELS
     except Exception:
-        allowed = ("app", "wechat")
+        allowed = ("wechat", "wechat_group", "pc")
     s = str(src or "").strip().lower()
-    return s if s in allowed else "app"
+    return s if s in allowed else "wechat"
 
 
 def _persona_for_src(src, default_key=""):
@@ -1000,6 +1000,16 @@ def start_remote_api(brain):
                                                     "items": []},
                                          "err": str(e)[:80]})
                     return True
+                if path == "/api/plugins/frontend":
+                    # 插件前端注入资源：返回所有带 frontend.js / frontend.css 的插件
+                    # 版本号用时间戳，前端靠它判断是否需要热重载。
+                    try:
+                        import plugin_host as _ph
+                        self._json(200, _ph.frontend_assets())
+                    except Exception as e:
+                        self._json(200, {"version": 0, "plugins": [],
+                                         "err": str(e)[:80]})
+                    return True
                 return False
 
             if method != "POST":
@@ -1140,6 +1150,30 @@ def start_remote_api(brain):
             return False
 
         def do_POST(self):
+            # Agent 心跳使用独立凭证，不能借用主人 Token / 设备 Token。
+            # 仅此路由绕过通用鉴权；management.heartbeat 会按 node_id 校验独立令牌。
+            if self.path.split("?")[0] == "/api/management/heartbeat":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                except Exception:
+                    n = 0
+                if n <= 0 or n > 64 * 1024:
+                    self._json(413 if n > 64 * 1024 else 400,
+                               {"ok": False, "err": "心跳内容为空或超过 64 KB"})
+                    return
+                try:
+                    payload = json.loads(self.rfile.read(n).decode("utf-8"))
+                except Exception:
+                    self._json(400, {"ok": False, "err": "JSON 格式错误"})
+                    return
+                try:
+                    import management as _management
+                    code, out = _management.heartbeat(payload, self.headers.get("Authorization") or "")
+                    self._json(code, out)
+                except Exception as e:
+                    print("[管理] 心跳处理失败：%s: %s" % (type(e).__name__, e), flush=True)
+                    self._json(500, {"ok": False, "err": "心跳处理失败"})
+                return
             if not self._check():
                 self._json(401, {"err": "bad token"})
                 return
@@ -1507,7 +1541,9 @@ def start_remote_api(brain):
                         _ag = 0
                         try:
                             import agenda
-                            _ag = 1 if agenda.block() else 0
+                            _ag = 1 if agenda.block(
+                                persona_key=_persona_for_src(_src),
+                                src=_src) else 0
                         except Exception:
                             pass
                         _trace_write({
@@ -2062,6 +2098,22 @@ def start_remote_api(brain):
                 return
             note_client_ip(self.client_address[0])
             path = self.path.split("?")[0]
+            if path.startswith("/api/management/"):
+                # 管理接口只允许主人 Token；已绑定的普通设备 Token 不得读取全局基础设施信息。
+                if getattr(self, "_who", ("", ""))[0] != "brain":
+                    self._json(403, {"ok": False, "err": "需要管理员权限"})
+                    return
+                try:
+                    import management as _management
+                    result = _management.get(path)
+                    if result is not None:
+                        self._json(result[0], result[1])
+                    else:
+                        self._json(404, {"ok": False, "err": "no such management api"})
+                except Exception as e:
+                    print("[管理] 查询失败：%s: %s" % (type(e).__name__, e), flush=True)
+                    self._json(500, {"ok": False, "err": "管理数据读取失败"})
+                return
             if path == "/api/device/list":
                 import devices
                 me = getattr(self, "_who", ("", ""))
@@ -2509,6 +2561,12 @@ def run_server():
     except Exception as e:
         print("[模型] 密钥登记跳过（不影响聊天）：%s" % str(e)[:100],
               flush=True)
+    # 统一管理：本地电脑随大脑自动上报心跳（内嵌，无需单独开脚本）
+    try:
+        import management_agent as _magent
+        _magent.start_from_config(api_config)
+    except Exception as e:
+        print("[管理] 心跳启动跳过（不影响聊天）：%s" % str(e)[:100], flush=True)
     if not base and _LOCAL["brain"] is None:
         # 云服务器 / 没开桌宠的场景：本进程自己养一个她（记忆、人设全带）
         print("[大脑] 没找到桌宠 —— 切换独立模式（本进程自带大脑）", flush=True)

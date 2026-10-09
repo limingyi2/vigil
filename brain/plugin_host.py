@@ -158,6 +158,19 @@ class Plugin(object):
         self.tool_help_fn = getattr(mod, "TOOL_HELP_FN", None)
         self.routes = list(getattr(mod, "ROUTES", []) or [])
         self.err = ""
+        # 前端注入资源（可选）：目录型插件同目录下的 frontend.js / frontend.css
+        self.frontend_js = ""
+        self.frontend_css = ""
+        plugin_dir = os.path.dirname(path)
+        for _fname, _attr in [("frontend.js", "frontend_js"),
+                               ("frontend.css", "frontend_css")]:
+            _fpath = os.path.join(plugin_dir, _fname)
+            try:
+                if os.path.isfile(_fpath):
+                    with open(_fpath, "r", encoding="utf-8") as _f:
+                        setattr(self, _attr, _f.read())
+            except Exception:
+                pass  # 读不到就算了，不影响插件加载
 
     def hook(self, name):
         """取钩子函数，没有就返回 None。"""
@@ -180,8 +193,18 @@ class Plugin(object):
 # --- 加载 ---
 
 def _load_one(path):
-    """把一个 .py 当插件模块导进来。返回 Plugin 或 None（失败只打一行）。"""
-    name0 = os.path.splitext(os.path.basename(path))[0]
+    """把一个 .py 当插件模块导进来。返回 Plugin 或 None（失败只打一行）。
+
+    支持两种形态：
+    - 单文件插件：alarm.py → 模块名 alarm
+    - 目录型插件：wallpaper/__init__.py → 模块名 wallpaper（用上级目录名）
+    """
+    # 目录型插件：path 是 xxx/__init__.py，用上级目录名作为插件名
+    _parent = os.path.basename(os.path.dirname(path))
+    if os.path.basename(path) == "__init__.py" and _parent:
+        name0 = _parent
+    else:
+        name0 = os.path.splitext(os.path.basename(path))[0]
     try:
         spec = importlib.util.spec_from_file_location("zxplug_" + name0, path)
         if spec is None or spec.loader is None:
@@ -224,15 +247,26 @@ def load(force=False):
         except OSError:
             names = []
         for fn in names:
+            fpath = os.path.join(_DIR, fn)
+            # 目录型插件：xxx/__init__.py（可以带 frontend.js / frontend.css）
+            if os.path.isdir(fpath):
+                init_file = os.path.join(fpath, "__init__.py")
+                if os.path.isfile(init_file):
+                    p = _load_one(init_file)
+                    if p:
+                        found[p.name] = p
+                continue
+            # 单文件插件：xxx.py
             if not fn.endswith(".py") or fn.startswith("_"):
                 continue
-            p = _load_one(os.path.join(_DIR, fn))
+            p = _load_one(fpath)
             if p:
                 found[p.name] = p
         # 换掉的模块要从 sys.modules 摘掉，否则热重载拿到的是旧代码
+        # 模块名统一是 zxplug_ + 插件名（单文件和目录型都一样）
+        _keep = set("zxplug_" + v.name for v in found.values())
         for k in [k for k in sys.modules if k.startswith("zxplug_")]:
-            if k not in [ "zxplug_" + os.path.splitext(
-                    os.path.basename(v.path))[0] for v in found.values()]:
+            if k not in _keep:
                 sys.modules.pop(k, None)
         _registry.clear()
         _registry.update(found)
@@ -284,6 +318,33 @@ def listing():
         d["enabled"] = (not p.feature) or bool(on_map.get(p.feature, True))
         out.append(d)
     return out
+
+
+def frontend_assets():
+    """所有带前端资源的插件，给 /api/plugins/frontend 用。
+
+    返回 {"version": <时间戳>, "plugins": [{name, js, css, enabled}, ...]}
+    只返回有 frontend.js 或 frontend.css 的插件；version 用当前时间戳，
+    前端靠它判断是否需要热重载。
+    """
+    items = []
+    try:
+        import features
+        on_map = features.all_features()
+    except Exception:
+        on_map = {}
+    for p in sorted(all_plugins().values(), key=lambda x: x.name):
+        if not (p.frontend_js or p.frontend_css):
+            continue
+        enabled = (not p.feature) or bool(on_map.get(p.feature, True))
+        items.append({
+            "name": p.name,
+            "js": p.frontend_js,
+            "css": p.frontend_css,
+            "enabled": enabled,
+        })
+    import time
+    return {"version": int(time.time()), "plugins": items}
 
 
 # --- 派发 ---

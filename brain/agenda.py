@@ -29,6 +29,15 @@ except Exception:                       # 单独跑这个文件时的兜底
     AGENDA_PATH = os.path.join(_HERE, "data", "agenda.json")
     DEFAULT_MEM = os.path.join(_HERE, "data", "memory", "memory.json")
 
+
+def _path_for(persona_key="", src="wechat"):
+    """按人设+渠道取约定账本路径。默认人设+wechat 沿用老路径，老数据不用搬。"""
+    try:
+        import paths
+        return paths.scoped(AGENDA_PATH, persona_key, src)
+    except Exception:
+        return AGENDA_PATH
+
 PAST_WINDOW = 14         # 过去这么多天内的还带（**要标注已过去**，见 _label）
 FUTURE_WINDOW = 7        # 未来这么多天内的提前带（快到了就该想起来）
 PRUNE_DAYS = 60          # 超过这么多天的旧条目清掉（文件别无限长）
@@ -46,7 +55,7 @@ DONE_HINTS = ("已办", "办成", "办好了", "完成了", "搞定了", "见到
               "已经见", "已到", "去过了", "已经去", "接上了", "定下来了")
 
 
-_CACHE = {"t": 0.0, "text": ""}
+_CACHE = {}  # {(persona_key, src): {"t": 0.0, "text": ""}}
 
 # --- 日期表达白名单（顺序即优先级） ---
 _RE_ISO = re.compile(r"(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*[日号]?")
@@ -151,9 +160,10 @@ def _base_date(s):
 
 # --- 存取 ---
 
-def _load():
+def _load(path=None):
+    p = path or AGENDA_PATH
     try:
-        with open(AGENDA_PATH, encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             d = json.load(f)
         items = d.get("items")
         return items if isinstance(items, list) else []
@@ -161,10 +171,11 @@ def _load():
         return []
 
 
-def _save(items):
+def _save(items, path=None):
+    p = path or AGENDA_PATH
     try:
-        os.makedirs(os.path.dirname(os.path.abspath(AGENDA_PATH)), exist_ok=True)
-        with open(AGENDA_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
             json.dump({"items": items}, f, ensure_ascii=False, indent=1)
         return True
     except OSError:
@@ -192,14 +203,14 @@ def _status(it):
     return STATUS_MISSED if d < datetime.date.today() else ""
 
 
-def settle(today=None):
+def settle(today=None, path=None):
     """把过期的约定落成 missed（每天算一次即可，幂等）。
 
     落状态而不是每次现算：状态是要给后面用的 —— missed 的条目不参与"还差几天"的
     提示，也不会因为日期被人手改了就悄悄复活。**这里不删除任何条目**，只是盖章。
     """
     today = today or datetime.date.today()
-    items = _load()
+    items = _load(path)
     n = 0
     for it in items:
         if it.get("status") == STATUS_DONE:
@@ -213,18 +224,17 @@ def settle(today=None):
             it["settled"] = today.isoformat()
             n += 1
     if n:
-        _save(items)
-        _CACHE["t"] = 0.0
+        _save(items, path)
         print("[约定] 结算：%d 条过期约定标记为 missed" % n, flush=True)
     return n
 
 
-def mark_done(match, date=None):
+def mark_done(match, date=None, path=None):
     """把某条约定标成已办成（match 是文本片段，date 可选）。
 
     只用于确实办成了的情况。标了之后这条不再注入上下文 —— 已经发生过的事不必每天念。
     """
-    items = _load()
+    items = _load(path)
     hit = 0
     for it in items:
         if it.get("status") == STATUS_DONE:
@@ -237,8 +247,7 @@ def mark_done(match, date=None):
         it["done_at"] = datetime.date.today().isoformat()
         hit += 1
     if hit:
-        _save(items)
-        _CACHE["t"] = 0.0
+        _save(items, path)
     return hit
 
 
@@ -254,7 +263,7 @@ def _common_run(a, b, need=4):
     return False
 
 
-def auto_done_from_memory(mem_path=None):
+def auto_done_from_memory(mem_path=None, path=None):
     """扫记忆里"已经办成"的事件，把对应日期的约定标 done。
 
     保守到近乎悲观：要有明确的完成词、能解析出日期、且与条目文本有 ≥4 个连续汉字
@@ -275,27 +284,26 @@ def auto_done_from_memory(mem_path=None):
         d = parse_date(text, base)
         if not d:
             continue
-        for ag in _load():
+        for ag in _load(path):
             if ag.get("date") != d.isoformat():
                 continue
             if ag.get("status") == STATUS_DONE:
                 continue
             if _common_run(ag.get("text") or "", text):
-                if _mark_one(ag):
+                if _mark_one(ag, path):
                     hit += 1
     return hit
 
 
-def _mark_one(ag):
+def _mark_one(ag, path=None):
     """按 (date, text) 精确匹配落 done（不是靠对象引用，避免读的是另一份副本）。"""
-    items = _load()
+    items = _load(path)
     for x in items:
         if x.get("date") == ag.get("date") and x.get("text") == ag.get("text"):
             if x.get("status") != STATUS_DONE:
                 x["status"] = STATUS_DONE
                 x["done_at"] = datetime.date.today().isoformat()
-                _save(items)
-                _CACHE["t"] = 0.0
+                _save(items, path)
                 return True
             return False
     return False
@@ -303,16 +311,25 @@ def _mark_one(ag):
 
 # --- 主流程 ---
 
-def refresh(mem_path=None, verbose=False):
-    """扫记忆库的 events，把能解析出日期的写进 agenda.json。幂等。
+def refresh(persona_key="", src="wechat", mem_path=None, verbose=False):
+    """扫记忆库的 events，把能解析出日期的写进对应渠道的约定账本。幂等。
 
     只读 memory.json、绝不改它 —— 解析错了最多是这个账本多一条废话，删掉文件就干净。
+    按 persona+src 分区，私聊和群聊的约定互不干扰。
     """
-    items = _load_mem_items(mem_path or DEFAULT_MEM)
+    path = _path_for(persona_key, src)
+    # 记忆库也按 persona+src 分区，默认从对应分区扫
+    if mem_path is None:
+        try:
+            import paths
+            mem_path = paths.scoped(DEFAULT_MEM, persona_key, src)
+        except Exception:
+            mem_path = DEFAULT_MEM
+    items = _load_mem_items(mem_path)
     if not items:
-        return {"added": 0, "pruned": 0, "total": len(_load())}
+        return {"added": 0, "pruned": 0, "total": len(_load(path))}
 
-    known = _load()
+    known = _load(path)
     # 源记忆被删掉时账本里的影子也要跟着走，否则会出现
     # "她记得一件记忆库里根本没有的事"
     alive = {(it.get("id") or "") for it in items}
@@ -357,12 +374,11 @@ def refresh(mem_path=None, verbose=False):
         keep.append(it)
 
     if added or pruned:
-        _save(keep)
-        _CACHE["t"] = 0.0
+        _save(keep, path)
     # settle 给过期未办成的盖 missed，auto_done 给有办成证据的盖 done。
     # 两步都只读盘，跟着摘要循环（20 分钟）跑
-    settled = settle(today)
-    done_hits = auto_done_from_memory(mem_path)
+    settled = settle(today, path)
+    done_hits = auto_done_from_memory(mem_path, path)
     if verbose and (added or pruned):
         print("[约定] 新增 %d 条、清理 %d 条，账本共 %d 条" % (added, pruned, len(keep)),
               flush=True)
@@ -386,18 +402,21 @@ def _label(d, today):
     return "%d月%d日（%d 天后）" % (d.month, d.day, diff)
 
 
-def block(cap=BLOCK_CAP, today=None, use_cache=True):
-    """拼成注入块。窗口内没有约定就返回 ""。"""
+def block(persona_key="", src="wechat", cap=BLOCK_CAP, today=None, use_cache=True):
+    """拼成注入块。窗口内没有约定就返回 ""。按 persona+src 分区，互不串台。"""
+    path = _path_for(persona_key, src)
+    ck = (persona_key, src)
+    cache = _CACHE.setdefault(ck, {"t": 0.0, "text": ""})
     now = time.time()
-    if use_cache and _CACHE["text"] and (now - _CACHE["t"]) < CACHE_TTL:
-        return _CACHE["text"]
+    if use_cache and cache["text"] and (now - cache["t"]) < CACHE_TTL:
+        return cache["text"]
 
     today = today or datetime.date.today()
     lo = today - datetime.timedelta(days=PAST_WINDOW)
     hi = today + datetime.timedelta(days=FUTURE_WINDOW)
 
     sel = []
-    for it in _load():
+    for it in _load(path):
         try:
             d = datetime.date.fromisoformat(it.get("date") or "")
         except ValueError:
@@ -409,7 +428,7 @@ def block(cap=BLOCK_CAP, today=None, use_cache=True):
             sel.append((d, (it.get("text") or "").strip(), st))
     sel = [(d, t, s) for d, t, s in sel if t]
     if not sel:
-        _CACHE["t"], _CACHE["text"] = now, ""
+        cache["t"], cache["text"] = now, ""
         return ""
 
     sel.sort(key=lambda x: x[0])
@@ -442,7 +461,7 @@ def block(cap=BLOCK_CAP, today=None, use_cache=True):
         if full:
             break
     if not lines:
-        _CACHE["t"], _CACHE["text"] = now, ""
+        cache["t"], cache["text"] = now, ""
         return ""
 
     # 「今天是 X月X日」必须写进块里。只放 system 最前面那句的话隔了 4000 多字，
@@ -457,14 +476,14 @@ def block(cap=BLOCK_CAP, today=None, use_cache=True):
             "必须带上具体日期（比如“10月3日”），别只用“明天”“后天”"
             "这种说法，过一夜就指错日子了。别主动加码承诺新的。\n"
             % (today.month, today.day, wk) + "\n".join(lines))
-    _CACHE["t"], _CACHE["text"] = now, text
+    cache["t"], cache["text"] = now, text
     return text
 
 
-def stats(today=None):
+def stats(today=None, path=None):
     """排查用：账本里有什么、哪些在窗口内、各自什么状态"""
     today = today or datetime.date.today()
-    items = _load()
+    items = _load(path)
     lo = today - datetime.timedelta(days=PAST_WINDOW)
     hi = today + datetime.timedelta(days=FUTURE_WINDOW)
     inwin = []

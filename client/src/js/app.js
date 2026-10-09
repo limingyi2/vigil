@@ -137,12 +137,93 @@
   }
 
   // ── 启动 ──────────────────────────────────────────────────
+  // ── 插件前端注入：拉取 /api/plugins/frontend 并注入 CSS/JS ──
+  // 插件的 frontend.js 用 window.vigil.runJS 注入（绕过 CSP），
+  // 每个插件独立 try/catch，一个炸了不影响其他。
+  let lastPluginVersion = 0;
+
+  async function loadPluginFrontends() {
+    try {
+      const r = await get('/api/plugins/frontend');
+      if (!r || !r.ok || !r.json) return;
+      const { version, plugins } = r.json;
+      if (!Array.isArray(plugins)) return;
+
+      // 注入 CSS
+      for (const p of plugins) {
+        if (!p.enabled) continue;
+        if (p.css) {
+          const style = document.createElement('style');
+          style.id = 'plugin-css-' + p.name;
+          style.textContent = p.css;
+          document.head.appendChild(style);
+        }
+      }
+
+      // 注入 JS（用 runJS 绕过 CSP，每个独立 try/catch）
+      for (const p of plugins) {
+        if (!p.enabled || !p.js) continue;
+        try {
+          const wrapped =
+            '(function(){\ntry{\n' + p.js +
+            '\n}catch(e){console.error("[插件 ' + p.name + ' 前端出错]",e);}\n})();';
+          if (window.vigil && window.vigil.runJS) {
+            await window.vigil.runJS(wrapped);
+          }
+        } catch (e) {
+          console.warn('插件', p.name, '注入失败:', e);
+        }
+      }
+
+      lastPluginVersion = version;
+    } catch (e) {
+      console.warn('插件前端加载失败:', e);
+    }
+  }
+
   async function boot() {
     let t = 'light';
     try { t = localStorage.getItem('vigil_theme') || 'light'; } catch (_) {}
     applyTheme(t);
 
+    // ── 插件前端注入：暴露全局 API 给插件用 ──
+    window.VigilAPI = API;
+    window.VigilUI = U;
+    window.VigilPlugin = {
+      // 注册新页面：push 进 PAGES，重建导航
+      registerPage(page) {
+        if (!page || !page.id || !page.render) return;
+        if (PAGES.find(p => p.id === page.id)) return;
+        PAGES.push(page);
+        buildNav();
+      },
+      // 动态注入 CSS
+      injectCSS(name, css) {
+        const id = 'plugin-dyn-css-' + name;
+        let el = document.getElementById(id);
+        if (!el) {
+          el = document.createElement('style');
+          el.id = id;
+          document.head.appendChild(el);
+        }
+        el.textContent = css;
+      },
+      // 简单事件总线
+      _listeners: {},
+      on(event, fn) {
+        (this._listeners[event] = this._listeners[event] || []).push(fn);
+      },
+      emit(event, data) {
+        (this._listeners[event] || []).forEach(fn => {
+          try { fn(data); } catch (e) { console.error('[插件事件]', e); }
+        });
+      },
+    };
+
     buildNav();
+
+    // 加载插件前端资源（CSS/JS 自动注入）
+    await loadPluginFrontends();
 
     bindGutter(document.getElementById('gPanel'), { var: '--panel', min: 180, max: 460, def: 240, dir: 1 });
 
@@ -189,6 +270,19 @@
       setStatus();
       refreshStats();
     }, 30000);
+
+    // 插件热重载：10 秒查一次版本，变了就刷新页面（本地应用刷新零点几秒）
+    setInterval(async () => {
+      try {
+        const r = await get('/api/plugins/frontend');
+        if (r && r.ok && r.json && r.json.version
+            && r.json.version !== lastPluginVersion
+            && lastPluginVersion !== 0) {
+          location.reload();
+        }
+      } catch (_) { /* 静默 */ }
+    }, 10000);
+
     refreshStats();
   }
 

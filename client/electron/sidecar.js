@@ -15,13 +15,25 @@ const { spawn, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 
 const READY_RE = /VIGIL_BRAIN_READY\s+port=(\d+)/;
 const MAX_RESTARTS = 3;
 const STABLE_MS = 10 * 60 * 1000;   // 跑满 10 分钟算稳定，重启计数清零
+const PORT_SCAN_TIMEOUT = 10000;     // 10秒没抓到就绪行就主动扫端口
+const SCAN_RANGE = [49000, 65000];   // brain 通常在这个区间挑端口
+
+// 调试日志：写到用户目录，方便排坑
+function dbg(msg) {
+  try {
+    const logPath = path.join(require('os').homedir(), 'vigil-sidecar.log');
+    fs.appendFileSync(logPath, new Date().toISOString() + ' ' + msg + '\n');
+  } catch (e) { /* 写日志失败别影响主流程 */ }
+}
 
 let app = null;          // electron app（init 注入，为了拿 resourcesPath）
 let child = null;
+let scanTimer = null;    // 端口扫描定时器
 let state = {
   enabled: false,        // 找到了 exe 且允许启动
   exe: '',
@@ -86,6 +98,45 @@ function probeHealth(port, timeoutMs) {
   });
 }
 
+/** 备用机制：stdout 抓不到就绪行时，主动扫描本地端口找 brain */
+function scanForBrainPort() {
+  return new Promise((resolve) => {
+    const [start, end] = SCAN_RANGE;
+    let found = 0;
+    let pending = 0;
+    const batch = 200;  // 每批扫 200 个端口，避免 too many open files
+    let cursor = start;
+    const scanBatch = () => {
+      if (found) return resolve(found);
+      if (cursor > end) return resolve(0);
+      const batchEnd = Math.min(cursor + batch - 1, end);
+      pending = 0;
+      for (let p = cursor; p <= batchEnd; p++) {
+        pending++;
+        const socket = net.connect({ host: '127.0.0.1', port: p }, () => {
+          socket.destroy();
+          probeHealth(p, 1500).then((ok) => {
+            if (ok && !found) {
+              found = p;
+              dbg('端口扫描找到 brain: ' + p);
+            }
+          });
+        });
+        socket.setTimeout(800, () => socket.destroy());
+        socket.on('error', () => {});
+        socket.on('close', () => {
+          pending--;
+          if (pending === 0) {
+            cursor = batchEnd + 1;
+            setTimeout(scanBatch, 50);
+          }
+        });
+      }
+    };
+    scanBatch();
+  });
+}
+
 /** 云端同步（M5）：把云端地址 + 主人钥匙递给本地大脑。
  *  大脑的 sync_client.cloud() 认 VIGIL_CLOUD_URL / VIGIL_CLOUD_TOKEN，
  *  config 的 sync 段优先（设置页直接写大脑 config 也行），这里给没写
@@ -104,6 +155,7 @@ function spawnBrain() {
   state.status = 'starting';
   state.startedAt = Date.now();
   emit();
+  dbg('spawnBrain start, exe=' + state.exe + ' home=' + state.home);
   try {
     child = spawn(state.exe, [], {
       cwd: state.home,             // 大脑的家：config/ data/ 都落这儿
@@ -114,11 +166,29 @@ function spawnBrain() {
   } catch (e) {
     state.status = 'failed';
     state.lastErr = 'spawn 失败：' + e.message;
+    dbg('spawn 失败: ' + e.message);
     emit();
     return;
   }
   state.pid = child.pid || 0;
   log('spawn pid=' + state.pid);
+  dbg('spawn pid=' + state.pid);
+
+  // 备用：10秒没抓到就绪行就主动扫端口（PyInstaller console 模式下 stdout 可能丢）
+  clearTimeout(scanTimer);
+  scanTimer = setTimeout(() => {
+    if (state.status === 'ready') return;
+    dbg('10秒未抓到就绪行，启动端口扫描...');
+    scanForBrainPort().then((port) => {
+      if (port && state.status !== 'ready' && state.status !== 'stopped') {
+        state.port = port;
+        state.status = 'ready';
+        log('端口扫描发现 brain port=' + port);
+        dbg('端口扫描设置 ready port=' + port);
+        emit();
+      }
+    });
+  }, PORT_SCAN_TIMEOUT);
 
   let buf = '';
   const onData = (chunk) => {
@@ -145,6 +215,8 @@ function spawnBrain() {
 
   child.on('exit', (code, signal) => {
     log('exit code=' + code + ' signal=' + signal);
+    dbg('exit code=' + code + ' signal=' + signal);
+    clearTimeout(scanTimer);
     child = null;
     state.pid = 0;
     state.port = 0;
@@ -186,6 +258,7 @@ function maybeStart(cfg) {
 }
 
 function stop() {
+  clearTimeout(scanTimer);
   if (!child) { state.status = 'stopped'; emit(); return; }
   state.status = 'stopped';        // 先定性，exit 回调看到它就不重启了
   const pid = state.pid;
