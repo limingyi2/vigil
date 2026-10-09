@@ -21,6 +21,12 @@ const https = require('https');
 // ① 核显/驱动有毛病的机器（GPU 进程反复崩溃会把整个渲染进程拖死）
 // ② 无 GPU 的远程/虚拟机环境 —— 都能正常开窗。
 app.disableHardwareAcceleration();
+// 2026-10-09：某次 AMD 驱动/ROCm 更新后，连**软件渲染**的 GPU 进程都启动即崩
+// （0xC0000005 连崩 4 次），renderer 永远完不成首帧 → ready-to-show 不触发
+// → 窗口 show:false 永不显示 = "客户端打不开"。光禁硬件加速不够，
+// 直接让 GPU 管线整个别起（纯软件光栅化），崩溃源头就没了。
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
 
 const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App 直连换这个地址
 // 客户端自己的渠道：独立于手机 App / 微信，聊天、历史、记忆都落在 pc 分区。
@@ -263,6 +269,22 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   win.once('ready-to-show', () => win.show());
+  // 2026-10-09 兜底：GPU 进程连环崩的机器上 renderer 可能永远不发
+  // ready-to-show，show:false 的窗口就永远不出来 = "打不开"。
+  // 3.5 秒还没显示就强制 show —— 白屏也总比没有窗口强，后续
+  // renderer 恢复后 UI 自然就画出来了。
+  setTimeout(() => {
+    try {
+      if (win && !win.isDestroyed() && !win.isVisible()) {
+        console.log('[window] ready-to-show 超时，强制显示');
+        win.show();
+      }
+    } catch (e) { /* 窗口已销毁就算了 */ }
+  }, 3500);
+  // renderer 死了要留痕：不然"窗口白屏/打不开"这种事查无可查
+  win.webContents.on('render-process-gone', (_e, d) => {
+    console.log('[window] renderer gone: reason=' + d.reason + ' exitCode=' + d.exitCode);
+  });
   // 外链走系统浏览器，不要在客户端里开新窗口
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
