@@ -372,8 +372,11 @@ function askLocal(call) {
     if (!win || win.isDestroyed()) return resolve(false);
     const id = 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     asking = { id, resolve };
+    // risk 三档（M4 服务端 public() 透出）：safe 不该走到这、confirm 普通
+    // 确认、dangerous 强提醒。老服务端没有 risk 字段 → 退回 danger 布尔。
     win.webContents.send('local:confirm', {
       id, name: call.name, args: call.args || {}, danger: !!call.danger,
+      risk: call.risk || (call.danger ? 'confirm' : ''),
     });
     setTimeout(() => {
       if (asking && asking.id === id) { asking = null; resolve(false); }
@@ -406,10 +409,16 @@ async function pollOnce() {
     if (!call) return;                            // 没活是常态
     let result;
     let backup = null;
+    // 三档 risk（M4）：safe 直接干；confirm 普通确认；dangerous 强确认。
+    // 老服务端只有 danger 布尔 → risk 缺失时按老逻辑（danger 才问）。
+    const risk = String(call.risk || (call.danger ? 'confirm' : 'safe'));
+    const needsAsk = risk !== 'safe' || call.danger ||
+      localtool.DANGER.has(call.name);
     // 让她那边/你这边都能看见"正在做第几步"：先报"要做什么"，
     // 危险操作在等确认时也报一条（否则界面上会静默几十秒）。
-    if (call.danger || localtool.DANGER.has(call.name)) {
+    if (needsAsk) {
       send('local:step', { name: call.name, args: call.args, kind: 'danger',
+                           risk,
                            text: describeCall(call.name, call.args) });
       // 自动模式（权限菜单里选了"白名单内自动执行/完全访问"）不再逐条问：
       // 拦截靠系统目录硬拦 + 白名单，出事靠备份撤销 + 操作日志兜底。

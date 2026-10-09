@@ -574,17 +574,29 @@
       const a = msg.args || {};
       const rows = Object.keys(a).map((k) =>
         '<div class="kv"><span>' + esc(k) + '</span></div><div class="cfarg">' + esc(a[k]) + '</div>');
+      // 三档 risk（M4/M5）：dangerous 强提醒（标题和按钮都更重），
+      // confirm 普通确认，risk 没带（老服务端）走原样。
+      const risky = msg.risk === 'dangerous';
+      const confirmish = msg.risk === 'confirm';
+      const headTxt = risky ? '她要在这台电脑上做一个高危操作'
+        : confirmish ? '她要在这台电脑上做改动'
+        : '她要用这台电脑做一个操作';
+      const hint = risky
+        ? '这一步可能删东西、杀进程或执行命令，不可自动撤销。确认是你让她做的再放行。'
+        : '只有点了「允许」才会执行；60 秒不理它算拒绝。';
       const wrap = document.createElement('div');
       wrap.className = 'turn';
       wrap.innerHTML =
         '<div class="bdy"><div class="cfcard">' +
-        '<div class="cfh">' + icon('shield', 'sm') + '<b>她要用这台电脑做一个操作</b></div>' +
+        '<div class="cfh" style="' + (risky ? 'color:var(--err);' : '') + '">' +
+        icon('shield', 'sm') + '<b>' + esc(headTxt) + '</b></div>' +
         '<div class="kv" style="margin-top:8px"><span>操作</span><b class="mono">' + esc(msg.name) + '</b></div>' +
         (rows.length ? rows.join('') : '<div class="muted" style="font-size:12px;margin-top:4px">（没有参数）</div>') +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">只有点了「允许」才会执行；60 秒不理它算拒绝。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">' + esc(hint) + '</div>' +
         '<div class="cfbtns"><span class="sp"></span>' +
         '<button class="btn oline" data-allow="0">不允许</button>' +
-        '<button class="btn fill" data-allow="1">允许这一次</button></div>' +
+        '<button class="btn ' + (risky ? 'oline' : 'fill') + '" data-allow="1">' +
+        (risky ? '我确认，放行' : '允许这一次') + '</button></div>' +
         '</div></div>';
       msgs.appendChild(wrap);
       msgs.scrollTop = msgs.scrollHeight;
@@ -1022,13 +1034,28 @@
       '<div class="card"><div class="muted" style="font-size:12px">约定待办</div><div style="font-size:22px;font-weight:600">' + esc((st.agenda && st.agenda.pending) || 0) + '</div></div>' +
       '</div>' +
       '<div class="card hd"><div class="h"><h3>她记住了什么</h3><div class="sp"></div>' +
-      '<input class="input" id="memQ" placeholder="搜一条…" style="height:26px;width:160px">' +
+      '<select class="input" id="memStore" style="height:26px;width:170px" title="记忆分区（每个渠道/人设一份）"></select>' +
+      '<input class="input" id="memQ" placeholder="搜一条…" style="height:26px;width:140px">' +
       '<select class="input" id="memType" style="height:26px;width:90px">' +
       '<option value="">全部</option><option value="fact">事实</option><option value="event">事件</option></select></div>' +
+      '<div class="muted" style="font-size:11px;margin:6px 0">改动（编辑 / 删除）会通过同步层自动上云；云端是权威源，删掉的东西不会被增量拉取复活。</div>' +
       '<div id="memList"></div></div>' +
       '</div>';
 
     let all = [];
+    let curStore = 'memory';
+    const storeSel = () => ctx.view.querySelector('#memStore');
+
+    async function loadStores() {
+      const r = pick(await get('/api/memory/stores'));
+      const names = (r && r.items && r.items.length) ? r.items : ['memory'];
+      const sel = storeSel();
+      sel.innerHTML = names.map((n) =>
+        '<option value="' + esc(n) + '"' + (n === curStore ? ' selected' : '') + '>' +
+        esc(n === 'memory' ? 'memory（主库）' : n) + '</option>').join('');
+      sel.onchange = () => { curStore = sel.value; load(); };
+    }
+
     const drawList = () => {
       const q = (ctx.view.querySelector('#memQ').value || '').trim().toLowerCase();
       const ty = ctx.view.querySelector('#memType').value;
@@ -1038,24 +1065,48 @@
         (!q || String(x.text || '').toLowerCase().includes(q)));
       box.innerHTML = items.length ? items.map((x) =>
         '<div class="row"><div class="lb"><b>' + esc(x.text || '') + '</b>' +
-        '<span>' + esc(x.time || '') + (x.chan ? ' · ' + esc(x.chan) : '') + '</span></div>' +
+        '<span>' + esc(x.time || '') + (x.chan ? ' · ' + esc(x.chan) : '') +
+        (x.src ? ' · ' + esc(x.src) : '') + '</span></div>' +
         tag((x.type || '') === 'fact' ? 'info' : 'neutral', (x.type || '') === 'fact' ? '事实' : '事件') +
+        '<button class="btn oline" style="height:24px;padding:0 8px;font-size:11px" data-edit="' + esc(x.id) + '">改</button>' +
+        '<button class="btn oline" style="height:24px;padding:0 8px;font-size:11px;color:var(--err)" data-del="' + esc(x.id) + '">删</button>' +
         '</div>').join('')
         : empty(all.length ? '没有匹配的条目' : '这个分区还没有记忆', all.length ? '换个搜法' : '聊几句她就开始记了');
+      box.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', async () => {
+        const it = all.find((x) => x.id === b.dataset.edit);
+        const nv = prompt('改这条记忆（改动会上云）：', it ? it.text : '');
+        if (nv == null) return;                     // 取消
+        const r = pick(await post('/api/memory/edit',
+          { store: curStore, id: b.dataset.edit, text: nv }));
+        if (r.ok) { toast('已改，同步层会推上云'); load(); }
+        else toast('没改成：' + (r.err || r._err || ''));
+      }));
+      box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+        if (!confirm('删掉这条记忆？会同步到云端（墓碑账本，不会被增量拉取复活）。')) return;
+        const r = pick(await post('/api/memory/delete',
+          { store: curStore, id: b.dataset.del }));
+        if (r.ok) { toast('已删除'); load(); }
+        else toast('没删成：' + (r.err || r._err || ''));
+      }));
     };
+
+    async function load() {
+      const r = pick(await get('/api/memory/list?store=' +
+        encodeURIComponent(curStore) + '&limit=300'));
+      all = r.items || [];
+      const cnt = ctx.view.querySelector('#memCount');
+      if (cnt) cnt.textContent = (r.total != null) ? r.total : (all.length || '—');
+      if (r.ok === false && !all.length) {
+        ctx.view.querySelector('#memList').innerHTML =
+          errBox('读不到记忆', r._err || '大脑需要 M5 的 /api/memory/list（重启大脑后生效）');
+        return;
+      }
+      drawList();
+    }
     ctx.view.querySelector('#memQ').addEventListener('input', drawList);
     ctx.view.querySelector('#memType').addEventListener('change', drawList);
-
-    const r = pick(await get('/api/memory?limit=300'));
-    all = r.items || [];
-    const cnt = ctx.view.querySelector('#memCount');
-    if (cnt) cnt.textContent = (r.count != null) ? r.count : (all.length ? all.length : '—');
-    if (r.ok === false && !all.length) {
-      ctx.view.querySelector('#memList').innerHTML =
-        errBox('读不到记忆', r._err || '云端 brain 需要 /api/memory（已加，重启大脑后生效）');
-      return;
-    }
-    drawList();
+    await loadStores();
+    await load();
 
     ctx.panel.querySelectorAll('.li').forEach((n) => n.addEventListener('click', () => {
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -1692,9 +1743,9 @@
     // 本地操控不再是设置里的一页：确认走聊天气泡，权限/目录/工具开关
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：云端 brain 没有 /api/device/*（点了就是 no such api）。
-    const subs = [['conn', '连接与设备'], ['model', '模型与服务商'], ['danger', '危险操作'], ['about', '关于']];
+    const subs = [['conn', '连接与设备'], ['model', '模型与服务商'], ['sync', '云端同步'], ['danger', '危险操作'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'device' ? 'mon' : k === 'model' ? 'brain' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('连接与设备', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -1933,7 +1984,79 @@
         '</div>';
     }
 
-    const draw = { conn, model, danger, about };
+    // ── 云端同步（M5）：本地大脑 ↔ 云端权威源 ─────────────────
+    // 本地优先架构：本地大脑跑着，记忆/人设的改动走 outbox 上云，
+    // 云端的增量定时拉下来。这里管"云端在哪 + 主人钥匙 + 同步状态"，
+    // 顺带管微信双大脑路由开关（同属"两边大脑怎么分工"这件事）。
+    async function sync() {
+      ctx.topbar.querySelector('h1').textContent = '云端同步';
+      const cfg = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
+      const sc = (cfg && cfg.sync) || {};
+      const rt = pick(await get('/api/route'));
+      const route = (rt && rt.wechat_route) || 'cloud';
+      const st = pick(await get('/api/sync/status'));
+      const isLocalBrain = /^https?:\/\/(127\.|localhost)/i.test(state.base || '');
+
+      v.innerHTML =
+        '<div class="sec">微信双大脑路由（她说的话在谁的脑子里想）</div>' +
+        '<div class="card" style="margin-bottom:14px">' +
+        '<div class="kv"><span>当前</span><b>' + (route === 'local' ? '本地大脑（本机这台）' : '云端大脑（云机）') + '</b></div>' +
+        '<div class="muted" style="font-size:11.5px;margin:6px 0">只对微信（私聊/群）生效；App 和本机控制台不受影响。本地大脑掉线时云端自动接管直答，消息不会丢。</div>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+        '<button class="btn ' + (route === 'cloud' ? 'fill' : 'oline') + ' md" id="rtCloud">云端优先</button>' +
+        '<button class="btn ' + (route === 'local' ? 'fill' : 'oline') + ' md" id="rtLocal" ' + (isLocalBrain ? '' : 'title="当前连的是云端大脑，切本地没有意义"') + '>本地优先</button>' +
+        '<span class="muted" id="rtRes" style="font-size:12px"></span></div></div>' +
+
+        '<div class="sec">同步状态（大脑自己报的）</div>' +
+        '<div class="card" style="margin-bottom:14px">' +
+        '<div class="kv"><span>同步</span><b>' + (st && st.enabled ? '已启用 → ' + esc(st.cloud_url || '') : '未启用（没有云端地址可推）') + '</b></div>' +
+        '<div class="kv"><span>outbox 积压</span><b>' + esc((st && st.outbox_pending != null) ? st.outbox_pending : '—') + ' 条</b></div>' +
+        '<div class="kv"><span>记忆断点</span><b class="mono" style="font-size:11px">' + esc(JSON.stringify((st && st.mem_seqs) || {})) + '</b></div>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
+        '<button class="btn oline md" id="syncNow">立即同步</button>' +
+        '<span class="muted" id="syncRes" style="font-size:12px"></span></div></div>' +
+
+        '<div class="sec">云端地址与主人钥匙（填一次，重启大脑生效）</div>' +
+        '<div class="card">' +
+        '<div class="field"><label>云端地址</label>' +
+        '<input class="input mono" id="syUrl" value="' + esc(sc.cloud_url || '') + '" placeholder="http://<你的云机 IP>:8788">' +
+        '<div class="muted" style="font-size:11.5px">本地大脑把记忆/人设改动推到这儿；留空 = 不同步</div></div>' +
+        '<div class="field"><label>主人钥匙（brain token）</label>' +
+        '<input class="input" id="syTok" type="password" placeholder="' + (sc.cloud_token ? '已保存（留空 = 不改）' : '还没配') + '">' +
+        '<div class="muted" style="font-size:11.5px">同步接口只认主人钥匙；设备 token 拉不到全量</div></div>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+        '<button class="btn fill" id="sySave">保存</button>' +
+        '<span class="muted" id="syRes" style="font-size:12px">保存后重启本地大脑（设置 → 连接与设备 → 重启大脑）生效</span></div></div>';
+
+      v.querySelector('#rtCloud').addEventListener('click', async () => {
+        const r = pick(await post('/api/route', { route: 'cloud' }));
+        v.querySelector('#rtRes').textContent = r.ok ? '已切到云端' : (r.err || '没切成');
+        if (r.ok) ctx.refresh();
+      });
+      v.querySelector('#rtLocal').addEventListener('click', async () => {
+        const r = pick(await post('/api/route', { route: 'local' }));
+        v.querySelector('#rtRes').textContent = r.ok ? '已切到本地（云端会等本地作答，掉线自动兜底）' : (r.err || '没切成');
+        if (r.ok) ctx.refresh();
+      });
+      v.querySelector('#syncNow').addEventListener('click', async () => {
+        v.querySelector('#syncRes').textContent = '同步中…';
+        const r = pick(await post('/api/sync/flush', {}));
+        v.querySelector('#syncRes').textContent = r.ok
+          ? '推 ' + (r.pushed || 0) + ' 条 / 拉 ' + (r.pulled ? ((r.pulled.memories || 0) + ' 记忆 ' + (r.pulled.personas || 0) + ' 人设') : '0')
+          : '失败：' + (r.err || r._err || '');
+      });
+      v.querySelector('#sySave').addEventListener('click', async () => {
+        const url = v.querySelector('#syUrl').value.trim().replace(/\/+$/, '');
+        const tok = v.querySelector('#syTok').value.trim();
+        const next = Object.assign({}, sc, { cloud_url: url });
+        if (tok) next.cloud_token = tok;
+        await API.saveCfg({ sync: next });
+        v.querySelector('#syRes').textContent = '已保存';
+        toast('云端同步配置已保存');
+      });
+    }
+
+    const draw = { conn, model, sync, danger, about };
     bindLi(ctx.panel, (k, n) => {
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[k] && draw[k]();

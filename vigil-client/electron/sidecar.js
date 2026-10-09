@@ -86,6 +86,20 @@ function probeHealth(port, timeoutMs) {
   });
 }
 
+/** 云端同步（M5）：把云端地址 + 主人钥匙递给本地大脑。
+ *  大脑的 sync_client.cloud() 认 VIGIL_CLOUD_URL / VIGIL_CLOUD_TOKEN，
+ *  config 的 sync 段优先（设置页直接写大脑 config 也行），这里给没写
+ *  config 的场景兜底 —— 客户端是唯一知道"云端在哪"的地方。 */
+function cloudEnv() {
+  let cfg = {};
+  try { cfg = readCfgSafe() || {}; } catch (e) { /* 没有配置就当没有 */ }
+  const s = cfg.sync || {};
+  const env = {};
+  if (s.cloud_url) env.VIGIL_CLOUD_URL = String(s.cloud_url);
+  if (s.cloud_token) env.VIGIL_CLOUD_TOKEN = String(s.cloud_token);
+  return env;
+}
+
 function spawnBrain() {
   state.status = 'starting';
   state.startedAt = Date.now();
@@ -95,6 +109,7 @@ function spawnBrain() {
       cwd: state.home,             // 大脑的家：config/ data/ 都落这儿
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: Object.assign({}, process.env, cloudEnv()),
     });
   } catch (e) {
     state.status = 'failed';

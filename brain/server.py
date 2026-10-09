@@ -1235,6 +1235,18 @@ def start_remote_api(brain):
                     st.delete(iid)
                     self._json(200, {"ok": True})
                     return
+                if path == "/api/sync/flush":
+                    # M5 客户端的「立即同步」按钮：把 outbox 存货推上去 +
+                    # 拉一轮云端增量。云端自己（权威源）调用时 cloud()
+                    # 返回 None，两个函数都是 no-op —— 同样一份代码两端安全。
+                    import sync_client as _sc
+                    import sync_outbox as _so
+                    pushed = _sc.flush_outbox_once()
+                    pulled = _sc.pull_once()
+                    self._json(200, {"ok": True, "pushed": pushed,
+                                     "pulled": pulled,
+                                     "pending": _so.pending_count()})
+                    return
                 if path == "/api/device/revoke":
                     import devices
                     did = str(body.get("device_id") or "").strip()
