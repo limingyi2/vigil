@@ -1199,6 +1199,42 @@ def start_remote_api(brain):
                     import localtools as _lt
                     self._json(200, {"ok": True, "items": _lt.audit()})
                     return
+                if path == "/api/memory/edit":
+                    # M5 记忆管理：改一条记忆的文本。底层 edit 自带 outbox
+                    # 钩子（本地记 memory_edit 上云；云端是权威源，
+                    # sync_outbox 没启用时 record 是 no-op）—— 两端共用
+                    # 这一份代码，同步方向自动正确。
+                    import memory_store_v2 as _ms
+                    st = _ms.open_store_by_name(
+                        str(body.get("store") or "memory"))
+                    if st is None:
+                        self._json(400, {"ok": False, "err": "分区名不合法"})
+                        return
+                    it = st.edit(str(body.get("id") or ""),
+                                 str(body.get("text") or ""))
+                    if it is None:
+                        self._json(404, {"ok": False,
+                                         "err": "没找到这条记忆，或新文本为空"})
+                        return
+                    self._json(200, {"ok": True, "item": it})
+                    return
+                if path == "/api/memory/delete":
+                    # M5 记忆管理：删一条。底层 delete 自带墓碑 + outbox
+                    # （本地删除要上云同步，不然增量拉取会把它复活）。
+                    # 幂等：删不存在的 id 也返回 ok（REST DELETE 惯例）。
+                    import memory_store_v2 as _ms
+                    st = _ms.open_store_by_name(
+                        str(body.get("store") or "memory"))
+                    if st is None:
+                        self._json(400, {"ok": False, "err": "分区名不合法"})
+                        return
+                    iid = str(body.get("id") or "").strip()
+                    if not iid:
+                        self._json(400, {"ok": False, "err": "没给 id"})
+                        return
+                    st.delete(iid)
+                    self._json(200, {"ok": True})
+                    return
                 if path == "/api/device/revoke":
                     import devices
                     did = str(body.get("device_id") or "").strip()
@@ -1960,6 +1996,33 @@ def start_remote_api(brain):
                     return
                 import localtools as _lt
                 self._json(200, {"ok": True, "items": _lt.audit()})
+                return
+            if path == "/api/memory/stores":
+                # M5 记忆管理面板：列出全部分区（主库 memory + 各渠道分区）
+                import memory_store_v2 as _ms
+                self._json(200, {"ok": True, "items": _ms.list_store_names()})
+                return
+            if path == "/api/memory/list":
+                # M5 记忆管理面板：看某个分区里的条目。
+                # store 名来自 HTTP，必须过 sanitize_name 白名单（防路径穿越，
+                # open_store_by_name 里做）。items 是 append 模式，尾部最新，
+                # 返回时反转成新→旧给 UI。
+                import memory_store_v2 as _ms
+                from urllib.parse import urlparse, parse_qs
+                _q = parse_qs(urlparse(self.path).query)
+                st = _ms.open_store_by_name(
+                    (_q.get("store") or ["memory"])[0])
+                if st is None:
+                    self._json(400, {"ok": False, "err": "分区名不合法"})
+                    return
+                try:
+                    limit = min(500, max(1, int((_q.get("limit") or ["200"])[0])))
+                except ValueError:
+                    limit = 200
+                items = st.list_items()
+                self._json(200, {"ok": True, "store": st.name,
+                                 "total": len(items),
+                                 "items": items[-limit:][::-1]})
                 return
             if path == "/api/persona/full":
                 # 给人设编辑器用：读人设的全部字段（不是摘要）。
