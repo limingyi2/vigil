@@ -1,0 +1,21 @@
+{
+  "run_id": "ollama-agent-smoke-20261011-002638",
+  "started_at": "2026-10-11T00:26:38",
+  "ollama_version": "0.34.1",
+  "ollama_base_url": "http://127.0.0.1:11434",
+  "model_tag": "qwen27b-efficientthink:latest",
+  "provider": "ollama",
+  "num_ctx": 16384,
+  "num_predict": 2048,
+  "think": true,
+  "temperature_in_payload": 0.85,
+  "worker": "<REPO>\\vigil-eval\\adapters\\ollama_worker.py",
+  "limits": {
+    "max_model_requests": 6,
+    "max_tool_calls": 8,
+    "max_wall_seconds": 180
+  },
+  "task_ids": [
+    "A01"
+  ]
+}

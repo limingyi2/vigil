@@ -1,0 +1,125 @@
+{
+  "batch_id": "live-first-batch-20261010-232026",
+  "expected_runs": 16,
+  "completed_runs": 16,
+  "model": "mimo-v2.6-flash",
+  "limits_per_run": {
+    "max_model_requests": 8,
+    "max_tool_calls": 8,
+    "max_wall_seconds": 180
+  },
+  "overall": {
+    "A_direct": {
+      "runs": 8,
+      "oracle_passed": 3,
+      "planner_decisions": 0,
+      "effective_plans": 0,
+      "fallbacks": 0,
+      "checker_calls": 0,
+      "revisions": 0,
+      "model_requests": 19,
+      "input_tokens_known": 17734,
+      "output_tokens_known": 1678,
+      "token_runs_reported": 8,
+      "tool_calls": 18,
+      "elapsed_seconds_total": 94.62,
+      "elapsed_seconds_mean": 11.83,
+      "circuit_breakers": {
+        "tool_call_limit": 1
+      }
+    },
+    "B_current": {
+      "runs": 8,
+      "oracle_passed": 3,
+      "planner_decisions": 5,
+      "effective_plans": 5,
+      "fallbacks": 0,
+      "checker_calls": 1,
+      "revisions": 0,
+      "model_requests": 17,
+      "input_tokens_known": 10130,
+      "output_tokens_known": 1962,
+      "token_runs_reported": 8,
+      "tool_calls": 12,
+      "elapsed_seconds_total": 115.85,
+      "elapsed_seconds_mean": 14.48,
+      "circuit_breakers": {}
+    },
+    "total": {
+      "runs": 16,
+      "oracle_passed": 6,
+      "planner_decisions": 5,
+      "effective_plans": 5,
+      "fallbacks": 0,
+      "checker_calls": 1,
+      "revisions": 0,
+      "model_requests": 36,
+      "input_tokens_known": 27864,
+      "output_tokens_known": 3640,
+      "token_runs_reported": 16,
+      "tool_calls": 30,
+      "elapsed_seconds_total": 210.47,
+      "elapsed_seconds_mean": 13.15,
+      "circuit_breakers": {
+        "tool_call_limit": 1
+      }
+    }
+  },
+  "planner_eligible_subset": {
+    "A_direct": {
+      "runs": 5,
+      "oracle_passed": 2,
+      "planner_decisions": 0,
+      "effective_plans": 0,
+      "fallbacks": 0,
+      "checker_calls": 0,
+      "revisions": 0,
+      "model_requests": 12,
+      "input_tokens_known": 11903,
+      "output_tokens_known": 1288,
+      "token_runs_reported": 5,
+      "tool_calls": 13,
+      "elapsed_seconds_total": 68.19,
+      "elapsed_seconds_mean": 13.64,
+      "circuit_breakers": {
+        "tool_call_limit": 1
+      }
+    },
+    "B_current": {
+      "runs": 5,
+      "oracle_passed": 2,
+      "planner_decisions": 5,
+      "effective_plans": 5,
+      "fallbacks": 0,
+      "checker_calls": 1,
+      "revisions": 0,
+      "model_requests": 11,
+      "input_tokens_known": 5170,
+      "output_tokens_known": 1550,
+      "token_runs_reported": 5,
+      "tool_calls": 8,
+      "elapsed_seconds_total": 87.14,
+      "elapsed_seconds_mean": 17.43,
+      "circuit_breakers": {}
+    },
+    "total": {
+      "runs": 10,
+      "oracle_passed": 4,
+      "planner_decisions": 5,
+      "effective_plans": 5,
+      "fallbacks": 0,
+      "checker_calls": 1,
+      "revisions": 0,
+      "model_requests": 23,
+      "input_tokens_known": 17073,
+      "output_tokens_known": 2838,
+      "token_runs_reported": 10,
+      "tool_calls": 21,
+      "elapsed_seconds_total": 155.33,
+      "elapsed_seconds_mean": 15.53,
+      "circuit_breakers": {
+        "tool_call_limit": 1
+      }
+    }
+  }
+}

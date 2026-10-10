@@ -1,0 +1,46 @@
+[build] info  loading build graph
+[build] info  resolving package "synthetic-utils"
+[build] warn  package "synthetic-utils" has no setup.cfg metadata
+[build] info  resolving package "synthetic-core"
+[build] warn  package "synthetic-core" pins numpy==1.20.0 (old)
+[build] info  resolving package "synthetic-cli"
+[build] info  resolving package "synthetic-test"
+[build] warn  package "synthetic-test" depends on pytest-cov>=4.0 (not cached)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  warming wheel cache
+[build] warn  wheel cache hit ratio 0.42 (cold)
+[build] info  collecting source files
+[build] info  compiling synthetic_cli.py
+[build] info  compiling synthetic_core.py
+[build] info  compiling synthetic_utils.py
+[build] info  running import smoke test
+Traceback (most recent call last):
+  File "synthetic_smoke.py", line 1, in <module>
+    import crypto
+ModuleNotFoundError: No module named 'crypto'
+[build] error import smoke test failed (exit=1)
+[build] info  aborting build on smoke failure
+[build] error ImportError: cannot import name 'encrypt' from 'synthetic_core' (synthetic_core.py line 88)
+[build] error AttributeError: module 'synthetic_core' has no attribute 'encrypt'
+[build] error TestCollectionError: collected 0 items in 0.42s
+[build] error pytest failed with exit code 5
+[build] error wheel build aborted: dependencies missing

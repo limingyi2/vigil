@@ -1,0 +1,10 @@
+run_id,task_id,oracle_pass,model_requests,tool_calls,input_tokens,output_tokens,seconds,breaker,provenance
+ollama-agent-smoke-20261011-002638,A01,False,0,0,,,0.125,,available recorded event
+ollama-agent-smoke-20261011-002727,A01,True,5,7,6942,447,18.562,,available recorded event
+ollama-agent-smoke-20261011-002805,A01,True,4,4,5051,227,9.016,,available recorded event
+ollama-agent-smoke-20261011-002805,A02,True,4,7,5408,484,18.813,,available recorded event
+ollama-agent-smoke-20261011-002805,A03,True,6,6,10526,472,18.562,,A03 rerun merged into this batch; not original first run
+ollama-agent-smoke-20261011-002805,A04,True,5,4,6398,478,17.672,,available recorded event
+ollama-agent-smoke-20261011-002805,A05,False,3,2,4097,770,25.656,,available recorded event
+ollama-agent-smoke-20261011-002805,A06,True,3,4,3763,463,15.938,,available recorded event
+ollama-agent-smoke-20261011-003059,A03,True,6,6,10526,472,18.562,,separate A03 rerun; duplicate of merged row

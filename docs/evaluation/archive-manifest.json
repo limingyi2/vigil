@@ -1,0 +1,817 @@
+{
+  "published_at": "2026-10-11",
+  "timezone": "Asia/Shanghai",
+  "publication_base_commit": "c3e37591e836b027926a10dedd32ba3d62210876",
+  "new_model_experiments_run": false,
+  "path_placeholders": {
+    "<REPO>": "local repository root",
+    "<USER_HOME>": "local user home"
+  },
+  "files": [
+    {
+      "source": "<USER_HOME>/Downloads/vigil-evaluation-record-2026-10-10.md",
+      "archive": "vigil-evaluation-record-2026-10-10.md",
+      "source_sha256": "2aca0026e5520f4a702924e92acfbdb3b57e7056288aabd5dd64a664e825b405",
+      "archive_sha256": "2aca0026e5520f4a702924e92acfbdb3b57e7056288aabd5dd64a664e825b405",
+      "transformation": "byte-identical"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205252-6b292f-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205252-6b292f-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "8874696259802a8fa63feb54f23d60db957a53753c2d4cb581ef1b711d26d225",
+      "archive_sha256": "8874696259802a8fa63feb54f23d60db957a53753c2d4cb581ef1b711d26d225",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205322-80dcc7-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205322-80dcc7-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "11883741c3478ad4fb13e97d61d0fb40c75872bae68e292bd0f9a62b1611b809",
+      "archive_sha256": "11883741c3478ad4fb13e97d61d0fb40c75872bae68e292bd0f9a62b1611b809",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205406-4ada36-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205406-4ada36-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "0465ba18004a0a7aa5168a6695ff5616788ad4f8df88c6d709f13b5becc3bb47",
+      "archive_sha256": "0465ba18004a0a7aa5168a6695ff5616788ad4f8df88c6d709f13b5becc3bb47",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205406-4ada36-4e3b62dd8d05/04-results.md",
+      "archive": "data/stub/20261010-205406-4ada36-4e3b62dd8d05/04-results.md",
+      "source_sha256": "f1ba31cabf5e7095e8e026a42d735149d70c6d3554d309bc8f01480c8a407764",
+      "archive_sha256": "3a04e9c5c2aed983806811fad8e545362be369d77899d24ca6a2d79bab005529",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205425-b80e72-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205425-b80e72-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "8a81489de531fc64b86aba9f63fded70c7cb2831a2a8a81c7c8e454a07e27b25",
+      "archive_sha256": "8a81489de531fc64b86aba9f63fded70c7cb2831a2a8a81c7c8e454a07e27b25",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205425-b80e72-4e3b62dd8d05/04-results.md",
+      "archive": "data/stub/20261010-205425-b80e72-4e3b62dd8d05/04-results.md",
+      "source_sha256": "613577b06c164ff49c53e3954fe40c8aa33f652583ca86386e1e1d82e97ebf79",
+      "archive_sha256": "faa3521026d82cc9bdb707568db02e0e0c8181f73a4ca858d61718e23d6e4740",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205436-9a48f3-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205436-9a48f3-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "7bf6b7a60d5e9bd5a4fb4454c5eebf0ccc46d24f6a9365328afbed9f641ff1a1",
+      "archive_sha256": "7bf6b7a60d5e9bd5a4fb4454c5eebf0ccc46d24f6a9365328afbed9f641ff1a1",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205436-9a48f3-4e3b62dd8d05/04-results.md",
+      "archive": "data/stub/20261010-205436-9a48f3-4e3b62dd8d05/04-results.md",
+      "source_sha256": "4f98856458a51e86b9b404dc9419c8a239bcdaadda666101e99eeaef48b37e82",
+      "archive_sha256": "6d8f8ed19fe1da1405f9988cf9be7ca2251964915b6e8a37c6f049890fdc2d12",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205518-383b3e-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205518-383b3e-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "61aecf66e0fe98374353ae93e33531f640888949dd7e4cdce3a40ea57eaa0081",
+      "archive_sha256": "61aecf66e0fe98374353ae93e33531f640888949dd7e4cdce3a40ea57eaa0081",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205518-383b3e-4e3b62dd8d05/04-results.md",
+      "archive": "data/stub/20261010-205518-383b3e-4e3b62dd8d05/04-results.md",
+      "source_sha256": "73ad3187c7c7a8ea2806516a9bb8bc113f4cd37f14237695622f262f4fb74098",
+      "archive_sha256": "089e7c058c82678dce421460fe30a67217b8c2bbc007ecb0ed06ef115c80b3e3",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205612-e6d040-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-205612-e6d040-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "f5c5bdb36d8ef0beecc302fe78e156ff3efc0586b7e4a2d3400930f81578c64b",
+      "archive_sha256": "f5c5bdb36d8ef0beecc302fe78e156ff3efc0586b7e4a2d3400930f81578c64b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205612-e6d040-4e3b62dd8d05/run_meta.json",
+      "archive": "data/stub/20261010-205612-e6d040-4e3b62dd8d05/run_meta.json",
+      "source_sha256": "0fc3aaf1940a0c609e8bb6fa5291645b82e508fc6a13ff8a243e6adfdd02971e",
+      "archive_sha256": "79231945b6c7c3d95d06ef7e8c41b9cc29b8456cb1f7f828044c0ebc86155015",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-205612-e6d040-4e3b62dd8d05/04-results.md",
+      "archive": "data/stub/20261010-205612-e6d040-4e3b62dd8d05/04-results.md",
+      "source_sha256": "94c82a4d511a20b021bba1af055a26adee02c422bd800a23797682794cd4a504",
+      "archive_sha256": "d3f3cd51668bc339cb6ece0ed043065e09d4606ff9d795bd88576a812c6c6639",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-215838-3c313a-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-215838-3c313a-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "b14886014fe10773d7e63f48db1dd092336d6143ccf08e05633f97a8192f3b32",
+      "archive_sha256": "402109cc7312cfd8e9050851a05a7d59ca44a072eea02978357be016cea2d7be",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-215838-3c313a-4e3b62dd8d05/run_meta.json",
+      "archive": "data/stub/20261010-215838-3c313a-4e3b62dd8d05/run_meta.json",
+      "source_sha256": "496cbe449227dbfbfeaf9b68a03ec26290d85783f04f5d6df5d231a042eebea2",
+      "archive_sha256": "34bd1b1d11184f4ad99ffdf5180493bc2f4391a6e6970d14d199a1b639d49ebf",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-221057-adc633-4e3b62dd8d05/events.jsonl",
+      "archive": "data/stub/20261010-221057-adc633-4e3b62dd8d05/events.jsonl",
+      "source_sha256": "71f9a22c6b8e3e0e4342272e4eefd9a99997a018b7d19243309e1286dc450ddb",
+      "archive_sha256": "8563e52192c003c2c75ac644709b703e70ab4465a433562b1d89d524638150d6",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/20261010-221057-adc633-4e3b62dd8d05/run_meta.json",
+      "archive": "data/stub/20261010-221057-adc633-4e3b62dd8d05/run_meta.json",
+      "source_sha256": "f308ef666432213bc36dcebb88d5c4f020e886d1b330e4dfb219a3d96e88bb80",
+      "archive_sha256": "90814e29cdeb38f3bc4f78ec9dc6aa91ca33bfcb01ec92d3d3af2533097532fa",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/live-first-batch-20261010-232026/events.jsonl",
+      "archive": "data/mimo-planner-first-batch/events.jsonl",
+      "source_sha256": "efc85e319531cce4ed5c0c55917c87aca931a58a92c9393c058942fbd27a8d0c",
+      "archive_sha256": "88d4fb8bfe504241ba0a851c4f63db49220becbee713984e23c44f7c7109cd44",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/live-first-batch-20261010-232026/run_meta.json",
+      "archive": "data/mimo-planner-first-batch/run_meta.json",
+      "source_sha256": "325ba2192f98a14668d7b150e2bdd5f66ee9d7b30732911f1c861d27a0fb2b90",
+      "archive_sha256": "325ba2192f98a14668d7b150e2bdd5f66ee9d7b30732911f1c861d27a0fb2b90",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/live-first-batch-20261010-232026/summary.json",
+      "archive": "data/mimo-planner-first-batch/summary.json",
+      "source_sha256": "9b79220582ed00f993f5e0445e93d04bd9a8482f180ca6df93cc7c2141b6df66",
+      "archive_sha256": "9b79220582ed00f993f5e0445e93d04bd9a8482f180ca6df93cc7c2141b6df66",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/outputs/live-first-batch-20261010-232026/summary.md",
+      "archive": "data/mimo-planner-first-batch/summary.md",
+      "source_sha256": "c4abbcbfd40079cd700123f233607112974a45b309f4d37d08ed95ec2f2454ad",
+      "archive_sha256": "272526a9d637eb8f0aa8759b254700b9c19e5871dc0e4fed20a573855a6da4d4",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002638/raw_events.jsonl",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002638/raw_events.jsonl",
+      "source_sha256": "4af3eccc085a7c0565f8a22bb999344fbf57da233cc87b91b9acf36de7ac6fad",
+      "archive_sha256": "a93ee130c09ecd53262940676371e913df92d0092cfb7234bf14ef2a96db5c51",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002638/summary.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002638/summary.json",
+      "source_sha256": "2b70fa422f47c1037dea75a2643fb97a361fff176355ef67641f62188539723d",
+      "archive_sha256": "b391ce15ae0faa190e1d0c2a0b95b7ef85d282a29aeb828c3b69824cb38136f5",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002638/environment.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002638/environment.json",
+      "source_sha256": "6cf137bb529b0e88e3dc90afe3ca81f1d47bdc5b708a7a96da133fe0489d0252",
+      "archive_sha256": "ee48161b81003136c3f526631a6f83cb5d48087397351979595a21c1f9dd7b98",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002638/runs/A01/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002638/progress/A01/progress.json",
+      "source_sha256": "89a60934de3fb62596f5b2fe9216e97a62620d8c4308ec008067041038078d26",
+      "archive_sha256": "5661d1b39f3b40f10fe9f54d14889518cf33a3596667de9b001ea87abf33ea30",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002727/raw_events.jsonl",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002727/raw_events.jsonl",
+      "source_sha256": "d3a7e1f22d6cfc3497f01f51103ab94267f9b98044e1e93efd917b9536e8949b",
+      "archive_sha256": "a8deb4f28e611e7c2869684dbb7ebe0ebaaa09dd0b8018f99b555ff60a244c83",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002727/summary.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002727/summary.json",
+      "source_sha256": "b42535d7d619e994b6ca02d5dbc1b2bc0d4887fcb3a75349c42d3ca8c1bb0fd5",
+      "archive_sha256": "5253e1a0d69be79946a56236fbbeca1e48c65b6768ece207675c24e20e4144dc",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002727/environment.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002727/environment.json",
+      "source_sha256": "03014605a98fcbaa6075e372d37b3be91e916450127b048acaa4eaa9fcae0704",
+      "archive_sha256": "ce772517cbd45503e3896e733db4d679873423f32a09e8ee3ce6093f93e5e197",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002727/runs/A01/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002727/progress/A01/progress.json",
+      "source_sha256": "3cb2abd600b53bb5fa9568cae4f413c40e7fddc7bbdc1921dc08247f5567c3fc",
+      "archive_sha256": "d4c7fd5bf2e3dac593a5d98805efa79a9fa38ce95b03285117a587d73afcbb35",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/raw_events.jsonl",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/raw_events.jsonl",
+      "source_sha256": "82f0c082889b389076f219d2381282cf6d32ea98d5d74a28e3fcb150671cdfce",
+      "archive_sha256": "b6a7714824b68e4aa187235104cfd9da17800373e8a8daf62e0b37b606f2d117",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/summary.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/summary.json",
+      "source_sha256": "bc8d3b8bf76c8f195d9d44646396a0902c10ebddbae8ce70d1e74cb0823055df",
+      "archive_sha256": "1a741097a5ed80e4ec8e1429fe8b9d5e247ff5041fe5647f0eec96cb810ae0bc",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/environment.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/environment.json",
+      "source_sha256": "386a46e23e0492882326d27798a9b6d9f486b1fce3cc8ec30f243fb1b55c7f7d",
+      "archive_sha256": "263525aa643c24cb14d194b9e3fb0c4eb7ac1ea7d0105a0addbc07e9ad4bb1b3",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/report.md",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/report.md",
+      "source_sha256": "e7ccc111e6f53ea9c50bab7707c3de38508f208fd0ad11623669923af86a60b0",
+      "archive_sha256": "d68eaaabcef863d03fc256a4b8fe44a28479bc4b296e422c139b78018f14ddcd",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/failures.md",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/failures.md",
+      "source_sha256": "a7f87a05bbcaed99b3e97b7e135151cea27c764166f73e9b114ab0d167690881",
+      "archive_sha256": "b33e94ce73d7c5ec76aa5111690e2c807147c0e2499c02ada1ae88bb2f1c8b2c",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/runs/A01/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/progress/A01/progress.json",
+      "source_sha256": "52898da5d6343de6d5473ec2baa80ca8a20eda2607167427d2827b480eb1c416",
+      "archive_sha256": "dde11d055841ab617860307bdad4b462810e4bf906bca410fd50a77c785ea393",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/runs/A02/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/progress/A02/progress.json",
+      "source_sha256": "aba05c5a1087daa0a095f71772694f346398ed6b2d7c44a1983ef37a3b6a57ff",
+      "archive_sha256": "eaa8300e583571e2a309f75cdd70136d8e6de2dcec0d99028bd34feeb5e4c2cd",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/runs/A03/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/progress/A03/progress.json",
+      "source_sha256": "fffd1ed481ad86319954a6af6f31777f9d955543c9fdd9070a3fd1e1883a1ddd",
+      "archive_sha256": "42f7d5965d087e54799837f496b881654898b6aafce0c626813df51bcc8c56d5",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/runs/A04/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/progress/A04/progress.json",
+      "source_sha256": "b9e503bf2803f1823def8411fbf76c14aac238c25f931b7f104c011f18c3c07d",
+      "archive_sha256": "38ca1ec3432bdddd015e4d98bb7e33daf63c7cd0afe197ee38195ca98966f1c8",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/runs/A05/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/progress/A05/progress.json",
+      "source_sha256": "b87688c57d9275fd19499e452635546526d3cfd1f37d1ea8cc91d5cfb6cc3192",
+      "archive_sha256": "2b66127d035f9ae75b99924c57b13569865689629aa28cd52cc0b9efb2107654",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/runs/A06/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/progress/A06/progress.json",
+      "source_sha256": "6a6331ed1837e3d5b28b1ab84c0c09fa970291bc1048c9e5352761064bce40fa",
+      "archive_sha256": "3560b6b0b7f48ec8c1520667ba79c28b9f3fe8fddd28b2d17b7d141778ad0ea3",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-002805/patches/A03.diff",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-002805/patches/A03.diff",
+      "source_sha256": "93d5b696740a30df760c959ff8a95c10fbccb968bf8674b790272c6049499ab6",
+      "archive_sha256": "352674f35f11280c9ca197f57d8d5b2f2df75c101a6b69f2a85596599bbe5c8c",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-003059/raw_events.jsonl",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-003059/raw_events.jsonl",
+      "source_sha256": "6a483297bbcb1834769db81f9087646f28dc5ece9bfb498b78cc20c3a7c689a3",
+      "archive_sha256": "3504c558c1300b50af6db040ee144dba9bc8c15ce2535e36df672e96611d5174",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-003059/summary.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-003059/summary.json",
+      "source_sha256": "cbca4e4b189a4de187ee82c586b358764f89dc72e7e2e389b142264874f5c567",
+      "archive_sha256": "881b0e144d721319f651930cf432bfc5faebdcf50c2836798cc42c909547b0dc",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-003059/environment.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-003059/environment.json",
+      "source_sha256": "533a4e6f6e24382467a0ea7e2ae53ef078c77e42b520d7a3c71b2c29ab3250c8",
+      "archive_sha256": "f83aa61e29f55d4bae8996fe5385f99e9217d2a592efffafb20920dc94c96294",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-003059/runs/A03/progress.json",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-003059/progress/A03/progress.json",
+      "source_sha256": "56b4e421490e83b62e563e7b1c94924c82a75958a3414b7aa89e581bb982175a",
+      "archive_sha256": "ef5acb0a31153038e1bc3f1ebd13f20fe5e92b6a0948c30f461e7671bb9d7c68",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-20261011-003059/patches/A03.diff",
+      "archive": "data/qwen-agent/ollama-agent-smoke-20261011-003059/patches/A03.diff",
+      "source_sha256": "93d5b696740a30df760c959ff8a95c10fbccb968bf8674b790272c6049499ab6",
+      "archive_sha256": "352674f35f11280c9ca197f57d8d5b2f2df75c101a6b69f2a85596599bbe5c8c",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-gates/g0_report.json",
+      "archive": "data/qwen-gates/g0_report.json",
+      "source_sha256": "99ce302809ccaebcb08a48c95f4eaa4991753ef3614dc0183df280005695607c",
+      "archive_sha256": "c3ba06deef3a707165fa9db4825e9f100c03cd9f5af3193541e28b57904c6704",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-gates/g1_report.json",
+      "archive": "data/qwen-gates/g1_report.json",
+      "source_sha256": "0a52d0f8882093643fe2f73df7f26b06737b07c242ea52b06c08cfc2236dea14",
+      "archive_sha256": "1a84cceedf8f33fc24692f3cacf35e83b9e6bbaf8f5c7eb51d39c60ef81f7235",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-gates/g2_report.json",
+      "archive": "data/qwen-gates/g2_report.json",
+      "source_sha256": "8808f0d454b606b680ea440edf737a4a3df5a4d0bd26a8f081d0f5285fe8e67b",
+      "archive_sha256": "32aa8288a6ce1d50fb22298cbf7e4a58c831f56d88e75c20d69be5c330ca0e40",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "results/ollama-agent-smoke-gates/tool_interface.json",
+      "archive": "data/qwen-gates/tool_interface.json",
+      "source_sha256": "91b7ee32633f68eb72e55c997a9366bf1e8f96de1ad31b92d5e722849592c366",
+      "archive_sha256": "04389e7ccdec6b40ca40ecfc04ba22727b6c6c9aed5f71d9deed9e180ce7ffca",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/tasks.jsonl",
+      "archive": "datasets/tasks.jsonl",
+      "source_sha256": "12269ac0940559c35f8ce7aa7215ea4444ac22813f3e2033e09ac09454620c6d",
+      "archive_sha256": "12269ac0940559c35f8ce7aa7215ea4444ac22813f3e2033e09ac09454620c6d",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/tasks_a0x.jsonl",
+      "archive": "datasets/tasks_a0x.jsonl",
+      "source_sha256": "27a6909d38e7aec2bca17c1239a02f6ff1444c889c85ea09a584ed8e7fbe29d2",
+      "archive_sha256": "c4c3ff321831543be5037741b80a3ce12b162b785628ede603c43e1bc9877f28",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a01/config/app.conf",
+      "archive": "datasets/fixtures/a01/config/app.conf",
+      "source_sha256": "b12db1e1f1a7d87e85e2bd4438378c6743b941db3f2374f571e829c571bd9fa7",
+      "archive_sha256": "83e0597c5ed55195a4a0401d487713f796ab1fe9562833c5cd32265a6654c8cb",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a01/config/app.conf.bak.old",
+      "archive": "datasets/fixtures/a01/config/app.conf.bak.old",
+      "source_sha256": "d78d0062de17dac2e01380b77523f1b976a4f25d4c22f2d9983b69a9fde110d7",
+      "archive_sha256": "ff8ac50af1997139ff8bda0e2893b5f3a8e5a28a1e5992b8997501ad95696d4b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a01/config/backup/config.json",
+      "archive": "datasets/fixtures/a01/config/backup/config.json",
+      "source_sha256": "c7420d69fba1ce5c9dea5ebfae27acedcf4ba5986fee0a890ac07dbf7afb204d",
+      "archive_sha256": "14d3cf4a9bfcc7f03d0d713e104f5f3bbb13263c44c77c6ec0dc079577fd08a2",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a01/config/settings.yaml",
+      "archive": "datasets/fixtures/a01/config/settings.yaml",
+      "source_sha256": "1d23506bd530ef49f32ab12feeb775acfc9c65bce299714ecd5385f431d551a5",
+      "archive_sha256": "e6d2b182a1cb4ebb8d9e3a5e77902aec1ca7b92d291e98639c299b81bea6bad2",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a01/README.md",
+      "archive": "datasets/fixtures/a01/README.md",
+      "source_sha256": "5bd8cbd456032f9bfebfa060576dfb92be1ad0a212968fccf54d3eb63047a4bd",
+      "archive_sha256": "f8d543ed6658c0302895124c58b71899c2c9fe4387d2fee80c922a0a11b81f20",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a02/error.log",
+      "archive": "datasets/fixtures/a02/error.log",
+      "source_sha256": "4d234cbfb3b4044978b4c6d8071711b83f0b38e0cc72f13fe5843b23fd01fb6f",
+      "archive_sha256": "15364784f4fadc27db7ed249a5e781d7bc469d8a025842b690593a5e729d1172",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a02/src/app.py",
+      "archive": "datasets/fixtures/a02/src/app.py",
+      "source_sha256": "106d65e441fff214ebb02ad353311fcff934915b7118f9f859a574729bfffa0e",
+      "archive_sha256": "bf1327c9383c07f14084abd317c9dc0c60450eeba3ac0a9beab3aa9ee0cb2ade",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a02/src/auth.py",
+      "archive": "datasets/fixtures/a02/src/auth.py",
+      "source_sha256": "4a0ecf134dd5dcfa8ef6735b4b6c5a62de7625b85ac9bc50c2908cec4bf522aa",
+      "archive_sha256": "dc09e46f9dd84a2adb61ecd1fd9fc06d3c9852cb35d61f8166ab5de07760350b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a02/src/session.py",
+      "archive": "datasets/fixtures/a02/src/session.py",
+      "source_sha256": "a33b731fe2d6f946dee903a919e807745076f0456361e769fa9a1e042b6aed0e",
+      "archive_sha256": "4bb706afa354a17ee2b21c038b09537a785fc88b754ca342798af79cc6d6981d",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a02/tests/test_auth.py",
+      "archive": "datasets/fixtures/a02/tests/test_auth.py",
+      "source_sha256": "94e196b11ca813708bec0c982aadf0a21ec26757c82982ce11889de0052dfccc",
+      "archive_sha256": "e0e785e4e70e15ecaeb285de70ca247adfc761685c37c740aa61d53e1e16785b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a03/calculator.py",
+      "archive": "datasets/fixtures/a03/calculator.py",
+      "source_sha256": "7a0cf58897cd54f33a579b631cfb4bd7acc4f795e0c6eb0217aa9e1c50880cd4",
+      "archive_sha256": "408f8e3ec7f7dd366fe454cdf07d2c75605610616e54ec02bf8ed7550d76a950",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a03/README.md",
+      "archive": "datasets/fixtures/a03/README.md",
+      "source_sha256": "2b9c30dc02a14a419bc2b2b9a74597c1de38b69e6febdc0290bdcaefc164f1ff",
+      "archive_sha256": "5a065e3e55bdd62a97282f1414dd07bdd309b97bd30504734442cc64e4bf4735",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a03/test_calculator.py",
+      "archive": "datasets/fixtures/a03/test_calculator.py",
+      "source_sha256": "390cb6d3724f1051c3c72c4f28ac405b16888d6d17693f1406c99443721d4a79",
+      "archive_sha256": "fab0b55dec53e4f923e0f46364b4a05256d604f844ac11a9328d78d0dcd54023",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a03/utils.py",
+      "archive": "datasets/fixtures/a03/utils.py",
+      "source_sha256": "66100231d8781c88ab541c7c4b4ffd05cad8bffe7e150fb86ced92d4739cffb5",
+      "archive_sha256": "6b45eb2e145f843855f3a47d2f6c99a1a70fc3e151ba849b5b531f944a51c1bc",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a04/docs/old-guide.md.bak",
+      "archive": "datasets/fixtures/a04/docs/old-guide.md.bak",
+      "source_sha256": "7f06a72a1cec4d34bef12a764b02ae6c54976e08c08bb6a24840e0b5bb49c43e",
+      "archive_sha256": "7d07ca90c4a72d1deb0c0eab698c240cd83eef1d6fbfad56cb1143d38562c8c8",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a04/docs/readme.txt",
+      "archive": "datasets/fixtures/a04/docs/readme.txt",
+      "source_sha256": "dc5498bb30bc12320a06f71e73bceabea60d815be2eef3473765cfb6517f241a",
+      "archive_sha256": "ead569cab41e284d9ed7457264c0a3cc6f4ae131fdb5d221a6d5447dc6a5d689",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a04/documentation/guide.md",
+      "archive": "datasets/fixtures/a04/documentation/guide.md",
+      "source_sha256": "81be5149ce3ac9ff38cf9d057eb29e9483b846a775196551d3fd8651fcca7187",
+      "archive_sha256": "2e9ee3c1223cb9a85073ec98c6ce648ee2a26fede46f9a20fb3854b4f379f041",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a05/build.log",
+      "archive": "datasets/fixtures/a05/build.log",
+      "source_sha256": "c743cd39b20cbaa8d7746894154ca4499e579582cfaa5c0e0c9ae3c447c20ba9",
+      "archive_sha256": "3b25750be450feb4d15ea162999f0b62fc86554124dfb8e3c0b76d406730441c",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a05/install.log",
+      "archive": "datasets/fixtures/a05/install.log",
+      "source_sha256": "9e48cfd52d9d0eaf276e7105c4c9a4a10fd94c87b4b12d81128a6b175c12bd49",
+      "archive_sha256": "53a9c8fa6600abe21980f9338f26dd5defdf206f78f6a9e7b9dfeaeaacbfbd90",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a05/test.log",
+      "archive": "datasets/fixtures/a05/test.log",
+      "source_sha256": "8d98bce4a4625beb3004d42f0641035da6c84f7bad9e80f0d088e3fc6078241d",
+      "archive_sha256": "c2f1198c8eb34672595f54664b2b1a4fd153200dc6f487002fc0f1f9eac4a113",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a06/.env",
+      "archive": "datasets/fixtures/a06/.env",
+      "source_sha256": "bc478972f3d033670962aff9765419a33106ddeceba35535c8afa80b63570a78",
+      "archive_sha256": "f8bc36f8433d0a203cf7355c21d3b370239e6d47c2f9e65265fe305d891626d4",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a06/build.log",
+      "archive": "datasets/fixtures/a06/build.log",
+      "source_sha256": "6f34cf44247163ca774e61511c03df8dd2a9adc715b38b59da829a561e575e2a",
+      "archive_sha256": "242375b932aad896aa9093c75a7640df2b8dd1c29d588fef9bd98d72825a76df",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a06/README.md",
+      "archive": "datasets/fixtures/a06/README.md",
+      "source_sha256": "44474e11b909f1168704b9879c4698865ce89d34bfcedce15d67869fdc4dee89",
+      "archive_sha256": "39dbb196e6f8d189f53b4b2b18b8ddff8b1b4630a8624e081ef794ae540ad045",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/a06/src/main.py",
+      "archive": "datasets/fixtures/a06/src/main.py",
+      "source_sha256": "2c64af279d892a58a84c420664749cb27ab96a6aa947ef2574e844d623d91d43",
+      "archive_sha256": "274430f3a20c9f7e9a6014b2f688895199b2f8e60d7021f7023664b07a208266",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/f01/spec.txt",
+      "archive": "datasets/fixtures/f01/spec.txt",
+      "source_sha256": "ff952bad24f97cec40a5cfd4f57aeb2d41bc213eeeb0210d19fbc7c43b8bae52",
+      "archive_sha256": "fb850b51a355dc5058228a69a59e89de067a2b15f7b14118ec623d8d3d4bbee3",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/f02/a/target.txt",
+      "archive": "datasets/fixtures/f02/a/target.txt",
+      "source_sha256": "4a31f8a329cdbbab944056fc992eeb5ab5c0b4a78c3bc34e6d7c4a59fd6cf3b6",
+      "archive_sha256": "18a9d551cfb520402d72ba2debc19f14df223d2e94269a767c5ab2f7848f2b01",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/f02/b/target.txt",
+      "archive": "datasets/fixtures/f02/b/target.txt",
+      "source_sha256": "a5406fc126c2bf45b47433c7b2676cce32321fd95d9c67a7dff067249abdb712",
+      "archive_sha256": "02aa67444bbdb0c7bee8ff6bb10e0c894807a38dea3356239666310a5297fda3",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/f03/status.txt",
+      "archive": "datasets/fixtures/f03/status.txt",
+      "source_sha256": "d09459f946053707cb868ac33ccc5022dbbfc63b7e05eca31145d5b55231e66e",
+      "archive_sha256": "1d5269d5de7b18da3b743fe87f54921c08627a893be404e8860be22a28eca14d",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/f04/known.txt",
+      "archive": "datasets/fixtures/f04/known.txt",
+      "source_sha256": "b7e9227138bad88d94fa3e0ab9ee5cfb7612accbe0737ce82d2e2dd99004b150",
+      "archive_sha256": "08dd991d6a6dfa9048e07749f25d14f3c289324f8a22620a4e1271d1593054f6",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/l01/app.log",
+      "archive": "datasets/fixtures/l01/app.log",
+      "source_sha256": "f598d5d0557def451a0318f4996b0511e8e883eff94e8efad20a283a062be775",
+      "archive_sha256": "ff5a7c3c29b0d538502c1519d141df5f3675e8238c570c116c5bd884a1be093b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/l02/service.log",
+      "archive": "datasets/fixtures/l02/service.log",
+      "source_sha256": "4cee0110a1e658963771407edc0d907b97a5e9ed75b06962b70110c1970c503a",
+      "archive_sha256": "f2fe7cf3030d8cc9db3750959579e42beaee8f53e4a501a3b3bc29ba2b585df9",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/l03/worker.log",
+      "archive": "datasets/fixtures/l03/worker.log",
+      "source_sha256": "db1cd9a67f979f79ff4def3656ab5d24cc21e9c97e72e19869ca0fc58113d056",
+      "archive_sha256": "839b9138816ba3a9903aa9837a65c2f8359139b55a8e2d17e4f5a116d6adce2c",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/l04/a.log",
+      "archive": "datasets/fixtures/l04/a.log",
+      "source_sha256": "581573cefbaafb25415166f9583067f120871d5b80425bd205ca4a97ace719ac",
+      "archive_sha256": "290ec41556f344d70cf6d064fb83e49631fc4619cb12cff63ab4a4874557e7f4",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/l04/b.log",
+      "archive": "datasets/fixtures/l04/b.log",
+      "source_sha256": "158f29f164bfb5b7d27c1f53cd10633fa117f5f15262da3250b9ae4e5a2dcb50",
+      "archive_sha256": "02cc41e8e81b38a396dbb3912edfa6a8937adce6e86f7c41ff371b3eadf6395b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m01/workspace/note.txt",
+      "archive": "datasets/fixtures/m01/workspace/note.txt",
+      "source_sha256": "243636bcd4d9e0e095326128d64847423fd7e93c666e8c3d7c4adcb60bd611e4",
+      "archive_sha256": "72bb879f75284243cb10a64f3304f438848e289cfc223df04da905fa7a2f437d",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m01/workspace/untouched.txt",
+      "archive": "datasets/fixtures/m01/workspace/untouched.txt",
+      "source_sha256": "2640094524ba9b781fc48b17051fa049db127fe727b8b0c1f38f7f6ae7a6bc96",
+      "archive_sha256": "40fd3423ab0e88605fecb6631ffa54d044207f9f127752f213e1978c8a9ecc5d",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m02/one.txt",
+      "archive": "datasets/fixtures/m02/one.txt",
+      "source_sha256": "7f539033db738b0e0f8dc26251983c1bf8172d2e136ef1ee38b19dfb8e065b9a",
+      "archive_sha256": "52e85dce3109de4c4a24596fcf26fd25991d2c40eec00b735b1fcacce8596b62",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m02/two.txt",
+      "archive": "datasets/fixtures/m02/two.txt",
+      "source_sha256": "7f539033db738b0e0f8dc26251983c1bf8172d2e136ef1ee38b19dfb8e065b9a",
+      "archive_sha256": "52e85dce3109de4c4a24596fcf26fd25991d2c40eec00b735b1fcacce8596b62",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m03/report.txt",
+      "archive": "datasets/fixtures/m03/report.txt",
+      "source_sha256": "eff9f02ed2930de9f52f92c3a5d639347b339936648cba33c1a5016978ad0d2c",
+      "archive_sha256": "f3c002a13e146e1139345395b824c1b2278618322dc690d5003a530146be88a4",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m04/left.txt",
+      "archive": "datasets/fixtures/m04/left.txt",
+      "source_sha256": "43c86f35a0678593f87afbb6cb2f6b6850541b37445b40f694af634138cb386e",
+      "archive_sha256": "e801dfa5a9b1f5be19c4746f2881a28e797e8bdbfa9e86afd4a122a31511e8db",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/m04/right.txt",
+      "archive": "datasets/fixtures/m04/right.txt",
+      "source_sha256": "aeb93cb71877052f57de71c587ae0d49f76de8db69b194a75ed4ffe1228fe699",
+      "archive_sha256": "3837d103bfd45468d65bc0c62d328875f5c4de79e16331ddcc711c575d9f6b59",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p01/buggy_module.py",
+      "archive": "datasets/fixtures/p01/buggy_module.py",
+      "source_sha256": "17657448ecf368d83bdab90cabdbb5e180114360acaf62bdd2b9b81449d98456",
+      "archive_sha256": "44ed61d01a5fbd04baf686865a6ea433f4c2d9728d2ea5691c748fbb3abe1b25",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p01/test_module.py",
+      "archive": "datasets/fixtures/p01/test_module.py",
+      "source_sha256": "e0173d50b6acaf3e5c1c40e46003475930c3f9e04b7b6602fb11671893df6512",
+      "archive_sha256": "129e3a0ad77bdcfc20462e2a78cdc5d9541a7ca7e5008279b8456c3339f531b1",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p02/calc.py",
+      "archive": "datasets/fixtures/p02/calc.py",
+      "source_sha256": "bc4ddae1deafac13da4a75b5a59c442f7200966d096d25dcbe1f37ca96a7d26e",
+      "archive_sha256": "c22be5558fbe71248c9acae7d62e31d57baba780f49e83ea45fae4422505c5ae",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p02/test_calc.py",
+      "archive": "datasets/fixtures/p02/test_calc.py",
+      "source_sha256": "56c77bb461210b19297c1dad890dc78e585657ee2ace905585b2aec8c7946bdd",
+      "archive_sha256": "60ff1ddb40bc5064381bf2c9b969465c2292818431e14acd5469b5d405e24660",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p03/counter.py",
+      "archive": "datasets/fixtures/p03/counter.py",
+      "source_sha256": "162d77b0526e35a9aeecf6da7f78b59b67aaa36b5203283c91631da9e0c7a5cc",
+      "archive_sha256": "3fabb66999c32a1cc7346c50934db405f54d00d9a1e177c46b3771a4857c0f52",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p03/test_counter.py",
+      "archive": "datasets/fixtures/p03/test_counter.py",
+      "source_sha256": "a8a136a6bfe030785d38c3e3c3e3d287c34898f982609dafd5cfd2a9fd97d2fb",
+      "archive_sha256": "1e7527a11964340f2c5b7dcdd34f2cf4a7ac0f7bbd5ea3c58b1562fea78aec52",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p04/broken.py",
+      "archive": "datasets/fixtures/p04/broken.py",
+      "source_sha256": "22f8a1942053d26bf4f7766d4ac5bb7140617ea1e61d89e66da828951fa67b40",
+      "archive_sha256": "7834281a037bd3936b3e262a19edd5574e23744173139c4428c3387fbed23914",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/p04/test_broken.py",
+      "archive": "datasets/fixtures/p04/test_broken.py",
+      "source_sha256": "047397c51abfd2f1ea6d269c57a0e646266952dc168c345de15c67ebf486ebdf",
+      "archive_sha256": "8e1f6d14597d803ac8c8d0fc3a4ff9b4b9d800d7625653df3352eaa66db8ee95",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/s01/inside.txt",
+      "archive": "datasets/fixtures/s01/inside.txt",
+      "source_sha256": "e57826a3cd819c880c5c695c5634ac55ba2b664c128516e8d0a7d942318c2959",
+      "archive_sha256": "54fc75c852d94aa5d6fb8d0814cad4c178f2a9c7999b9e1304adb60d5d61f074",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/s02/README.txt",
+      "archive": "datasets/fixtures/s02/README.txt",
+      "source_sha256": "1838e34a6c5106001ad0df02d7bfb3fbbf508699c21a16686efd826f0b0f6df4",
+      "archive_sha256": "953a901320ce395dc2b985916a2925aa2cec31dc7c13f351b2f7a915cfe69372",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/s03/fake.env",
+      "archive": "datasets/fixtures/s03/fake.env",
+      "source_sha256": "dcfb6f9e5bea807c08cf8a781ca4fa9cf85652092ae06dc648b68e171b6c19e1",
+      "archive_sha256": "38ffb434ea76e2bf11edf1ddb528c5300d75eceb7e06d6a0e385fdf0fc991cc0",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/s04/sentinel.txt",
+      "archive": "datasets/fixtures/s04/sentinel.txt",
+      "source_sha256": "28290e5771629232ec7d72c7dc9bddbad24851b0c0fe6aad4d757fdd32c6b4b0",
+      "archive_sha256": "c517956210ea78160d8c9a3ee022c2d746fd91c982c88d99012cc7440be776c5",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/t01/response.json",
+      "archive": "datasets/fixtures/t01/response.json",
+      "source_sha256": "5ca50c2852bbf85b27fe6638452f18c93c6388bd1dce0a64fc251b6441b8159b",
+      "archive_sha256": "38abd0b916cba2997bde1b3c403a9e99103079c858e3d4c8c918ce557171fa24",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/t02/tool_state.txt",
+      "archive": "datasets/fixtures/t02/tool_state.txt",
+      "source_sha256": "2f6973354b711e1794728ef7d9cb31306d5203484bee9e033f5466a407adae81",
+      "archive_sha256": "78f532f3a3ce82bec839b2f65de4e2b4063bb6fb83bf9049aa7afbe6bf9e66af",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/t03/permission.txt",
+      "archive": "datasets/fixtures/t03/permission.txt",
+      "source_sha256": "ba2dd9e325e1db26717749cb10c14d32e2e78b5cdff4be7724ba010f6e0f3661",
+      "archive_sha256": "74fef956fa6047cf7f577203e57773318f124b13f96789b8bc0b633b6834cb69",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/dataset/fixtures/t04/truncated.txt",
+      "archive": "datasets/fixtures/t04/truncated.txt",
+      "source_sha256": "7d7c929210758fd4d90616e11dfb85f557a9b836191623640f04403d638de83c",
+      "archive_sha256": "7d7c929210758fd4d90616e11dfb85f557a9b836191623640f04403d638de83c",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/oracles.py",
+      "archive": "datasets/oracles.py",
+      "source_sha256": "1c298df759e55a74f5760b2e51f46a82674ae35b0708092e2eec20415bf30462",
+      "archive_sha256": "65cf2755ce17105913bed6ed5e37740cc3f517689f8d1de41f94f763c87cf9aa",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/oracles_a0x.py",
+      "archive": "datasets/oracles_a0x.py",
+      "source_sha256": "28609ace0c73510a16fa6f576f54113e0caabc0c75b6176d88255ed4b8c74a39",
+      "archive_sha256": "29535b7676c6412a1c851fb4cd2e35063ce60ffeadc7a2da1b7a7befe3648972",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/01-source-audit.md",
+      "archive": "methodology/01-source-audit.md",
+      "source_sha256": "ed136e5f74a1c6d7eaaec1c3cb18419465b555931fedb100fe6e7770c452e87d",
+      "archive_sha256": "e389f1eaa06d65d15faf4305c754a321f2c3cf062a2d7e9510b943a7e0b41288",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/02-dataset-design.md",
+      "archive": "methodology/02-dataset-design.md",
+      "source_sha256": "a722ca996342ee438193efa9c81e66a81037d702fbe3db5a6a8f8489f98556e9",
+      "archive_sha256": "5deece4c823a26c6cf7872a5d28e63f3540a9eedfc5dddbbd4ada6a61d953100",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    },
+    {
+      "source": "vigil-eval/08-phase2-experiment-plan.md",
+      "archive": "methodology/08-phase2-experiment-plan.md",
+      "source_sha256": "e2af35b4ea1cc343e516de197e16165e147712402492589724438d592795a43b",
+      "archive_sha256": "63fa3b261f4ff1e62bad24191686afe1d176d92bbc15a23ccc579197baa99d0b",
+      "transformation": "UTF-8 normalization and local root path redaction only"
+    }
+  ]
+}

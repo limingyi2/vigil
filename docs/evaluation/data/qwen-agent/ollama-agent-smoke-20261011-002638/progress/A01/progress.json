@@ -1,0 +1,8 @@
+{
+  "model_calls": 0,
+  "input_tokens": null,
+  "output_tokens": null,
+  "tool_call_count": 0,
+  "elapsed_seconds": 0.125,
+  "circuit_breaker": null
+}

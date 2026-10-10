@@ -1,0 +1,28 @@
+{
+  "circuit_breaker_limits": {
+    "max_model_requests_per_run": 6,
+    "max_tool_calls_per_run": 8,
+    "max_wall_seconds_per_run": 180
+  },
+  "enforcement_points_in_ollama_worker": {
+    "model_request_limit": "httpx.post monkeypatch counted_post() raises RuntimeError('task-run model request limit reached') when api_counts['calls'] >= max_requests; breaker.reason='model_request_limit'.",
+    "tool_call_limit": "dispatch() checks len(calls) >= max_tools and returns 'single-task tool call limit reached' without executing; breaker.reason='tool_call_limit'.",
+    "wall_time_limit": "check_deadline() called at the top of counted_post() and dispatch(); raises TimeoutError after deadline; breaker.reason='wall_time_limit'."
+  },
+  "diff_vs_brain_eval_worker": {
+    "brain_eval_worker_default": "max_model_requests=8 (per RUN_LIMITS in vigil_adapter.py line 21).",
+    "ollama_worker_default": "max_model_requests=6 (line 136).",
+    "max_tool_calls": "8 (same).",
+    "max_wall_seconds": "180 (same).",
+    "note": "brain_eval_worker.py and vigil_adapter.py were NOT modified. The new limit lives in ollama_worker.py defaults; callers can still override via spec['limits']."
+  },
+  "serial_run_design": {
+    "model": "One process per run (like vigil_adapter.py).",
+    "oom_handling": "Ollama server itself manages GPU memory; the worker does not batch. If Ollama OOMs, httpx.post raises an exception, which is caught and recorded as brain_error / tool_error.",
+    "double_timeout_stop": "Two consecutive TimeoutExpired / wall_time_limit events will surface via errors[] and breaker.reason; the parent harness should stop further runs when breaker.reason is wall_time_limit or model_request_limit is hit twice in a row."
+  },
+  "verified_by": [
+    "selftest spec limits passed through: max_model_requests=6, max_tool_calls=8, max_wall_seconds=180 (see g1_report.json .limits).",
+    "py_compile passes; defaults grep confirmed at lines 136-138."
+  ]
+}

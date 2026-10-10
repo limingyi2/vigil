@@ -1,0 +1,15 @@
+{
+  "run_id": "20261010-221057-adc633",
+  "commit": "4e3b62dd8d05e009b33e7bd3966f9a50d150e2eb",
+  "python": "3.12.14",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "adapter": "synthetic_stub_no_api",
+  "config_example_sha256": "dee826c66ff0b359e771a7aeb067ca40ebcc2c74693cea7b83cfab52838f456b",
+  "production_config_loaded": false,
+  "main_model": null,
+  "planner_model": null,
+  "temperature": null,
+  "seed": 20261010,
+  "repeats": 1,
+  "note": "No API was called; model settings and production credentials were not loaded."
+}

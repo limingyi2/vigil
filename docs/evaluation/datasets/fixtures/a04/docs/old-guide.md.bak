@@ -1,0 +1,7 @@
+# Old installation guide (v0.1, outdated)
+
+1. Download foobar-0.1.tar.gz
+2. ./configure --prefix=/opt/foobar
+3. make install
+
+NOTE: This backup is stale. The current guide is in documentation/guide.md.

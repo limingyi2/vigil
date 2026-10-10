@@ -31,6 +31,7 @@ Android WebView（手机）· Node（JS 技能宿主）· LLM 走 OpenAI 兼容�
 | [模块表](#模块表) | 每个文件负责什么 |
 | [构建 APK](#构建-apk) | 打包手机端 |
 | [测试](#测试) | 跑用例 |
+| [Agent 评测记录与对照数据](docs/evaluation/README.md) | Planner A/B、Qwen 实战、原始轨迹与复测前后 |
 
 ---
 

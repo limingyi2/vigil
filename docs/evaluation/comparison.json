@@ -1,0 +1,435 @@
+{
+  "generated_from_existing_data_only": true,
+  "overall": {
+    "A_direct": {
+      "runs": 8,
+      "oracle_passed": 3,
+      "planner_decisions": 0,
+      "effective_plans": 0,
+      "fallbacks": 0,
+      "checker_calls": 0,
+      "revisions": 0,
+      "model_requests": 19,
+      "input_tokens_known": 17734,
+      "output_tokens_known": 1678,
+      "tool_calls": 18,
+      "elapsed_seconds_total": 94.62,
+      "elapsed_seconds_mean": 11.83
+    },
+    "B_current": {
+      "runs": 8,
+      "oracle_passed": 3,
+      "planner_decisions": 5,
+      "effective_plans": 5,
+      "fallbacks": 0,
+      "checker_calls": 1,
+      "revisions": 0,
+      "model_requests": 17,
+      "input_tokens_known": 10130,
+      "output_tokens_known": 1962,
+      "tool_calls": 12,
+      "elapsed_seconds_total": 115.85,
+      "elapsed_seconds_mean": 14.48
+    }
+  },
+  "planner_eligible_subset": {
+    "A_direct": {
+      "runs": 5,
+      "oracle_passed": 2,
+      "planner_decisions": 0,
+      "effective_plans": 0,
+      "fallbacks": 0,
+      "checker_calls": 0,
+      "revisions": 0,
+      "model_requests": 12,
+      "input_tokens_known": 11903,
+      "output_tokens_known": 1288,
+      "tool_calls": 13,
+      "elapsed_seconds_total": 68.19,
+      "elapsed_seconds_mean": 13.64
+    },
+    "B_current": {
+      "runs": 5,
+      "oracle_passed": 2,
+      "planner_decisions": 5,
+      "effective_plans": 5,
+      "fallbacks": 0,
+      "checker_calls": 1,
+      "revisions": 0,
+      "model_requests": 11,
+      "input_tokens_known": 5170,
+      "output_tokens_known": 1550,
+      "tool_calls": 8,
+      "elapsed_seconds_total": 87.14,
+      "elapsed_seconds_mean": 17.43
+    }
+  },
+  "paired_tasks": [
+    {
+      "task_id": "F02",
+      "planner_eligible": true,
+      "A_oracle_pass": false,
+      "B_oracle_pass": false,
+      "A_model_requests": 2,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": 0,
+      "A_tool_calls": 2,
+      "B_tool_calls": 2,
+      "delta_B_minus_A_tool_calls": 0,
+      "A_seconds": 8.141,
+      "B_seconds": 10.781,
+      "delta_B_minus_A_seconds": 2.64,
+      "A_tokens_input": 1518,
+      "B_tokens_input": 870,
+      "delta_B_minus_A_tokens_input": -648,
+      "A_tokens_output": 114,
+      "B_tokens_output": 270,
+      "delta_B_minus_A_tokens_output": 156,
+      "A_breaker": null,
+      "B_breaker": null
+    },
+    {
+      "task_id": "M01",
+      "planner_eligible": false,
+      "A_oracle_pass": false,
+      "B_oracle_pass": false,
+      "A_model_requests": 2,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": 0,
+      "A_tool_calls": 1,
+      "B_tool_calls": 1,
+      "delta_B_minus_A_tool_calls": 0,
+      "A_seconds": 8.437,
+      "B_seconds": 5.469,
+      "delta_B_minus_A_seconds": -2.968,
+      "A_tokens_input": 1772,
+      "B_tokens_input": 1773,
+      "delta_B_minus_A_tokens_input": 1,
+      "A_tokens_output": 121,
+      "B_tokens_output": 76,
+      "delta_B_minus_A_tokens_output": -45,
+      "A_breaker": null,
+      "B_breaker": null
+    },
+    {
+      "task_id": "P02",
+      "planner_eligible": true,
+      "A_oracle_pass": false,
+      "B_oracle_pass": false,
+      "A_model_requests": 5,
+      "B_model_requests": 3,
+      "delta_B_minus_A_model_requests": -2,
+      "A_tool_calls": 8,
+      "B_tool_calls": 2,
+      "delta_B_minus_A_tool_calls": -6,
+      "A_seconds": 29.391,
+      "B_seconds": 37.469,
+      "delta_B_minus_A_seconds": 8.078,
+      "A_tokens_input": 6669,
+      "B_tokens_input": 1527,
+      "delta_B_minus_A_tokens_input": -5142,
+      "A_tokens_output": 729,
+      "B_tokens_output": 561,
+      "delta_B_minus_A_tokens_output": -168,
+      "A_breaker": "tool_call_limit",
+      "B_breaker": null
+    },
+    {
+      "task_id": "L01",
+      "planner_eligible": true,
+      "A_oracle_pass": true,
+      "B_oracle_pass": true,
+      "A_model_requests": 2,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": 0,
+      "A_tool_calls": 2,
+      "B_tool_calls": 1,
+      "delta_B_minus_A_tool_calls": -1,
+      "A_seconds": 11.359,
+      "B_seconds": 15.563,
+      "delta_B_minus_A_seconds": 4.204,
+      "A_tokens_input": 1508,
+      "B_tokens_input": 878,
+      "delta_B_minus_A_tokens_input": -630,
+      "A_tokens_output": 237,
+      "B_tokens_output": 289,
+      "delta_B_minus_A_tokens_output": 52,
+      "A_breaker": null,
+      "B_breaker": null
+    },
+    {
+      "task_id": "L04",
+      "planner_eligible": true,
+      "A_oracle_pass": false,
+      "B_oracle_pass": false,
+      "A_model_requests": 1,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": 1,
+      "A_tool_calls": 0,
+      "B_tool_calls": 2,
+      "delta_B_minus_A_tool_calls": 2,
+      "A_seconds": 5.312,
+      "B_seconds": 12.766,
+      "delta_B_minus_A_seconds": 7.454,
+      "A_tokens_input": 707,
+      "B_tokens_input": 1021,
+      "delta_B_minus_A_tokens_input": 314,
+      "A_tokens_output": 86,
+      "B_tokens_output": 284,
+      "delta_B_minus_A_tokens_output": 198,
+      "A_breaker": null,
+      "B_breaker": null
+    },
+    {
+      "task_id": "T01",
+      "planner_eligible": true,
+      "A_oracle_pass": true,
+      "B_oracle_pass": true,
+      "A_model_requests": 2,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": 0,
+      "A_tool_calls": 1,
+      "B_tool_calls": 1,
+      "delta_B_minus_A_tool_calls": 0,
+      "A_seconds": 13.984,
+      "B_seconds": 10.563,
+      "delta_B_minus_A_seconds": -3.421,
+      "A_tokens_input": 1501,
+      "B_tokens_input": 874,
+      "delta_B_minus_A_tokens_input": -627,
+      "A_tokens_output": 122,
+      "B_tokens_output": 146,
+      "delta_B_minus_A_tokens_output": 24,
+      "A_breaker": null,
+      "B_breaker": null
+    },
+    {
+      "task_id": "T02",
+      "planner_eligible": false,
+      "A_oracle_pass": true,
+      "B_oracle_pass": true,
+      "A_model_requests": 2,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": 0,
+      "A_tool_calls": 1,
+      "B_tool_calls": 1,
+      "delta_B_minus_A_tool_calls": 0,
+      "A_seconds": 9.265,
+      "B_seconds": 14.047,
+      "delta_B_minus_A_seconds": 4.782,
+      "A_tokens_input": 1477,
+      "B_tokens_input": 1513,
+      "delta_B_minus_A_tokens_input": 36,
+      "A_tokens_output": 88,
+      "B_tokens_output": 156,
+      "delta_B_minus_A_tokens_output": 68,
+      "A_breaker": null,
+      "B_breaker": null
+    },
+    {
+      "task_id": "S02",
+      "planner_eligible": false,
+      "A_oracle_pass": false,
+      "B_oracle_pass": false,
+      "A_model_requests": 3,
+      "B_model_requests": 2,
+      "delta_B_minus_A_model_requests": -1,
+      "A_tool_calls": 3,
+      "B_tool_calls": 2,
+      "delta_B_minus_A_tool_calls": -1,
+      "A_seconds": 8.734,
+      "B_seconds": 9.188,
+      "delta_B_minus_A_seconds": 0.454,
+      "A_tokens_input": 2582,
+      "B_tokens_input": 1674,
+      "delta_B_minus_A_tokens_input": -908,
+      "A_tokens_output": 181,
+      "B_tokens_output": 180,
+      "delta_B_minus_A_tokens_output": -1,
+      "A_breaker": null,
+      "B_breaker": null
+    }
+  ],
+  "qwen_A03_initial_progress": {
+    "model_calls": 6,
+    "input_tokens": 10567,
+    "output_tokens": 590,
+    "tool_call_count": 7,
+    "elapsed_seconds": 23.344,
+    "circuit_breaker": "model_request_limit"
+  },
+  "qwen_A03_rerun": {
+    "model_calls": 6,
+    "model_requests": [
+      {
+        "phase": "chat",
+        "model": "qwen27b-efficientthink:latest",
+        "input_tokens": 1355,
+        "output_tokens": 56,
+        "http_status": 200,
+        "elapsed_seconds": 2.391
+      },
+      {
+        "phase": "chat",
+        "model": "qwen27b-efficientthink:latest",
+        "input_tokens": 1484,
+        "output_tokens": 70,
+        "http_status": 200,
+        "elapsed_seconds": 2.609
+      },
+      {
+        "phase": "chat",
+        "model": "qwen27b-efficientthink:latest",
+        "input_tokens": 1798,
+        "output_tokens": 63,
+        "http_status": 200,
+        "elapsed_seconds": 2.594
+      },
+      {
+        "phase": "chat",
+        "model": "qwen27b-efficientthink:latest",
+        "input_tokens": 1869,
+        "output_tokens": 151,
+        "http_status": 200,
+        "elapsed_seconds": 4.922
+      },
+      {
+        "phase": "chat",
+        "model": "qwen27b-efficientthink:latest",
+        "input_tokens": 1971,
+        "output_tokens": 102,
+        "http_status": 200,
+        "elapsed_seconds": 3.485
+      },
+      {
+        "phase": "chat",
+        "model": "qwen27b-efficientthink:latest",
+        "input_tokens": 2049,
+        "output_tokens": 30,
+        "http_status": 200,
+        "elapsed_seconds": 1.359
+      }
+    ],
+    "tokens": {
+      "input": 10526,
+      "output": 472
+    },
+    "tool_calls": [
+      {
+        "tool": "file_list",
+        "arguments": {
+          "path": "."
+        },
+        "ok": true
+      },
+      {
+        "tool": "read_file",
+        "arguments": {
+          "path": "calculator.py"
+        },
+        "ok": true
+      },
+      {
+        "tool": "read_file",
+        "arguments": {
+          "path": "test_calculator.py"
+        },
+        "ok": true
+      },
+      {
+        "tool": "read_file",
+        "arguments": {
+          "path": "README.md"
+        },
+        "ok": true
+      },
+      {
+        "tool": "replace_text",
+        "arguments": {
+          "path": "calculator.py",
+          "old": "    return a / b",
+          "new": "    return a // b"
+        },
+        "ok": true
+      },
+      {
+        "tool": "pytest",
+        "arguments": {
+          "test_file": "test_calculator.py"
+        },
+        "ok": true,
+        "exit_code": 0
+      }
+    ],
+    "tool_errors": [],
+    "final_answer": "过了，4 个全绿。就是把 `/` 换成了 `//`，整除。",
+    "tool_call_count": 6,
+    "elapsed_seconds": 18.562,
+    "circuit_breaker": null,
+    "session_id": "eval_ollama_A03_ollama-a",
+    "worker": "ollama_worker",
+    "ollama_injected_options": {
+      "num_ctx": 16384,
+      "num_predict": 2048,
+      "think": true
+    }
+  },
+  "qwen_merged_A03_equals_rerun": true,
+  "qwen_original_failed_A03_trace_available": false,
+  "stub_history": [
+    {
+      "run_id": "20261010-205252-6b292f-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 6,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-205322-80dcc7-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 6,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-205406-4ada36-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 6,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-205425-b80e72-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 6,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-205436-9a48f3-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 8,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-205518-383b3e-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 8,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-205612-e6d040-4e3b62dd8d05",
+      "runs": 8,
+      "passed": 8,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-215838-3c313a-4e3b62dd8d05",
+      "runs": 48,
+      "passed": 48,
+      "actual_model_requests": 0
+    },
+    {
+      "run_id": "20261010-221057-adc633-4e3b62dd8d05",
+      "runs": 48,
+      "passed": 48,
+      "actual_model_requests": 0
+    }
+  ]
+}

@@ -1,0 +1,179 @@
+{
+  "ollama_server": {
+    "version": "0.34.1",
+    "base_url": "http://127.0.0.1:11434",
+    "client_version": "0.34.1",
+    "serve_status": "running (started via Start-Process ollama serve)"
+  },
+  "model": {
+    "tag": "qwen27b-efficientthink:latest",
+    "digest": "02833d795ec9bb5110a821f7b0992eda6bab511f368bbce129b2a033b267426d",
+    "size_bytes": 13276009909,
+    "parent_model_gguf": "Qwen3.8-27B-Coder390-EfficientThink-Q2LynnStyle-MTP.gguf",
+    "format": "gguf",
+    "family": "qwen35",
+    "parameter_size": "27.3B",
+    "quantization_level": "IQ3_S",
+    "context_length_in_model_info": 262144,
+    "capabilities_reported_by_api_tags": [
+      "tools",
+      "thinking",
+      "completion"
+    ],
+    "modelfile_template": "{{ .Prompt }}"
+  },
+  "tests": {
+    "a_oai_compat_with_tools": {
+      "endpoint": "POST http://127.0.0.1:11434/v1/chat/completions",
+      "request_shape": {
+        "model": "qwen27b-efficientthink:latest",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "parameters": "..."
+            }
+          }
+        ],
+        "tool_choice": "auto",
+        "stream": false,
+        "options": {
+          "num_ctx": 16384,
+          "num_predict": 512
+        }
+      },
+      "http_status": 200,
+      "elapsed_s": 17.47,
+      "response_message_keys": [
+        "role",
+        "content",
+        "reasoning",
+        "tool_calls"
+      ],
+      "structured_tool_calls_present": true,
+      "tool_calls_value": [
+        {
+          "id": "O1pCRPcEoSIPxmxA3ZjFIhrKlWrVoQBv",
+          "index": 0,
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Beijing\"}"
+          }
+        }
+      ],
+      "finish_reason": "tool_calls",
+      "arguments_format": "stringified JSON (OpenAI-compatible: json.loads(arguments) works; brain.py already does this)",
+      "usage": {
+        "prompt_tokens": 333,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens": 47,
+        "total_tokens": 380
+      },
+      "passed": true
+    },
+    "b_native_api_chat_with_tools": {
+      "endpoint": "POST http://127.0.0.1:11434/api/chat",
+      "request_shape": {
+        "model": "qwen27b-efficientthink:latest",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "parameters": "..."
+            }
+          }
+        ],
+        "stream": false,
+        "options": {
+          "num_ctx": 16384,
+          "num_predict": 512
+        }
+      },
+      "http_status": 200,
+      "elapsed_s": 18.81,
+      "response_message_keys": [
+        "role",
+        "content",
+        "thinking",
+        "tool_calls"
+      ],
+      "tool_calls_present": true,
+      "tool_calls_value": [
+        {
+          "id": "4QFgsfA7Rr3yetIB9Lus0lEnnc606gat",
+          "function": {
+            "index": 0,
+            "name": "get_weather",
+            "arguments": {
+              "city": "Shanghai"
+            }
+          }
+        }
+      ],
+      "arguments_format": "native dict (NOT stringified; index is inside function)",
+      "incompatibilities_with_openai_shim": [
+        "arguments is a dict, not a JSON string",
+        "function.index is nested inside function (OAI puts index at top level of tool_call)",
+        "thinking field is separate (OAI shim puts it as `reasoning`)"
+      ],
+      "passed": true
+    },
+    "c_think_top_level_native": {
+      "endpoint": "POST http://127.0.0.1:11434/api/chat",
+      "request_added": {
+        "think": true
+      },
+      "http_status": 200,
+      "elapsed_s": 4.06,
+      "thinking_field_populated": true,
+      "thinking_head": "We need compare 9.11 vs 9.9. Need brief thinking. Compare decimal: 9.9 = 9.90, 9.11 < 9.90, so 9.9 larger. Need final concise. Ensure no extra? The user says Think briefly. Could just answer. Final: 9.9 is larger. Maybe explain: 9.11 is 9 + 0.11, 9.9 is 9 + 0.90.\n",
+      "content_head": "9.9 is larger.",
+      "done_flag_thinking_field": null,
+      "conclusion": "Top-level `think: true` on /api/chat works; thinking and final content are split into `thinking` and `content` fields.",
+      "passed": true
+    },
+    "c2_think_on_oai_compat_endpoint": {
+      "endpoint": "POST http://127.0.0.1:11434/v1/chat/completions",
+      "request_added": {
+        "think": true
+      },
+      "http_status": 200,
+      "elapsed_s": 20.33,
+      "message_keys": [
+        "role",
+        "content",
+        "reasoning"
+      ],
+      "reasoning_field_populated": true,
+      "reasoning_field_name": "reasoning  (NOT `reasoning_content`)",
+      "content_head": "0.1 is bigger than 0.02.  \n(0.1 = 0.10, which is greater than 0.02.)",
+      "conclusion": "Ollama /v1 shim returns thinking under `reasoning`, not `reasoning_content`. brain.py `_extract_reasoning()` prefers `reasoning_content` and will NOT auto-pick up Ollama's `reasoning` field — this is a cosmetic gap (last_think will be empty), not a tool-loop breaker.",
+      "passed": true
+    }
+  },
+  "conclusion": {
+    "draft_native_compatible_directly": true,
+    "why": [
+      "Ollama's /v1/chat/completions endpoint returns OpenAI-structured tool_calls with stringified JSON arguments, which is exactly what brain.draft_native() parses (json.loads(function.arguments)).",
+      "finish_reason='tool_calls' is set on the function-calling turn.",
+      "OpenAI-role tool message回灌 (assistant.tool_calls + role:tool with tool_call_id) should work because Ollama preserves the OpenAI message shape.",
+      "Model advertises capabilities=['tools','thinking','completion']."
+    ],
+    "required_adapter_in_ollama_worker": [
+      "Inject options.num_ctx=16384 (Ollama default ctx is 4096, brain.py does not send num_ctx; without this ReAct loops truncate).",
+      "Inject options.num_predict=2048 (brain.py's max_tokens=600/4096 will still override at the OpenAI layer; num_predict is a safety net).",
+      "Set think=True in the outgoing payload so the efficientthink model emits its thinking trace.",
+      "api_key='ollama' placeholder (Ollama ignores Authorization header)."
+    ],
+    "known_cosmetic_gaps": [
+      "brain._extract_reasoning() reads `reasoning_content`; Ollama returns `reasoning`. last_think will be empty but the final answer and tool loop are unaffected. Do NOT modify brain/ to fix this — out of scope.",
+      "brain.py sends reasoning_effort='low'/'medium'; Ollama's /v1 shim may ignore it. The model still thinks when think=True."
+    ],
+    "do_not_use": "Native /api/chat endpoint for draft_native — its arguments is a dict and field layout differs from OpenAI."
+  }
+}

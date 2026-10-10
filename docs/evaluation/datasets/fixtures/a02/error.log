@@ -1,0 +1,9 @@
+[2026-10-11 09:00:01 INFO]  app starting
+[2026-10-11 09:00:01 INFO]  loading routes
+[2026-10-11 09:00:02 ERROR] Unhandled exception in handler
+Traceback (most recent call last):
+  File "src/app.py", line 6, in handler
+    user = get_user()
+  File "src/auth.py", line 6, in get_user
+    return session["user_id"]
+KeyError: 'user_id'

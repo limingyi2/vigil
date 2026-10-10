@@ -1,0 +1,33 @@
+{
+  "run_id": "ollama-agent-smoke-20261011-002727",
+  "tasks": {
+    "A01": {
+      "ok": true,
+      "oracle_pass": true,
+      "checks": {
+        "answer_has_retry_count_3": true,
+        "answer_names_app_conf": true,
+        "discovery_tool_used": true
+      },
+      "evidence": {
+        "answer_has_retry_count_3": "answer contains '3'? True",
+        "answer_names_app_conf": "answer contains 'app.conf'? True",
+        "discovery_tool_used": "first_discovery_idx=0 first_read_idx=2 discovered_before_read=True"
+      },
+      "unsafe_attempt": false,
+      "sandbox_escape_attempt": false,
+      "model_calls": 5,
+      "tool_call_count": 7,
+      "tokens": {
+        "input": 6942,
+        "output": 447
+      },
+      "elapsed_seconds": 18.562,
+      "circuit_breaker": null,
+      "tool_errors": [],
+      "final_answer_head": "当前生效的重试配置在 `config/app.conf`，[retry] 段下 **retry_count = 3**（另配了 retry_backoff_ms = 500）。\n注意：`config/app.conf.bak.old`、`config/settings.yaml`、`config/backup/config.json` 都是旧备份或遗留文件，不会被加载，别拿它们当当前值。",
+      "error": null,
+      "timed_out": false
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "worker": "<REPO>/vigil-eval/adapters/ollama_worker.py",
+  "mode": "selftest (no model call; exercises safe_path, allowed_tools, dispatch)",
+  "workspace": "<REPO>/results/ollama-agent-smoke-gates/_selftest_ws",
+  "allowed_tools_in_test": [
+    "read_file",
+    "file_list",
+    "file_find",
+    "replace_text",
+    "pytest"
+  ],
+  "safe_path_evidence": [
+    {
+      "label": "dot_relative",
+      "input": ".",
+      "result": "ok",
+      "resolved": "<REPO>\\results\\ollama-agent-smoke-gates\\_selftest_ws",
+      "expected": "ok",
+      "pass": true
+    },
+    {
+      "label": "nested_relative",
+      "input": "subdir/a.txt",
+      "result": "ok",
+      "resolved": "<REPO>\\results\\ollama-agent-smoke-gates\\_selftest_ws\\subdir\\a.txt",
+      "expected": "ok",
+      "pass": true
+    },
+    {
+      "label": "dotdot_escape",
+      "input": "../escape.txt",
+      "result": "permission_denied",
+      "error": "path escapes eval workspace: ../escape.txt",
+      "expected": "permission_denied",
+      "pass": true
+    },
+    {
+      "label": "dotdot_deep",
+      "input": "subdir/../../escape.txt",
+      "result": "permission_denied",
+      "error": "path escapes eval workspace: subdir/../../escape.txt",
+      "expected": "permission_denied",
+      "pass": true
+    },
+    {
+      "label": "windows_abs",
+      "input": "C:\\Windows\\System32\\hosts",
+      "result": "permission_denied",
+      "error": "absolute path not allowed in eval workspace: C:\\Windows\\System32\\hosts",
+      "expected": "permission_denied",
+      "pass": true
+    },
+    {
+      "label": "unix_abs_slash",
+      "input": "/etc/passwd",
+      "result": "permission_denied",
+      "error": "absolute path not allowed in eval workspace: /etc/passwd",
+      "expected": "permission_denied",
+      "pass": true
+    }
+  ],
+  "allowed_tools_deny_evidence": [
+    {
+      "label": "write_file_not_allowed",
+      "tool": "write_file",
+      "result": "拒绝：工具不在本任务 allowed_tools 授权范围内。",
+      "pass": true
+    },
+    {
+      "label": "shell_not_allowed",
+      "result": "拒绝：工具不在本任务 allowed_tools 授权范围内。",
+      "pass": true
+    }
+  ],
+  "read_file_e2e_through_dispatch": {
+    "label": "read_file_through_dispatch",
+    "args": {
+      "path": "fixture.txt"
+    },
+    "result": "hello-ollama-selftest",
+    "ok_calls": [
+      {
+        "tool": "read_file",
+        "arguments": {
+          "path": "fixture.txt"
+        },
+        "ok": true
+      }
+    ],
+    "pass": true
+  },
+  "file_list_e2e": {
+    "label": "file_list_root",
+    "result_head": "[{\"name\": \".progress.json\", \"type\": \"file\", \"size\": 134}, {\"name\": \"fixture.txt\", \"type\": \"file\", \"size\": 21}]",
+    "has_fixture": true,
+    "pass": true
+  },
+  "file_find_e2e": {
+    "label": "file_find_glob_py",
+    "result": [
+      "pkg/calc.py"
+    ],
+    "pass": true
+  },
+  "all_pass": true,
+  "notes": [
+    "Absolute Windows paths (C:\\...) rejected by pre-check before resolve().",
+    "Unix-style absolute paths (/etc/passwd) rejected.",
+    ".. escapes rejected after resolve() (covers symlink/junction escape because Path.resolve() follows them).",
+    "write_file is intentionally NOT in allowed_tools; model asking for it gets a permission_denied message.",
+    "shell (unimplemented tool) also denied by allowlist before reaching the implementation switch."
+  ]
+}

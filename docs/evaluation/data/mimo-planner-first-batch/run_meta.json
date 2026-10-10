@@ -1,0 +1,45 @@
+{
+  "batch_id": "live-first-batch-20261010-232026",
+  "commit": "4e3b62dd8d05e009b33e7bd3966f9a50d150e2eb",
+  "python": "3.12.14",
+  "started_at": "2026-10-10T23:20:26.731527",
+  "task_ids": [
+    "F02",
+    "M01",
+    "P02",
+    "L01",
+    "L04",
+    "T01",
+    "T02",
+    "S02"
+  ],
+  "groups": [
+    "A_direct",
+    "B_current"
+  ],
+  "repeats": 1,
+  "expected_runs": 16,
+  "main_model": "mimo-v2.6-flash",
+  "planner_model": "mimo-v2.6-flash",
+  "planner_enabled": true,
+  "planner_eligible_tasks": [
+    "F02",
+    "P02",
+    "L01",
+    "L04",
+    "T01"
+  ],
+  "limits_per_run": {
+    "max_model_requests": 8,
+    "max_tool_calls": 8,
+    "max_wall_seconds": 180
+  },
+  "code_sha256": {
+    "brain/planner.py": "6b9a81b5c4431bf0b7526bb2f4d448c1944bc06d56e2b4308549f1f06f268359",
+    "brain/server.py": "53ce1e77acac9be93ad8213fc3359876f99af001af9b0015997259f965e54438",
+    "vigil-eval/adapters/vigil_adapter.py": "b7f7826c242a6e7e6bbd82325703f4a7129120f639ffbcb9020ea25d76adc3e1",
+    "vigil-eval/adapters/brain_eval_worker.py": "5c0c030414fe4635875c4bfe88131932b24486598b6831f3a060ec9a367e4193",
+    "vigil-eval/dataset/tasks.jsonl": "12269ac0940559c35f8ce7aa7215ea4444ac22813f3e2033e09ac09454620c6d"
+  },
+  "production_history_or_memory_loaded": false
+}

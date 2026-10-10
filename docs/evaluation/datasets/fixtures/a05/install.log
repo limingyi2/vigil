@@ -1,0 +1,7 @@
+[install] info  pip 23.0.0
+[install] info  target dir: .venv
+[install] warn  pip upgrade available: 23.0.0 -> 24.2
+[install] info  installing synthetic-utils
+[install] warn  dependency conflict: numpy 1.20.0 requested by synthetic-core
+[install] info  installing synthetic-cli
+[install] info  done
