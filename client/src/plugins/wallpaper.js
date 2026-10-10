@@ -41,7 +41,12 @@
     style.setProperty('--vwp-blur', settings.blur + 'px');
     if (!media) return;
     media.style.opacity = 1 - settings.wallpaperOpacity / 100;
-    media.style.filter = `blur(${settings.wallpaperBlur}px) brightness(${settings.backgroundBrightness}%) contrast(${settings.backgroundContrast}%) saturate(${settings.backgroundSaturate}%)`;
+    const effects = [];
+    if (Number(settings.wallpaperBlur) > 0) effects.push(`blur(${settings.wallpaperBlur}px)`);
+    if (Number(settings.backgroundBrightness) !== 100) effects.push(`brightness(${settings.backgroundBrightness}%)`);
+    if (Number(settings.backgroundContrast) !== 100) effects.push(`contrast(${settings.backgroundContrast}%)`);
+    if (Number(settings.backgroundSaturate) !== 100) effects.push(`saturate(${settings.backgroundSaturate}%)`);
+    media.style.filter = effects.length ? effects.join(' ') : 'none';
     media.style.transform = settings.flip ? 'scaleX(-1)' : '';
     media.querySelectorAll('img,video').forEach(e => e.style.objectFit = settings.objectFit);
     scrim.style.background = `rgba(${dark ? '0,0,0' : '255,255,255'},${settings.scrim})`;
@@ -66,8 +71,11 @@
     media?.replaceChildren(); currentKey = ''; lastControl = ''; firstFrame = false;
   }
   function showPreview(w) {
-    if (!w.preview) return;
-    const img = document.createElement('img'); img.src = w.preview; img.alt = ''; media.append(img);
+    if (!w.frameUrl && !w.preview) return;
+    const img = document.createElement('img'); img.alt = '';
+    if (w.frameUrl && w.preview) img.onerror = () => { img.onerror = null; img.src = w.preview; };
+    img.src = w.frameUrl || w.preview;
+    media.append(img);
   }
   function fallback(w, reason, run) {
     if (run !== generation || firstFrame) return;
@@ -102,7 +110,8 @@
       frame.sandbox = 'allow-scripts allow-same-origin'; frame.style.opacity = '0';
       const params = new URLSearchParams({ type: w.type, src: w.type === 'web' ? w.webLiveSrc : w.sceneLiveSrc,
         mediaBase: base + '/wallpaper-engine/scene-files', fit: settings.objectFit,
-        sceneFps: String(settings.sceneLiveFps), renderDpr: '0.8', muted: String(!settings.videoAudioEnabled) });
+        sceneFps: String(settings.sceneLiveFps), renderDpr: '0', resources: 'native',
+        muted: String(!settings.videoAudioEnabled) });
       if (w.type === 'web') params.set('webSandbox', 'strict');
       if (inventory.weAssetsAvailable) params.set('localAssets', '1');
       frame.src = base + '/wallpaper-engine/scene-live/index.html?' + params;
