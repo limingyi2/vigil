@@ -29,9 +29,9 @@ READY_TAG = "VIGIL_BRAIN_READY"
 def _seed_plugins():
     """把随包分发的插件铺到家目录 plugins/。
 
-    只在目标为空/不存在时整份复制 —— 用户后来装/改的插件不该被
-    每次启动覆盖回去（那等于悄悄回滚）。复制失败不致命：少几个功能，
-    不影响聊天。
+    逐个插件补齐：已存在的插件不覆盖，避免用户后来装/改的内容被
+    每次启动回滚；目录型插件缺失时复制整个目录（包括前端资源）。
+    复制失败不致命：少几个功能，不影响聊天。
     """
     if not FROZEN:
         return
@@ -39,16 +39,17 @@ def _seed_plugins():
     dst = os.path.join(HOME_DIR, "plugins")
     if not os.path.isdir(src):
         return
-    has_files = os.path.isdir(dst) and any(
-        f.endswith(".py") for f in os.listdir(dst))
-    if has_files:
-        return
     try:
         os.makedirs(dst, exist_ok=True)
         for name in os.listdir(src):
-            if name.endswith(".py"):
-                shutil.copy2(os.path.join(src, name),
-                             os.path.join(dst, name))
+            source = os.path.join(src, name)
+            target = os.path.join(dst, name)
+            if os.path.exists(target):
+                continue
+            if os.path.isdir(source):
+                shutil.copytree(source, target)
+            elif name.endswith(".py") and not name.startswith("_"):
+                shutil.copy2(source, target)
         print("[sidecar] 已铺开随包插件 -> %s" % dst, flush=True)
     except Exception as e:
         print("[sidecar] 铺插件失败（不影响聊天）：%s" % e, flush=True)

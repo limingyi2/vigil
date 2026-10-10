@@ -20,27 +20,27 @@ import paths  # noqa: E402
 
 class TestScopeName(unittest.TestCase):
 
-    def test_默认人设app沿用老路径(self):
-        """老数据不用搬 —— 默认人设 + app 走原来的文件名。"""
-        self.assertEqual(paths.scope_name("", "app"), "")
-        self.assertEqual(paths.scope_name("default", "app"), "")
+    def test_默认人设wechat沿用老路径(self):
+        """老数据不用搬 —— 默认人设 + 主渠道 wechat 走原来的文件名。"""
+        self.assertEqual(paths.scope_name("", "wechat"), "")
+        self.assertEqual(paths.scope_name("default", "wechat"), "")
 
     def test_按人设和渠道分别分区(self):
-        self.assertEqual(paths.scope_name("alpha", "app"), "alpha.app")
         self.assertEqual(paths.scope_name("alpha", "wechat"),
                          "alpha.wechat")
-        self.assertEqual(paths.scope_name("preset_group", "app"),
-                         "preset_group.app")
+        self.assertEqual(paths.scope_name("alpha", "pc"), "alpha.pc")
+        self.assertEqual(paths.scope_name("preset_group", "wechat"),
+                         "preset_group.wechat")
 
     def test_换人设就是换分区(self):
         """这是整件事的核心：a 和 b 必须是两份数据。"""
-        a = paths.scoped("C:/x/chat_history.jsonl", "alpha", "app")
-        b = paths.scoped("C:/x/chat_history.jsonl", "preset_yui", "app")
+        a = paths.scoped("C:/x/chat_history.jsonl", "alpha", "wechat")
+        b = paths.scoped("C:/x/chat_history.jsonl", "preset_yui", "wechat")
         self.assertNotEqual(a, b)
 
     def test_同一人设不同渠道也分开(self):
-        a = paths.scoped("C:/x/memory.json", "alpha", "app")
-        b = paths.scoped("C:/x/memory.json", "alpha", "wechat")
+        a = paths.scoped("C:/x/memory.json", "alpha", "wechat")
+        b = paths.scoped("C:/x/memory.json", "alpha", "pc")
         self.assertNotEqual(a, b)
 
 
@@ -72,16 +72,16 @@ class TestScopedPath(unittest.TestCase):
 
     def test_空分区名原样返回(self):
         p = "C:/x/data/memory.json"
-        self.assertEqual(paths.scoped(p, "", "app"), p)
-        self.assertEqual(paths.scoped(p, "default", "app"), p)
+        self.assertEqual(paths.scoped(p, "", "wechat"), p)
+        self.assertEqual(paths.scoped(p, "default", "wechat"), p)
 
     def test_有分区名时插在扩展名前(self):
-        got = paths.scoped("C:/x/data/memory.json", "alpha", "app")
+        got = paths.scoped("C:/x/data/memory.json", "alpha", "wechat")
         self.assertEqual(os.path.basename(got),
-                         "alpha.app.memory.json")
+                         "alpha.wechat.memory.json")
 
     def test_目录不变(self):
-        got = paths.scoped("C:/x/data/memory.json", "alpha", "app")
+        got = paths.scoped("C:/x/data/memory.json", "alpha", "wechat")
         self.assertEqual(os.path.dirname(got).replace("\\", "/"), "C:/x/data")
 
 

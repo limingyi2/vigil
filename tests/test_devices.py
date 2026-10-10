@@ -139,6 +139,45 @@ class TestStore(DeviceBase, unittest.TestCase):
         devices._reload()                     # 模拟进程重启（缓存清掉、从文件读）
         self.assertIsNotNone(devices.verify(r["device_token"]))
 
+    def test_默认角色是受限设备(self):
+        r = devices.register("手机", "mobile")
+        self.assertEqual(r.get("role"), "device")
+        one = devices.get(r["device_id"])
+        self.assertEqual(one.get("role"), "device")
+
+    def test_可注册为admin角色且落盘(self):
+        r = devices.register("台式机", "desktop", role="admin")
+        self.assertEqual(r["role"], "admin")
+        devices._reload()
+        self.assertEqual(devices.get(r["device_id"])["role"], "admin")
+
+    def test_乱填角色收口成device(self):
+        r = devices.register("怪设备", "other", role="superuser")
+        self.assertEqual(r["role"], "device")
+
+    def test_写盘失败返回None并回滚内存(self):
+        """P2-10：落盘失败不能返回 token，内存表里也不能留这条（重启即失效的假绑定）。"""
+        old_write = devices._write
+        devices._write = lambda data: False
+        try:
+            n_before = len(devices.list_all())
+            r = devices.register("写不进去的机器", "desktop")
+            self.assertIsNone(r, "写盘失败必须返回 None")
+            self.assertEqual(len(devices.list_all()), n_before,
+                             "回滚后设备数不该增加")
+        finally:
+            devices._write = old_write
+
+    def test_写盘失败后没发出去的token不能用(self):
+        old_write = devices._write
+        devices._write = lambda data: False
+        try:
+            # 无法拿到 token（register 返回 None）；即便重启读盘也是空表
+            devices._reload()
+            self.assertEqual(devices.list_all(), [])
+        finally:
+            devices._write = old_write
+
 
 class TestAuthIntegration(DeviceBase, unittest.TestCase):
     """_check 的判据：老 brain_token 与设备 token 并存。"""
@@ -160,6 +199,34 @@ class TestAuthIntegration(DeviceBase, unittest.TestCase):
         self.assertFalse(server._auth_ok("", "", "", "1.2.3.4"))
 
 
+class TestDeviceRoleGating(DeviceBase, unittest.TestCase):
+    """server 侧按角色判管理面：admin 设备放行，受限/不存在设备收口。"""
+
+    def test_admin设备是管理员(self):
+        r = devices.register("台式机", "desktop", role="admin")
+        self.assertEqual(server._device_role(r["device_id"]), "admin")
+
+    def test_普通设备不是管理员(self):
+        r = devices.register("手机", "mobile")
+        self.assertEqual(server._device_role(r["device_id"]), "device")
+
+    def test_查不到的设备按最受限处理(self):
+        self.assertEqual(server._device_role("dev_ghost"), "device")
+
+    def test_角色降档下一个请求立即生效(self):
+        r = devices.register("台式机", "desktop", role="admin")
+        self.assertEqual(server._device_role(r["device_id"]), "admin")
+        self.assertTrue(devices.revoke(r["device_id"]))
+        # 吊销后 get() 仍返回记录但 status=revoked；角色判定即便还在也不该再给权限
+        # （revoked token 在 _check 那层就过不了，这里双保险查默认收口）
+        # 直接改角色写回，验证判定是每请求现查、不缓存：
+        data = devices._all()
+        data[r["device_id"]]["role"] = "device"
+        devices._write(data)
+        devices._cache = data
+        self.assertEqual(server._device_role(r["device_id"]), "device")
+
+
 class TestDeviceRoutesDeclared(unittest.TestCase):
     """路由真的接在 server 里了（不是只写了 devices.py）。"""
 
@@ -179,13 +246,29 @@ class TestDeviceRoutesDeclared(unittest.TestCase):
         self.assertIn("403", block)
 
     def test_设备只能解绑自己(self):
-        i = self.src.index('"/api/device/revoke"')
-        block = self.src[i:i + 800]
+        # 路径字符串在设备权限白名单里也出现一次，得找**处理分支**那一处
+        # （后面跟着 did/who/mine 判定的那块）。
+        marker = 'path == "/api/device/revoke"'
+        self.assertIn(marker, self.src)
+        i = self.src.index(marker)
+        block = self.src[i:i + 900]
         self.assertIn("只能解绑本机", block)
 
     def test_check里加了设备分支(self):
         self.assertIn("dt_", self.src)
         self.assertIn("who", self.src)
+
+    def test_插件管理写操作有管理员闸门(self):
+        """P0-3 静态回归：装/卸/重载插件必须先过 _is_admin。"""
+        i = self.src.index("def _plugin_admin")
+        block = self.src[i:i + 1200]
+        self.assertIn("_is_admin", block)
+        self.assertIn("403", block)
+
+    def test_设备权限矩阵默认拒绝接在两条HTTP方法链上(self):
+        self.assertIn("_deny_if_limited_device", self.src)
+        # POST 和 GET 都必须调用，少一条就是半边门没关
+        self.assertGreaterEqual(self.src.count("_deny_if_limited_device("), 3)
 
 
 if __name__ == "__main__":

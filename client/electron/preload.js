@@ -15,6 +15,7 @@ let _streamHandler = null;
 let _streamBound = false;
 
 contextBridge.exposeInMainWorld('vigil', {
+  appVersion: () => ipcRenderer.invoke('app:version'),
   // 所有网络请求走主进程：token 在那边加，渲染层拿不到凭据
   api: (method, path, body, opts) => ipcRenderer.invoke('api', { method, path, body, base: (opts && opts.base) || null }),
 
@@ -93,8 +94,18 @@ contextBridge.exposeInMainWorld('vigil', {
 
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
 
-  // 插件前端注入：主进程直接往渲染进程注代码，绕过 CSP 的 script-src 'self'
-  runJS: (code) => ipcRenderer.invoke('run-js', code),
+  // 插件前端注入：渲染层只能"请主进程加载一次"。插件代码由主进程自己从
+  // 服务端拉取（token 不经过渲染层）并注入，不再有"任意代码 → executeJavaScript"
+  // 的通道（旧 runJS 已移除：插件 JS/XSS 能借它执行任意脚本）。
+  plugins: {
+    load: () => ipcRenderer.invoke('plugins:load'),
+    resourceUrl: (path) => ipcRenderer.invoke('plugins:resource-url', path),
+  },
+  wallpaper: {
+    request: (method, resource, body) => ipcRenderer.invoke('wallpaper:request', { method, resource, body }),
+    importFile: () => ipcRenderer.invoke('wallpaper:import'),
+    directory: () => ipcRenderer.invoke('wallpaper:directory'),
+  },
 
   platform: process.platform,
 });

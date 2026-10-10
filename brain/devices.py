@@ -48,6 +48,13 @@ DEVICE_PREFIX = "dev_"        # device id
 # 设备类型：只影响界面上的图标和提示，不参与鉴权判定
 TYPES = ("desktop", "mobile", "pet", "wechat", "other")
 
+# 设备角色：
+# - device：受限端。只能聊天、认领/提交自己的远程工具调用、读自己的数据，
+#   管理面（装插件、改配置、改人设、记忆编辑、路由切换…）一律 403。
+# - admin：管理端（用户自己的桌面客户端）。API 面与主人钥匙相同。
+# 注册接口本身只接受主人钥匙，所以由主人在注册时授予角色；设备无法自己提权。
+ROLES = ("device", "admin")
+
 
 def _now():
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -103,6 +110,7 @@ def _public(d):
         "device_id": d.get("device_id", ""),
         "device_name": d.get("device_name", ""),
         "device_type": d.get("device_type", "other"),
+        "role": d.get("role") if d.get("role") in ROLES else "device",
         "created_at": d.get("created_at", ""),
         "last_seen": d.get("last_seen", ""),
         "last_ip": d.get("last_ip", ""),
@@ -128,11 +136,15 @@ def _clean_caps(caps):
     return out
 
 
-def register(device_name, device_type="other", ip="", capabilities=None):
-    """注册一台设备，返回**一次性的明文 token**。
+def register(device_name, device_type="other", ip="", capabilities=None,
+             role="device"):
+    """注册一台设备，返回**一次性的明文 token**；写盘失败返回 None。
 
     同名设备重复注册不覆盖、而是新建一条 —— 两台电脑可能都叫"我的电脑"，
     按名字去重会让第二台把第一台顶掉，用户完全看不出发生了什么。
+
+    role 只在 ROLES 里收口，调用方（server 的注册路由）本身已要求主人钥匙，
+    所以由主人决定这台是不是管理端；设备不能自己注册，也就无法自我提权。
     """
     token = TOKEN_PREFIX + secrets.token_hex(16)
     did = DEVICE_PREFIX + secrets.token_hex(4)
@@ -140,10 +152,14 @@ def register(device_name, device_type="other", ip="", capabilities=None):
     dtype = str(device_type or "other").strip().lower()
     if dtype not in TYPES:
         dtype = "other"
+    role = str(role or "device").strip().lower()
+    if role not in ROLES:
+        role = "device"
     rec = {
         "device_id": did,
         "device_name": name,
         "device_type": dtype,
+        "role": role,
         "token_hash": _hash(token),
         "token_hint": token[-6:],       # 只留尾巴，够人认"是不是这把"
         "capabilities": _clean_caps(capabilities),
@@ -155,10 +171,17 @@ def register(device_name, device_type="other", ip="", capabilities=None):
     with _LOCK:
         data = _all()
         data[did] = rec
-        _write(data)
+        # 🔴 必须检查落盘结果：写失败时把 cache 里的临时记录回滚。
+        # 否则客户端拿到 token 以为绑定成功，服务端一重启这台设备就"消失"，
+        # 排查起来像 token 失效，其实是从来没写进去过。
+        if not _write(data):
+            data.pop(did, None)
+            _cache = data
+            return None
         _cache = data
     return {"device_id": did, "device_token": token, "device_name": name,
-            "device_type": dtype, "created_at": rec["created_at"],
+            "device_type": dtype, "role": role,
+            "created_at": rec["created_at"],
             "capabilities": rec["capabilities"]}
 
 

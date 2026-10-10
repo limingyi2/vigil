@@ -53,28 +53,30 @@ def _should_reload(cfg, saved_key, src):
 
 
 class TestPersonaSaveReloadJudgement(unittest.TestCase):
+    # 全局（= pc 桌面端/无覆盖渠道）用 preset_group；微信渠道覆盖成 maibot。
     CFG = _Cfg("preset_group", {"wechat": "preset_group_maibot"})
 
     def test_editing_the_channels_own_persona_reloads(self):
-        # 这两条以前只有第一条过
-        self.assertTrue(_should_reload(self.CFG, "preset_group", "app"))
+        # pc 吃全局那份；wechat 吃 persona_by_src.wechat 那份。
+        self.assertTrue(_should_reload(self.CFG, "preset_group", "pc"))
         self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", "wechat"))
 
     def test_editing_another_templates_does_not_reload(self):
         """守卫的本意要保住：在面板里改一个**没在用**的模板，不该动她。"""
-        self.assertFalse(_should_reload(self.CFG, "preset_group_maibot", "app"))
+        self.assertFalse(_should_reload(self.CFG, "preset_group_maibot", "pc"))
         self.assertFalse(_should_reload(self.CFG, "preset_group", "wechat"))
 
-    def test_missing_src_defaults_to_app(self):
-        """老客户端不带 src（App 客户端就是这样）→ 落回 app 渠道。"""
-        self.assertTrue(_should_reload(self.CFG, "preset_group", None))
-        self.assertTrue(_should_reload(self.CFG, "preset_group", ""))
-        self.assertTrue(_should_reload(self.CFG, "preset_group", "  "))
+    def test_missing_src_defaults_to_wechat(self):
+        """不带 src / 空白 → 归一到主渠道 wechat（app 已退役）。"""
+        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", None))
+        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", ""))
+        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", "  "))
 
-    def test_unknown_channel_falls_back_to_app(self):
+    def test_unknown_channel_falls_back_to_wechat(self):
         """传个认不出来的渠道不能变成"哪个都不匹配"（那等于静默不重载）。"""
-        self.assertTrue(_should_reload(self.CFG, "preset_group", "../../evil"))
-        self.assertTrue(_should_reload(self.CFG, "preset_group", "APP"))
+        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot",
+                                       "../../evil"))
+        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", "APP"))
 
     def test_case_and_padding_are_normalised(self):
         self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", " WeChat "))

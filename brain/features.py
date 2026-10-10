@@ -28,9 +28,10 @@ DEFAULTS 里除核心功能外，插件声明了 FEATURE 的也会登记进来�
 bug（"她在群里提醒你加衣服"就是这么来的）。覆盖是**只写差异**，
 全局那一份仍是唯一真源。
 """
+import contextvars
 import json
-import time
 import threading
+import time
 
 # 行为开关改动 → 同步 outbox（M2：行为插件配置纳入 version 同步）。
 # 拉取落盘不经过 set_features（sync_client 直接写 config.json），无回声
@@ -66,47 +67,54 @@ DEFAULTS = {
     "rand_img_moment": True,  # 朋友圈配图优先用随机图（云上 10-07 加的键）
     "tools": True,            # 模型可自选调免费 API（查他在哪/天气/快递）
     "voice": True,            # 语音条（App 能渲染音频条；群里发不了 mp3，要关）
+    # 微信远程操控 PC 的总闸。**默认关**：现阶段微信只聊天；要开放远控必须
+    # 显式打开，且仍要过 localtools.clearance() 的 owner/群聊矩阵。
+    # 不能靠"没登记的 key on() 默认 True"那套 fail-open —— 安全闸必须 fail-closed。
+    "remote_control": False,
 }
 
 _cache = {"t": 0.0, "d": dict(DEFAULTS), "by": {}}
 _lock = threading.RLock()
 # 当前渠道。聊天入口在进入时 set_current_src 一次，管完这一轮。
-_cur_src = "wechat"
+#
+# 🔴 必须是 ContextVar，不能是模块级变量：server 是 ThreadingHTTPServer，
+# 两个请求的处理线程会互相覆盖同一个"当前渠道"，A 请求的功能开关/权限判断
+# 可能读到 B 请求的渠道。ContextVar 按线程（按上下文）隔离，请求线程之间
+# 天然不串；后台线程在 start 时复制一份父上下文，也不会回写主流程。
+_cur_src = contextvars.ContextVar("features_cur_src", default="wechat")
 
 
 def set_current_src(src):
-    """声明这一轮处理的是哪个渠道。"""
-    global _cur_src
-    _cur_src = str(src or "wechat").strip().lower() or "wechat"
-    return _cur_src
+    """声明这一轮处理的是哪个渠道。只影响当前请求线程/上下文。"""
+    s = str(src or "wechat").strip().lower() or "wechat"
+    _cur_src.set(s)
+    return s
 
 
 def current_src():
-    return _cur_src
+    return _cur_src.get()
 
 
 class with_channel(object):
     """临时把当前渠道改成 src（with 语句），退出时恢复。
 
     主动提醒那种"在后台线程里开口"的路径用这个 —— 它们不属于任何一轮对话，
-    但发到群里显然不合适。
+    但发到群里显然不合适。基于 ContextVar token 复位，不会影响别的线程。
     """
 
     def __init__(self, src):
         self.src = src
-        self.old = None
+        self._token = None
 
     def __enter__(self):
-        global _cur_src
-        with _lock:
-            self.old = _cur_src
-            _cur_src = str(self.src or "wechat").strip().lower() or "wechat"
-        return self.src
+        s = str(self.src or "wechat").strip().lower() or "wechat"
+        self._token = _cur_src.set(s)
+        return s
 
     def __exit__(self, *a):
-        global _cur_src
-        with _lock:
-            _cur_src = self.old or "wechat"
+        if self._token is not None:
+            _cur_src.reset(self._token)
+            self._token = None
         return False
 
 

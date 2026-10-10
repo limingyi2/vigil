@@ -20,16 +20,12 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-// 这个客户端就是表单+列表+聊天气泡，用不上 GPU 合成。禁掉硬件加速：
-// ① 核显/驱动有毛病的机器（GPU 进程反复崩溃会把整个渲染进程拖死）
-// ② 无 GPU 的远程/虚拟机环境 —— 都能正常开窗。
+// 默认软件渲染兼容此前出现过崩溃的 AMD 驱动；保留 SwiftShader WebGL，
+// 让 WebWallGL 场景引擎和无硬件 GPU 的机器都能工作。
 app.disableHardwareAcceleration();
-// 2026-10-09：某次 AMD 驱动/ROCm 更新后，连**软件渲染**的 GPU 进程都启动即崩
-// （0xC0000005 连崩 4 次），renderer 永远完不成首帧 → ready-to-show 不触发
-// → 窗口 show:false 永不显示 = "客户端打不开"。光禁硬件加速不够，
-// 直接让 GPU 管线整个别起（纯软件光栅化），崩溃源头就没了。
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-gpu-compositing');
+// WebWallGL requires WebGL. Keep software rendering for the affected AMD driver,
+// but leave the GPU service alive so Chromium can provide its SwiftShader context.
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
 const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App 直连换这个地址
 // 客户端自己的渠道：独立于手机 App / 微信，聊天、历史、记忆都落在 pc 分区。
@@ -517,6 +513,16 @@ function createWindow() {
 const localtool = require('./localtool');
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
+const wallpaperHost = require('./wallpaper-host').createWallpaperHost({
+  dataDir: path.join(app.getPath('userData'), 'wallpaper-engine'),
+});
+const pluginMedia = require('./plugin-media').createPluginMedia({
+  getBase: () => {
+    const cfg = readCfg();
+    return (sidecar.ready() ? sidecar.base() : cfg.base || DEFAULT_BASE).replace(/\/+$/, '');
+  },
+  getToken,
+});
 const PROBE = ['http://127.0.0.1:18787', 'http://127.0.0.1:8788'];
 
 // 本地大脑（sidecar）一起步就养上；找不到 exe 时它自己会保持 stopped
@@ -532,15 +538,24 @@ async function registerThisDevice(base, brainToken) {
     const old = await getToken();
     if (old) {
       const chk = await request('GET', base + '/api/device/list', null, old);
-      if (chk.ok && chk.json && chk.json.ok && chk.json.me === cfg.device_id) {
+      // 复用条件：me 对得上，且这台设备仍是 admin 角色。
+      // 服务端把角色收紧后（老设备没有 role 字段 = 受限 device），
+      // 面板的管理操作会吃 403 —— 这里检测到就走下面的重新注册自愈。
+      const me = chk.json && ((chk.json.items || []).find((d) => d.device_id === chk.json.me));
+      if (chk.ok && chk.json && chk.json.ok && chk.json.me === cfg.device_id
+          && me && me.role === 'admin') {
         return { ok: true, device_id: cfg.device_id, reused: true };
       }
     }
-    // 401/不匹配 → 掉到下面重新注册，正好完成自愈
+    // 401/不匹配/角色被降 → 掉到下面重新注册，正好完成自愈
   }
   const r = await request('POST', base + '/api/device/register', {
     device_name: os.hostname() || '这台电脑',
     device_type: 'desktop',
+    // 桌面客户端是管理 UI，要能改人设/配置/装插件：注册为 admin 设备。
+    // 注册接口本身只认主人钥匙（brainToken 来自回环 connect-config），
+    // 设备无法自我提权。
+    role: 'admin',
     // 声明这台机器能干什么：服务端只会把能力对得上的活派过来
     capabilities: localtool.capabilities(cfg),
   }, brainToken);
@@ -745,14 +760,63 @@ function startPolling() {
 }
 
 // ── IPC ──────────────────────────────────────────────────────────
-// 插件前端注入：主进程直接往渲染进程注代码，绕过 CSP 的 script-src 'self'
-ipcMain.handle('run-js', async (e, code) => {
+// 插件前端注入（收紧版）：渲染层**不能**再把任意代码塞给主进程执行
+// （旧的 run-js 通道等于 renderer → executeJavaScript 的任意代码桥，
+//  插件 JS 或 XSS 都能借它执行任意脚本）。现在由主进程自己拉
+// /api/plugins/frontend（带服务端 token，渲染层碰不到），只注入
+// 管理员已审核安装的插件代码；渲染层能做的只是"请加载一次"。
+ipcMain.handle('plugins:load', async () => {
   try {
-    return await e.sender.executeJavaScript(String(code || ''));
+    if (!win || win.isDestroyed()) return { ok: false, loaded: 0, err: '窗口没准备好' };
+    const cfg0 = readCfg();
+    const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
+    const b = (sidecarOk ? sidecar.base() : cfg0.base || DEFAULT_BASE).replace(/\/+$/, '');
+    const token = await getToken();
+    const r = await request('GET', b + '/api/plugins/frontend', null, token, 8000);
+    if (!r.ok || !r.json) return { ok: false, loaded: 0, err: '拉取插件资源失败' };
+    const plugins = Array.isArray(r.json.plugins) ? r.json.plugins : [];
+    let loaded = 0;
+    for (const p of plugins) {
+      // Wallpaper Engine runs on this machine independently of cloud/local brain plugins.
+      if (p.name === 'wallpaper') continue;
+      if (!p.enabled || !p.js) continue;
+      const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
+      const wrapped =
+        '(function(){\ntry{\n' + String(p.js) +
+        '\n}catch(e){console.error("[插件 ' + name + ' 前端出错]",e);}\n})();';
+      try {
+        await win.webContents.executeJavaScript(wrapped);
+        loaded += 1;
+      } catch (err) {
+        console.error('[plugins:load] 插件', name, '执行失败:', err);
+      }
+    }
+    return { ok: true, loaded, version: r.json.version || 0 };
   } catch (err) {
-    console.error('[run-js] 执行失败:', err);
-    return null;
+    return { ok: false, loaded: 0, err: String(err && err.message || err) };
   }
+});
+ipcMain.handle('plugins:resource-url', async (_e, resource) => {
+  try { return { ok: true, url: await pluginMedia.url(resource) }; }
+  catch (e) { return { ok: false, err: e.message }; }
+});
+ipcMain.handle('wallpaper:request', async (_e, { method, resource, body }) => {
+  try { return { ok: true, ...(await wallpaperHost.request(method, resource, body)) }; }
+  catch (e) { return { ok: false, err: e.message }; }
+});
+ipcMain.handle('app:version', () => app.getVersion());
+ipcMain.handle('wallpaper:import', async () => {
+  const result = await dialog.showOpenDialog(win, { title: '导入壁纸', properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png'] }] });
+  if (result.canceled) return { ok: true, canceled: true };
+  try { return { ok: true, data: await wallpaperHost.importFile(result.filePaths[0]) }; }
+  catch (e) { return { ok: false, err: e.message }; }
+});
+ipcMain.handle('wallpaper:directory', async () => {
+  const result = await dialog.showOpenDialog(win, { title: '选择壁纸工程目录（包含 project.json 的文件夹）', properties: ['openDirectory'] });
+  if (result.canceled) return { ok: true, canceled: true };
+  try { return { ok: true, ...(await wallpaperHost.request('POST', '/upload-dir', { dir: result.filePaths[0], migrate: false })) }; }
+  catch (e) { return { ok: false, err: e.message }; }
 });
 ipcMain.handle('auto:connect', () => autoConnect());
 ipcMain.handle('local:defaults', () => ({
@@ -772,6 +836,21 @@ ipcMain.handle('local:tools', () => ({
 }));
 
 ipcMain.handle('local:run', async (_e, { name, args }) => {
+  // 🔴 主进程是最后一道：危险工具不管调用方是工具页还是插件 JS，
+  // 都必须走同一个确认气泡（auto 模式除外，那是用户显式选的全自动）。
+  // 不能只靠渲染层的"我确认"勾选 —— 注入的插件代码能直接调 local.run，
+  // 但弹不弹、用户点不点，在这个主进程分支里说了算。
+  if (localtool.DANGER.has(name)) {
+    const allow = readCfg().localAuto
+      ? true
+      : await askLocal({ name, args: args || {}, danger: true, risk: 'confirm' });
+    if (!allow) {
+      const rec = oplog.append({ tool: name, args: args || {}, source: 'me',
+                                 ok: false, text: '你拒绝了这次操作', backup: null });
+      return { ok: true, refused: true, text: '你拒绝了这次操作',
+               backup: null, id: rec && rec.id };
+    }
+  }
   const r = await localtool.run(name, args, readCfg());
   const rec = oplog.append({
     tool: name, args: args || {}, source: 'me',
@@ -806,7 +885,14 @@ ipcMain.handle('local:reveal', (_e, p) => {
 // 渲染层只能给 'ask' 或默认 'status'——不会绕过弹窗直接下载。
 ipcMain.handle('updater:check', (_e, mode) => checkUpdate(mode === 'ask' ? 'ask' : 'status'));
 
-ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null }) => {  if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
+ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null }) => {
+  if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
+  // 🔴 base 只认两种：缺省（配置的大脑/sidecar）和 'cloud' 别名。
+  // 以前渲染层（含被注入的插件 JS）可以传任意 URL，主进程会把 token 带到
+  // 那个 URL 上 —— 等于凭据外传口。
+  if (base != null && base !== 'cloud') {
+    return { ok: false, status: 0, err: '不允许的请求目标：只能用已配置的大脑' };
+  }
   const cfg = readCfg();
   // 🔴 数据页云端视角（2026-10-09）：base='cloud' 改走云端大脑，鉴权用
   // 云端同步凭据（跟本机设备 token 是两把钥匙）。微信渠道的账全在云端，
@@ -840,6 +926,10 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
 // 渲染层调用 api:stream 开始，然后监听 api:stream:event 接收事件。
 ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null }) => {
   if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
+  // 同 'api'：流式通道也不许指向任意 base（防 token 外传）。
+  if (base != null && base !== 'cloud') {
+    return { ok: false, status: 0, err: '不允许的请求目标：只能用已配置的大脑' };
+  }
   const cfg = readCfg();
   const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
   const b = (base || (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE).replace(/\/+$/, '');
@@ -981,7 +1071,7 @@ if (!app.requestSingleInstanceLock()) {
 
 // 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
 // 也会走 before-quit —— 那时必须放行 close，不然关不了机）
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; pluginMedia.close(); wallpaperHost.close(); });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

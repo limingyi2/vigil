@@ -17,12 +17,20 @@ import os
 
 BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 
-# 只带插件的 .py 源码（__pycache__、_registry.json 这类运行时垃圾不进包）
+# 带插件源码及目录型插件的前端/附属资源（运行时文件不进包）。
 plugin_data = []
 plugins_src = os.path.join(BLOCK, "plugins")
-for f in sorted(os.listdir(plugins_src)):
-    if f.endswith(".py"):
-        plugin_data.append((os.path.join(plugins_src, f), "plugins"))
+for root, dirs, files in os.walk(plugins_src):
+    dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+    rel_dir = os.path.relpath(root, plugins_src)
+    for f in sorted(files):
+        if f.endswith((".pyc", ".pyo", ".log")) or f == "_registry.json":
+            continue
+        # 顶层加载器只认独立插件 .py；下划线脚本是开发/测试辅助文件。
+        if rel_dir == "." and (not f.endswith(".py") or f.startswith("_")):
+            continue
+        dest = "plugins" if rel_dir == "." else os.path.join("plugins", rel_dir)
+        plugin_data.append((os.path.join(root, f), dest))
 
 # 带 skill_host（Node.js 技能宿主）：server.js + start_host.bat + skills/ 下所有技能
 skill_host_data = []

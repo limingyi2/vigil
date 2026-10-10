@@ -35,6 +35,9 @@ if-else，改一个功能还可能弄坏别的。插件化之后，核心只认�
 3. **插件不认识就是不认识**：run_tool 查不到名字就返回 None，她照实说查不到。
    模型编出来的工具名由 tools.TOOL_TAG_ANY_RE 兜底扫掉，不会漏给用户。
 """
+import contextlib
+import contextvars
+import hashlib
 import importlib
 import importlib.util
 import os
@@ -323,9 +326,9 @@ def listing():
 def frontend_assets():
     """所有带前端资源的插件，给 /api/plugins/frontend 用。
 
-    返回 {"version": <时间戳>, "plugins": [{name, js, css, enabled}, ...]}
-    只返回有 frontend.js 或 frontend.css 的插件；version 用当前时间戳，
-    前端靠它判断是否需要热重载。
+    返回 {"version": <资源指纹>, "plugins": [{name, js, css, enabled}, ...]}
+    只返回有 frontend.js 或 frontend.css 的插件；version 根据实际资源生成，
+    资源没变就保持不变，供客户端判断是否需要热重载。
     """
     items = []
     try:
@@ -343,8 +346,13 @@ def frontend_assets():
             "css": p.frontend_css,
             "enabled": enabled,
         })
-    import time
-    return {"version": int(time.time()), "plugins": items}
+    digest = hashlib.sha256()
+    for item in items:
+        for value in (item["name"], "1" if item["enabled"] else "0",
+                      item["js"], item["css"]):
+            digest.update(value.encode("utf-8"))
+            digest.update(b"\0")
+    return {"version": digest.hexdigest()[:16], "plugins": items}
 
 
 # --- 派发 ---
@@ -612,6 +620,29 @@ def tool_help(native=False):
         if line:
             out.append("\n" + line.strip())
     return "".join(out)
+
+
+# ── 插件 HTTP 路由的请求身份 ───────────────────────────────────
+# server 在派发插件路由前用 use_principal() 写入本请求的已认证身份
+# (kind, id)：("brain","") 主人钥匙 / ("device", device_id) 设备 token。
+# ContextVar 按请求线程隔离，插件 handler 用 principal() 读，做设备归属校验
+# （见 plugins/remote.py 的 poll/result/cancel）。
+_PRINCIPAL = contextvars.ContextVar("plugin_principal", default=("", ""))
+
+
+def principal():
+    """当前插件路由请求的已认证身份 (kind, id)。非 HTTP 上下文是 ("","")。"""
+    return tuple(_PRINCIPAL.get())
+
+
+@contextlib.contextmanager
+def use_principal(who):
+    """在 with 块内把插件路由身份设成 who（请求级，退出自动复位）。"""
+    token = _PRINCIPAL.set(tuple(who) if who else ("", ""))
+    try:
+        yield
+    finally:
+        _PRINCIPAL.reset(token)
 
 
 def route_table():

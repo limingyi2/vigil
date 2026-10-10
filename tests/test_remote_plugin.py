@@ -51,13 +51,21 @@ class TestRemotePlugin(unittest.TestCase):
     def tearDown(self):
         localtools.DEFAULT_WAIT = self._old_wait
 
-    def _fake_client(self, caps, answer=None, stop_after=1):
-        """扮演客户端：轮询 → 认领 → 送结果。返回线程和结果盒子。"""
+    def _fake_client(self, caps, answer=None, stop_after=1, loops=200):
+        """扮演客户端：轮询 → 认领 → 送结果。返回线程和结果盒子。
+
+        loops 控制最多轮多少轮（每轮 50ms）：不匹配能力的用例要给个小值，
+        否则线程会带着这些 caps 继续轮询 10 秒，把**后续用例/后续文件**里
+        排队的同能力调用偷走（全局队列，跨测试污染）。
+        """
+        # 先在主线程留一个"客户端刚来过"的时间戳：否则 call() 入队前的
+        # POLL_STALE 快回可能先于工作线程第一次 take 触发（线程调度竞态）。
+        localtools.take("dev_prime", ["__prime_only__"])
         box = {"calls": []}
 
         def run():
             got = 0
-            for _ in range(200):
+            for _ in range(loops):
                 if got >= stop_after:
                     return
                 r = PLUGIN._h_poll({}, {"caps": ",".join(caps), "device": "dev_test"})
@@ -70,7 +78,7 @@ class TestRemotePlugin(unittest.TestCase):
                 else:
                     time.sleep(0.05)
 
-        t = threading.Thread(target=run)
+        t = threading.Thread(target=run, daemon=True)
         t.start()
         return t, box
 
@@ -83,9 +91,10 @@ class TestRemotePlugin(unittest.TestCase):
 
     def test_没声明能力就不派给它(self):
         """手机没声明 local_screenshot，这条调用它就认领不到。"""
-        t, box = self._fake_client(["local_file_list"])
+        # loops 给小值：确认领不到就收工，别让轮询线程污染后面的用例。
+        t, box = self._fake_client(["local_file_list"], loops=6)
         out = PLUGIN.TOOLS["local_screenshot"]("")
-        t.join(1)
+        t.join(2)
         self.assertIn("没有在线的电脑", out)
         self.assertEqual(box["calls"], [])
 
@@ -110,19 +119,33 @@ class TestRemotePlugin(unittest.TestCase):
         self.assertEqual(box["calls"][0]["args"], {})
 
     def test_工具规格是按登记表生成的(self):
-        self.assertEqual(set(PLUGIN.TOOL_SPECS), set(localtools.REMOTE_TOOLS))
-        for n, s in PLUGIN.TOOL_SPECS.items():
+        # TOOL_SPECS 是**函数**（按渠道动态返回规格），不是字典：
+        # 默认渠道（pc/app 语义）给全部工具。
+        specs = PLUGIN.TOOL_SPECS()
+        self.assertEqual(set(specs), set(localtools.REMOTE_TOOLS))
+        for n, s in specs.items():
             self.assertTrue(s["desc"], n)
             self.assertIn("arg_param", s)
             self.assertTrue(s["desc"] in PLUGIN.TOOL_HELP or True)
+
+    def test_微信渠道规格默认是空(self):
+        """总闸默认关：微信私聊/群聊的工具规格必须为空（微信只聊天）。"""
+        self.assertEqual(PLUGIN.tool_specs("wechat"), {})
+        self.assertEqual(PLUGIN.tool_specs("wechat_group"), {})
+        # 客户端渠道不受影响
+        self.assertTrue(PLUGIN.tool_specs("pc"))
+        self.assertTrue(PLUGIN.tool_specs("app"))
 
     def test_提示词里提了每个工具(self):
         """tag 形式的提示词要带工具名（模型照名字拼 [tool:名字:参数]）。"""
         for n in localtools.REMOTE_TOOLS:
             self.assertIn(n, PLUGIN.TOOL_HELP)
-        # native 形式只给散文说明，名字走 TOOL_SPECS 的 schema，别在这里找
+        # native 形式只给散文说明，名字走 TOOL_SPECS 的 schema。
+        # 该消失的是旧的 [tool:xxx] 标签语法（native 通道不执行它），
+        # 不是 "local_" 三个字 —— 散文本就要用工具名告诉她
+        # "别用 local_exec 跑 dir"（以前断言成禁词，和文案自相矛盾）。
         self.assertTrue(PLUGIN.TOOL_HELP_NATIVE.strip())
-        self.assertNotIn("local_", PLUGIN.TOOL_HELP_NATIVE)
+        self.assertNotIn("[tool:", PLUGIN.TOOL_HELP_NATIVE)
 
     def test_轮询路由就绪时没有活(self):
         r = PLUGIN._h_poll({}, {"caps": "local_file_list"})

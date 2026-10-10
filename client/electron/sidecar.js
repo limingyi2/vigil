@@ -75,6 +75,7 @@ function locateExe(cfg) {
       cands.push(path.join(process.resourcesPath, 'vigil-brain', 'vigil-brain.exe'));
     } else {
       // 开发仓：vigil-client/electron/ 上一级是仓库根
+      cands.push(path.join(__dirname, '..', '..', 'dist', 'brain-release', 'vigil-brain', 'vigil-brain.exe'));
       cands.push(path.join(__dirname, '..', '..', 'dist', 'vigil-brain', 'vigil-brain.exe'));
     }
   }

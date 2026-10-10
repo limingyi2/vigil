@@ -57,6 +57,56 @@ function inside(target, roots) {
   return null;
 }
 
+// ── symlink / junction 防护 ────────────────────────────────────
+// path.resolve 只做**词法**规范化，不解析符号链接；而 fs.stat()/递归遍历
+// 默认跟随链接。允许目录里放一个指向外部的链接，词法检查放过去、读取时就
+// 走出了白名单根（Windows junction 同理）。两道对策：
+//   1. 路径检查一律先 realpath（已存在的部分解析到真实位置再比根）；
+//   2. 递归遍历默认**不跟随**链接（lstat，遇 link 跳过）。
+function safeRealpath(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch (_) {
+    try {
+      return fs.realpathSync(p);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/**
+ * 算出路径的**真实**落点：
+ * - 已存在（文件/目录/链接本身）：直接 realpath；
+ * - 不存在（典型：要新建的文件）：取最近的、存在的祖先目录 realpath，
+ *   再把不存在的尾部词法拼回去 —— 保证新建时检查的是父目录真实位置。
+ * 整条路径都不存在时，退回词法规范化结果。
+ */
+function resolveTarget(p) {
+  const abs = path.resolve(p);
+  const direct = safeRealpath(abs);
+  if (direct) return direct;
+  const tail = [];
+  let cur = abs;
+  for (let i = 0; i < 64; i++) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break;                 // 到盘符根了
+    tail.unshift(path.basename(cur));
+    const rp = safeRealpath(parent);
+    if (rp) return path.join(rp, ...tail);
+    cur = parent;
+  }
+  return abs;
+}
+
+function realRoots(roots) {
+  const out = [];
+  for (const r of roots || []) {
+    out.push(safeRealpath(r) || path.resolve(r));
+  }
+  return out;
+}
+
 /**
  * 这个路径能不能碰。
  *
@@ -92,17 +142,26 @@ function isSystemPath(abs) {
 }
 
 function guard(p, cfg) {
-  const abs = expand(p);
-  if (!abs) return { err: '没给路径' };
-  const sys = isSystemPath(abs);
-  if (sys) {
-    return { err: '系统目录不动：' + abs + '\n（这个限制写死在代码里，改设置也放不开）' };
+  const abs0 = expand(p);
+  if (!abs0) return { err: '没给路径' };
+  // 词法形态先拦一次（字面上的 C:\Windows 直接拒，不必去解析）
+  if (isSystemPath(abs0)) {
+    return { err: '系统目录不动：' + abs0 + '\n（这个限制写死在代码里，改设置也放不开）' };
+  }
+  // 解析 symlink/junction 后的**真实落点**再查一遍：
+  // 白名单目录里的链接若指向系统目录/外部路径，在这里被挡住。
+  const abs = resolveTarget(abs0);
+  if (isSystemPath(abs)) {
+    return { err: '系统目录不动：' + abs0 + '（真实路径 ' + abs + '）\n'
+      + '（这个限制写死在代码里，改设置也放不开）' };
   }
   if (cfg.allowAllPaths) return { abs, root: path.parse(abs).root };
   const roots = (cfg.roots && cfg.roots.length) ? cfg.roots : defaultRoots();
-  const root = inside(abs, roots);
+  const reals = realRoots(roots);
+  const root = inside(abs, reals);
   if (!root) {
-    return { err: '这个路径不在允许的目录里：' + abs +
+    return { err: '这个路径不在允许的目录里：' + abs0 +
+      (abs !== abs0 ? '（真实路径 ' + abs + '）' : '') +
       '\n（允许的目录：' + roots.join('、') +
       '；要放开整台机器，在 设置 → 本地操控 里把「允许整台机器」打开）' };
   }
@@ -193,9 +252,11 @@ async function tool_file_find(args, cfg) {
       if (hits.length >= MAX_FIND) return;
       if (skip.has(n)) continue;
       const full = path.join(dir, n);
-      if (n.toLowerCase().includes(q)) hits.push(full);
+      // lstat 不跟随链接：符号链接/junction 一律跳过，递归不能借此走出白名单根
       let st;
-      try { st = await fs.promises.stat(full); } catch (_) { continue; }
+      try { st = await fs.promises.lstat(full); } catch (_) { continue; }
+      if (st.isSymbolicLink()) continue;
+      if (n.toLowerCase().includes(q)) hits.push(full);
       if (st.isDirectory()) await walk(full, depth + 1);
     }
   }
@@ -216,8 +277,11 @@ async function tool_file_grep(args, cfg) {
   const pat = String(args.pattern || '').trim();
   if (!p) return '没给要搜的路径';
   if (!pat) return '没给要搜的关键词';
-  const abs = g.abs(p, cfg);
-  if (!abs) return '路径不在允许的目录里：' + p;
+  // 🔴 这里曾经直接写 `const abs = g.abs(...)`，但函数里根本没定义 g
+  // （ReferenceError），grep 一调就炸。先过 guard，拿到白名单解析后的绝对路径。
+  const g = guard(p, cfg);
+  if (g.err) return g.err;
+  const abs = g.abs;
 
   let regex;
   try { regex = new RegExp(pat, 'i'); } catch (_) { regex = null; }
@@ -252,7 +316,9 @@ async function tool_file_grep(args, cfg) {
   async function searchFile(filePath) {
     if (results.length >= maxResults) return;
     let st;
-    try { st = await fs.promises.stat(filePath); } catch (_) { return; }
+    // lstat：链接到白名单外的文件不搜（显式给的单文件已在 guard 里过 realpath）
+    try { st = await fs.promises.lstat(filePath); } catch (_) { return; }
+    if (st.isSymbolicLink()) return;
     if (st.size > MAX_FILE_SIZE) return;
     if (!globMatch(path.basename(filePath))) return;
     // 无扩展名且不在 TEXT_EXT 里的，按前 2KB 判断是不是文本
@@ -278,7 +344,8 @@ async function tool_file_grep(args, cfg) {
       if (skip.has(n) || (n.startsWith('.') && n !== '..')) continue;
       const full = path.join(dir, n);
       let st;
-      try { st = await fs.promises.stat(full); } catch (_) { continue; }
+      try { st = await fs.promises.lstat(full); } catch (_) { continue; }
+      if (st.isSymbolicLink()) continue;   // 不跟随链接
       if (st.isDirectory()) await walk(full, depth + 1);
       else await searchFile(full);
     }
@@ -323,7 +390,8 @@ async function tool_file_recent(args, cfg) {
       if (skip.has(n) || (n.startsWith('.') && n !== '..')) continue;
       const full = path.join(dir, n);
       let st;
-      try { st = await fs.promises.stat(full); } catch (_) { continue; }
+      try { st = await fs.promises.lstat(full); } catch (_) { continue; }
+      if (st.isSymbolicLink()) continue;     // 不跟随链接
       if (st.isDirectory()) { await walk(full, depth + 1); continue; }
       if (st.mtimeMs >= since) found.push({ full, mtime: st.mtimeMs, size: st.size });
     }
@@ -355,6 +423,26 @@ async function tool_screenshot() {
   return '截了张屏幕图，存在：' + file + '\n（图不进对话，要看得你自己去打开）';
 }
 
+/** 原子写：先写同目录临时文件再 rename 替换，避免写到一半被读/崩溃留半截文件。 */
+async function atomicWrite(abs, text) {
+  const dir = path.dirname(abs);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const tmp = path.join(dir, '.~vigil_' + process.pid + '_' + Date.now() + '.tmp');
+  await fs.promises.writeFile(tmp, text, 'utf8');
+  try {
+    await fs.promises.rename(tmp, abs);
+  } catch (e) {
+    // Windows 上个别情况 rename 替换失败时，退一步"删目标再改名"，仍在同卷内。
+    if (e && /EPERM|EACCES|EBUSY/.test(String(e.code || ''))) {
+      await fs.promises.unlink(abs).catch(() => {});
+      await fs.promises.rename(tmp, abs);
+    } else {
+      await fs.promises.unlink(tmp).catch(() => {});
+      throw e;
+    }
+  }
+}
+
 async function tool_file_write(args, cfg) {
   const g = guard(args.path || '', cfg);
   if (g.err) return g.err;
@@ -367,10 +455,10 @@ async function tool_file_write(args, cfg) {
     // 新文件：没有"原文件"可备份，但**仍然要留一条可撤销的记录** ——
     // 撤销的动作就是把它删掉。返回 null 的话界面会写"不可撤销"，
     // 等于你让她新建了东西却收不回来。
-    bk = { target: g.abs, existed: false };
+    bk = { target: g.abs, existed: false, backup_created: false };
   }
-  await fs.promises.mkdir(path.dirname(g.abs), { recursive: true });
-  await fs.promises.writeFile(g.abs, String(args.text == null ? '' : args.text), 'utf8');
+  if (bk) bk.backup_created = !!bk.file;
+  await atomicWrite(g.abs, String(args.text == null ? '' : args.text));
   const canUndo = existed ? !!(bk && bk.file) : true;
   const tip = canUndo ? '（可撤销）' : (bk && bk.skipped ? '（' + bk.skipped + '）' : '');
   return { text: '已写入：' + g.abs + tip, backup: canUndo ? bk : null };
@@ -390,12 +478,14 @@ async function tool_file_append(args, cfg) {
     bk = await backupFile(g.abs);
     if (bk && bk.file) bk.existed = true;
   } else {
-    bk = { target: g.abs, existed: false };
+    bk = { target: g.abs, existed: false, backup_created: false };
   }
+  if (bk) bk.backup_created = !!bk.file;
   await fs.promises.mkdir(path.dirname(g.abs), { recursive: true });
   await fs.promises.appendFile(g.abs, String(args.text == null ? '' : args.text), 'utf8');
   const canUndo = existed ? !!(bk && bk.file) : true;
-  return { text: '已追加到：' + g.abs + (canUndo ? '（可撤销）' : ''), backup: canUndo ? bk : null };
+  return { text: '已追加到：' + g.abs + (canUndo ? '（可撤销）'
+    : (bk && bk.skipped ? '（' + bk.skipped + '）' : '')), backup: canUndo ? bk : null };
 }
 
 async function tool_mkdir(args, cfg) {
@@ -445,19 +535,24 @@ async function tool_copy(args, cfg) {
     bk = await backupFile(to.abs);
     if (bk && bk.file) bk.existed = true;
   } else {
-    bk = { target: to.abs, existed: false };
+    bk = { target: to.abs, existed: false, backup_created: false };
   }
+  if (bk) bk.backup_created = !!bk.file;
   await fs.promises.mkdir(path.dirname(to.abs), { recursive: true });
   await fs.promises.cp(from.abs, to.abs, { recursive: true });
-  return { text: '已复制：' + from.abs + '  →  ' + to.abs, backup: bk };
+  return { text: '已复制：' + from.abs + '  →  ' + to.abs
+    + (existed && !(bk && bk.file) ? '（目标旧文件没能备份，撤不回来）' : ''),
+    backup: bk };
 }
 
 async function tool_file_delete(args, cfg) {
   const g = guard(args.path || '', cfg);
   if (g.err) return g.err;
   const bk = await backupFile(g.abs);
+  if (bk) bk.backup_created = !!bk.file;
   await shell.trashItem(g.abs);      // 进回收站，不是真删
-  const tip = bk && bk.file ? '（已备份，可撤销）' : bk && bk.skipped ? '（' + bk.skipped + '）' : '';
+  const tip = bk && bk.file ? '（已备份，可撤销）'
+    : bk && bk.skipped ? '（' + bk.skipped + '）' : '（没备份，只能从回收站找回）';
   return { text: '已移到回收站：' + g.abs + tip, backup: (bk && bk.file) ? bk : null };
 }
 
@@ -728,6 +823,33 @@ const CMD_BLOCK = [
   /cipher\s+\/w/i, /takeown\s+\/f\s+[a-z]:\\windows/i,
 ];
 
+// cmd.exe 的 shell 元字符：管道、连锁、重定向、转义、变量展开、命令分隔。
+// 白名单命令里出现任何一个，就说明它可能不是"看一眼状态"，而是
+// "dir & 删库"这种以前缀骗过 startsWith 的拼接命令 —— 一律不自动放行。
+// 括号不拦（Program Files (x86) 这类路径里合法），它离开了 &| 也组不成命令。
+const SHELL_META = /[|&<>^%]|\r|\n/;
+
+// cmd 内建命令（不是独立 exe，spawn 时必须经 cmd.exe /d /s /c 调起）。
+// echo 也在内建里，但白名单的 echo 同样不许带元字符。
+const CMD_BUILTINS = new Set(
+  ['dir', 'tree', 'type', 'find', 'findstr', 'where', 'ver', 'echo', 'chcp']);
+
+/** 极简命令行拆词：按空白分，尊重双引号。只用于白名单只读命令的参数化执行。 */
+function tokenizeCmd(c) {
+  const out = [];
+  let cur = '', q = false;
+  for (const ch of String(c || '')) {
+    if (ch === '"') { q = !q; continue; }
+    if (/\s/.test(ch) && !q) {
+      if (cur) { out.push(cur); cur = ''; }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 /** 返回 null 表示放行；返回字符串表示拒绝的理由。 */
 function execVerdict(cmd, cfg) {
   const c = String(cmd || '').trim();
@@ -737,28 +859,85 @@ function execVerdict(cmd, cfg) {
   }
   const low = c.toLowerCase();
   const hit = CMD_ALLOW.find((x) => low === x || low.startsWith(x + ' '));
-  if (hit) return null;                       // 只读命令：直接放行
+  // 白名单前缀 + 无 shell 元字符 = 可信的只读命令。
+  // 元字符让前缀匹配失去意义（"dir & calc" 以 dir 开头但不只是 dir）。
+  if (hit && !SHELL_META.test(c)) return null;
   if (cfg && cfg.allowAllCmds) return null;   // 开了"允许整台机器"：放行，但客户端仍会弹确认
+  if (hit && SHELL_META.test(c)) {
+    return '白名单命令里带了管道、连接符或重定向，按非白名单处理，没执行：' + c.slice(0, 80) +
+      '\n（只读命令只能单条执行；要跑组合命令，在 设置 → 本地操控 里打开「允许执行命令」并逐次确认）';
+  }
   return '这条命令不在只读白名单里，没执行：' + c.slice(0, 80) +
     '\n（只放行看状态的命令，比如 ' + CMD_ALLOW.slice(0, 6).join('、') + ' …；' +
     '要让它能跑别的命令，在 设置 → 本地操控 里把「允许执行命令」打开）';
+}
+
+function _runOnce(exe, argv, cfg) {
+  return new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile(exe, argv,
+      { timeout: 60000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
+        cwd: (cfg && cfg.workdir) || undefined },
+      (err, stdout, stderr) => {
+        if (err) { err.stdout = stdout; err.stderr = stderr; reject(err); return; }
+        resolve((stdout || '') + (stderr ? '\n[stderr]\n' + stderr : ''));
+      });
+  });
+}
+
+/**
+ * 执行白名单只读命令：参数化启动、shell:false，命令参数不会被 shell 二次解释。
+ * cmd 内建走 cmd.exe /d /s /c（/d 不读 AutoRun，免得被开机脚本污染）；
+ * .cmd 包装（npm）直接 spawn 会 ENOENT，那种情况退回 cmd /c 调起 ——
+ * 元字符已在 execVerdict 里挡掉，参数进 argv 数组，拼不进额外动作。
+ */
+async function runReadOnly(cmd, cfg) {
+  const argv = tokenizeCmd(cmd);
+  if (!argv.length) throw new Error('空命令');
+  const comspec = process.env.ComSpec || 'cmd.exe';
+  if (CMD_BUILTINS.has(argv[0].toLowerCase())) {
+    return _runOnce(comspec, ['/d', '/s', '/c', ...argv], cfg);
+  }
+  try {
+    return await _runOnce(argv[0], argv.slice(1), cfg);
+  } catch (e) {
+    // npm 是 npm.cmd、pip 可能是批处理：直接 spawn 在 Windows 上 ENOENT。
+    // 只对这类"找不到文件"退回 cmd 调起；其余错误照常抛。
+    const out = (e.stdout || '') + (e.stderr ? '\n[stderr]\n' + e.stderr : '');
+    if (e && (e.code === 'ENOENT') && !/\.[a-z0-9]+$/i.test(argv[0])) {
+      return _runOnce(comspec, ['/d', '/s', '/c', ...argv], cfg);
+    }
+    if (out) return out;
+    throw e;
+  }
 }
 
 async function tool_exec(args, cfg) {
   const cmd = String(args.cmd || '').trim();
   const bad = execVerdict(cmd, cfg);
   if (bad) return bad;
-  const { exec } = require('child_process');
-  return await new Promise((resolve) => {
-    exec(cmd, { timeout: 60000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
-                cwd: (cfg && cfg.workdir) || undefined },
-      (err, stdout, stderr) => {
-        const out = (stdout || '') + (stderr ? '\n[stderr]\n' + stderr : '');
-        const text = out.trim().slice(0, 12000);
-        if (err && !text) resolve('命令执行失败：' + err.message);
-        else resolve(text || '（命令没有输出）');
-      });
-  });
+  try {
+    const low = cmd.toLowerCase();
+    const hit = CMD_ALLOW.find((x) => low === x || low.startsWith(x + ' '));
+    // 白名单只读命令：参数化执行，不经过 shell 解析。
+    // 其余能走到这的，只能是 allowAllCmds 模式（用户开了总闸且会逐次确认），
+    // 那条路保留 shell（用户明确要"能跑任意命令"），CMD_BLOCK 仍然先生效。
+    const out = hit
+      ? await runReadOnly(cmd, cfg)
+      : await new Promise((resolve, reject) => {
+          const { exec } = require('child_process');
+          exec(cmd, { timeout: 60000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
+                      cwd: (cfg && cfg.workdir) || undefined },
+            (err, stdout, stderr) => {
+              if (err && !(stdout || stderr)) { reject(err); return; }
+              resolve((stdout || '') + (stderr ? '\n[stderr]\n' + stderr : ''));
+            });
+        });
+    const text = String(out || '').trim().slice(0, 12000);
+    return text || '（命令没有输出）';
+  } catch (e) {
+    return '命令执行失败：' + (e && e.message || e);
+  }
 }
 
 const RUN = {
@@ -913,4 +1092,7 @@ module.exports = {
   run, capabilities, defaultRoots, restore,
   CATALOG, GROUP_NAME, DANGER, CMD_ALLOW, CMD_BLOCK, execVerdict,
   inside, expand, isSystemPath, backupFile,
+  // 安全加固件（单测要直接钉）：
+  guard, safeRealpath, resolveTarget, realRoots, tokenizeCmd,
+  SHELL_META, CMD_BUILTINS, runReadOnly, atomicWrite,
 };

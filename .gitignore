@@ -198,8 +198,13 @@ vigil-client/_shots/
 vigil-client/src/_harness.html
 # client/ 新路径（重构后）
 client/dist/
+client/dist-*/
+client/dist_*/
 client/_shots/
 client/src/_harness.html
+
+# 本机微信桥接脚本可能带有机器账号/自动登录配置，不随主仓库发布
+wechat-bridge/*.bat
 
 # 日志目录
 logs/

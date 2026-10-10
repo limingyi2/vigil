@@ -1,6 +1,6 @@
 {
   "name": "vigil-client",
-  "version": "0.1.2",
+  "version": "0.1.5",
   "private": true,
   "description": "Vigil 桌面客户端：聊天 + 管理面板 + 本地操控（骨架阶段）",
   "main": "electron/main.js",
@@ -20,6 +20,7 @@
       "electron/**",
       "src/**",
       "assets/**",
+      "vendor/dsh-wallpaper-engine/**",
       "version.json",
       "package.json"
     ],
@@ -28,7 +29,7 @@
     ],
     "extraResources": [
       {
-        "from": "../dist/vigil-brain",
+        "from": "../dist/brain-release/vigil-brain",
         "to": "vigil-brain"
       }
     ],

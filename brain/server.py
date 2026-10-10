@@ -147,6 +147,87 @@ CHAT_LOCK_WAIT = 300
 # 顺便挡掉"报个超大 Content-Length 把内存打满"。
 MAX_BODY = 12 * 1024 * 1024
 
+# ── 设备 Token 权限矩阵（默认拒绝）─────────────────────────────────
+# 主人钥匙（brain token）：全部 API。
+# 设备 token 分两种角色（devices.ROLES）：
+#   admin —— 用户自己的桌面客户端，注册时由主人授予，API 面同主人钥匙；
+#   device —— 受限端（手机/桌宠/新设备），只放行下面名单里的接口。
+# 名单之外的一切（装插件、改人设/模型/语音、功能开关、路由切换、记忆编辑、
+# 重置/清档、设备注册…）对受限设备一律 403。
+# 新增管理类接口时**默认不在名单里** —— 要开放给设备必须显式加进来。
+DEVICE_GET_ALLOW = frozenset({
+    "/api/chat",                        # 极少数 GET 化的探测（兼容）
+    "/api/health",
+    "/api/history",
+    "/api/features",
+    "/api/chatty",
+    "/api/stats",
+    "/api/logs",
+    "/api/plugins",                     # 桥接/启动器的存活探针
+    "/api/plugins/frontend",            # 客户端要拉插件前端资源
+    "/api/packages",
+    "/api/stickers",
+    "/api/voice",
+    "/api/img",
+    "/api/route",                       # 只读：当前路由状态
+    "/api/persona",
+    "/api/persona/full",
+    "/api/voices",
+    "/api/models",
+    "/api/memory/stores",
+    "/api/memory/list",
+    "/api/device/list",
+    "/api/app/version",
+    "/api/app.apk",
+    "/api/client/version",
+    "/api/client/setup",
+    # remote 插件：设备轮询/看工具目录/统计
+    "/api/plugin/remote/poll",
+    "/api/plugin/remote/tools",
+    "/api/plugin/remote/stats",
+})
+DEVICE_GET_PREFIX = ("/api/sync/",)
+DEVICE_POST_ALLOW = frozenset({
+    "/api/chat",
+    "/api/chat/stream",
+    "/api/logs",                         # 客户端上报错误
+    "/api/stickers/collect",
+    "/api/sync/flush",                   # 客户端「立即同步」
+    "/api/device/list",
+    "/api/device/revoke",                # 只能解绑自己（路由内再校验）
+    # remote 插件：认领任务 / 交结果 / 取消自己的单
+    "/api/plugin/remote/poll",
+    "/api/plugin/remote/result",
+    "/api/plugin/remote/cancel",
+})
+DEVICE_POST_PREFIX = ("/api/sync/",)
+
+
+def _device_path_allowed(method, path):
+    """受限设备（role=device）能不能访问这个路径。纯函数，方便直接测。
+
+    精确匹配优先，前缀只留给 /api/sync/ 这一整族同步账本接口。
+    """
+    p = str(path or "").split("?", 1)[0]
+    if str(method).upper() == "GET":
+        if p in DEVICE_GET_ALLOW:
+            return True
+        return any(p.startswith(x) for x in DEVICE_GET_PREFIX)
+    if p in DEVICE_POST_ALLOW:
+        return True
+    return any(p.startswith(x) for x in DEVICE_POST_PREFIX)
+
+
+def _device_role(device_id):
+    """查一台设备的角色；查不到（已吊销/不存在）给最受限的 'device'。"""
+    try:
+        import devices
+        rec = devices.get(device_id) or {}
+        role = str(rec.get("role") or "device")
+        return role if role in ("device", "admin") else "device"
+    except Exception:
+        return "device"
+
 
 class _Busy(Exception):
     """等聊天锁超时：这一轮没轮到脑子。"""
@@ -156,8 +237,11 @@ def _norm_src(src):
     """把请求里的渠道名收拾成已知渠道。
 
     白名单而不是黑名单：渠道名会拼进存档文件名，写进配置也决定读哪份人设，
-    认不出来的值一律当默认渠道。手机上多传一个 src 字段不会出事，
-    但传个 "../../evil" 也不该有机会。
+    认不出来的值一律归一化成主渠道 wechat。这是"app 已退役"后的明确政策，
+    不是静默巧合：
+      - 桌面客户端显式发 pc；微信桥接显式发 wechat/wechat_group；
+      - 手机 App 框架不再有聊天链路（PollService 的历史轮询也已改默认值）；
+      - 多传/拼错一个 src 不会出事，但 "../../evil" 也没机会碰到文件系统。
     """
     try:
         import paths
@@ -664,10 +748,11 @@ def _stats_today():
 
 
 
-def _cloud_history(limit=60, src="app"):
-    """最近 N 条聊天记录（t / role / text），给手机 App 显示会话用。
+def _cloud_history(limit=60, src="wechat"):
+    """最近 N 条聊天记录（t / role / text），给客户端历史页用。
 
-    按渠道读不同文件 —— App 里不该看见微信侧那半份对话。
+    缺省主渠道 wechat（app 已退役）。按渠道读不同文件 —— 群聊里不该看见
+    私聊那份对话。
 
     🔴 分区名必须跟 brain._log_for 算出来的一致（人设 × 渠道），不能只按渠道拼。
     两边各算一套的后果：群友人设在群里聊的对话被写进
@@ -925,6 +1010,30 @@ def start_remote_api(brain):
             self._who = ("", "")
             return False
 
+        def _is_admin(self):
+            """这个请求能不能动管理面：主人钥匙，或 admin 角色的设备。
+
+            角色每请求查一次设备表（内存缓存，开销可忽略）：设备被吊销或
+            角色被降档后，下一个请求立即生效。
+            """
+            who, who_id = getattr(self, "_who", ("", ""))
+            if who == "brain":
+                return True
+            if who == "device":
+                return _device_role(who_id) == "admin"
+            return False
+
+        def _deny_if_limited_device(self, method, path):
+            """受限设备的默认拒绝闸门。命中拦截返回 True（已回 403）。"""
+            who = getattr(self, "_who", ("", ""))[0]
+            if who != "device" or self._is_admin():
+                return False
+            if _device_path_allowed(method, path):
+                return False
+            self._json(403, {"ok": False,
+                             "err": "设备 Token 无权访问这个接口（需要管理员授权）"})
+            return True
+
         def _cors(self):
             """跨域头：管理仪表盘从 file:// 或其他源访问时需要。
             鉴权靠 token 兜底，CORS 只放开浏览器侧的读取限制。"""
@@ -964,6 +1073,13 @@ def start_remote_api(brain):
             """
             if not path.startswith("/api/plugins"):
                 return False
+            # 装/卸/重载/渠道开关 = 在服务器上放置并执行代码，只允许管理员。
+            # GET（清单/探针/前端资源）任何已认证身份都能读：前端资源是
+            # 管理员已审核安装后的产物，真正的入口（install）已经在这里卡死。
+            if method == "POST" and not self._is_admin():
+                self._json(403, {"ok": False,
+                                 "err": "插件安装/卸载/重载只允许管理员"})
+                return True
             try:
                 import plugin_ops as _po
             except Exception as e:
@@ -977,7 +1093,7 @@ def start_remote_api(brain):
                 import paths
                 chans = list(paths.CHANNELS)
             except Exception:
-                chans = ["app", "wechat"]
+                chans = ["wechat", "wechat_group", "pc"]
 
             if method == "GET":
                 # /api/plugins 已经被微信桥接和 VM 启动器当"大脑活着吗"
@@ -1003,6 +1119,8 @@ def start_remote_api(brain):
                 if path == "/api/plugins/frontend":
                     # 插件前端注入资源：返回所有带 frontend.js / frontend.css 的插件
                     # 版本号用时间戳，前端靠它判断是否需要热重载。
+                    # 客户端 request() 已把响应体解析成 r.json，r.ok 是 HTTP 状态码，
+                    # 所以这里直接返回 {version, plugins}，不要再包一层 {ok, json}。
                     try:
                         import plugin_host as _ph
                         self._json(200, _ph.frontend_assets())
@@ -1131,6 +1249,12 @@ def start_remote_api(brain):
                 tbl = plugin_host.route_table()
             except Exception:
                 return False
+            # 受限设备只能打 remote 插件那几条（在设备权限矩阵里），
+            # 其余插件路由一律视为管理面：防止低权限凭据借插件路由越权。
+            if not self._is_admin() and not _device_path_allowed(method, path):
+                self._json(403, {"ok": False,
+                                 "err": "设备 Token 无权访问这个插件接口"})
+                return True
             for m, p, fn, owner in tbl:
                 if m != method or p != path:
                     continue
@@ -1138,7 +1262,24 @@ def start_remote_api(brain):
                     from urllib.parse import urlparse, parse_qs
                     q = parse_qs(urlparse(self.path).query)
                     q = {k: (v[0] if v else "") for k, v in q.items()}
-                    out = fn(body or {}, q)
+                    # 已认证身份按请求注入（ContextVar），handler 据此做
+                    # 设备归属校验；handler 签名保持 (body, query) 不变。
+                    with plugin_host.use_principal(
+                            getattr(self, "_who", ("", ""))):
+                        out = fn(body or {}, q)
+                    # 插件返回 {"__file__": 路径, "__mime__": 类型} 时，
+                    # 直接回传文件二进制（视频/图片等静态资源）。
+                    if isinstance(out, dict) and "__file__" in out:
+                        fpath = out["__file__"]
+                        mime = out.get("__mime__", "application/octet-stream")
+                        try:
+                            from plugin_files import send_file
+                            send_file(self, fpath, mime)
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass  # 切换壁纸/拖动进度时客户端会取消旧请求。
+                        except Exception as fe:
+                            self._json(404, {"ok": False, "err": str(fe)[:80]})
+                        return True
                     if not isinstance(out, dict):
                         out = {"ok": True, "result": out}
                     self._json(int(out.pop("_code", 200)), out)
@@ -1200,6 +1341,10 @@ def start_remote_api(brain):
                 qp = {k: v[0] for k, v in _pqs(_up(self.path).query).items()}
             except Exception:
                 qp = {}
+            # 受限设备（role=device）的默认拒绝闸门：不在权限矩阵里的一律 403。
+            # 管理类接口的管理员要求在各自分支里再判（双重保险）。
+            if self._deny_if_limited_device("POST", path):
+                return
             try:
                 if path == "/api/device/register":
                     # 只能用"主人钥匙"注册：设备 token 不能自己给自己发新设备，
@@ -1212,9 +1357,15 @@ def start_remote_api(brain):
                     out = devices.register(body.get("device_name"),
                                            body.get("device_type") or "desktop",
                                            self.client_address[0],
-                                           body.get("capabilities"))
-                    print("[设备] 新绑定：%s（%s）" % (out["device_name"], out["device_id"]),
-                          flush=True)
+                                           body.get("capabilities"),
+                                           role=body.get("role") or "device")
+                    if not out:
+                        self._json(500, {"ok": False,
+                                         "err": "设备表写盘失败，注册没生效，重试一次"})
+                        return
+                    print("[设备] 新绑定：%s（%s，角色 %s）"
+                          % (out["device_name"], out["device_id"],
+                             out.get("role", "device")), flush=True)
                     out["ok"] = True
                     self._json(200, out)
                     return
@@ -1237,10 +1388,14 @@ def start_remote_api(brain):
                     self._json(200, {"ok": True, "items": _lt.audit()})
                     return
                 if path == "/api/memory/edit":
-                    # M5 记忆管理：改一条记忆的文本。底层 edit 自带 outbox
-                    # 钩子（本地记 memory_edit 上云；云端是权威源，
-                    # sync_outbox 没启用时 record 是 no-op）—— 两端共用
-                    # 这一份代码，同步方向自动正确。
+                    # M5 记忆管理：改一条记忆的文本。写操作只允许管理员。
+                    if not self._is_admin():
+                        self._json(403, {"ok": False,
+                                         "err": "记忆编辑只允许管理员"})
+                        return
+                    # 底层 edit 自带 outbox 钩子（本地记 memory_edit 上云；
+                    # 云端是权威源，sync_outbox 没启用时 record 是 no-op）——
+                    # 两端共用这一份代码，同步方向自动正确。
                     import memory_store_v2 as _ms
                     st = _ms.open_store_by_name(
                         str(body.get("store") or "memory"))
@@ -1256,7 +1411,12 @@ def start_remote_api(brain):
                     self._json(200, {"ok": True, "item": it})
                     return
                 if path == "/api/memory/delete":
-                    # M5 记忆管理：删一条。底层 delete 自带墓碑 + outbox
+                    # M5 记忆管理：删一条。写操作只允许管理员。
+                    if not self._is_admin():
+                        self._json(403, {"ok": False,
+                                         "err": "记忆删除只允许管理员"})
+                        return
+                    # 底层 delete 自带墓碑 + outbox
                     # （本地删除要上云同步，不然增量拉取会把它复活）。
                     # 幂等：删不存在的 id 也返回 ok（REST DELETE 惯例）。
                     import memory_store_v2 as _ms
@@ -1354,9 +1514,9 @@ def start_remote_api(brain):
                 if path == "/api/chat":
                     _in_text = str(body.get("text") or "")
                     _disp = _in_text          # 存档用原文，注入的系统提示不带
-                    # 渠道：手机 App 传 app（默认），微信那边传 wechat。
-                    # 认不出来的值当默认 —— 宁可跟 App 共用，也别因为一个
-                    # 拼错的字段名开出空历史让她失忆。
+                    # 渠道：桌面客户端传 pc，微信桥接传 wechat/wechat_group。
+                    # 缺省/认不出来的值归一到主渠道 wechat（app 已退役；
+                    # 未知值同时也是防路径穿越，绝不能原样拼进存档文件名）。
                     _src = _norm_src(body.get("src"))
                     # 把渠道记进 features：同一个功能在 App 和群聊里该有不同的
                     # 开合（群聊里她不该报天气、不该把别人的单号加进你的监控）。
@@ -1619,6 +1779,8 @@ def start_remote_api(brain):
                     try:
                         import features as _feat
                         _feat.set_current_src(_src)
+                        import localtools as _lt
+                        _lt.set_context(_src, str(body.get("sender_id") or ""))
                     except Exception:
                         pass
                     self.send_response(200)
@@ -1976,7 +2138,7 @@ def start_remote_api(brain):
                     patch.pop("token", None)
                     # 渠道取值优先级：body 显式给的 > query 里的（Electron 放
                     # query）> 都没有 = 全局那一份。🔴 不能用 _norm_src("") 兜
-                    # 底 —— 它把空串归成 "app"，"不带 src 改全局"就永远走不到。
+                    # 底 —— 它把空串归成 "wechat"，"不带 src 改全局"就永远走不到。
                     _raw = str(patch.pop("src", "") or qp.get("src") or "").strip()
                     _fsrc = _norm_src(_raw) if _raw else None
                     cur = _feat.set_features(patch, _fsrc) if patch else None
@@ -2098,9 +2260,13 @@ def start_remote_api(brain):
                 return
             note_client_ip(self.client_address[0])
             path = self.path.split("?")[0]
+            # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
+            if self._deny_if_limited_device("GET", path):
+                return
             if path.startswith("/api/management/"):
-                # 管理接口只允许主人 Token；已绑定的普通设备 Token 不得读取全局基础设施信息。
-                if getattr(self, "_who", ("", ""))[0] != "brain":
+                # 全局基础设施信息：主人钥匙或 admin 角色设备（桌面管理端），
+                # 普通设备 Token 不得读取。
+                if not self._is_admin():
                     self._json(403, {"ok": False, "err": "需要管理员权限"})
                     return
                 try:
@@ -2348,8 +2514,10 @@ def start_remote_api(brain):
                 self._json(200, {"items": _trace_tail(n)})
             elif path == "/api/history":
                 lim = _query_param(self.path, "limit") or 60
+                # 缺省渠道是主渠道 wechat（app 已退役；老的 PollService 不带
+                # src，给它微信这份才是她真正的对话历史）。
                 self._json(200, {"items": _cloud_history(
-                    lim, _query_param(self.path, "src") or "app")})
+                    lim, _norm_src(_query_param(self.path, "src")))})
             elif path == "/api/features":
                 # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。
                 import features as _feat
@@ -2360,7 +2528,7 @@ def start_remote_api(brain):
                           parse_qs(urlparse(self.path).query).items()}
                 except Exception:
                     _q = {}
-                # 不带 src 读全局视角（_norm_src 会把空串兜成 "app"，别让它
+                # 不带 src 读全局视角（_norm_src 会把空串兜成 "wechat"，别让它
                 # 混进来 —— 渠道视角只在明确带了 src 时才生效）
                 _fsrc = (_norm_src(_q.get("src"))
                          if (_q.get("src") or "").strip() else None)
@@ -2379,10 +2547,11 @@ def start_remote_api(brain):
                          if (_q.get("src") or "").strip() else None)
                 self._json(200, {"levels": _ch.all_levels(),
                                  "level": _ch.level(_csrc)})
-            elif path == "/api/plugins":
-                # 插件清单 + 管理视图（渠道视图）。微信桥接和 VM 启动器拿这个
-                # 接口当"大脑还活着吗"的探针，只看 200 不看 body ——
-                # plugins 键的形状保持原样，管理视图另起一个键。
+            elif path.startswith("/api/plugins"):
+                # 插件清单 + 管理视图（渠道视图）+ 前端注入资源。
+                # 微信桥接和 VM 启动器拿 /api/plugins 当"大脑还活着吗"
+                # 的探针，只看 200 不看 body —— plugins 键的形状保持原样，
+                # 管理视图另起一个键。/api/plugins/frontend 返回插件前端代码。
                 if self._plugin_admin("GET", path, None):
                     return
                 self._json(200, {"plugins": []})

@@ -106,33 +106,51 @@ class TestDispatch(LocalToolsBase, unittest.TestCase):
         self.assertIn("别重试", out)
         self.assertEqual(localtools._STATS["refused"], 1)
 
-    def test_一次只派一件事(self):
-        """第二条调用不该排队干等，直接回绝。"""
+    def test_两件调用串行不并发(self):
+        """上一件没做完时，第二件排队（不再 30 秒干等被拒），客户端串行做完两件。
+
+        历史：最早是"忙就直接拒"，后改成排队等最多 30 秒；旧用例的断言
+        还钉着老话术，一直红。这里按现行契约钉：两件都成功、且被同一台
+        客户端顺序认领（同一时刻 active 不超过 1 —— 服务端串行化保证）。
+        """
+        localtools._LAST_POLL = time.time()   # 客户端在线（避开 POLL_STALE 快回）
+        claimed = []
+
         def client():
-            for _ in range(60):
+            done = 0
+            for _ in range(200):
+                if done >= 2:
+                    return
                 c = localtools.take("dev_1", ["local_system_info"])
                 if c:
-                    time.sleep(0.8)              # 假装在干活
-                    localtools.resolve(c["call_id"], "OK")
-                    return
-                time.sleep(0.05)
+                    # 认领期间队列里不许同时有第二件处于 active
+                    self.assertEqual(len(localtools._ACTIVE), 1)
+                    claimed.append(time.time())
+                    time.sleep(0.4)              # 假装在干活
+                    localtools.resolve(c["call_id"], "OK %d" % done)
+                    done += 1
+                else:
+                    time.sleep(0.02)
 
         t = threading.Thread(target=client)
         t.start()
         time.sleep(0.2)
-        first = {}
+        outs = {}
 
         def first_call():
-            first["out"] = localtools.call("local_system_info", {}, wait=10)
+            outs["a"] = localtools.call("local_system_info", {}, wait=10)
 
         th = threading.Thread(target=first_call)
         th.start()
-        time.sleep(0.3)
-        second = localtools.call("local_system_info", {}, wait=5)
-        self.assertIn("还没做完", second)
-        th.join(5)
-        t.join(5)
-        self.assertIn("OK", first.get("out", ""))
+        time.sleep(0.1)                          # 第一件先占住通道
+        outs["b"] = localtools.call("local_system_info", {}, wait=10)
+        th.join(8)
+        t.join(8)
+        self.assertIn("OK", outs.get("a", ""))
+        self.assertIn("OK", outs.get("b", ""))
+        self.assertEqual(len(claimed), 2)
+        # 两件是顺序认领的，间隔至少等于第一件的处理时长
+        self.assertGreaterEqual(abs(claimed[1] - claimed[0]), 0.3)
 
     def test_不存在的工具名直接回绝(self):
         self.assertIn("没有这个本地工具", localtools.call("local_自爆", {}))
@@ -155,10 +173,11 @@ class TestRegistry(LocalToolsBase, unittest.TestCase):
     def test_只读工具不该标danger(self):
         """反过来也要盯：把只读工具标成危险，每次列个目录都要人点确认，
         很快就变成无脑点"允许" —— 确认框就白设了。"""
+        # local_volume 已从工具表移除（这里曾因旧名字残留 KeyError）。
         for n in ("local_system_info", "local_file_list", "local_file_read",
-                  "local_file_find", "local_file_recent", "local_process_list",
-                  "local_active_window", "local_clipboard_read",
-                  "local_volume", "open_url", "local_screenshot"):
+                  "local_file_find", "local_file_grep", "local_file_recent",
+                  "local_process_list", "local_active_window",
+                  "local_clipboard_read", "open_url", "local_screenshot"):
             self.assertFalse(localtools.REMOTE_TOOLS[n]["danger"], n + " 不该标危险")
 
     def test_多步任务需要的工具都在(self):

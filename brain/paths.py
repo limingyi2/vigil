@@ -60,6 +60,12 @@ CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 # 在 App 里说的"我在宿舍"会顺着微信那头的上下文往下编。
 # 每个渠道一份聊天存档，互不读取。渠道名同时用于记忆库分区（见 memory_store_v2）。
 # 生活流不分区 —— 她过的是同一种日子，分开反而不一致。
+# wechat / wechat_group：微信私聊 / 群聊（微信是主人现在的主渠道，沿用
+# 老的基础存档文件名）；pc：桌面 Electron 客户端。
+# 「app」渠道已随手机 App 退役（桌面端改发 pc、微信桥接显式发 wechat），
+# 不在名单里 —— 但为了数据安全，认不出来的渠道名仍会被 _norm_src 归一化成
+# wechat（见 server.py），绝不会原样拼进文件路径。
+# 这是渠道名的**唯一真源**，服务端和面板都从这里取。
 CHANNELS = ("wechat", "wechat_group", "pc")
 
 

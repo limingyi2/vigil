@@ -26,6 +26,7 @@
 只有能力对得上的调用才会派给它。一台机器不该去执行另一台机器才有的操作
 （比如手机没有"打开桌面文件"这个能力）。
 """
+import contextvars
 import threading
 import time
 import uuid
@@ -252,9 +253,20 @@ _LAST_POLL = 0.0     # 最近一次 take() 的时间戳（本地内存，重启�
 #   - wechat_group 群聊：**即使 owner 也只放 safe** —— 群里一句话就能
 #     删文件的世界太危险，而且群里确认弹窗没有意义（人不在电脑前）
 #
+# 🔴 现阶段微信远控总闸 remote_control 默认关（见 features.DEFAULTS）：
+#   关着时微信私聊/群聊**一条 local_* 工具都看不到，执行层也一律拒**，
+#   即"微信只聊天"。owner/群聊矩阵只有总闸打开后才生效 —— 那是以后单独
+#   授权才开放的能力。
+#
 # 🔴 这是服务端的最终关卡。客户端的确认弹窗、白名单、能力开关是第二道；
 #   两道各自独立工作，谁也不依赖谁。
-_CTX = {"src": "", "sender_id": ""}
+#
+# 🔴 身份上下文必须是 ContextVar：server 用 ThreadingHTTPServer，并发放
+#   大括号请求，模块级 dict 会被别的请求线程改写，权限判断可能读到别人的
+#   渠道和 sender_id。ContextVar 按请求线程隔离，FC 循环在同一线程内同步
+#   执行，读到的就是这一轮设置的值。
+_CTX = contextvars.ContextVar(
+    "localtools_ctx", default={"src": "", "sender_id": ""})
 
 AUDIT_MAX = 200
 _AUDIT = []          # 最近 N 条操作日志：谁在哪个渠道动了什么、结果如何
@@ -262,13 +274,27 @@ _AUDIT = []          # 最近 N 条操作日志：谁在哪个渠道动了什么
 
 def set_context(src, sender_id=""):
     """每轮 /api/chat 开头设置：这条消息来自哪个渠道、谁发的。
-    工具调用（call）发生在同一轮的 FC 循环里，读的就是这份上下文。"""
-    _CTX["src"] = str(src or "")
-    _CTX["sender_id"] = str(sender_id or "").strip()
+    工具调用（call）发生在同一轮的 FC 循环里，读的就是这份上下文。
+    只影响当前请求线程/上下文，并发请求互不串线。"""
+    _CTX.set({"src": str(src or ""),
+              "sender_id": str(sender_id or "").strip()})
 
 
 def get_context():
-    return dict(_CTX)
+    return dict(_CTX.get())
+
+
+def _remote_control_on(src):
+    """微信渠道远控总闸（features.remote_control，默认关）。
+
+    规格层和执行层都问它：关着 = 微信渠道不暴露、不放行任何 local_* 工具。
+    读开关失败一律按"关"处理（fail-closed）——远控不是基础能力。
+    """
+    try:
+        import features
+        return bool(features.on("remote_control", str(src or "").lower()))
+    except Exception:
+        return False
 
 
 def _owner_ids():
@@ -288,10 +314,15 @@ def clearance(risk, src=None, sender_id=None):
     reason 是给模型看的拒绝话术 —— 要让它转述得出口，别是内部黑话。
     """
     risk = risk if risk in ("safe", "confirm", "dangerous") else "safe"
-    src = _CTX["src"] if src is None else str(src or "")
-    sender_id = (_CTX["sender_id"] if sender_id is None
+    src = _CTX.get()["src"] if src is None else str(src or "")
+    sender_id = (_CTX.get()["sender_id"] if sender_id is None
                  else str(sender_id or "").strip())
     if src in ("wechat", "wechat_group"):
+        # 总闸关着：规格层不给工具，这里是执行层的第二道拒绝（双重保险，
+        # 防止旧队列、热加载窗口或别的调用路径漏过来）。
+        if not _remote_control_on(src):
+            return False, ("现阶段微信只聊天，不远程操控电脑"
+                           "（远程控制功能还没打开）。")
         owners = _owner_ids()
         if not sender_id or sender_id not in owners:
             return False, ("这个操作要在他的电脑上动东西，只有他本人（微信私聊）"
@@ -300,19 +331,24 @@ def clearance(risk, src=None, sender_id=None):
             return False, ("群聊里只能做查询类的安全操作（看看状态、读读文件），"
                            "改动和危险操作只在他本人私聊时才做。")
         return True, ""
-    # app / pc / 其他带客户端的渠道：能在这条渠道聊天的就是主人本人
-    return True, ""
+    # 只有"坐在设备前的本人渠道"才天然放行：pc（桌面客户端）、app（已退役，
+    # 仅内部/老链路兼容；HTTP 上 app 会被 _norm_src 归一成 wechat，到不了这）、
+    # 空渠道（进程内调用）。其它任何拼不出来的渠道默认拒 —— 不认识就不放行。
+    if src in ("pc", "app", ""):
+        return True, ""
+    return False, "未知渠道，不允许在这台电脑上执行操作。"
 
 
 def _audit(event, tool="", args=None, result=""):
     """操作日志：谁在哪个渠道动了什么、结果如何。只留最近 AUDIT_MAX 条。"""
+    ctx = _CTX.get()
     _AUDIT.append({
         "t": time.strftime("%Y-%m-%d %H:%M:%S"),
         "event": event,                       # denied | queued
         "tool": tool,
         "args": args or {},
-        "src": _CTX.get("src", ""),
-        "sender_id": _CTX.get("sender_id", ""),
+        "src": ctx.get("src", ""),
+        "sender_id": ctx.get("sender_id", ""),
         "result": str(result)[:120],
     })
     del _AUDIT[:-AUDIT_MAX]
@@ -325,7 +361,8 @@ def audit():
 
 class _Call(object):
     __slots__ = ("id", "name", "args", "danger", "risk", "device_id",
-                 "created", "claimed_at", "done", "result", "err", "refused")
+                 "created", "claimed_at", "done", "result", "err", "refused",
+                 "src", "sender_id", "cancel")
 
     def __init__(self, name, args):
         self.id = "c_" + uuid.uuid4().hex[:10]
@@ -344,6 +381,13 @@ class _Call(object):
         self.result = ""
         self.err = ""
         self.refused = False        # 他点了"不允许"。这不是错误，是答复。
+        # 发起时把已认证身份**固化**进这单调用：之后权限/审计都看这份快照，
+        # 不受并发请求改写上下文影响。
+        ctx = _CTX.get()
+        self.src = ctx.get("src", "")
+        self.sender_id = ctx.get("sender_id", "")
+        # 按调用定向取消（区别于全局 _CANCEL）：只有归属方/管理员能置位
+        self.cancel = False
 
     def public(self):
         return {"call_id": self.id, "name": self.name, "args": self.args,
@@ -355,17 +399,24 @@ _LOCK = threading.RLock()
 _COND = threading.Condition(_LOCK)
 _QUEUE = {}          # call_id -> _Call（还没被认领的）
 _ACTIVE = {}         # call_id -> _Call（已被认领、等结果）
+_DONE = set()        # 已完成的 call_id（重复结果幂等用，限量保留）
 _STATS = {"calls": 0, "ok": 0, "timeout": 0, "refused": 0, "errors": 0, "busy": 0}
-_CANCEL = False      # 全局取消标志：用户点"停止"时置 True，下一次 wait 检查到就提前返回
+_CANCEL = False      # 全局取消标志：管理员点"停止"时置 True，下一次 wait 检查到就提前返回
 
 
 def specs(names=None, src=None):
     """给插件用的工具规格（TOOL_SPECS 的形状）。
 
     names 为 None 时给全部；传了名字就只给这些 —— 能力裁剪用得上。
-    src 是渠道：群聊（wechat_group）只暴露 safe 档 —— 模型**看不到**
-    改动类工具，比"调了再拒"更稳（省得它在群里许诺一件做不了的事）。
+    src 是渠道：
+      - 微信私聊/群聊在 remote_control 总闸关着时返回**空集**（模型根本
+        看不到 local_* 工具，"微信只聊天"）；
+      - 总闸打开后，群聊（wechat_group）仍只暴露 safe 档 —— 模型**看不到**
+        改动类工具，比"调了再拒"更稳（省得它在群里许诺一件做不了的事）。
     """
+    src = str(src or "").strip().lower()
+    if src in ("wechat", "wechat_group") and not _remote_control_on(src):
+        return {}
     if src in ("wechat_group",):
         names = [k for k, v in REMOTE_TOOLS.items()
                  if v.get("risk") == "safe"] if names is None else \
@@ -403,8 +454,9 @@ def call(name, args, wait=None):
     if not ok:
         _audit("denied", name, args, why)
         _STATS["denied"] = _STATS.get("denied", 0) + 1
+        _ctx = _CTX.get()
         print("[本地操控] 拒绝 %s（%s@%s）：%s"
-              % (name, _CTX.get("sender_id") or "?", _CTX.get("src") or "?",
+              % (name, _ctx.get("sender_id") or "?", _ctx.get("src") or "?",
                  why), flush=True)
         return "这个操作被安全策略拦下了，不能做。%s【别重试】" % why
     w = max(5, int(wait or DEFAULT_WAIT))
@@ -440,8 +492,9 @@ def call(name, args, wait=None):
         _COND.notify_all()
         deadline = time.time() + w
         while not c.done and time.time() < deadline:
-            if _CANCEL:
-                # 用户点了"停止"：把当前调用放掉，提前返回
+            if _CANCEL or c.cancel:
+                # 用户点了"停止"（全局）或归属方定向取消这一单：
+                # 把当前调用放掉，提前返回
                 _QUEUE.pop(c.id, None)
                 _ACTIVE.pop(c.id, None)
                 _STATS["cancelled"] = _STATS.get("cancelled", 0) + 1
@@ -495,12 +548,24 @@ def take(device_id, capabilities=None):
     return None
 
 
-def resolve(call_id, result, err=""):
-    """客户端把结果送回来。"""
+def resolve(call_id, result, err="", device_id=None):
+    """客户端把结果送回来。
+
+    device_id 不为 None 时（设备 token 调用），必须与**认领这单的设备**
+    一致才收 —— 否则 A 设备可以替 B 设备的调用提交结果。brain 身份不
+    传 device_id（内部/管理员路径），不做这层校验。
+
+    重复提交同一单的结果按幂等成功处理（返回 True）：网络重试不该让客户端
+    收到"这条调用不在了"的假错误，也不会二次改状态。
+    """
     cid = str(call_id or "")
     with _COND:
         c = _ACTIVE.pop(cid, None) or _QUEUE.pop(cid, None)
         if not c:
+            return cid in _DONE
+        if device_id is not None and c.device_id != str(device_id):
+            # 不是认领这单的设备：原样放回，让真正的归属者能提交
+            (_ACTIVE if c.claimed_at else _QUEUE)[cid] = c
             return False
         if str(result or "").strip() in ("__refused__",):
             c.refused = True
@@ -509,6 +574,11 @@ def resolve(call_id, result, err=""):
             c.result = str(result or "")
             c.err = str(err or "")
         c.done = True
+        _DONE.add(cid)
+        if len(_DONE) > 500:
+            # 只留最近一批做幂等判据，老 id 自然淘汰
+            _DONE.clear()
+            _DONE.add(cid)
         _COND.notify_all()
         return True
 
@@ -520,16 +590,42 @@ def stats():
                     danger=sum(1 for v in REMOTE_TOOLS.values() if v["danger"]))
 
 
-def cancel():
-    """用户点"停止"：取消当前正在等待的工具调用。
-
-    只取消"还在等客户端响应"的调用，已经执行完的不受影响。
+def cancel(call_id=None, device_id=None):
+    """取消还在等客户端响应的调用，已经执行完的不受影响。
     取消后调用方会收到"你停止了当前操作"的返回。
+
+    三种调用方式（对应 HTTP 层的不同身份）：
+    - cancel()：管理员/主人钥匙 —— 全局停止标志，唤醒当前所有等待；
+    - cancel(call_id=...)：管理员指定一单，或设备取消自己的一单；
+    - cancel(device_id="dev_x")：设备只取消**自己名下**的那一单
+      （不带 call_id 时取它名下最早的一单）。
+
+    设备凭据不许取消别人的调用：归属不符 / 找不到单时返回 False。
     """
     global _CANCEL
+    cid = str(call_id or "")
+    dev = str(device_id) if device_id is not None else None
     with _COND:
+        target = None
+        if cid:
+            target = _QUEUE.get(cid) or _ACTIVE.get(cid)
+            if target is None:
+                return False
+            if dev is not None and target.device_id != dev:
+                return False
+        elif dev is not None:
+            target = next(
+                (c for c in list(_QUEUE.values()) + list(_ACTIVE.values())
+                 if c.device_id == dev), None)
+            if target is None:
+                return False
+        if target is not None:
+            target.cancel = True
+            _COND.notify_all()
+            return True
         _CANCEL = True
         _COND.notify_all()
+        return True
 
 
 def reset_cancel():

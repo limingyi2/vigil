@@ -47,7 +47,7 @@
     if (lastStats && lastStats.model) seg.push('<i class="ssep">│</i>模型 <b>' + esc(lastStats.model) + '</b>');
     if (lastStats && lastStats.tok) seg.push('<i class="ssep">│</i>今日 TOKENS <b>' + fmtNum(lastStats.tok) + '</b>');
     if (extra) seg.push('<i class="ssep">│</i>' + esc(extra));
-    seg.push('<span class="sp"></span><span class="mono muted">' + esc(state.base || '') + '</span><span class="mono muted">v0.1.0</span>');
+    seg.push('<span class="sp"></span><span class="mono muted">' + esc(state.base || '') + '</span><span class="mono muted">v' + esc(state.version || '…') + '</span>');
     statusEl.innerHTML = seg.join('');
   }
   async function refreshStats() {
@@ -137,51 +137,54 @@
   }
 
   // ── 启动 ──────────────────────────────────────────────────
-  // ── 插件前端注入：拉取 /api/plugins/frontend 并注入 CSS/JS ──
-  // 插件的 frontend.js 用 window.vigil.runJS 注入（绕过 CSP），
-  // 每个插件独立 try/catch，一个炸了不影响其他。
+  // ── 插件前端注入：CSS 在渲染层注入；JS 由主进程加载并注入 ──
+  // 安全收紧（2026-10）：渲染层不再有 window.vigil.runJS 这种"任意代码 →
+  // executeJavaScript"通道。插件 JS 由主进程凭服务端 token 自己拉取后注入，
+  // 每个插件独立 try/catch，一个炸了不影响其他。CSS 无执行权，仍在渲染层注入。
   let lastPluginVersion = 0;
+  // Older brains return a timestamp version. Compare actual assets so they cannot
+  // reload the window every ten seconds and interrupt wallpaper playback.
+  function pluginFingerprint(plugins) {
+    const content = JSON.stringify(plugins.filter(p => p.name !== 'wallpaper')
+      .map(p => [p.name, p.enabled, p.js, p.css]).sort((a, b) => a[0].localeCompare(b[0])));
+    let h = 2166136261;
+    for (let i = 0; i < content.length; i++) h = Math.imul(h ^ content.charCodeAt(i), 16777619);
+    return (h >>> 0).toString(16);
+  }
 
   async function loadPluginFrontends() {
     try {
       const r = await get('/api/plugins/frontend');
       if (!r || !r.ok || !r.json) return;
-      const { version, plugins } = r.json;
+      const { plugins } = r.json;
       if (!Array.isArray(plugins)) return;
 
       // 注入 CSS
       for (const p of plugins) {
+        if (p.name === 'wallpaper') continue;
         if (!p.enabled) continue;
         if (p.css) {
-          const style = document.createElement('style');
+          const style = document.getElementById('plugin-css-' + p.name) || document.createElement('style');
           style.id = 'plugin-css-' + p.name;
           style.textContent = p.css;
           document.head.appendChild(style);
         }
       }
 
-      // 注入 JS（用 runJS 绕过 CSP，每个独立 try/catch）
-      for (const p of plugins) {
-        if (!p.enabled || !p.js) continue;
-        try {
-          const wrapped =
-            '(function(){\ntry{\n' + p.js +
-            '\n}catch(e){console.error("[插件 ' + p.name + ' 前端出错]",e);}\n})();';
-          if (window.vigil && window.vigil.runJS) {
-            await window.vigil.runJS(wrapped);
-          }
-        } catch (e) {
-          console.warn('插件', p.name, '注入失败:', e);
-        }
+      // 注入 JS：交给主进程（它会重新拉一次资源并逐个执行）。
+      if (window.vigil && window.vigil.plugins && window.vigil.plugins.load) {
+        const lr = await window.vigil.plugins.load();
+        if (!lr || !lr.ok) return;
       }
 
-      lastPluginVersion = version;
+      lastPluginVersion = pluginFingerprint(plugins);
     } catch (e) {
       console.warn('插件前端加载失败:', e);
     }
   }
 
   async function boot() {
+    if (window.vigil?.appVersion) state.version = await window.vigil.appVersion();
     let t = 'light';
     try { t = localStorage.getItem('vigil_theme') || 'light'; } catch (_) {}
     applyTheme(t);
@@ -222,6 +225,8 @@
 
     buildNav();
 
+    if (window.VigilWallpaper) window.VigilWallpaper.init();
+
     // 加载插件前端资源（CSS/JS 自动注入）
     await loadPluginFrontends();
 
@@ -258,6 +263,7 @@
           toast('已重新连上 ' + again.base);
         }
       }
+      if (state.conn.ok && lastPluginVersion === 0) await loadPluginFrontends();
       setStatus();
       refreshStats();
       if (state.page === 'chat') go('chat');
@@ -275,10 +281,9 @@
     setInterval(async () => {
       try {
         const r = await get('/api/plugins/frontend');
-        if (r && r.ok && r.json && r.json.version
-            && r.json.version !== lastPluginVersion
-            && lastPluginVersion !== 0) {
-          location.reload();
+        if (r && r.ok && r.json && r.json.version) {
+          if (lastPluginVersion === 0) await loadPluginFrontends();
+          else if (Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) location.reload();
         }
       } catch (_) { /* 静默 */ }
     }, 10000);

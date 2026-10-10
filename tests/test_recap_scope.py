@@ -48,21 +48,19 @@ class TestScopeNameIsolation(unittest.TestCase):
         self.assertEqual(calls,
                          [("pg", "wechat"), ("", "wechat"), ("pg", "app")])
 
-    def test_default_persona_on_wechat_is_still_partitioned(self):
-        """默认人设 + 微信渠道也要分区。
+    def test_default_persona_channel_partitioning(self):
+        """默认人设下的渠道分区规则（app 退役后）。
 
-        paths.scope_name("", "wechat") 返回 "wechat"，聊天存档那边也是分的
-        （chat_history.wechat.jsonl）。scoped_to 若只判人设 key 非空，
-        微信的摘要就退回无分区目录，跟 App 的混在一起。
+        wechat 是主人的主渠道，沿用老的基础存档/摘要目录（scope 为空，
+        老数据不用搬）；退役的 app 若被显式传入，按命名分区处理
+        （HTTP 上它会被 _norm_src 归一成 wechat，到不了这里）。
         """
         recap_store.scoped_to("", "wechat")
-        self.assertEqual(recap_store._SCOPE, "wechat")
-        self.assertTrue(recap_store.SUMMARY_DIR.endswith("summary.wechat"),
-                        recap_store.SUMMARY_DIR)
-        # 默认人设 + app 才是真的无分区（老数据不用搬）
-        recap_store.scoped_to("", "app")
         self.assertEqual(recap_store._SCOPE, "")
-        self.assertEqual(recap_store.SUMMARY_DIR, recap_store._BASE_SUMMARY_DIR)
+        self.assertEqual(recap_store.SUMMARY_DIR,
+                         recap_store._BASE_SUMMARY_DIR)
+        recap_store.scoped_to("", "app")
+        self.assertEqual(recap_store._SCOPE, "app")
 
 
 class TestScopedToPaths(unittest.TestCase):
@@ -219,7 +217,7 @@ class TestJobScopeDiscovery(unittest.TestCase):
                 return "key_" + src
 
         out = jobs._recap_scopes(_B())
-        self.assertEqual(out, [("key_app", "app"), ("key_wechat", "wechat"),
+        self.assertEqual(out, [("key_wechat", "wechat"),
                              ("key_wechat_group", "wechat_group"),
                              ("key_pc", "pc")])
 
@@ -231,7 +229,7 @@ class TestJobScopeDiscovery(unittest.TestCase):
 
         out = jobs._recap_scopes(_Broken())
         self.assertEqual([s for _, s in out],
-                         ["app", "wechat", "wechat_group", "pc"])
+                         ["wechat", "wechat_group", "pc"])
 
 
 class TestTickIsImmuneToConcurrentScopeSwitch(unittest.TestCase):

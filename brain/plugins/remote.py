@@ -12,8 +12,9 @@
 
 **为什么 FEATURE = None（不做成可开关的功能）**：本地操控是 agent 的核心
 能力，不是"可选功能"。用户不应该能在设置里把它关掉——关了 agent 就
-没法干活了。渠道过滤是硬编码的：微信渠道没有本地文件系统，TOOL_SPECS
-在 wechat 渠道返回空；app 渠道（和其他有客户端的渠道）返回全部。
+没法干活了。渠道过滤不硬编码在这个文件里，统一交给 localtools.specs()：
+微信渠道在 remote_control 总闸关着时返回空（现阶段微信只聊天）；
+pc 等带客户端的渠道返回全部。
 """
 # 注意：核心模块叫 localtools，不叫 remote —— 这个文件自己就叫
 # plugins/remote.py，plugins/ 又在 sys.path 上，叫 remote 会 import 到自己
@@ -24,22 +25,19 @@ NAME = "remote"
 DESC = "本地操控：她可以用这台电脑看文件、截图、打开网页"
 FEATURE = None               # 始终启用——这是 agent 的核心能力，不是可选功能
 
-# 没有本地文件系统的渠道：这些渠道不应该出现 local_* 工具。
-# 🔴 M4 起 wechat 从这个名单里**摘掉了**：活最终派到的是他自己的电脑，
-# 谁能下令由 localtools.clearance() 按（渠道，sender_id，风险档）把关 ——
-# 私聊 owner 全放、非 owner 全拒。群聊在 specs() 里只暴露 safe 档，
-# call() 里仍是最终关卡。
-_NO_LOCAL_SRC = set()
+# 渠道裁剪的唯一真源在 localtools.specs()：
+#   - 微信私聊/群聊在 remote_control 总闸（features.remote_control，默认关）
+#     关着时返回空集 —— 现阶段"微信只聊天"；
+#   - 总闸打开后，群聊仍只给 safe 档；
+#   - 执行层 localtools.clearance() 是同一套规则的第二道关卡。
+# 本插件不再自己维护渠道黑名单，免得两份名单漂移。
 
 
 def tool_specs(src=None):
-    """按渠道返回工具集。微信等无本地文件系统的渠道返回空。
+    """按渠道返回工具集。规则全部由 localtools.specs() 裁决。
 
     plugin_host.tool_specs 检测到 TOOL_SPECS 是函数时会调用它并传入 src。
     """
-    if src and str(src).lower() in _NO_LOCAL_SRC:
-        return {}
-    # 把渠道传下去：群聊只给 safe 档（模型看不到改动类工具）
     return localtools.specs(src=str(src).lower() if src else None)
 
 
@@ -76,6 +74,20 @@ TOOL_HELP_NATIVE = "".join(
     "- %s\n" % localtools.REMOTE_TOOLS[n]["desc"] for n in localtools.REMOTE_TOOLS)
 
 
+def _principal():
+    """本次 HTTP 路由的已认证身份 (kind, id)。
+
+    由 server 派发插件路由前写进 plugin_host 的请求级 ContextVar。
+    进程内直接调 handler（测试/内部脚本）时是空身份，按"本机可信"处理 ——
+    空身份不可能从 HTTP 进来（server 对所有插件路由都先鉴权）。
+    """
+    try:
+        import plugin_host
+        return tuple(plugin_host.principal()) or ("", "")
+    except Exception:
+        return ("", "")
+
+
 def _h_poll(body, query):
     """客户端轮询：有活就派给它。
 
@@ -85,9 +97,19 @@ def _h_poll(body, query):
 
     还会跟**注册时声明过**的能力取交集：客户端当次多报一个，
     也不至于拐到它本来没有的能力上去。声明过的是空表（老客户端）就不卡它。
+
+    🔴 归属校验：设备 token 轮询时，query 的 device 必须就是凭据绑定的
+    那台设备（缺省也按自己算）—— 否则一台设备能认领派给别的设备的活。
     """
+    who, who_id = _principal()
     caps = [x for x in str(query.get("caps") or "").split(",") if x]
     dev = str(query.get("device") or "")
+    if who == "device":
+        if dev and dev != who_id:
+            return {"ok": False,
+                    "err": "device 与设备凭据不一致，只能认领自己的任务",
+                    "_code": 403}
+        dev = who_id
     try:
         import devices
         rec = devices.get(dev) if dev else None
@@ -105,13 +127,27 @@ def _h_poll(body, query):
 
 
 def _h_result(body, query):
-    ok = localtools.resolve(body.get("call_id"), body.get("result"), body.get("err"))
-    return {"ok": ok, "err": "" if ok else "这条调用不在了（可能已超时）"}
+    """提交结果。设备凭据只能给自己认领的那单提交（localtools.resolve 校验）。"""
+    who, who_id = _principal()
+    ok = localtools.resolve(
+        body.get("call_id"), body.get("result"), body.get("err"),
+        device_id=(who_id if who == "device" else None))
+    if not ok:
+        return {"ok": False, "err": "这条调用不在了，或不属于这台设备",
+                "_code": 403}
+    return {"ok": True, "err": ""}
 
 
 def _h_cancel(body, query):
-    """用户点"停止"：取消当前正在等待的工具调用。"""
-    localtools.cancel()
+    """停止等待中的调用。设备凭据只能取消自己名下的单，不能全局停。"""
+    who, who_id = _principal()
+    cid = str(body.get("call_id") or "")
+    ok = localtools.cancel(
+        call_id=cid or None,
+        device_id=(who_id if who == "device" else None))
+    if not ok:
+        return {"ok": False, "err": "没有可取消的调用，或不能取消别人的调用",
+                "_code": 403}
     return {"ok": True}
 
 
