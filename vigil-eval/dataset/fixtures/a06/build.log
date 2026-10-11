@@ -1,0 +1,7 @@
+[build] info  starting build
+[build] warn  deprecated setting "old_path" in config (will be removed)
+[build] warn  missing documentation for function "legacy_export"
+[build] error TypeError: unsupported operand type(s) for +: 'int' and 'str' in serializer.py:42
+[build] error unit tests failed: 3 of 12 tests failing
+[build] error coverage below threshold (62% < 80%)
+[build] info  build finished with errors

@@ -1,0 +1,6 @@
+{
+  "_comment": "Old snapshot from v0.9 release. Not loaded at runtime.",
+  "service": "legacy-billing",
+  "retries": 7,
+  "timeout_ms": 1000
+}

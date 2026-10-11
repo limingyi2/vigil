@@ -1,0 +1,88 @@
+# -*- coding: utf-8 -*-
+"""云端 OpenAI 兼容服务商：把 brain.py 里原有的 httpx 直调原样包一层。
+
+🔴 这个类存在的意义是"行为零变化"：默认模式（model_mode 缺省 = cloud）
+发出去的请求体、headers、超时、异常语义必须和改造前逐字节一致。
+它只负责"知道用哪个地址/哪把 key/哪个模型"，不加任何额外参数。
+"""
+import httpx as _httpx
+
+from .base import (
+    ModelProvider, ProviderUnavailable, ProviderHTTPError, ProviderResponseError,
+)
+
+
+def _active_http():
+    """实际发请求用的 httpx 模块。
+
+    生产里 `brain.httpx` 就是真 httpx；测试和 vigil-eval worker 会替换
+    `brain.httpx`（或对 httpx 模块做 monkeypatch）来打桩。传输层统一从
+    brain 模块取，老的打桩点（draft_native 内联时代就是这么桩的）就不用
+    因为 provider 收口而全部改道。
+    """
+    try:
+        import brain
+        mod = getattr(brain, "httpx", None)
+        if mod is not None:
+            return mod
+    except Exception:
+        pass
+    return _httpx
+
+
+class CloudProvider(ModelProvider):
+    kind = "cloud"
+    supports_tools = True
+    supports_stream = True
+    supports_vision = True
+
+    def __init__(self, cfg=None):
+        cfg = cfg or {}
+        self.api_base = str(cfg.get("api_base") or "").rstrip("/")
+        self.api_key = str(cfg.get("api_key") or "")
+        self.model = str(cfg.get("model") or "")
+
+    def _url(self):
+        return self.api_base + "/chat/completions"
+
+    def _headers(self):
+        return {"Authorization": "Bearer " + self.api_key}
+
+    def chat(self, payload, timeout=90):
+        if not self.api_base or not self.api_key:
+            # 与 brain.py 旧门语义一致：没配 key 时上层直接判"没稿"，
+            # 不当成异常打日志吓人。
+            return None
+        http = _active_http()
+        try:
+            r = http.post(self._url(), headers=self._headers(),
+                          json=payload, timeout=timeout)
+        except _httpx.TimeoutException as e:
+            raise ProviderUnavailable("云端请求超时：%s" % str(e)[:120])
+        except _httpx.ConnectError as e:
+            raise ProviderUnavailable("云端连接失败：%s" % str(e)[:120])
+        if r.status_code != 200:
+            raise ProviderHTTPError("云端返回 %s" % r.status_code,
+                                    status=r.status_code, body=r.text)
+        try:
+            return r.json()
+        except Exception as e:
+            raise ProviderResponseError("云端响应不是合法 JSON：%s" % e)
+
+    def stream(self, payload, timeout=120):
+        """直通 httpx.stream；调用方用法与改造前完全相同。"""
+        return _active_http().stream("POST", self._url(),
+                                     headers=self._headers(),
+                                     json=payload, timeout=timeout)
+
+    def health(self, timeout=4):
+        if not self.api_base:
+            return False, {"err": "没配接口地址"}
+        try:
+            r = _active_http().get(self.api_base.rstrip("/v1") + "/models",
+                                   headers=self._headers(), timeout=timeout)
+            if r.status_code == 200:
+                return True, {}
+            return False, {"status": r.status_code}
+        except Exception as e:
+            return False, {"err": "%s: %s" % (type(e).__name__, str(e)[:100])}

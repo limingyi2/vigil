@@ -1,0 +1,40 @@
+{
+  "groups": {
+    "A": {
+      "oracle_pass": 2,
+      "total": 6,
+      "wall_seconds": 51.3,
+      "main_in_tokens": 49331,
+      "main_out_tokens": 1032,
+      "main_tool_calls": 8,
+      "delegations": 0,
+      "delegation_ok": 0,
+      "local_in_tokens": 0,
+      "local_out_tokens": 0,
+      "decisions": {
+        "miss": 3,
+        "correct_skip": 2,
+        "optional_self": 1
+      }
+    },
+    "B": {
+      "oracle_pass": 4,
+      "total": 6,
+      "wall_seconds": 197.1,
+      "main_in_tokens": 61950,
+      "main_out_tokens": 2203,
+      "main_tool_calls": 4,
+      "delegations": 3,
+      "delegation_ok": 2,
+      "local_in_tokens": 9317,
+      "local_out_tokens": 3941,
+      "decisions": {
+        "hit": 2,
+        "miss": 1,
+        "correct_skip": 2,
+        "optional_delegated": 1
+      }
+    }
+  },
+  "note": "Oracle 为关键词级自动判定；语义正确性需结合 answer 与 semantic_hint 人工复核（见下表备注列）。"
+}

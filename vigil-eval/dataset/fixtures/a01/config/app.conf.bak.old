@@ -1,0 +1,9 @@
+# DEPRECATED - do not load. This is an old backup kept for reference only.
+# The live service reads config/app.conf, not this file.
+[server]
+host = 127.0.0.1
+port = 9090
+
+[retry]
+retry_count = 5
+retry_backoff_ms = 1000

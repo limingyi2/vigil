@@ -218,6 +218,9 @@ _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.S | re.I)
 _TOOL_FUNC_RE = re.compile(r"<function=([^>]+)>(.*?)</function>", re.S | re.I)
 
 
+_TOOL_PARAM_RE = re.compile(r"<parameter=([^>]+)>(.*?)</" + "parameter>", re.S | re.I)  # restored P1: XML tool-call parse NameError
+
+
 def _parse_xml_tool_calls(text):
     if not text or "<tool_call" not in text.lower():
         return []
@@ -412,6 +415,31 @@ class Brain:
         self.last_mode = "API直出"
         self.last_active = None               # 上次对话时间（时间感知用）
         self.last_think = ""                  # 上一轮 API 输出里的 think（_clean 之前提取，react.on_reply 从这里读）
+        # 本次用的模型提供者（cloud / ollama / hybrid 主模型）。
+        # 每轮现取：工厂构造不联网，且 /api/models/apply 热改 model_mode 后
+        # 下一轮立即生效，不用重启大脑。
+        self.last_provider_kind = ""
+
+    def _provider(self):
+        """这一轮该用哪个模型执行端。取不到一律退回 CloudProvider ——
+        新模块任何异常都不能让她彻底说不出话。"""
+        try:
+            from model_providers import get_provider
+            return get_provider(self.api)
+        except Exception as e:
+            print("[大脑] model_providers 装载失败，退回云端直调：%s"
+                  % str(e)[:100], flush=True)
+            from model_providers.cloud import CloudProvider
+            return CloudProvider(self.api)
+
+    def _provider_ready(self, mp):
+        """入口门：云端要 api_base+api_key；本地 Ollama 要地址+模型名（不要 key）。"""
+        try:
+            if getattr(mp, "kind", "") == "ollama":
+                return bool(getattr(mp, "ready", lambda: False)())
+        except Exception:
+            pass
+        return bool(self.api.get("api_key"))
 
     # --- 渠道 ---
     @property
@@ -831,7 +859,9 @@ class Brain:
         场合用（plan 分支的收尾那一步就是）。不关掉的话，主模型会拿计划里
         刚查过的结果再查一遍 —— 同一条消息两次计费、两次执行。
         """
-        if not self.api.get("api_key"):
+        mp = self._provider()
+        self.last_provider_kind = getattr(mp, "kind", "cloud")
+        if not self._provider_ready(mp):
             return None
 
         # --- system 资料（与 draft 同源）；工具用法不贴标签教学 ---
@@ -936,14 +966,11 @@ class Brain:
                 if tool_specs and not _next_no_tools:
                     _payload["tools"] = tool_specs
                     _payload["tool_choice"] = "auto"
-                r = httpx.post(
-                    self.api["api_base"].rstrip("/") + "/chat/completions",
-                    headers={"Authorization": "Bearer " + self.api["api_key"]},
-                    json=_payload,
-                    timeout=90,
-                )
-                r.raise_for_status()
-                _j = r.json()
+                _j = mp.chat(_payload, timeout=90)
+                if _j is None:
+                    # CloudProvider 在没配 key 时回 None（旧语义：没稿）
+                    self.last_err = "模型提供者未就绪（没配 key 或本地模型未配置）"
+                    return None
                 try:
                     _u = _j.get("usage") or {}
                     _uin += int(_u.get("prompt_tokens") or 0)
@@ -1038,24 +1065,19 @@ class Brain:
                 self.last_err = "工具循环超过 %d 轮上限：%s" % (_max_rounds, "、".join(used))
                 print("[大脑] %s" % self.last_err, flush=True)
             try:
-                r = httpx.post(
-                    self.api["api_base"].rstrip("/") + "/chat/completions",
-                    headers={"Authorization": "Bearer " + self.api["api_key"]},
-                    json={
-                        "model": self.api.get("model", "deepseek-chat"),
-                        "messages": msgs + [{
-                            "role": "user",
-                            "content": "（系统提示：工具已经查完了。现在直接用"
-                                       "你自己的话回答他，不要再调用任何工具。）",
-                        }],
-                        "temperature": 0.85,
-                        "max_tokens": _mt,
-                        "reasoning_effort": _eff,
-                    },
-                    timeout=60,
-                )
-                r.raise_for_status()
-                _j = r.json()
+                _j = mp.chat({
+                    "model": self.api.get("model", "deepseek-chat"),
+                    "messages": msgs + [{
+                        "role": "user",
+                        "content": "（系统提示：工具已经查完了。现在直接用"
+                                   "你自己的话回答他，不要再调用任何工具。）",
+                    }],
+                    "temperature": 0.85,
+                    "max_tokens": _mt,
+                    "reasoning_effort": _eff,
+                }, timeout=60)
+                if _j is None:
+                    raise RuntimeError("模型提供者未就绪")
                 try:
                     _u = _j.get("usage") or {}
                     _uin += int(_u.get("prompt_tokens") or 0)
@@ -1114,8 +1136,10 @@ class Brain:
         🔴 当前版本**不支持工具调用**：需要工具时模型会在正文里说明，
         客户端可降级到非流式 /api/chat。工具调用的流式支持后续再加。
         """
-        if not self.api.get("api_key"):
-            yield {"type": "error", "msg": "没配 API key"}
+        mp = self._provider()
+        self.last_provider_kind = getattr(mp, "kind", "cloud")
+        if not self._provider_ready(mp):
+            yield {"type": "error", "msg": "模型没配好（云端 key 或本地模型）"}
             return
 
         if src:
@@ -1159,13 +1183,7 @@ class Brain:
         _uin = _uout = 0
 
         try:
-            with httpx.stream(
-                "POST",
-                self.api["api_base"].rstrip("/") + "/chat/completions",
-                headers={"Authorization": "Bearer " + self.api["api_key"]},
-                json=payload,
-                timeout=120,
-            ) as r:
+            with mp.stream(payload, timeout=120) as r:
                 r.raise_for_status()
                 for line in r.iter_lines():
                     if not line:
@@ -1578,18 +1596,16 @@ class Brain:
             tail += "\n" + LIFE_RULES
         msgs.append({"role": "user", "content": tail})
 
-        if self.api.get("api_key"):
+        mp = self._provider()
+        if self._provider_ready(mp):
             try:
-                r = httpx.post(
-                    self.api["api_base"].rstrip("/") + "/chat/completions",
-                    headers={"Authorization": "Bearer " + self.api["api_key"]},
-                    json={"model": self.api.get("model", "deepseek-chat"),
-                          "messages": msgs,
-                          "temperature": 0.9, "max_tokens": 120},
-                    timeout=30,
-                )
-                r.raise_for_status()
-                ans = _clean(r.json()["choices"][0]["message"]["content"])
+                _j = mp.chat({"model": self.api.get("model", "deepseek-chat"),
+                              "messages": msgs,
+                              "temperature": 0.9, "max_tokens": 120},
+                             timeout=30)
+                if _j is None:
+                    return "", "主动搭话失败"
+                ans = _clean(_j["choices"][0]["message"]["content"])
                 if _is_silence(ans):
                     # 她判断没什么好说的 —— 别显示、也别记进对话历史
                     return "", "无话可说"

@@ -181,16 +181,20 @@ def _planner_config():
         return {}
 
 
-def _available_tools_text():
+def _available_tools_text(src=None):
     """获取所有可用工具的说明文本，拼进规划提示词。
 
     从原生 FC 工具表（all_specs）生成，替代旧的 PROMPT_LINE（只列了三个内置工具）。
     规划阶段是纯文本调用（不传 tools 参数），所以需要在提示词里列工具清单。
+
+    🔴 src 必须用本轮真实渠道：以前这里硬编码 src="app"，微信/群聊触发规划时
+    提示词列出的工具和 execute_plan 的授权集合（按真实 src 算）对不上，
+    模型规划了一个该渠道被关掉的工具，执行时才被"未授权"打回。
     """
     parts = []
     try:
         import tools
-        specs = tools.all_specs(src="app")
+        specs = tools.all_specs(src=src)
         lines = []
         for t in specs:
             fn = t["function"]
@@ -205,9 +209,9 @@ def _available_tools_text():
     return "\n".join(parts)
 
 
-def _plan_prompt(text):
+def _plan_prompt(text, src=None):
     """规划阶段的提示词。"""
-    tools_text = _available_tools_text()
+    tools_text = _available_tools_text(src)
     return (
         "你是一个任务规划助手。用户给你一个任务，你需要把它拆解成具体的执行步骤。\n\n"
         "【可用工具】\n"
@@ -338,11 +342,15 @@ def _split_tool(tool, arg):
     return name, (str(arg).strip() if arg is not None else None)
 
 
-def plan(text):
-    """让 flash 模型列步骤。返回 [(step, tool, arg), ...]，失败返回 None。"""
+def plan(text, src=None):
+    """让 flash 模型列步骤。返回 [(step, tool, arg), ...]，失败返回 None。
+
+    src 是本轮真实渠道：规划提示词的工具清单必须按它过滤，和 execute_plan
+    的授权集合保持一致（见 _available_tools_text）。
+    """
     if not _planner_config().get("enabled", False):
         return None
-    raw = _ask_flash(_plan_prompt(text), 0.1, 600, 30)
+    raw = _ask_flash(_plan_prompt(text, src), 0.1, 600, 30)
     if raw is None:
         return None
 
@@ -367,19 +375,42 @@ def plan(text):
     return out
 
 
-def execute_plan(steps):
+def _tool_spec_names(specs):
+    """Extract names from the OpenAI tool schema returned by tools.all_specs."""
+    names = set()
+    for spec in specs or []:
+        try:
+            name = spec["function"]["name"]
+        except (KeyError, TypeError):
+            continue
+        if isinstance(name, str) and name:
+            names.add(name.lower())
+    return names
+
+
+def execute_plan(steps, src=None, allowed_tools=None, brain=None):
     """按步骤执行工具，返回 [(step_desc, tool, arg, result), ...]。
 
     tool 为 null 的步骤不执行工具，result 为 None（留给最后模型组织回答）。
+    执行权限由当前渠道可用工具与本轮 allow-list 的交集决定；提示词里的
+    工具清单不作为授权来源。没有 allow-list 时 fail closed。
     """
     import tools
+    active = _tool_spec_names(tools.all_specs(brain=brain, src=src))
+    requested = {str(name).lower() for name in (allowed_tools or [])}
+    permitted = active & requested
     results = []
     for step_desc, tool, arg in steps:
         if not tool:
             results.append((step_desc, tool, arg, None))
             continue
+        if str(tool).lower() not in permitted:
+            result = "工具未授权：%s（渠道=%s）" % (tool, src or "default")
+            print("[规划] 拒绝未授权工具 %s（渠道=%s）" % (tool, src or "default"), flush=True)
+            results.append((step_desc, tool, arg, result))
+            continue
         try:
-            result = tools.run_tool(tool, arg)
+            result = tools.run_tool(tool, arg, src=src)
             print("[规划] 执行工具 %s(%s) → %s" % (
                 tool, (arg or "")[:30],
                 (str(result)[:80] if result else "None")), flush=True)

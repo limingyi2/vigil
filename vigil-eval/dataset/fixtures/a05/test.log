@@ -1,0 +1,6 @@
+[test] collected 0 items
+[test] error ModuleNotFoundError: No module named 'crypto'
+[test] error ImportError: cannot import name 'encrypt'
+[test] error AttributeError: module 'synthetic_core' has no attribute 'encrypt'
+[test] error pytest failed with exit code 5
+[test] error no tests were collected

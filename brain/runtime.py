@@ -69,8 +69,11 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 # （`API_CFG.update` 是整体替换，缺键即当場消失）→ 面板显示已切换，
 # 而 Brain 构造时读到的仍是旧家的 base，模型接口直接连错地方。
 # 少了 api_keys：各家密钥那份在内存里没了，下次切回那家要重新填。
+# model_mode：cloud（默认）/ local（本机 Ollama）/ hybrid（主模型云端+本地委派 P2）
+# ollama：本地模型连接段 {base, model, num_ctx, num_predict, think, request_timeout}
 API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
-                "persona_file", "provider", "api_keys")
+                "persona_file", "provider", "api_keys",
+                "model_mode", "ollama")
 
 
 def api_cfg_subset(src):

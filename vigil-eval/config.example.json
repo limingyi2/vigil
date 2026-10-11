@@ -1,0 +1,12 @@
+{
+  "mode": "stub_smoke_only",
+  "groups": ["A_direct", "B_current"],
+  "repeats": 1,
+  "seed": 20261010,
+  "timeout_seconds_max": 30,
+  "main_model": null,
+  "planner_model": null,
+  "temperature": null,
+  "api_budget_usd": null,
+  "note": "No credentials. Full model evaluation is not enabled in this phase."
+}

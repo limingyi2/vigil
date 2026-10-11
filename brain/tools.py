@@ -315,6 +315,14 @@ def all_specs(brain=None, src=None):
     tools = _static_tool_array(src)
     if brain is not None:
         tools.extend(_dynamic_tool_array(brain, src))
+    # 混合模式受控委派工具：仅在 hybrid + delegation.enabled + 本地模型已配置时
+    # 出现（门控在 bridge 里，集中一处，cloud/local 模式的工具表永远不含它）。
+    try:
+        from delegation.bridge import is_delegation_enabled, TOOL_SPEC as _DTS
+        if is_delegation_enabled(src):
+            tools.append(_DTS)
+    except Exception:
+        pass
     return tools
 
 
@@ -409,6 +417,15 @@ def invoke_spec(name, args, ctx=None):
     if not n:
         return None
     args = args if isinstance(args, dict) else {}
+
+    # 混合模式委派工具：不走静态/插件表，直接进 delegation 桥（内部再做门控、
+    # 合同校验与有界子循环）。永远返回字符串、不抛，避免主循环被打断。
+    if n == "delegate_to_local":
+        try:
+            from delegation.bridge import delegate_to_local as _dl
+            return _dl(ctx, **args)
+        except Exception:
+            return "委派工具暂不可用，照你的其他工具或自己的判断回答。"
 
     # 动态 JS 技能
     if "__" in n:

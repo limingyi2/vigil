@@ -2022,6 +2022,7 @@
         return '这把就是当前服务商的密钥。切回存过密钥的服务商不用重填';
       };
       const ol = cur.ollama || {};
+      const dl = cur.delegation || {};
       const mode = cur.model_mode || 'cloud';
       // 运行方式卡片只在「本机大脑」视图出现 —— Ollama 长在这台 PC 上，
       // 云端那台服务器够不着 127.0.0.1:11434。
@@ -2031,10 +2032,10 @@
         '<div class="seg" id="mMode" style="margin-top:10px">' +
         '<button data-mm="cloud"' + (mode === 'cloud' ? ' class="on"' : '') + '>云端模型</button>' +
         '<button data-mm="local"' + (mode === 'local' ? ' class="on"' : '') + '>本地 Ollama</button>' +
-        '<button data-mm="hybrid" disabled title="P2 开放：云端主脑把只读子任务委派给本地" style="opacity:.45">混合（待开放）</button>' +
+        '<button data-mm="hybrid"' + (mode === 'hybrid' ? ' class="on"' : '') + '>混合（云端主脑+本地委派）</button>' +
         '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:6px">本地模式不调云端 API：同一套大脑用本机 Ollama 跑完整工具循环。混合模式（主模型云端 + 只读子任务委派本地）将在后续版本开放。</div>' +
-        '<div id="olBox" style="margin-top:12px' + (mode === 'local' ? '' : ';display:none') + '">' +
+        '<div class="muted" style="font-size:11.5px;margin-top:6px">本地模式不调云端 API：同一套大脑用本机 Ollama 跑完整工具循环。混合模式：主模型仍在云端，只把需要翻本地文件的只读子任务委派给本机 Ollama。</div>' +
+        '<div id="olBox" style="margin-top:12px' + ((mode === 'local' || mode === 'hybrid') ? '' : ';display:none') + '">' +
         '<div class="field"><label>Ollama 地址</label>' +
         '<input class="input mono" id="olBase" value="' + esc(ol.base || 'http://127.0.0.1:11434') + '" placeholder="http://127.0.0.1:11434">' +
         '<div class="muted" style="font-size:11.5px">默认回环；不用带 /v1，程序走原生 /api/chat（options 才生效）</div></div>' +
@@ -2049,6 +2050,20 @@
         '<div style="display:flex;gap:8px;align-items:center;margin-top:6px">' +
         '<button class="btn oline md" id="olTest">测试连接</button>' +
         '<span class="muted" id="olRes" style="font-size:12px"></span></div>' +
+        '</div>' +
+        // 委派设置：只在混合模式露面（开关门控在大脑侧：hybrid + enabled + 已配本地模型）
+        '<div id="dlBox" style="margin-top:12px' + (mode === 'hybrid' ? '' : ';display:none') + '">' +
+        '<div style="border-top:1px solid var(--border,#e5e5e5);padding-top:10px">' +
+        '<label class="row" style="margin:0 0 6px"><input type="checkbox" id="dlEnabled"' + (dl.enabled ? ' checked' : '') + '> 允许云端主脑把只读子任务委派给本机</label>' +
+        '<div class="muted" style="font-size:11.5px">默认关闭。仅支持只读勘察（列目录/查找/读文件/搜内容），不能写文件、跑命令、删除或联网；单次硬顶 6 轮模型请求 / 8 次工具调用 / 180 秒。</div></div>' +
+        '<div class="field" style="margin-top:10px"><label>授权工作区（每行一个绝对路径）</label>' +
+        '<textarea class="input mono" id="dlRoots" rows="3" style="width:100%;resize:vertical;font-size:12px" placeholder="如 F:\projects\demo">' + esc((dl.allowed_roots || []).join('\n')) + '</textarea>' +
+        '<div class="muted" style="font-size:11.5px">只有清单内目录能被委派访问，路径外一律拒绝；留空 = 任何委派都不执行（fail-closed）。</div></div>' +
+        '<div style="margin-top:10px"><b style="font-size:12.5px">最近委派</b>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin:6px 0">' +
+        '<button class="btn oline md" id="dlRefresh" type="button">刷新</button>' +
+        '<span class="muted" id="dlRes" style="font-size:11.5px"></span></div>' +
+        '<div id="dlList" class="muted" style="font-size:11.5px">加载中…</div></div>' +
         '</div></div>') : '';
 
       v.innerHTML =
@@ -2103,12 +2118,14 @@
         state.mSrc = b.dataset.ms;
         model();
       }));
-      // 运行方式：切云端时折叠 Ollama 设置（值不清，保存时仍会带上所选模式）
+      // 运行方式：切云端时折叠 Ollama/委派设置（值不清，保存时仍会带上所选模式）
       const olBox = v.querySelector('#olBox');
+      const dlBox = v.querySelector('#dlBox');
       v.querySelectorAll('#mMode button').forEach((b) => b.addEventListener('click', () => {
         if (b.disabled) return;
         v.querySelectorAll('#mMode button').forEach((x) => x.classList.toggle('on', x === b));
-        if (olBox) olBox.style.display = b.dataset.mm === 'local' ? '' : 'none';
+        if (olBox) olBox.style.display = (b.dataset.mm === 'local' || b.dataset.mm === 'hybrid') ? '' : 'none';
+        if (dlBox) dlBox.style.display = b.dataset.mm === 'hybrid' ? '' : 'none';
       }));
       // 连接测试：拿表单里的地址（模型留空也能测服务在不在），成功后回填模型下拉
       const olRes = v.querySelector('#olRes');
@@ -2133,6 +2150,54 @@
           olRes.textContent = '✗ 连不上：' + (rr.err || '检查 Ollama 是否已启动');
         }
       });
+      // 最近委派：本机大脑 data/delegations/ 的落盘记录，每次委派的状态/用量
+      // 都在这（只在本机视图有 dlBox）。
+      if (dlBox) {
+        const dlList = dlBox.querySelector('#dlList');
+        const dlRes = dlBox.querySelector('#dlRes');
+        const KIND_CN = {
+          log_root_cause: '日志根因', file_discovery: '文件发现',
+          read_only_bug_analysis: '跨文件 Bug', structured_extraction: '结构化抽取',
+          plan_draft: '计划草拟',
+        };
+        const DL_BADGE = {
+          succeeded: ['成功', '#1a7f37'], failed: ['失败', '#c00'],
+          timed_out: ['超时', '#b25f00'], cancelled: ['取消', '#666'],
+          running: ['进行中', '#0969da'], queued: ['排队', '#666'],
+        };
+        const fmtDLTime = (ts) => {
+          const d = new Date((ts || 0) * 1000);
+          const p = (n) => String(n).padStart(2, '0');
+          return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+            p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+        };
+        const loadDL = async () => {
+          dlList.textContent = '加载中…';
+          const rr = pick(await mget('/api/delegations/recent?n=20'));
+          const items = rr.items || [];
+          if (!rr.ok) { dlList.textContent = '读不到：' + esc(rr._err || rr.err || ''); return; }
+          if (!items.length) { dlList.textContent = '还没有委派记录。'; return; }
+          dlList.innerHTML = items.map((it) => {
+            const bg = DL_BADGE[it.status] || [it.status || '?', '#666'];
+            const errs = (it.errors || []).map((e) => esc(e.category || '错误')).join('、');
+            return '<div style="border-top:1px solid var(--border,#eee);padding:6px 0">' +
+              '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+              '<b style="font-size:11.5px">' + esc(KIND_CN[it.kind] || it.kind || '?') + '</b>' +
+              '<span style="color:#fff;background:' + bg[1] + ';border-radius:3px;padding:0 5px;font-size:10.5px">' + esc(bg[0]) + '</span>' +
+              '<span style="color:#999">' + esc(fmtDLTime(it.created_at)) + '</span>' +
+              (it.retry_used ? '<span style="color:#b25f00">重试1次</span>' : '') +
+              '</div>' +
+              '<div style="margin-top:2px;word-break:break-all">' + esc(it.goal || '') + '</div>' +
+              '<div style="color:#999;margin-top:2px">模型请求 ' + esc(it.model_requests) +
+              ' · 工具 ' + esc(it.tool_calls) + ' · tokens ' + esc(it.input_tokens) +
+              '/' + esc(it.output_tokens) + ' · 用时 ' + esc(it.elapsed_seconds) + 's' +
+              (errs ? ' · <span style="color:#c00">' + errs + '</span>' : '') + '</div></div>';
+          }).join('');
+          dlRes.textContent = '共 ' + items.length + ' 条 · ' + fmtDLTime(items[0].created_at) + ' 更新';
+        };
+        dlBox.querySelector('#dlRefresh').addEventListener('click', loadDL);
+        loadDL();
+      }
       // 下拉换服务商：地址自动填 + 清单自动拉。这家没存过密钥、密钥框又空着
       // 就先不拉 —— 服务端只能拿别家的 key 去试，必然 401，白拉一轮还吐出
       // 一份兜底清单冒充这家的模型（"换了家模型却不变"就是它干的）。
@@ -2223,10 +2288,10 @@
         const mmBtn = v.querySelector('#mMode button.on');
         if (mmBtn) {
           payload.model_mode = mmBtn.dataset.mm;
-          if (payload.model_mode === 'local') {
+          if (payload.model_mode === 'local' || payload.model_mode === 'hybrid') {
             const olModel = (v.querySelector('#olModel') || {}).value || '';
             if (!olModel.trim()) {
-              alert('本地模式要先选/填一个已安装的 Ollama 模型（点「测试连接」可自动拉取）');
+              alert('本地/混合模式要先选或填一个已安装的 Ollama 模型（点「测试连接」可自动拉取）');
               return;
             }
             payload.ollama = {
@@ -2236,6 +2301,18 @@
               num_predict: parseInt((v.querySelector('#olPred') || {}).value, 10) || 2048,
               think: !!(v.querySelector('#olThink') || {}).checked,
             };
+          }
+          // 委派段只在混合模式提交；云端/本地模式留着配置也无害（门控看 model_mode）
+          if (payload.model_mode === 'hybrid') {
+            payload.delegation = {
+              enabled: !!(v.querySelector('#dlEnabled') || {}).checked,
+              allowed_roots: (v.querySelector('#dlRoots') || {}).value || '',
+            };
+            if (payload.delegation.enabled &&
+                !payload.delegation.allowed_roots.trim()) {
+              alert('开了委派但没填授权工作区：空名单是 fail-closed，任何委派都会被拒绝。先填一个目录（每行一个绝对路径）');
+              return;
+            }
           }
         }
         const rr = pick(await mpost('/api/models/apply', payload));
