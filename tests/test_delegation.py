@@ -172,32 +172,76 @@ class TestSandbox(_Workspace, unittest.TestCase):
             self.sb.execute("write_file", {"path": "x"})
         self.assertEqual(cm.exception.category, "tool_not_allowed")
 
+    def test_grep传文件路径_直接搜该文件(self):
+        # P3 修复 H03：path 是文件时不再报 "不是目录"
+        out = self.sb.file_grep("NoneType", "error.log")
+        self.assertIn("error.log:1", out)
+
+    def test_grep文件无匹配也给明确提示(self):
+        out = self.sb.file_grep("ZZZZNOTEXIST", "error.log")
+        self.assertIn("没有匹配", out)
+
+    def test_缓存版本戳随文件内容变化(self):
+        v1 = self.sb.version_of("src/auth.py")
+        p = os.path.join(self.ws, "src", "auth.py")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("\n# changed\n")
+        v2 = self.sb.version_of("src/auth.py")
+        self.assertNotEqual(v1, v2)
+
 
 class TestValidator(_Workspace, unittest.TestCase):
+    def _blob(self, rel):
+        with open(os.path.join(self.ws, rel.replace("/", os.sep)),
+                  encoding="utf-8") as f:
+            return f.read()
+
     def test_bug分析_证据真实(self):
-        text = '{"root_cause":"None 传入","file":"src/auth.py",' \
-               '"line":2,"reason":"login 未判空"}'
+        text = ('{"answer":"login 未判空，None 传进 issue_token",'
+                '"evidence":[{"path":"src/auth.py","line":2,'
+                '"excerpt":"return issue_token(None)","observation":"未判空"}]}')
         events = [{"tool": "read_file", "path": "src/auth.py", "ok": True}]
         v = V.validate("read_only_bug_analysis", "bug_analysis_v1",
-                       text, self.ws, tool_events=events)
+                       text, self.ws, tool_events=events,
+                       read_blobs={"src/auth.py": self._blob("src/auth.py")})
         self.assertTrue(v["ok"], v["problems"])
-        self.assertEqual(v["structured"]["root_cause"], "None 传入")
+        self.assertEqual(v["structured"]["answer"],
+                         "login 未判空，None 传进 issue_token")
+        self.assertTrue(v["verified"])
+        self.assertEqual(v["evidence"]["verified"][0]["path"], "src/auth.py")
+
+    def test_摘录必须来自实读内容_否则不通过(self):
+        text = ('{"answer":"x",'
+                '"evidence":[{"path":"src/auth.py","excerpt":"伪造的原文行"}]}')
+        v = V.validate("read_only_bug_analysis", "bug_analysis_v1",
+                       text, self.ws,
+                       tool_events=[{"tool": "read_file",
+                                     "path": "src/auth.py", "ok": True}],
+                       read_blobs={"src/auth.py": self._blob("src/auth.py")})
+        self.assertFalse(v["ok"])
+        self.assertTrue(any("找不到" in p or "编造" in p for p in v["problems"]))
 
     def test_引用不存在文件_invalid_evidence(self):
-        text = '{"root_cause":"x","file":"src/ghost.py","reason":"y"}'
+        text = '{"answer":"x","evidence":[{"path":"src/ghost.py","excerpt":"y"}]}'
         v = V.validate("read_only_bug_analysis", "bug_analysis_v1",
                        text, self.ws,
                        tool_events=[{"tool": "read_file",
                                      "path": "src/ghost.py"}])
         self.assertFalse(v["ok"])
-        self.assertTrue(any("证据" in p or "不存在" in p or "工具" in p
-                            for p in v["problems"]))
+        self.assertTrue(any("不存在" in p for p in v["problems"]))
 
     def test_无工具调用的分析不算完成(self):
         v = V.validate("read_only_bug_analysis", "bug_analysis_v1",
-                       '{"root_cause":"x","file":"src/auth.py","reason":"y"}',
+                       '{"answer":"x","evidence":[]}',
                        self.ws, tool_events=[])
         self.assertFalse(v["ok"])
+
+    def test_answer超长不通过(self):
+        v = V.validate("read_only_bug_analysis", "bug_analysis_v1",
+                       json.dumps({"answer": "长" * 901, "evidence": []}),
+                       self.ws, tool_events=[])
+        self.assertFalse(v["ok"])
+        self.assertTrue(any("answer" in p for p in v["problems"]))
 
     def test_抽JSON失败(self):
         v = V.validate("structured_extraction", "extraction_v1",
@@ -206,17 +250,35 @@ class TestValidator(_Workspace, unittest.TestCase):
         self.assertTrue(any("JSON" in p for p in v["problems"]))
 
     def test_file_list证据校验(self):
-        text = '{"files":["src/auth.py","src/missing.py"]}'
+        text = '{"answer":"发现 2 个文件","files":["src/auth.py","src/missing.py"]}'
         v = V.validate("file_discovery", "file_list_v1", text, self.ws,
                        tool_events=[{"tool": "file_find"}])
         self.assertFalse(v["ok"])
         self.assertIn("src/missing.py", v["evidence"]["missing"])
 
-    def test_plan永远待主模型审核(self):
+    def test_plan无工作区_通用草案可过(self):
         text = '{"steps":["读日志","定位","修复建议"]}'
         v = V.validate("plan_draft", "plan_draft_v1", text, "")
-        self.assertTrue(v["ok"])
+        self.assertTrue(v["ok"], v["problems"])
+        self.assertTrue(v["generic"])
         self.assertTrue(v["needs_main_agent_review"])
+
+    def test_plan有工作区_零取证不通过(self):
+        text = '{"steps":["读日志","定位","修复建议"]}'
+        v = V.validate("plan_draft", "plan_draft_v1", text, self.ws,
+                       tool_events=[])
+        self.assertFalse(v["ok"])
+        self.assertTrue(any("取证" in p for p in v["problems"]))
+
+    def test_plan有工作区_取证后通过(self):
+        text = ('{"steps":["读堆栈","统一 user_id/uid 字段","跑测试回归"],'
+                '"evidence_paths":["src/auth.py"]}')
+        events = [{"tool": "read_file", "path": "src/auth.py", "ok": True}]
+        v = V.validate("plan_draft", "plan_draft_v1", text, self.ws,
+                       tool_events=events)
+        self.assertTrue(v["ok"], v["problems"])
+        self.assertFalse(v["generic"])
+        self.assertTrue(v["verified"])
 
 
 # --- 脚本化 provider：按调用次数返回预设响应 ---
@@ -262,16 +324,18 @@ class TestDispatcher(_Workspace, unittest.TestCase):
                               persist=False), p
 
     def test_工具取证后出JSON_成功(self):
-        final = '{"root_cause":"None 被传入 issue_token","file":"src/auth.py",' \
-                '"line":2,"reason":"login 未判空"}'
+        final = ('{"answer":"login 未判空，None 传进 issue_token",'
+                 '"evidence":[{"path":"src/auth.py","line":2,'
+                 '"excerpt":"return issue_token(None)","observation":"未判空"}]}')
         r, p = self._run([
             _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
             _Msg.say(final),
         ])
         self.assertEqual(r["status"], "succeeded", r["errors"])
         self.assertEqual(r["tool_calls"], 1)
-        self.assertEqual(r["structured"]["file"], "src/auth.py")
+        self.assertIn("login 未判空", r["structured"]["answer"])
         self.assertIn("src/auth.py", r["evidence"]["existing"])
+        self.assertTrue(r["verified"])
         # 沙箱工具结果确实回灌了
         tool_msgs = [m for m in p.payloads[1]["messages"]
                      if m.get("role") == "tool"]
@@ -299,8 +363,8 @@ class TestDispatcher(_Workspace, unittest.TestCase):
 
     def test_验收失败重试一次后通过(self):
         bad = "我觉得是个问题"            # 不是 JSON
-        good = '{"root_cause":"None 传入","file":"src/auth.py",' \
-               '"line":2,"reason":"未判空"}'
+        good = ('{"answer":"login 未判空","evidence":[{"path":"src/auth.py",'
+                '"line":2,"excerpt":"return issue_token(None)"}]}')
         r, p = self._run([
             _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
             _Msg.say(bad),
@@ -339,8 +403,8 @@ class TestDispatcher(_Workspace, unittest.TestCase):
     def test_结果落盘(self):
         c = self.contract(kind="file_discovery",
                           expected_schema="file_list_v1")
-        # file_discovery 期待 file_list_v1
-        final = '{"files":["src/auth.py","error.log"]}'
+        # file_discovery 期待 file_list_v1（紧凑版带 answer）
+        final = '{"answer":"发现 2 个相关文件","files":["src/auth.py","error.log"]}'
         p = _ScriptedProvider([
             _Msg.call("c1", "file_find", {"pattern": "*"}),
             _Msg.say(final),
@@ -360,7 +424,7 @@ class TestDispatcher(_Workspace, unittest.TestCase):
                           expected_schema="file_list_v1")
         p = _ScriptedProvider([
             _Msg.call("c1", "file_find", {"pattern": "*"}),
-            _Msg.say('{"files":["src/auth.py"]}'),
+            _Msg.say('{"answer":"找到 src/auth.py","files":["src/auth.py"]}'),
         ])
         r = run_delegation(c, ollama_cfg={"model": "m"},
                            provider_factory=lambda cfg: p, persist=True)
@@ -381,6 +445,92 @@ class TestDispatcher(_Workspace, unittest.TestCase):
         finally:
             if os.path.exists(fp):
                 os.remove(fp)
+
+
+    def test_预算用尽_留最终回答机会_降级成功(self):
+        # P3.1：8 次工具用完后不再硬失败，给一次无工具收口；
+        # 凭已有真实证据出 JSON → succeeded 但标 degraded，不伪造。
+        c = self.contract(kind="file_discovery",
+                          expected_schema="file_list_v1")
+        # 第 1 个响应：单轮并行 8 个 read_file（H01 式撒网）
+        parallel = {"choices": [{"message": {"role": "assistant", "content": "",
+                      "tool_calls": [
+                          _Msg.call("c%d" % i, "read_file",
+                                    {"path": "src/auth.py"})["choices"][0]
+                          ["message"]["tool_calls"][0]
+                          for i in range(8)]}}]}
+        final = '{"answer":"已读到认证文件","files":["src/auth.py"]}'
+        p = _ScriptedProvider([
+            parallel,
+            _Msg.call("c9", "read_file", {"path": "src/auth.py"}),
+            _Msg.say(final),
+        ])
+        r = run_delegation(c, ollama_cfg={"model": "m"},
+                           provider_factory=lambda cfg: p, persist=False)
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertTrue(r["degraded"])
+        self.assertEqual(r["tool_calls"], 8)
+        self.assertEqual(r["model_requests"], 3)
+        self.assertTrue(any(e["category"] == "tool_limit" for e in r["errors"]))
+        # 同参重复读命中任务内缓存
+        self.assertGreaterEqual(r["cache_hits"], 1)
+
+    def test_分段计时字段存在(self):
+        r, _ = self._run([
+            _Msg.say('{"fields":{"name":"张三"}}'),
+        ], use_contract=False)
+        # use_contract=False 实际仍给 bug 合同；这里只验计时键齐全
+        for k in ("model_seconds", "tool_seconds", "validation_seconds"):
+            self.assertIn(k, r)
+
+
+class TestRouter(_Workspace, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        from delegation import router
+        self.router = router
+
+    def test_授权目录内的简单查询_本地直答(self):
+        d = self.router.classify(
+            "这个项目配置里的重试次数是多少？在哪个文件里？工作区在 %s"
+            % self.ws, allowed_roots=[self.tmp])
+        self.assertEqual(d["route"], "local_direct", d)
+        self.assertEqual(d["workspace"], os.path.abspath(self.ws))
+        self.assertEqual(d["kind"], "file_discovery")
+
+    def test_实时信息_即使带路径也走云端(self):
+        d = self.router.classify(
+            "%s 这个目录所在城市现在天气怎么样？" % self.ws,
+            allowed_roots=[self.tmp])
+        self.assertEqual(d["route"], "cloud_direct")
+        self.assertEqual(d["reason"], "realtime_or_external_intent")
+
+    def test_多步根因分析_委派链路(self):
+        d = self.router.classify(
+            "程序报错，分析 %s 里的日志找根因，后面都是连锁反应" % self.ws,
+            allowed_roots=[self.tmp])
+        self.assertEqual(d["route"], "hybrid_delegate")
+
+    def test_无授权路径_不猜测_走云端(self):
+        d = self.router.classify("配置里重试次数是多少？",
+                                 allowed_roots=[self.tmp])
+        self.assertEqual(d["route"], "cloud_direct")
+        self.assertEqual(d["reason"], "no_authorized_path_in_text")
+
+    def test_授权根外路径_不认(self):
+        other = tempfile.mkdtemp(prefix="dlg_route_out_")
+        try:
+            d = self.router.classify(
+                "%s 里重试次数是多少？" % other, allowed_roots=[self.tmp])
+            self.assertEqual(d["route"], "cloud_direct")
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+
+    def test_长句歧义_保守走云端(self):
+        d = self.router.classify(
+            "在 %s 里帮我看看" % self.ws + "细节" * 200,
+            allowed_roots=[self.tmp])
+        self.assertEqual(d["route"], "cloud_direct")
 
 
 class TestGateAndBridge(_Workspace, unittest.TestCase):
@@ -472,6 +622,50 @@ class TestGateAndBridge(_Workspace, unittest.TestCase):
             bridge.run_delegation = old
         self.assertIn("succeeded", out)
         self.assertIn("src/auth.py", out)
+
+    def test_local_direct命中并跳过云端(self):
+        self._set_mode("hybrid")
+        from delegation import bridge
+        old_cfg = bridge.load_delegation_config
+        old_run = bridge.run_delegation
+        bridge.load_delegation_config = lambda: {
+            "enabled": True, "router_enabled": True,
+            "allowed_roots": [self.tmp]}
+        bridge.run_delegation = lambda contract, **k: {
+            "task_id": "dlg_d", "kind": "file_discovery",
+            "status": "succeeded", "verified": True, "degraded": False,
+            "model_requests": 2, "tool_calls": 2, "elapsed_seconds": 5,
+            "output": "",
+            "structured": {"answer": "重试次数 3，在 config/app.conf",
+                           "files": ["config/app.conf"]},
+            "evidence": {"verified": [{"path": "config/app.conf",
+                                       "line": 1,
+                                       "excerpt": "retry_count = 3"}]},
+            "errors": []}
+        try:
+            r = bridge.run_local_direct(
+                "%s 里的重试次数是多少？在哪个文件？" % self.ws, src="pc")
+        finally:
+            bridge.load_delegation_config = old_cfg
+            bridge.run_delegation = old_run
+        self.assertTrue(r["ok"], r)
+        self.assertIn("3", r["reply"])
+        self.assertEqual(r["decision"]["route"], "local_direct")
+
+    def test_local_direct路由关闭_回云端(self):
+        self._set_mode("hybrid")
+        from delegation import bridge
+        old_cfg = bridge.load_delegation_config
+        bridge.load_delegation_config = lambda: {
+            "enabled": True, "router_enabled": False,
+            "allowed_roots": [self.tmp]}
+        try:
+            r = bridge.run_local_direct(
+                "%s 里的重试次数是多少？" % self.ws, src="pc")
+        finally:
+            bridge.load_delegation_config = old_cfg
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "router_disabled")
 
 
 if __name__ == "__main__":

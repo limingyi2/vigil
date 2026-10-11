@@ -77,27 +77,124 @@ def is_delegation_enabled(src=None):
         return False
 
 
+def _compact_lines(structured, evidence, *, limit=5, answer_clip=600):
+    """从核验过的结构化结果里压出给主模型看的短证据（P2）。
+
+    只用程序核验过的条目；云端回灌 answer 裁到 600 字、证据 ≤5 条、
+    摘录 ≤160 字，绝不转贴 output 全文（旧版把本地模型整段 JSON 回灌，
+    是云端 tokens 上涨的主因之一）。本地直答可放宽 answer_clip=900。
+    """
+    lines = []
+    s = structured if isinstance(structured, dict) else {}
+    ans = str(s.get("answer") or "").strip()
+    if ans:
+        lines.append("结论：" + ans[:answer_clip])
+    files = s.get("files")
+    if isinstance(files, list) and files:
+        lines.append("相关文件：" + "、".join(str(f) for f in files[:8]))
+    steps = s.get("steps")
+    if isinstance(steps, list) and steps:
+        lines.append("步骤草案（需你审核）："
+                     + "；".join("%d.%s" % (i + 1, str(x)[:200])
+                                for i, x in enumerate(steps[:8])))
+    items = (evidence or {}).get("verified") or []
+    for v in items[:limit]:
+        loc = v.get("path") or ""
+        if v.get("line"):
+            loc += ":%s" % v["line"]
+        piece = "证据 %s" % loc
+        if v.get("excerpt"):
+            piece += "「%s」" % str(v["excerpt"])[:160]
+        if v.get("observation"):
+            piece += "（%s）" % str(v["observation"])[:120]
+        lines.append(piece)
+    conf = s.get("confidence")
+    if conf:
+        lines.append("本地置信度：%s" % conf)
+    return lines
+
+
 def _render(result):
-    """把 Dispatcher 结果压成给主模型看的工具结果文本。"""
-    import json
+    """把 Dispatcher 结果压成**紧凑证据文本**给主模型（P2：短证据回灌）。"""
     head = "【本地子任务结果 task=%s status=%s 模型请求=%d 工具调用=%d 用时=%.0fs】" % (
         result["task_id"], result["status"], result["model_requests"],
         result["tool_calls"], result["elapsed_seconds"])
     if result["status"] == "succeeded":
-        lines = [head, result["output"] or ""]
-        ev = result.get("evidence") or {}
-        if ev.get("existing"):
-            lines.append("已核实的证据文件：" + "、".join(ev["existing"][:10]))
+        lines = [head]
+        lines += _compact_lines(result.get("structured"),
+                                result.get("evidence"))
+        if not any(l.startswith("结论") or l.startswith("步骤") for l in lines):
+            # 结构化字段缺 answer 时的兜底：从 output 里截一小段，绝不全文转贴
+            lines.append("结论：" + (result.get("output") or "")[:300])
+        if result.get("degraded"):
+            lines.append("注意：工具预算用尽，该结果基于已有证据降级产出，"
+                         "请你核对后再采用。")
+        if result.get("generic"):
+            lines.append("注意：这是未结合具体仓库的通用草案。")
         if result.get("needs_main_agent_review"):
-            lines.append("注意：这是本地模型草拟的计划，**你（主模型）必须自行审核后**才能采用。")
-        return "\n".join(lines)
+            lines.append("注意：这是本地模型草拟的计划，**你（主模型）必须自行审核后**"
+                         "才能采用。")
+        return "\n".join(lines)[:1800]
     # 失败：把类别和细节交代清楚，主模型应据此回退（自己答或让用户处理），
     # 绝不能因为这个工具失败就把用户晾着。
     errs = result.get("errors") or []
     detail = "；".join("%s:%s" % (e.get("category"), e.get("detail", ""))
                       for e in errs[-3:])
-    return ("%s\n本地子任务未成功（%s）。请你自己继续处理或如实告诉用户，"
-            "不要声称子任务已完成。") % (head, detail or "未知原因")
+    cats = {str(e.get("category")) for e in errs}
+    if cats & {"tool_limit", "request_limit", "validation_failed",
+               "tool_denied", "kind_not_allowed",
+               "workspace_not_authorized"}:
+        # 确定性失败：同一轮再派一次结果不会变（H03 实测云端连派 3 次，
+        # 白烧 270s 预算）——明令禁止重试，直接用已有信息自己处理或如实告知。
+        no_retry = "这是确定性失败，**禁止再次调用 delegate_to_local**，" \
+                   "同一轮重试结果相同；直接用你已有的信息处理或如实告诉用户。"
+    else:
+        no_retry = "除非用户明确要求稍后重试，否则不要再次调用本工具。"
+    return ("%s\n本地子任务未成功（%s）。%s\n"
+            "不要声称子任务已完成。") % (head, detail or "未知原因", no_retry)
+
+
+def run_local_direct(text, src=None):
+    """P1 确定性路由 local_direct 的执行入口（brain 调用，不是 FC 工具）。
+
+    成功返回 {"ok": True, "reply": 给用户的文本, "result": 委派结果}；
+    任何不满足条件/执行失败都返回 {"ok": False, "reason": ...}，调用方
+    必须回退到原有云端链路，不改变单模式行为。
+    """
+    try:
+        import runtime
+        if str(runtime.API_CFG.get("model_mode") or "cloud") != "hybrid":
+            return {"ok": False, "reason": "not_hybrid"}
+        if not is_delegation_enabled(src):
+            return {"ok": False, "reason": "delegation_disabled"}
+        cfg = load_delegation_config()
+        if not cfg.get("router_enabled", True):
+            return {"ok": False, "reason": "router_disabled"}
+        from .router import classify
+        decision = classify(text, allowed_roots=cfg.get("allowed_roots") or [])
+        if decision["route"] != "local_direct":
+            return {"ok": False, "reason": "route=%s" % decision["route"],
+                    "decision": decision}
+        contract = validate_contract(
+            {"kind": decision["kind"], "goal": text,
+             "workspace": decision["workspace"]},
+            src=src, allowed_roots=cfg.get("allowed_roots") or [])
+        result = run_delegation(contract,
+                                ollama_cfg=runtime.API_CFG.get("ollama"))
+        if result.get("status") != "succeeded" or not result.get("verified"):
+            return {"ok": False,
+                    "reason": "delegation_%s" % result.get("status"),
+                    "decision": decision, "result": result}
+        lines = _compact_lines(result.get("structured"),
+                               result.get("evidence"), answer_clip=900)
+        reply = "\n".join(lines) if lines else (result.get("output") or "")[:600]
+        return {"ok": True, "reply": reply, "result": result,
+                "decision": decision}
+    except ContractError as e:
+        return {"ok": False, "reason": "contract_%s" % e.reason}
+    except Exception as e:
+        return {"ok": False,
+                "reason": "router_error:%s" % type(e).__name__}
 
 
 def delegate_to_local(ctx, **args):

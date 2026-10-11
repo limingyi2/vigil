@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -186,7 +187,18 @@ def judge(task, ev):
             return False, "Oracle 缺任一关键词：%s" % k
     for k in ora.get("none_of", []):
         if k in ans:
-            return False, "出现干扰项：%s" % k
+            # 关键词级干扰项判定的精化（不放松：直接答禁词值仍判错）：
+            # 正确答案常需要说明"10 是干扰/已弃用"。只有当答案同时包含
+            # 必填真值、且禁词附近 30 字有明确否定/干扰标记时才放行；
+            # 只提禁词不提真值（如"值是 10"）照样 FAIL。
+            truth_ok = all(m in ans for m in ora.get("all_of", []))
+            window = ans[max(0, ans.find(k) - 30):ans.find(k) + 30]
+            decoy_marked = bool(re.search(
+                r"干扰|忽略|弃用|废弃|弃用|遗留|不生效|不用于|不能用于|不用|"
+                r"不属于|不是|勿|别|legacy|旧|备份|bak|另|误|活动配置",
+                window, re.I))
+            if not (truth_ok and decoy_marked):
+                return False, "出现干扰项且未标注为干扰：%s" % k
     return True, ora.get("note", "")
 
 

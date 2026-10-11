@@ -15,8 +15,9 @@
     "think": true
   },
   "delegation": {
-    "_说明": "仅 hybrid 生效：允许云端主脑把只读子任务委派给本机 Ollama。默认关闭，要显式打开；allowed_roots 是沙箱白名单根目录，委派只能读写这些目录内的文件（第一版只读）",
+    "_说明": "仅 hybrid 生效：允许云端主脑把只读子任务委派给本机 Ollama。默认关闭，要显式打开；allowed_roots 是沙箱白名单根目录，委派只能读写这些目录内的文件（第一版只读）。router_enabled=true 时简单本地查询（消息里带授权目录的明确路径）直接由本机处理、跳过云端，可设 false 关掉走纯云端决策",
     "enabled": false,
+    "router_enabled": true,
     "allowed_roots": ["D:\\your-project"]
   },
   "persona_file": "personas/default.json",

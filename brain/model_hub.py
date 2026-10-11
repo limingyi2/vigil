@@ -268,6 +268,7 @@ def current(cfg):
         },
         "delegation": {
             "enabled": bool(dl.get("enabled", False)),
+            "router_enabled": bool(dl.get("router_enabled", True)),
             "allowed_roots": [str(r) for r in dl.get("allowed_roots") or []
                               if str(r).strip()],
         },
@@ -532,7 +533,7 @@ def apply_cfg(cfg, p):
             cfg["ollama"] = cur_ol
             changed.append("本地模型设置已更新")
 
-    # 委派段（P3 只读委派）：白名单两键 enabled / allowed_roots。
+    # 委派段（P3 只读委派）：白名单三键 enabled / router_enabled / allowed_roots。
     # 只有请求显式带 delegation dict 才改，旧客户端保存不会冲掉已配段。
     # allowed_roots 空名单是 fail-closed（任何工作区都派不出去），不在服务端
     # 强制非空 —— 由 UI 提示用户。
@@ -541,6 +542,8 @@ def apply_cfg(cfg, p):
         cur_dl = dict(cfg["delegation"]) if isinstance(cfg.get("delegation"), dict) else {}
         if "enabled" in dl and dl.get("enabled") is not None:
             cur_dl["enabled"] = bool(dl.get("enabled"))
+        if "router_enabled" in dl and dl.get("router_enabled") is not None:
+            cur_dl["router_enabled"] = bool(dl.get("router_enabled"))
         if "allowed_roots" in dl:
             roots = dl.get("allowed_roots")
             if isinstance(roots, str):

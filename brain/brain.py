@@ -864,6 +864,35 @@ class Brain:
         if not self._provider_ready(mp):
             return None
 
+        # P1 确定性三路路由：只有 hybrid + 委派开关 + 路由开关全满足时才可能
+        # 命中 local_direct；任何失败/不确定都返回 None，继续走下面的云端
+        # 原链路（可观测：self.last_route；可回退：不影响 cloud/local 单模式）。
+        self.last_route = None
+        if not no_tools:
+            try:
+                from delegation import bridge as _dbridge
+                _direct = _dbridge.run_local_direct(user_text,
+                                                    src=ctx_src or self._cur_src)
+                self.last_route = _direct.get("decision") or {
+                    "route": "cloud_direct", "reason": _direct.get("reason", "")}
+                if _direct.get("ok"):
+                    _r = _direct["result"]
+                    self.last_route["status"] = "succeeded"
+                    self.last_ms = int(_r.get("elapsed_seconds", 0) * 1000)
+                    # 本地直答：云端零请求、零计费 token
+                    self.last_usage = {"in": 0, "out": 0}
+                    self.last_cloud_requests = 0
+                    self.last_cloud_seconds = 0.0
+                    self.last_tools_used = ["delegate_to_local:direct"]
+                    self.last_delegation = _r
+                    return _direct["reply"]
+                if _direct.get("result"):
+                    self.last_route["status"] = _direct["result"].get("status")
+                    self.last_delegation = _direct
+            except Exception as _e:
+                print("[路由] local_direct 判断异常，回退云端：%s"
+                      % str(_e)[:100], flush=True)
+
         # --- system 资料（与 draft 同源）；工具用法不贴标签教学 ---
         parts, life = self._build_system_parts(user_text, memory_block)
         # 原生 FC 的工具使用态度（语法不用教，API 通道处理）
@@ -919,6 +948,9 @@ class Brain:
         self.last_ms = None
         self.last_err = ""
         self.last_think = ""
+        # P0 性能追踪：云端模型请求数与云端模型耗时（不含本地工具/委派耗时）
+        self.last_cloud_requests = 0
+        self.last_cloud_seconds = 0.0
         _t0 = time.time()
         _uin = _uout = 0
         used = []
@@ -966,7 +998,11 @@ class Brain:
                 if tool_specs and not _next_no_tools:
                     _payload["tools"] = tool_specs
                     _payload["tool_choice"] = "auto"
+                _tc0 = time.time()
+                self.last_cloud_requests += 1
                 _j = mp.chat(_payload, timeout=90)
+                self.last_cloud_seconds = round(
+                    self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
                     # CloudProvider 在没配 key 时回 None（旧语义：没稿）
                     self.last_err = "模型提供者未就绪（没配 key 或本地模型未配置）"
@@ -1065,6 +1101,8 @@ class Brain:
                 self.last_err = "工具循环超过 %d 轮上限：%s" % (_max_rounds, "、".join(used))
                 print("[大脑] %s" % self.last_err, flush=True)
             try:
+                _tc0 = time.time()
+                self.last_cloud_requests += 1
                 _j = mp.chat({
                     "model": self.api.get("model", "deepseek-chat"),
                     "messages": msgs + [{
@@ -1076,6 +1114,8 @@ class Brain:
                     "max_tokens": _mt,
                     "reasoning_effort": _eff,
                 }, timeout=60)
+                self.last_cloud_seconds = round(
+                    self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
                     raise RuntimeError("模型提供者未就绪")
                 try:

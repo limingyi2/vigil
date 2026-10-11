@@ -1,0 +1,36 @@
+{
+  "C": {
+    "H01": {
+      "n": 2,
+      "pass": "2/2",
+      "wall_med": 24.2,
+      "cin_med": 0.0,
+      "cout_med": 0.0,
+      "cloud_req_med": 0.0,
+      "pc_calls_med": 0.0,
+      "local_in": 10012,
+      "local_out": 597,
+      "dl_succ": 2,
+      "dl_n": 2,
+      "verified": 2,
+      "degraded": 0,
+      "routes": "{\"local_direct\": 2}"
+    },
+    "H03": {
+      "n": 2,
+      "pass": "0/2",
+      "wall_med": 64.9,
+      "cin_med": 15641.5,
+      "cout_med": 470.5,
+      "cloud_req_med": 3.0,
+      "pc_calls_med": 0.0,
+      "local_in": 19609,
+      "local_out": 1236,
+      "dl_succ": 0,
+      "dl_n": 2,
+      "verified": 0,
+      "degraded": 2,
+      "routes": "{\"hybrid_delegate\": 2}"
+    }
+  }
+}

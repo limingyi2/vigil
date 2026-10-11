@@ -22,9 +22,11 @@ KINDS = {
         "needs_workspace": True,
     },
     "file_discovery": {
-        "allowed_tools": ("file_list", "file_find"),
-        "max_model_requests": 4,
-        "max_tool_calls": 6,
+        # 先 list/find 勘察、再 read_file 定点读：只列目录读不到配置值
+        # （P3 实锤 H01：旧版没有 read_file，模型永远答不出 retry_count=3）。
+        "allowed_tools": ("file_list", "file_find", "read_file"),
+        "max_model_requests": 5,
+        "max_tool_calls": 8,
         "timeout_seconds": 120,
         "expected_schemas": ("file_list_v1",),
         "needs_workspace": True,
@@ -47,13 +49,15 @@ KINDS = {
         "needs_workspace": False,
     },
     "plan_draft": {
-        # 只根据任务描述草拟步骤，无执行权；产出必须由主模型审核
-        "allowed_tools": (),
-        "max_model_requests": 2,
-        "max_tool_calls": 0,
-        "timeout_seconds": 90,
+        # 无工作区 = 纯通用草案（不给工具，输出标 generic）；
+        # 带工作区 = 针对具体仓库的计划，必须先只读取证（P2：H06 零证据幻觉路径）。
+        "allowed_tools": ("file_list", "file_find", "file_grep", "read_file"),
+        "max_model_requests": 4,
+        "max_tool_calls": 6,
+        "timeout_seconds": 120,
         "expected_schemas": ("plan_draft_v1",),
         "needs_workspace": False,
+        "workspace_optional": True,
     },
 }
 KIND_NAMES = tuple(KINDS.keys())
@@ -93,9 +97,12 @@ def load_delegation_config():
             # 方案明确：允许只读子任务委派的开关默认关，要用户显式打开。
             "enabled": bool(d.get("enabled", False)),
             "allowed_roots": roots,
+            # 确定性三路路由（P1）：默认开，可显式关掉回退到纯云端决策。
+            "router_enabled": bool(d.get("router_enabled", True)),
         }
     except Exception:
-        return {"enabled": False, "allowed_roots": []}
+        return {"enabled": False, "allowed_roots": [],
+                "router_enabled": True}
 
 
 def _within(root, target):
@@ -182,7 +189,8 @@ def validate_contract(raw, *, src, allowed_roots):
 
     workspace = ""
     input_refs = []
-    if spec["needs_workspace"]:
+    allowed_tools = spec["allowed_tools"]
+    if spec.get("needs_workspace"):
         workspace = _resolve_workspace(raw.get("workspace"), allowed_roots)
         refs = raw.get("input_refs")
         if isinstance(refs, list):
@@ -205,6 +213,13 @@ def validate_contract(raw, *, src, allowed_roots):
             raise ContractError(
                 "input_refs_invalid",
                 "input_refs 里没有落在工作区内的有效路径")
+    elif spec.get("workspace_optional"):
+        # plan_draft：带了工作区就解析并开放只读工具；没带 = 通用草案，无工具。
+        _ws_raw = str(raw.get("workspace") or "").strip()
+        if _ws_raw:
+            workspace = _resolve_workspace(_ws_raw, allowed_roots)
+        if not workspace:
+            allowed_tools = ()
 
     # 渠道身份在调用方（bridge）固化进合同，子循环全程不可变。
     return {
@@ -214,6 +229,6 @@ def validate_contract(raw, *, src, allowed_roots):
         "input_refs": input_refs,
         "expected_schema": schema,
         "limits": limits,
-        "allowed_tools": spec["allowed_tools"],
+        "allowed_tools": allowed_tools,
         "src": str(src or ""),
     }
