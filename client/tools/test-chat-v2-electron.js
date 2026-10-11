@@ -5,6 +5,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const assert = require('assert/strict');
+// GUI launchers can close their inherited pipes before Electron exits. Only a
+// disconnected output pipe is benign; other stream errors still fail the test.
+for(const stream of [process.stdout,process.stderr]) {
+  stream.on('error',error=>{ if(error.code!=='EPIPE')throw error; });
+}
 const client = path.resolve(__dirname, '..');
 const baseline = process.argv.includes('--baseline');
 const src = baseline ? path.join(client, '_shots/ui-v2/baseline-src/src') : path.join(client, 'src');
@@ -50,6 +55,14 @@ async function setup() {
   fs.writeFileSync(path.join(dir,'project.json'), JSON.stringify({ title:'Isolated UI scene', type:'scene', file:'scene.json', preview:'preview.png' }));
   fs.writeFileSync(path.join(dir,'scene.json'), JSON.stringify({ general:{ clearcolor:'0.5 0.65 0.82', orthogonalprojection:{width:160,height:90}},objects:[] }));
   fs.writeFileSync(path.join(dir,'preview.png'), nativeImage.createFromBitmap(Buffer.from([195,165,115,255]),{width:1,height:1}).toPNG());
+  // A large gallery exercises height constraints using local fixtures only.
+  for(let i=0;i<48;i++) {
+    const galleryDir=path.join(steam,'steamapps/workshop/content/431960',String(990100+i));
+    fs.mkdirSync(galleryDir,{recursive:true});
+    fs.writeFileSync(path.join(galleryDir,'project.json'),JSON.stringify({title:'Gallery '+String(i).padStart(2,'0')+' · 长标题壁纸用于检查省略与可读性',type:'web',file:'index.html',preview:'preview.png'}));
+    fs.copyFileSync(path.join(dir,'preview.png'),path.join(galleryDir,'preview.png'));
+    fs.writeFileSync(path.join(galleryDir,'index.html'),'<html><body style="margin:0;background:#47658c">Isolated wallpaper</body></html>');
+  }
   const vendor = path.join(tmp,'vendor');
   fs.cpSync(path.join(client,'vendor/dsh-wallpaper-engine'), vendor, { recursive:true });
   const sourceFile = path.join(vendor,'lib/index.js');
@@ -104,8 +117,61 @@ async function chat() { await ev(`document.querySelector('#gnav [data-page="chat
 async function measure() {
   return ev(`(()=>{const rect=s=>{let r=document.querySelector(s).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}};return{viewport:{width:innerWidth,height:innerHeight},input:rect('.cbox'),composer:rect('.composer'),chat:rect('.chat'),hero:rect('#hero'),scroll:rect('#msgs'),context:getComputedStyle(document.querySelector('#rp')).display,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
 }
+async function wallpaperLayout() {
+  return ev(`(()=>{const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}};const grid=document.querySelector('#vwp-grid'),view=document.querySelector('#view'),tile=document.querySelector('.vwp-tile');return{viewport:{width:innerWidth,height:innerHeight},view:rect('#view'),shell:rect('.vwp-shell'),grid:rect('#vwp-grid'),toolbar:rect('.vwp-toolbar'),gridScroll:grid.scrollHeight>grid.clientHeight,outerScroll:view.scrollHeight>view.clientHeight+1,overflow:document.documentElement.scrollWidth>innerWidth,panel:getComputedStyle(document.querySelector('#panel')).display,gutter:getComputedStyle(document.querySelector('#gPanel')).display,surface:getComputedStyle(document.querySelector('.vwp-sheet')).backgroundColor,text:getComputedStyle(tile).color,titleSize:getComputedStyle(tile.querySelector('strong')).fontSize,blur:getComputedStyle(document.querySelector('.vwp-sheet')).backdropFilter}})()`);
+}
+async function wallpaperSettingsChecks() {
+  await until(`document.querySelectorAll('.vwp-tile').length===49`);
+  for(const theme of ['light','dark']) {
+    await ev(`document.documentElement.dataset.theme='${theme}'`);
+    const m=await wallpaperLayout();
+    assert.equal(m.panel,'none'); assert.equal(m.gutter,'none');
+    assert.equal(m.outerScroll,false); assert.equal(m.gridScroll,true); assert.equal(m.overflow,false);
+    assert.equal(m.titleSize,'14px'); assert.equal(m.blur,'none');
+    assert.equal(m.surface,theme==='light'?'rgb(255, 255, 255)':'rgb(32, 38, 48)');
+    assert.equal(m.text,theme==='light'?'rgb(32, 39, 51)':'rgb(239, 243, 248)');
+    await shot('wallpaper-settings-'+theme); result('wallpaper settings '+theme+' contrast and gallery layout',m);
+  }
+  for(const [width,height] of [[1920,1080],[1280,800],[800,540],[600,650]]) {
+    win.setSize(width,height); await wait(120);
+    const m=await wallpaperLayout();
+    assert.equal(m.overflow,false); assert.equal(m.outerScroll,false); assert.equal(m.gridScroll,true);
+    assert.ok(m.grid.height>90); assert.ok(m.shell.bottom<=height-26+1);
+    const toolbarBefore=m.toolbar.y;
+    await ev(`document.querySelector('#vwp-grid').scrollTop=700`);
+    assert.equal((await wallpaperLayout()).toolbar.y,toolbarBefore);
+    await ev(`document.querySelector('#vwp-grid').scrollTop=0`);
+    await shot('wallpaper-settings-'+width+'x'+height);
+    result('wallpaper gallery viewport '+width+'x'+height,m);
+  }
+  win.setSize(900,420); await wait(120);
+  assert.equal((await wallpaperLayout()).outerScroll,true);
+  await ev(`document.querySelector('#view').scrollTop=9999`);
+  assert.ok((await wallpaperLayout()).shell.bottom<=420-26+1);
+  result('very short wallpaper window has accessible outer scroll');
+  win.setSize(1400,900); await wait(120);
+  await ev(`document.querySelector('#vwp-search').value='Gallery 07';document.querySelector('#vwp-search').dispatchEvent(new Event('input'))`);
+  assert.equal(await ev(`document.querySelectorAll('.vwp-tile').length`),1);
+  assert.ok(await ev(`document.querySelector('.vwp-tile').title.includes('Gallery 07')`));
+  await ev(`document.querySelector('#vwp-search').value='';document.querySelector('#vwp-search').dispatchEvent(new Event('input'));document.querySelector('#vwp-filter').value='scene';document.querySelector('#vwp-filter').dispatchEvent(new Event('change'))`);
+  assert.equal(await ev(`document.querySelectorAll('.vwp-tile').length`),1);
+  await ev(`document.querySelector('#vwp-filter').value='all';document.querySelector('#vwp-filter').dispatchEvent(new Event('change'))`);
+  for(const tab of ['appearance','playback','system','about']) {
+    await ev(`document.querySelector('[data-tab="${tab}"]').click()`);
+    assert.equal(await ev(`document.querySelector('#vwp-content').getAttribute('aria-labelledby')`),'vwp-tab-'+tab);
+    assert.equal(await ev(`document.querySelector('#view').scrollHeight>document.querySelector('#view').clientHeight+1`),false);
+  }
+  await ev(`document.querySelector('[data-tab="system"]').click();document.querySelector('#vwp-dir').click();document.querySelector('[data-tab="library"]').click();document.querySelector('#vwp-import').click();document.querySelector('#vwp-refresh').click()`);
+  await until(`document.querySelectorAll('.vwp-tile').length===49`);
+  await ev(`document.documentElement.dataset.theme='light'`);
+  result('wallpaper search/filter, all tabs, canceled import/directory and refresh');
+}
 async function main() {
   await app.whenReady(); fs.mkdirSync(shots,{recursive:true}); await setup();
+  for(const stream of [process.stdout,process.stderr]) {
+    stream.emit('error',Object.assign(new Error('isolated disconnected-pipe fixture'),{code:'EPIPE'}));
+  }
+  result('isolated EPIPE simulation does not open a main-process error dialog');
   await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
   await wait(400);
   gpu = { features:app.getGPUFeatureStatus(), webgl:await ev(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`) };
@@ -280,8 +346,9 @@ async function main() {
   await until(`document.querySelector('#kbView')?.textContent.includes('fixture.md')`);
   result('knowledge-base data and document entry retained');
   await chat();
-  // Exercise the unmodified wallpaper plugin and host with a synthetic scene.
+  // Exercise settings UI and the unmodified renderer/host with local fixtures.
   await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
+  await wallpaperSettingsChecks();
   await ev(`document.querySelector('[data-id="990003"]').click()`);
   try { await until(`document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'`,30000); }
   catch(e) {
@@ -292,11 +359,33 @@ async function main() {
     throw e;
   }
   assert.equal(await ev(`document.body.classList.contains('vwp-active')`),true);
+  const wallpaperMaterial=await wallpaperLayout();
+  assert.equal(wallpaperMaterial.text,'rgb(239, 243, 248)');
+  assert.equal(wallpaperMaterial.blur,'none');
+  await shot('wallpaper-settings-active'); result('wallpaper-on settings uses readable tint without stacked blur',wallpaperMaterial);
   await ev(`document.querySelector('#vwp-pause').click()`); assert.equal(await ev(`document.querySelector('#vwp-pause').textContent`),'继续');
   await ev(`document.querySelector('#vwp-pause').click();document.querySelector('#vwp-import').click();document.querySelector('[data-tab="appearance"]').click()`);
   assert.ok(await ev(`Boolean(document.querySelector('[data-range="glassAlpha"]') && document.querySelector('[data-range="wallpaperBlur"]'))`));
   result('real wallpaper iframe/host, pause/resume, import entry and appearance settings');
   await chat(); await shot('after-wallpaper-empty');
+  // Trigger an actual rotation callback after leaving the settings page. The
+  // playback selection may change, but the shared chat view must stay intact.
+  await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`);
+  await until(`document.querySelector('[data-tab="playback"]')`);
+  await ev(`document.querySelector('[data-tab="playback"]').click();document.querySelector('#vwp-rotationInterval').value='10';document.querySelector('#vwp-rotationInterval').dispatchEvent(new Event('input'));window.__rotationCallback=null;window.__originalInterval=window.setInterval;window.setInterval=(fn,ms,...args)=>{if(ms===10000)window.__rotationCallback=fn;return window.__originalInterval(fn,ms,...args)};document.querySelector('#vwp-rotationEnabled').checked=true;document.querySelector('#vwp-rotationEnabled').dispatchEvent(new Event('change'));window.setInterval=window.__originalInterval;void 0`);
+  assert.equal(await ev(`typeof window.__rotationCallback`),'function');
+  await chat();
+  const rotationBefore=(await host.request('GET','/settings')).data.settings.id;
+  await ev(`window.__rotationCallback()`);
+  await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden && API.state.page==='chat'`);
+  await wait(250);
+  assert.notEqual((await host.request('GET','/settings')).data.settings.id,rotationBefore);
+  assert.ok(await ev(`Boolean(document.querySelector('#ta') && !document.querySelector('.vwp-shell'))`));
+  await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`);
+  await until(`document.querySelector('#vwp-rotationEnabled')`);
+  await ev(`document.querySelector('#vwp-rotationEnabled').checked=false;document.querySelector('#vwp-rotationEnabled').dispatchEvent(new Event('change'))`);
+  await chat();
+  result('background wallpaper rotation preserves the current chat page');
   const material=await ev(`(()=>{const h=getComputedStyle(document.querySelector('#hero')),c=getComputedStyle(document.querySelector('.cbox'));return{welcomeBackground:h.backgroundColor,welcomeBorder:h.borderWidth,welcomeBlur:h.backdropFilter,inputBlur:c.backdropFilter}})()`);
   assert.equal(material.welcomeBackground,'rgba(0, 0, 0, 0)'); assert.equal(material.welcomeBorder,'0px'); assert.equal(material.welcomeBlur,'none');
   result('wallpaper welcome has no card or backdrop blur',material);

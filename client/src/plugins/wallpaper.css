@@ -52,45 +52,115 @@ body.vwp-active[data-vigil-page="chat"] .cbox {
   backdrop-filter:blur(min(8px,var(--vwp-blur,8px)));
 }
 body.vwp-active[data-vigil-page="chat"] .composer-caption { color:#eef2f8; text-shadow:0 1px 3px #141820; }
-.vwp-shell { max-width:1120px; margin:0 auto; padding:10px 0 30px; }
-.vwp-header { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:20px; }
-.vwp-header h2 { font-size:26px; letter-spacing:-.6px; margin:0 0 6px; }
-.vwp-kicker { font:11px var(--mono); letter-spacing:2px; color:var(--accent); margin-bottom:8px; }
-.vwp-caption { color:var(--text-2); font-size:12px; }
-.vwp-badge { font:11px var(--mono); padding:8px 12px; border:1px solid var(--line); border-radius:30px; white-space:nowrap; background:rgba(var(--vwp-rgb,255,255,255),.6); }
-.vwp-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:5px; border:1px solid var(--line); border-radius:14px; background:rgba(var(--vwp-rgb,255,255,255),.6); margin-bottom:18px; width:fit-content; }
-.vwp-tabs button { padding:9px 18px; border-radius:10px; color:var(--text-2); }
-.vwp-tabs button[aria-selected=true] { background:var(--fill); color:var(--on-fill); }
-.vwp-sheet { border:1px solid rgba(var(--vwp-edge,255,255,255),.18); background:rgba(var(--vwp-rgb,18,20,24),.88); backdrop-filter:blur(min(12px,var(--vwp-blur,10px))); border-radius:14px; padding:20px; margin-bottom:16px; }
-.vwp-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:18px; }
+/* Settings page only. Playback materials above keep their existing semantics.
+   Theme tokens are separate from --vwp-rgb (the renderer's always-dark tint). */
+body[data-vigil-page="wallpaper"] {
+  --vwp-page-bg:#f6f7f9; --vwp-surface:#fff; --vwp-control:#f6f7f9;
+  --vwp-text:#202733; --vwp-muted:#566273; --vwp-border:#dbe1e8;
+  --vwp-hover:#eef2f7; --vwp-selected:#52779f; --vwp-selected-bg:#e9f0f8;
+  --vwp-primary:#355779; --vwp-on-primary:#fff;
+}
+[data-theme="dark"] body[data-vigil-page="wallpaper"],
+body.vwp-active[data-vigil-page="wallpaper"] {
+  --vwp-page-bg:#171b22; --vwp-surface:#202630; --vwp-control:#282f3b;
+  --vwp-text:#eff3f8; --vwp-muted:#bbc6d5; --vwp-border:#424d5d;
+  --vwp-hover:#343e4c; --vwp-selected:#9dbddd; --vwp-selected-bg:#354a63;
+  --vwp-primary:#b9cfe7; --vwp-on-primary:#1c2b3d;
+}
+body.vwp-active[data-vigil-page="wallpaper"] {
+  --vwp-page-bg:transparent; --vwp-surface:rgba(27,33,42,.94);
+  --vwp-control:rgba(38,47,60,.98);
+}
+body[data-vigil-page="wallpaper"] .body { grid-template-columns:minmax(0,1fr); }
+body[data-vigil-page="wallpaper"] .panel,
+body[data-vigil-page="wallpaper"] #gPanel { display:none; }
+body[data-vigil-page="wallpaper"] .main { background:var(--vwp-page-bg); background-image:none; }
+body[data-vigil-page="wallpaper"] #view {
+  display:flex; overflow:hidden; padding:20px clamp(16px,3vw,48px);
+  scrollbar-gutter:auto; color:var(--vwp-text);
+}
+.vwp-shell { width:100%; max-width:1440px; min-width:0; min-height:0; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
+.vwp-header { display:flex; align-items:center; justify-content:space-between; gap:20px; flex:none; }
+.vwp-header h2 { font-size:24px; letter-spacing:-.4px; margin:0 0 4px; }
+.vwp-caption { color:var(--vwp-muted); font-size:13px; }
+.vwp-badge { font:12px var(--mono); padding:6px 10px; border:1px solid var(--vwp-border); border-radius:20px; white-space:nowrap; background:var(--vwp-surface); color:var(--vwp-muted); }
+.vwp-tabs { display:flex; gap:4px; padding:4px; border:1px solid var(--vwp-border); border-radius:12px; background:var(--vwp-surface); width:fit-content; max-width:100%; overflow-x:auto; flex:none; }
+.vwp-tabs button { padding:8px 16px; border-radius:8px; color:var(--vwp-muted); font-size:14px; white-space:nowrap; }
+.vwp-tabs button:hover { background:var(--vwp-hover); }
+.vwp-tabs button[aria-selected=true] { background:var(--vwp-selected-bg); color:var(--vwp-text); font-weight:600; }
+.vwp-sheet { border:1px solid var(--vwp-border); background:var(--vwp-surface); color:var(--vwp-text); border-radius:14px; padding:16px; }
+/* A single scrolling region per tab; header, player and library tools stay visible. */
+.vwp-content { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.vwp-content h3 { font-size:18px; margin-bottom:12px; }
+.vwp-library { display:flex; flex-direction:column; overflow:hidden; scrollbar-gutter:auto; }
+.vwp-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-bottom:14px; flex:none; }
 .vwp-toolbar input { min-width:120px; flex:1; }
-.vwp-shell input[type=search],.vwp-shell select,.vwp-shell input[type=text] { padding:9px 12px; border:1px solid var(--line-strong); background:rgba(var(--vwp-rgb,18,20,24),.92); color:var(--text); border-radius:10px; font:inherit; }
-.vwp-button { border:1px solid var(--line-strong); border-radius:10px; padding:9px 13px; background:rgba(var(--vwp-rgb,18,20,24),.88); color:var(--text); }
-.vwp-button:hover { background:var(--bg-hover); }
-.vwp-button.primary { background:var(--fill); color:var(--on-fill); border-color:var(--fill); }
-.vwp-button:disabled { opacity:.45; cursor:default; }
-.vwp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(175px,1fr)); gap:14px; }
-.vwp-tile { text-align:left; position:relative; padding:0; overflow:hidden; border:2px solid transparent; border-radius:12px; background:rgba(var(--vwp-rgb,18,20,24),.9); color:var(--text); transition:border-color .18s; }
-.vwp-tile:hover { border-color:var(--line-strong); }
-.vwp-tile[aria-pressed=true] { border-color:var(--accent); }
-.vwp-thumb { aspect-ratio:16/10; background:var(--bg-sunken); display:grid; place-items:center; overflow:hidden; }
+.vwp-shell input[type=search],.vwp-shell select,.vwp-shell input[type=text] { min-width:0; max-width:100%; padding:9px 12px; border:1px solid var(--vwp-border); background:var(--vwp-control); color:var(--vwp-text); border-radius:9px; font-size:14px; }
+.vwp-shell input::placeholder { color:var(--vwp-muted); opacity:1; }
+.vwp-button { border:1px solid var(--vwp-border); border-radius:9px; padding:9px 13px; background:var(--vwp-control); color:var(--vwp-text); font-size:14px; white-space:nowrap; }
+.vwp-button:hover { background:var(--vwp-hover); }
+.vwp-button.primary { background:var(--vwp-primary); color:var(--vwp-on-primary); border-color:var(--vwp-primary); }
+.vwp-button:disabled { opacity:.55; cursor:default; }
+.vwp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr)); align-content:start; grid-auto-rows:max-content; gap:14px; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:4px; }
+.vwp-tile { min-width:0; text-align:left; position:relative; padding:0; overflow:hidden; border:2px solid var(--vwp-border); border-radius:12px; background:var(--vwp-control); color:var(--vwp-text); transition:border-color .18s; }
+.vwp-tile:hover { border-color:var(--vwp-selected); }
+.vwp-tile[aria-pressed=true] { border-color:var(--vwp-selected); background:var(--vwp-selected-bg); }
+.vwp-thumb { aspect-ratio:16/10; background:var(--vwp-control); display:grid; place-items:center; overflow:hidden; }
 .vwp-thumb img { width:100%; height:100%; object-fit:cover; }
-.vwp-tile strong { display:block; padding:11px 12px 4px; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.vwp-tile small { display:block; color:var(--text-3); padding:0 12px 12px; font-size:10px; }
-.vwp-player { display:flex; align-items:center; gap:14px; }
-.vwp-player img { width:64px; height:64px; object-fit:cover; border-radius:12px; }
+.vwp-tile strong { display:block; padding:10px 12px 3px; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.vwp-tile small { display:block; color:var(--vwp-muted); padding:0 12px 12px; font-size:12px; }
+.vwp-player { display:flex; align-items:center; gap:12px; flex:none; }
+.vwp-player img { width:48px; height:48px; flex:none; object-fit:cover; border-radius:8px; }
 .vwp-player .vwp-now { min-width:0; flex:1; }
-.vwp-player strong { display:block; margin-bottom:5px; }
-.vwp-state { font-size:11px; color:var(--text-2); margin-top:5px; }
-.vwp-row { display:grid; grid-template-columns:minmax(130px,1fr) minmax(140px,1fr) 54px; gap:16px; align-items:center; padding:17px 0; border-bottom:1px solid var(--line-soft); }
+.vwp-player strong { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:15px; }
+.vwp-player label { display:flex; align-items:center; gap:5px; white-space:nowrap; font-size:14px; }
+.vwp-shell input[type=checkbox] { accent-color:var(--vwp-selected); width:16px; height:16px; }
+.vwp-state { font-size:13px; color:var(--vwp-muted); margin-top:3px; overflow-wrap:anywhere; }
+.vwp-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(100px,1fr) 60px; gap:16px; align-items:center; padding:16px 0; border-bottom:1px solid var(--vwp-border); }
+.vwp-row:first-child { padding-top:4px; }
 .vwp-row:last-child { border-bottom:0; }
-.vwp-row label { font-weight:500; }
-.vwp-row small { display:block; font-size:11px; font-weight:400; color:var(--text-3); margin-top:5px; line-height:1.5; }
-.vwp-row input[type=range] { width:100%; accent-color:var(--accent); }
-.vwp-row output { text-align:right; font:11px var(--mono); }
-.vwp-empty { padding:45px 20px; text-align:center; color:var(--text-2); line-height:1.8; }
-.vwp-note { font-size:12px; line-height:1.8; color:var(--text-2); }
-.vwp-error { color:var(--err); white-space:pre-wrap; font-size:12px; }
-.vwp-shell button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
-@media(max-width:720px) { .vwp-header { align-items:flex-start; } .vwp-badge { display:none; } .vwp-row { grid-template-columns:1fr 1fr; gap:10px; } .vwp-row output { grid-column:2; } .vwp-player { flex-wrap:wrap; } }
+.vwp-row label { font-weight:500; font-size:15px; }
+.vwp-row small { display:block; font-size:13px; font-weight:400; color:var(--vwp-muted); margin-top:5px; line-height:1.5; }
+.vwp-row input[type=range] { width:100%; min-width:0; accent-color:var(--vwp-selected); }
+.vwp-row output { text-align:right; font:13px var(--mono); }
+.vwp-empty { padding:45px 20px; text-align:center; color:var(--vwp-muted,var(--text-2)); line-height:1.8; grid-column:1/-1; }
+.vwp-note { font-size:14px; line-height:1.8; color:var(--vwp-muted); margin-bottom:16px; overflow-wrap:anywhere; }
+.vwp-error { flex:none; max-height:70px; overflow-y:auto; color:var(--err); white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; }
+.vwp-error:empty { display:none; }
+.vwp-shell :is(button,input,select):focus-visible { outline:2px solid var(--vwp-selected); outline-offset:2px; }
+.vwp-content:focus-visible { outline:2px solid var(--vwp-selected); outline-offset:-3px; }
+@media(max-width:720px) {
+  body[data-vigil-page="wallpaper"] #view { padding:12px; }
+  .vwp-shell { gap:10px; }
+  .vwp-header { align-items:flex-start; }
+  .vwp-badge { display:none; }
+  .vwp-header h2 { font-size:22px; }
+  .vwp-row { grid-template-columns:minmax(0,1fr) minmax(80px,1fr); gap:10px; }
+  .vwp-row output { grid-column:2; }
+  .vwp-header { display:none; }
+  .vwp-player { padding:12px; gap:8px; }
+  .vwp-player img { display:none; }
+  .vwp-player .vwp-state { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .vwp-player .vwp-button { padding:8px 10px; }
+  .vwp-toolbar input { flex-basis:100%; }
+  .vwp-tabs { width:100%; }
+  .vwp-tabs button { flex:1; padding:8px 10px; }
+  .vwp-grid { grid-template-columns:repeat(auto-fill,minmax(min(100%,150px),1fr)); gap:10px; }
+}
+@media(max-width:480px) {
+  .vwp-player { flex-wrap:wrap; }
+  .vwp-player .vwp-now { flex-basis:calc(100% - 76px); }
+}
+@media(max-height:640px) and (min-width:721px) {
+  body[data-vigil-page="wallpaper"] #view { padding-top:10px; padding-bottom:10px; }
+  .vwp-shell { gap:8px; }
+  .vwp-header h2 { font-size:20px; }
+  .vwp-caption { display:none; }
+  .vwp-player { padding:10px 14px; }
+}
+/* Very short windows have one outer scrollbar, never an inaccessible library. */
+@media(max-height:480px) {
+  body[data-vigil-page="wallpaper"] #view { overflow-y:auto; }
+  .vwp-shell { min-height:420px; flex:none; }
+}
 @media(prefers-reduced-motion:reduce) { .vwp-tile { transition:none; } }

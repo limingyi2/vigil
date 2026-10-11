@@ -7,7 +7,7 @@
     playbackRate: 1, pauseOnHidden: true, pauseOnBlur: false, flip: false };
   let settings = { ...defaults }, inventory = { wallpapers: [] }, base = '', started, view, tab = 'library';
   let error = '', status = '未选择壁纸', stage, media, scrim, frame, video, selected, generation = 0;
-  let paused = false, serial = Promise.resolve(), persistTimer, fallbackTimer, firstFrame = false;
+  let paused = false, serial = Promise.resolve(), persistTimer, fallbackTimer, firstFrame = false, frameReady = false;
   let lastControl = '', currentKey = '', search = '', filter = 'all', rotationTimer, lastSelectedId = '';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const typeName = t => ({ scene: '实时场景', web: '网页', video: '视频', image: '图片', application: '应用（不支持）' }[t] || t);
@@ -57,7 +57,7 @@
       video.muted = volume === 0; video.volume = volume; video.playbackRate = settings.playbackRate;
       if (shouldPause()) video.pause(); else video.play().catch(() => {});
     }
-    if (frame) {
+    if (frame && frameReady) {
       const control = { vigilWallpaper: true, paused: shouldPause(), volume,
         fit: settings.objectFit === 'fill' ? 'stretch' : settings.objectFit };
       const key = JSON.stringify(control);
@@ -67,7 +67,7 @@
   function release() {
     clearTimeout(fallbackTimer); frame?.setAttribute('src', 'about:blank'); frame = null;
     if (video) { video.pause(); video.removeAttribute('src'); video.load(); video = null; }
-    media?.replaceChildren(); currentKey = ''; lastControl = ''; firstFrame = false;
+    media?.replaceChildren(); currentKey = ''; lastControl = ''; firstFrame = false; frameReady = false;
   }
   function showPreview(w) {
     if (!w.frameUrl && !w.preview) return;
@@ -115,7 +115,11 @@
       if (inventory.weAssetsAvailable) params.set('localAssets', '1');
       frame.src = base + '/wallpaper-engine/scene-live/index.html?' + params;
       media.append(frame);
-      frame.addEventListener('load', () => controls(true));
+      const mountedFrame = frame;
+      frame.addEventListener('load', () => {
+        if (frame !== mountedFrame || run !== generation) return;
+        frameReady = true; controls(true);
+      });
       status = 'WebWallGL 正在准备首帧';
       // Large scene packages need time to download and compile. Never clear the persisted choice on failure.
       fallbackTimer = setTimeout(() => fallback(w, '实时渲染尚未出帧', run),
@@ -155,14 +159,16 @@
     `<div class="vwp-row"><label for="vwp-${key}">${label}${hint ? '<small>' + hint + '</small>' : ''}</label><input id="vwp-${key}" data-range="${key}" type="range" min="${min}" max="${max}" step="${step}" value="${settings[key]}"><output>${Math.round(settings[key] * (suffix === '%' && max === 1 ? 100 : 1))}${suffix}</output></div>`;
   const check = (key, label, hint = '') => `<div class="vwp-row"><label for="vwp-${key}">${label}<small>${hint}</small></label><input id="vwp-${key}" data-check="${key}" type="checkbox" ${settings[key] ? 'checked' : ''}></div>`;
   function render() {
-    if (!view?.isConnected) return;
+    // The router reuses the view node. Background rotation must never replace
+    // the contents of another page after navigation.
+    if (!view?.isConnected || document.body.dataset.vigilPage !== 'wallpaper') return;
     const w = inventory.wallpapers.find(x => x.id === settings.id);
     const body = tab === 'library' ? `<div class="vwp-toolbar"><input type="search" id="vwp-search" aria-label="搜索壁纸" placeholder="搜索你的壁纸…" value="${esc(search)}"><select id="vwp-filter" aria-label="壁纸类型">${[['all', '全部类型'], ['scene', '实时场景'], ['web', '网页'], ['image', '图片']].map(([v, n]) => `<option value="${v}" ${filter === v ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="vwp-button" id="vwp-refresh">刷新</button><button class="vwp-button primary" id="vwp-import">导入图片</button></div><div class="vwp-grid" id="vwp-grid"></div>`
       : tab === 'appearance' ? row('glassAlpha', '面板不透明度', 70, 95, 1, '%', '壁纸切换时保持文字清晰，壁纸仍会从面板后透出') + row('blur', '玻璃雾化', 0, 16, 1, 'px') + row('scrim', '暗色遮罩', 0, 1, .01, '%') + row('wallpaperOpacity', '壁纸透明度', 0, 90, 1, '%') + row('wallpaperBlur', '壁纸模糊', 0, 60, 1, 'px') + row('backgroundBrightness', '亮度', 40, 160, 1, '%') + row('backgroundContrast', '对比度', 40, 200, 1, '%') + row('backgroundSaturate', '饱和度', 0, 200, 1, '%')
       : tab === 'playback' ? check('videoAudioEnabled', '启用壁纸声音') + row('videoVolume', '音量', 0, 1, .01, '%') + check('flip', '水平翻转') + check('pauseOnHidden', '最小化时暂停', '暂停播放，不关闭壁纸') + check('pauseOnBlur', '失去焦点时暂停') + check('rotationEnabled', '自动轮播') + row('rotationInterval', '轮播间隔', 10, 300, 10, 's') + `<div class="vwp-row"><label for="vwp-fit">填充方式</label><select id="vwp-fit">${[['cover','填充（裁剪）'],['contain','适应（完整显示）'],['fill','拉伸']].map(([v,n])=>`<option value="${v}" ${settings.objectFit === v ? 'selected' : ''}>${n}</option>`).join('')}</select></div><div class="vwp-row"><label for="vwp-fps">场景渲染帧率</label><select id="vwp-fps">${[15,30,60].map(v=>`<option ${settings.sceneLiveFps === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>`
       : tab === 'system' ? `<h3>本机壁纸库</h3><p class="vwp-note">自动发现 Steam 的 Wallpaper Engine 工程。也可选择包含壁纸工程子目录的文件夹；每个工程应含 project.json 和 scene.pkg / index.html / 图片文件。独立视频壁纸已隐藏。</p><p class="vwp-note">Steam：${esc(inventory.installDir || '未发现安装，可使用自定义目录')}<br>自定义目录：${esc(inventory.uploadDir || '')}</p><button class="vwp-button" id="vwp-dir">选择工程目录</button><p class="vwp-note">配置存储在客户端用户数据目录，与后端连接地址和端口无关。切换页面、断开后端、刷新窗口均保留选择。</p>`
       : `<h3>Wallpaper Engine · Vigil</h3><p class="vwp-note">已接入 dsh-wallpaper-engine 1.3.1 的本机宿主与 WebWallGL 2.1.0 场景渲染器。独立视频壁纸已隐藏；网页通过严格沙箱与 WE API 加载，场景实时 WebGL 渲染。</p><p class="vwp-note">Vigil 提供独立的设置界面。上游的吉祥物、字体集、系统音频与 Now Playing 等扩展尚未接入。Application 类型不执行。</p><button class="vwp-button" id="vwp-upstream">查看上游项目</button>`;
-    view.innerHTML = `<div class="vwp-shell"><header class="vwp-header"><div><div class="vwp-kicker">PERSONALIZE YOUR SPACE</div><h2>Wallpaper Engine</h2><div class="vwp-caption">实时壁纸 · 液态玻璃 · 本机独立运行</div></div><span class="vwp-badge">WebWallGL 2.1.0</span></header><div class="vwp-sheet vwp-player">${w?.preview ? `<img src="${esc(w.preview)}" alt="">` : ''}<div class="vwp-now"><strong>${esc(w?.title || '选择一张壁纸，让整个工作台动起来')}</strong><div class="vwp-state" data-status>${esc(status)}</div></div><label><input id="vwp-enabled" type="checkbox" ${settings.id ? 'checked' : ''}> 启用</label><button class="vwp-button" id="vwp-pause" ${!settings.id ? 'disabled' : ''}>${paused ? '继续' : '暂停'}</button><button class="vwp-button" id="vwp-close">关闭</button></div><nav class="vwp-tabs" role="tablist">${[['library','壁纸库'],['appearance','外观'],['playback','播放'],['system','系统'],['about','关于']].map(([id,name])=>`<button role="tab" aria-selected="${id === tab}" data-tab="${id}">${name}</button>`).join('')}</nav><div class="vwp-sheet">${body}</div><div class="vwp-error" data-error>${esc(error)}</div></div>`;
+    view.innerHTML = `<div class="vwp-shell"><header class="vwp-header"><div><h2>壁纸与外观</h2><div class="vwp-caption">选择壁纸，让工作空间动起来 · 本机独立运行</div></div><span class="vwp-badge">WebWallGL 2.1.0</span></header><div class="vwp-sheet vwp-player">${w?.preview ? `<img src="${esc(w.preview)}" alt="">` : ''}<div class="vwp-now"><strong>${esc(w?.title || '选择一张喜欢的壁纸')}</strong><div class="vwp-state" data-status aria-live="polite">${esc(status)}</div></div><label><input id="vwp-enabled" type="checkbox" ${settings.id ? 'checked' : ''}> 启用</label><button class="vwp-button" id="vwp-pause" ${!settings.id ? 'disabled' : ''}>${paused ? '继续' : '暂停'}</button><button class="vwp-button" id="vwp-close">关闭</button></div><nav class="vwp-tabs" role="tablist" aria-label="壁纸设置">${[['library','壁纸库'],['appearance','外观'],['playback','播放'],['system','系统'],['about','关于']].map(([id,name])=>`<button role="tab" id="vwp-tab-${id}" aria-controls="vwp-content" aria-selected="${id === tab}" data-tab="${id}">${name}</button>`).join('')}</nav><div class="vwp-sheet vwp-content ${tab === 'library' ? 'vwp-library' : ''}" id="vwp-content" role="tabpanel" aria-labelledby="vwp-tab-${tab}" tabindex="0">${body}</div><div class="vwp-error" data-error role="alert">${esc(error)}</div></div>`;
     view.querySelectorAll('[data-tab]').forEach(e => e.onclick = () => { tab = e.dataset.tab; render(); });
     view.querySelectorAll('[data-range]').forEach(e => e.oninput = () => { change(e.dataset.range, Number(e.value));
       const suffix = ['blur','wallpaperBlur'].includes(e.dataset.range) ? 'px' : e.dataset.range === 'playbackRate' ? '×' : e.dataset.range === 'rotationInterval' ? 's' : '%';
@@ -189,7 +195,7 @@
   function renderGrid() {
     const grid = view?.querySelector('#vwp-grid'); if (!grid) return;
     const list = inventory.wallpapers.filter(w=>w.type !== 'application' && (filter === 'all' || w.type === filter) && w.title.toLowerCase().includes(search.toLowerCase()));
-    grid.innerHTML = list.length ? list.map(w=>`<button class="vwp-tile" data-id="${esc(w.id)}" aria-pressed="${w.id === settings.id}"><div class="vwp-thumb">${w.preview || w.type === 'image' ? `<img src="${esc(w.preview || w.media)}" loading="lazy" alt="">` : '<span>' + esc(typeName(w.type)) + '</span>'}</div><strong>${esc(w.title)}</strong><small>${esc(typeName(w.type))}</small></button>`).join('') : '<div class="vwp-empty">没有找到壁纸。<br>导入图片，或在「系统」中选择你的工程目录。</div>';
+    grid.innerHTML = list.length ? list.map(w=>`<button class="vwp-tile" data-id="${esc(w.id)}" title="${esc(w.title)}" aria-pressed="${w.id === settings.id}"><div class="vwp-thumb">${w.preview || w.type === 'image' ? `<img src="${esc(w.preview || w.media)}" loading="lazy" alt="">` : '<span>' + esc(typeName(w.type)) + '</span>'}</div><strong>${esc(w.title)}</strong><small>${esc(typeName(w.type))}</small></button>`).join('') : '<div class="vwp-empty">没有找到壁纸。<br>导入图片，或在「系统」中选择你的工程目录。</div>';
     grid.querySelectorAll('[data-id]').forEach(e=>e.onclick=()=>select(e.dataset.id));
   }
   async function init() {
@@ -212,7 +218,7 @@
         if (!firstFrame) { firstFrame = true; clearTimeout(fallbackTimer); frame.style.opacity = '1'; status = selected.type === 'scene' ? 'WebWallGL 实时渲染中' : '网页壁纸运行中'; syncStatus(); controls(true); }
       }
     });
-    const pointer = e => { if (frame) frame.contentWindow?.postMessage({ vigilWallpaper:true,
+    const pointer = e => { if (frame && frameReady) frame.contentWindow?.postMessage({ vigilWallpaper:true,
       pointer:{ u:e.clientX/innerWidth, v:e.clientY/innerHeight, buttons:e.buttons, mods:0 } }, new URL(base).origin); };
     for (const event of ['pointermove','pointerdown','pointerup']) window.addEventListener(event, pointer, { passive:true });
     started = (async () => { try {
