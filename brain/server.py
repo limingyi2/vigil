@@ -354,6 +354,10 @@ def _snapshot(b):
 # 规划/修正 prompt 的指纹。brain.chat 会把喂给它的 prompt 原样记进历史和当日
 # 流水，那两条不是用户说的话，事后要认出来删掉（见 _restore_hist）。
 _PLAN_PROMPT_MARK = "（系统提示：你已经按计划完成了以下步骤"
+# D1：规划前确定性委派的收尾提示同样是系统注入的 user 消息，历史修正时
+# 要一并撤掉、换成用户原话（与 Planner 注入提示同等待遇）
+_DELEG_PROMPT_MARK = "（系统提示：本地子任务已在授权工作区内完成勘察"
+_INJECTED_PROMPT_MARKS = (_PLAN_PROMPT_MARK, _DELEG_PROMPT_MARK)
 
 
 def _restore_hist(brain, text, ans, mode=None):
@@ -380,7 +384,8 @@ def _restore_hist(brain, text, ans, mode=None):
                 drop_next = False
                 continue
             if (m.get("role") == "user"
-                    and _PLAN_PROMPT_MARK in str(m.get("content") or "")):
+                    and any(mk in str(m.get("content") or "")
+                            for mk in _INJECTED_PROMPT_MARKS)):
                 drop_next = True
                 continue
             keep.append(m)
@@ -433,6 +438,44 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
     _plan_t0 = time.time()
     _plan_calls = 0
     try:
+        # D1：多步本地勘察任务在 Planner 之前确定性截获。Planner 的自由文本
+        # 步骤无法可靠在「客户端 local_file_* / 进程内委派」间选通道（验收
+        # 实测会给 F 盘授权工作区错规划客户端工具）。路由确认授权工作区后
+        # 直接执行委派，云端只做一次收尾；失败透明回退下面的规划链路。
+        # D2：每轮先复位路由锁（请求线程复用防串），下方 PC 旁路再按本轮
+        # 目标路径决定是否上锁。
+        try:
+            from delegation import bridge as _dbr
+            _dbr.lock_delegation(False)
+            _dpre = _dbr.run_hybrid_delegation_direct(text, src=src)
+        except Exception as _e:
+            _dpre = {"ok": False, "reason": "precheck:%s" % type(_e).__name__}
+        if _dpre.get("ok"):
+            _dres = _dpre["result"]
+            _prompt = (
+                "（系统提示：本地子任务已在授权工作区内完成勘察，下面是经过程序"
+                "核验的证据。请直接基于证据回答用户：指出结论与依据；证据不足或"
+                "子任务标记低置信度处照实说明，不要编造文件/行号。）\n\n"
+                "子任务结果：\n%s\n\n用户原话：%s"
+                % (_dpre["evidence_text"], text))
+            ans, mode = _once(_prompt, no_tools=True)
+            _restore_hist(_LOCAL["brain"], text, ans, mode)
+            if trace_out is not None:
+                trace_out["plan_steps"] = 0
+                trace_out["route"] = "hybrid_delegate_preplan"
+                trace_out["tool"] = "delegate_to_local:preplan"
+                trace_out["plan_ms"] = int((time.time() - _plan_t0) * 1000)
+                trace_out["plan_calls"] = 1
+                trace_out["delegation"] = {
+                    "status": _dres.get("status"),
+                    "verified": bool(_dres.get("verified")),
+                    "elapsed_seconds": _dres.get("elapsed_seconds")}
+            import tools as _td
+            print("[大脑] 规划前确定性委派完成（%s, verified=%s, %.0fs）"
+                  % (_dres.get("status"), _dres.get("verified"),
+                     _dres.get("elapsed_seconds") or 0), flush=True)
+            return _td.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
+
         import planner
         _yes, _plan_why = planner.plan_decision(text)
         # 🔴 **关掉之后要单独记一笔，不能当成"规划失败"。**
@@ -447,6 +490,38 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
                 trace_out["plan"] = "off"
                 trace_out["plan_why"] = _plan_why
             _yes = False
+        # D2：PC 在线且消息带明确本地路径（非实时信息意图）时，跳过 Planner
+        # 直走原生 FC。Planner 的工具参数是自由文本（arg 是字符串），
+        # 驱动不了 local_file_grep/read 这类多参数工具（实测会把 dict 文本
+        # 和自然语言占位当路径）；FC 的结构化 tool_calls 才能正确带 path/
+        # pattern，配合 D2 的通道描述选对 local_file_*。这是路由逻辑，不是
+        # 提示词：pc_online() 与绝对路径都是运行事实。
+        # 进一步：只有本轮路径**不在**委派沙箱授权根内（属客户端域）时才
+        # 上路由锁——工具表整项摘除 delegate_to_local，验收实测 MiMo 会拿
+        # 历史里的 F 盘工作区连派 3 次烧光 270s 预算；沙箱根内的任务不上锁，
+        # 保持委派可达（preplanner 没拦的非勘察形态仍可由 FC 选择）。
+        if _yes:
+            try:
+                import localtools as _lt2
+                from delegation import router as _rt
+                from delegation import bridge as _dbr2
+                if (_lt2.pc_online() and _rt._ABS_PATH.search(text or "")
+                        and not _rt._CLOUD_HINT.search(text or "")):
+                    _cfg2 = _dbr2.load_delegation_config()
+                    _sandbox_ws = _rt.find_authorized_workspace(
+                        text or "", _cfg2.get("allowed_roots") or [])
+                    if not _sandbox_ws:
+                        _dbr2.lock_delegation(True)
+                        planner.note(would=1,
+                                     why=_plan_why + "|d2_pc_online_bypass_locked")
+                        if trace_out is not None:
+                            trace_out["plan"] = "bypass_pc_online_locked"
+                            trace_out["plan_why"] = _plan_why
+                        _yes = False
+                        print("[规划] PC 在线客户端域路径，摘除委派工具，"
+                              "跳过规划直走 FC(local_file_*)", flush=True)
+            except Exception:
+                pass
         if _yes:
             planner.note(decided=1, why=_plan_why)
             if trace_out is not None:

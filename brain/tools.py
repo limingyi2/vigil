@@ -100,6 +100,21 @@ def run_tool(name, arg, src=None):
     src 是渠道（app / wechat）：插件开关按渠道判，不传就退化成"当前渠道"。
     """
     n = str(name or "").lower()
+    # 混合模式委派（D1）：Planner / 文本标签链路只有字符串参数，统一进
+    # delegation.bridge.delegate_from_text —— 与 FC 的 invoke_spec 走同一
+    # 道门控、同一份合同校验与 Dispatcher。不该委派时返回 None，
+    # Planner 据此改走 local_file_* 或如实告知（不伪造）。
+    if n == "delegate_to_local":
+        try:
+            from delegation import bridge as _dbridge
+
+            class _PlannerCtx:
+                pass
+            _ctx = _PlannerCtx()
+            _ctx.src = src or ""
+            return _dbridge.delegate_from_text(str(arg or ""), ctx=_ctx)
+        except Exception:
+            return None
     fn = TOOLS.get(n)
     if fn:
         try:
@@ -318,9 +333,33 @@ def all_specs(brain=None, src=None):
     # 混合模式受控委派工具：仅在 hybrid + delegation.enabled + 本地模型已配置时
     # 出现（门控在 bridge 里，集中一处，cloud/local 模式的工具表永远不含它）。
     try:
-        from delegation.bridge import is_delegation_enabled, TOOL_SPEC as _DTS
+        from delegation.bridge import (is_delegation_enabled,
+                                        delegation_locked, TOOL_SPEC as _DTS)
         if is_delegation_enabled(src):
-            tools.append(_DTS)
+            # D2 路由锁：server 已判定本轮目标在 PC 客户端域（沙箱授权根
+            # 外）——工具表里**整项移除**委派工具，模型选都选不到。这是
+            # 路由逻辑，不是提示词劝退（执行层 invoke_spec/run_tool 还有
+            # 一道锁，防 XML 文本兜底绕过工具表）。
+            if not delegation_locked():
+                import copy
+                _spec = copy.deepcopy(_DTS)
+                # 未上锁但 PC 在线：工具表描述由路由状态动态改写（是否追加
+                # 取决于 pc_online() 运行事实）——客户端能直接读的目录走
+                # local_file_*，委派只用于客户端够不到、且在大脑
+                # delegation.allowed_roots 内的工作区。
+                try:
+                    import localtools as _lt
+                    if _lt.pc_online():
+                        _spec["function"]["description"] = (
+                            _spec["function"]["description"]
+                            + "\n🔴路由（PC 客户端在线）：用户桌面/文档/下载等客户端"
+                              "已授权目录里的文件任务，直接用 local_file_list/find/"
+                              "read/grep，**不要委派本工具**；本工具只处理客户端够"
+                              "不到、且已在大脑委派授权根（delegation.allowed_roots）"
+                              "内的工作区。对该授权根外的路径调用本工具会被拒绝。")
+                except Exception:
+                    pass
+                tools.append(_spec)
     except Exception:
         pass
     return tools

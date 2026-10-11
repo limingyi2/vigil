@@ -1,0 +1,38 @@
+[
+  {
+    "task_id": "dlg_62aa294c890a478d",
+    "kind": "log_root_cause",
+    "status": "succeeded",
+    "workspace": "F:\\Vigil\\vigil-eval\\dataset\\fixtures\\a05",
+    "model_requests": 5,
+    "tool_calls": 6,
+    "input_tokens": 8030,
+    "output_tokens": 952,
+    "elapsed_seconds": 37.4,
+    "retry_used": false,
+    "verified": true,
+    "degraded": false,
+    "json_raw_ok": true,
+    "json_repaired": false,
+    "json_repair": "",
+    "errors": []
+  },
+  {
+    "task_id": "dlg_bf6804452f604559",
+    "kind": "file_discovery",
+    "status": "succeeded",
+    "workspace": "F:\\Vigil\\vigil-eval\\dataset\\fixtures\\a01",
+    "model_requests": 4,
+    "tool_calls": 4,
+    "input_tokens": 4925,
+    "output_tokens": 463,
+    "elapsed_seconds": 23.7,
+    "retry_used": false,
+    "verified": true,
+    "degraded": false,
+    "json_raw_ok": true,
+    "json_repaired": false,
+    "json_repair": "",
+    "errors": []
+  }
+]

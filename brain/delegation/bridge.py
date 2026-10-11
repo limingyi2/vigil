@@ -8,11 +8,40 @@
 - 子任务结果经 validator 后才以结构化文本回灌，主模型继续决策；
 - 任何本地侧失败都不改变云端主链路 —— 这个工具永远返回字符串，不 raise。
 """
-from .contracts import validate_contract, load_delegation_config, ContractError
+import contextvars
+
+from .contracts import (validate_contract, load_delegation_config,
+                        ContractError, _GOAL_MAX)
 from .dispatcher import run_delegation
 
 # 只接受现役渠道发起的委派，拼不出来的身份默认拒绝。
 _TRUSTED_SRC = ("wechat", "wechat_group", "pc", "")
+
+# D2 路由锁（请求级，线程隔离）：PC 在线且本轮目标是**客户端可达、沙箱
+# 授权根外**的路径时，server 在进 FC 之前上锁。锁着的这一轮：
+#   ① 工具表直接不挂 delegate_to_local（模型选都选不到，不靠描述劝退）；
+#   ② invoke_spec / run_tool 执行层硬拒（防 XML 文本兜底绕过工具表）。
+# 只锁当前请求线程（ThreadingHTTPServer 每请求一线程），每轮聊天开头复位，
+# 不污染别的请求，也不改任何授权根/路径校验。
+_ROUTE_LOCK = contextvars.ContextVar("delegation_route_lock", default=False)
+
+
+def lock_delegation(locked):
+    """server 路由层按**本轮**目标路径上锁/复位。"""
+    _ROUTE_LOCK.set(bool(locked))
+
+
+def delegation_locked():
+    return bool(_ROUTE_LOCK.get())
+
+
+def _pc_online():
+    """PC 客户端是否在轮询新鲜期内（D2 路由事实来源，失败按离线处理）。"""
+    try:
+        import localtools
+        return bool(localtools.pc_online())
+    except Exception:
+        return False
 
 # 给主模型看的工具规格（字段与 validate_contract 的入参一一对应）
 TOOL_SPEC = {
@@ -197,10 +226,107 @@ def run_local_direct(text, src=None):
                 "reason": "router_error:%s" % type(e).__name__}
 
 
+def delegate_from_text(text, ctx=None):
+    """Planner / 文本标签链路的委派入口（D1）——与 FC 的 delegate_to_local
+    走**同一道门**（is_delegation_enabled → validate_contract →
+    run_delegation → _render），权限、限额、核验完全一致。
+
+    Planner 的工具参数是自由字符串，这里用确定性路由从文本识别：
+    ① 授权工作区（只认真实绝对路径，不猜目录）；② 任务 kind。
+    返回值沿用工具文本契约：成功/失败都返回字符串供 Planner 拼进收尾
+    提示；不该委派（非 hybrid/开关关/无授权路径/实时信息意图）时返回
+    None，让 Planner 改走 local_file_* 或其它工具，不伪造结果。
+    """
+    src = getattr(ctx, "src", None) if ctx is not None else ""
+    if not is_delegation_enabled(src):
+        return None
+    # D2 路由锁：本轮目标属客户端域时，Planner 字符串入口同样不受理，
+    # 返回 None 让 Planner 改走 local_file_*（与 FC 入口同一道门）。
+    if delegation_locked():
+        return None
+    try:
+        import runtime
+        cfg = load_delegation_config()
+        from .router import classify, kind_for_goal
+        decision = classify(str(text or ""),
+                            allowed_roots=cfg.get("allowed_roots") or [])
+        # 只有确定性识别出「需要委派」的多步勘察才受理；local_direct 不
+        # 经 Planner（它本来就是为了跳过整条云端规划链路），其余回 None
+        if decision["route"] != "hybrid_delegate" or not decision["workspace"]:
+            return None
+        kind = decision.get("kind") or kind_for_goal(str(text or ""))
+        contract = validate_contract(
+            {"kind": kind, "goal": str(text or "")[:_GOAL_MAX],
+             "workspace": decision["workspace"]},
+            src=src, allowed_roots=cfg.get("allowed_roots") or [])
+    except ContractError:
+        # 合同不合法（含工作区越权）：交回 Planner 工具集合处理，
+        # 不在这里硬塞错误文本（D2 的 PC 在线重定向在 FC 入口处理）
+        return None
+    except Exception:
+        return None
+    result = run_delegation(contract,
+                            ollama_cfg=runtime.API_CFG.get("ollama"))
+    return _render(result)
+
+
+def run_hybrid_delegation_direct(text, src=None):
+    """规划前确定性委派入口（D1）：HTTP /api/chat 的复杂本地勘察任务会先
+    经过 Plan-and-Execute，但 Planner 的自由文本步骤无法可靠在
+    「客户端 local_file_* vs 进程内委派」两条通道间选择（验收实测会为
+    F 盘授权工作区错规划客户端工具）。因此在规划**之前**由确定性路由
+    截获 hybrid_delegate：执行同一份合同/Dispatcher，成功则交给云端做
+    一次收尾总结，失败回退原规划链路（不吞错、不伪造）。
+
+    成功 {"ok":True,"result","evidence_text"}；其余 {"ok":False,"reason"}。
+    """
+    try:
+        import runtime
+        if str(runtime.API_CFG.get("model_mode") or "cloud") != "hybrid":
+            return {"ok": False, "reason": "not_hybrid"}
+        if not is_delegation_enabled(src):
+            return {"ok": False, "reason": "delegation_disabled"}
+        cfg = load_delegation_config()
+        from .router import classify, kind_for_goal
+        decision = classify(str(text or ""),
+                            allowed_roots=cfg.get("allowed_roots") or [])
+        if decision["route"] != "hybrid_delegate" or not decision["workspace"]:
+            return {"ok": False, "reason": "route=%s" % decision["route"]}
+        kind = decision.get("kind") or kind_for_goal(str(text or ""))
+        contract = validate_contract(
+            {"kind": kind, "goal": str(text or "")[:_GOAL_MAX],
+             "workspace": decision["workspace"]},
+            src=src, allowed_roots=cfg.get("allowed_roots") or [])
+        result = run_delegation(contract,
+                                ollama_cfg=runtime.API_CFG.get("ollama"))
+        if result.get("status") != "succeeded":
+            return {"ok": False,
+                    "reason": "delegation_%s" % result.get("status"),
+                    "result": result}
+        return {"ok": True, "result": result,
+                "evidence_text": _render(result),
+                "decision": decision}
+    except ContractError as e:
+        return {"ok": False, "reason": "contract_%s" % e.reason}
+    except Exception as e:
+        return {"ok": False,
+                "reason": "router_error:%s" % type(e).__name__}
+
+
 def delegate_to_local(ctx, **args):
     """FC 工具入口（签名对齐多参数插件：fn(ctx, **kwargs)）。永不抛异常。"""
     try:
         src = getattr(ctx, "src", "") or ""
+        # D2 路由锁：本轮已由 server 判为「PC 客户端域、沙箱授权根外」的
+        # 文件任务，工具表本就不该挂本工具；这是 XML 文本兜底等路径的
+        # 执行层硬门 —— 一个委派都不发，直接改道 local_file_*。
+        if delegation_locked():
+            return (
+                "【路由改道】本轮目标在 PC 客户端已授权目录、不在本机委派"
+                "沙箱授权根内，本工具本轮已被路由层禁用。请立即改用 "
+                "local_file_list / local_file_find / local_file_read / "
+                "local_file_grep 通过在线客户端访问（路径白名单仍由客户端"
+                "强制）；**不要再调用 delegate_to_local**，再调也是这个结果。")
         if not is_delegation_enabled(src):
             return ("委派未启用：需要 model_mode=hybrid、delegation.enabled=true "
                     "且已配置本地模型。请不要再次调用本工具，直接自己回答。")
@@ -209,6 +335,17 @@ def delegate_to_local(ctx, **args):
             contract = validate_contract(
                 args, src=src, allowed_roots=cfg.get("allowed_roots") or [])
         except ContractError as e:
+            # D2：工作区不在大脑委派沙箱授权根内，但 PC 客户端在线（
+            # local_file_* 此刻可达）→ 由调度层把这次调用重定向到客户端
+            # 只读工具，不在委派工具上重试，也不放宽任何路径校验。
+            if e.reason == "workspace_not_authorized" and _pc_online():
+                ws = str(getattr(e, "message", "") or "")
+                return (
+                    "【路由改道】该工作区不在本机委派沙箱的授权根内，"
+                    "但 PC 客户端在线、其本地只读工具可用。请立即改用 "
+                    "local_file_list / local_file_find / local_file_read / "
+                    "local_file_grep 通过在线客户端访问（路径白名单仍由"
+                    "客户端强制）；**不要再调用 delegate_to_local**。")
             return ("委派合同被拒绝（%s）：%s。请按限制修改参数后重试一次；"
                     "若仍不满足就自己回答，不要反复提交。"
                     % (e.reason, e))
@@ -258,6 +395,12 @@ def recent_records(limit=20):
                 "output_tokens": r.get("output_tokens") or 0,
                 "elapsed_seconds": r.get("elapsed_seconds") or 0,
                 "retry_used": bool(r.get("retry_used")),
+                "verified": bool(r.get("verified")),
+                "degraded": bool(r.get("degraded")),
+                # D3：JSON 解析/修复状态（不含 last_raw 全文，避免文件片段出面板）
+                "json_raw_ok": bool(r.get("json_raw_ok")),
+                "json_repaired": bool(r.get("json_repaired")),
+                "json_repair": str(r.get("json_repair") or "")[:80],
                 "errors": (r.get("errors") or [])[:2],
                 "created_at": r.get("created_at") or mtime,
             })

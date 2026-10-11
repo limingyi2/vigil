@@ -19,10 +19,44 @@ import uuid
 
 from . import contracts as _c
 from .sandbox import ReadOnlySandbox, SandboxError, tool_spec
-from .validator import validate as _validate
+from .validator import validate as _validate, extract_json_object
 
 # file_grep 命中行格式：相对路径:行号:内容（用于留档做证据核验）
 _GREP_LINE = re.compile(r"^(?!（)(.+?):(\d+):(.*)$")
+
+# D3：保留原始本地输出的截断长度（落盘排障用；可能含文件片段）
+_LAST_RAW_KEEP = 600
+
+
+def _repair_json_text(text):
+    """确定性、零模型调用的 JSON 修复（D3），全程只做不改变语义的机械处理：
+    ① 剥 markdown 代码围栏；② 截取首个 { 到末个 } 之间的对象；
+    ③ 删除 } / ] 前的尾逗号。修复后仍要能 json.loads 且过完整验收，
+    不补字段、不猜内容、不改任何值。
+
+    返回 (json_text, fixes)；修不出来返回 (None, 失败原因)。
+    """
+    t = (text or "").strip()
+    if not t:
+        return None, "empty"
+    fixes = []
+    cand = t
+    t2 = re.sub(r"^```(?:json)?\s*", "", cand)
+    t2 = re.sub(r"\s*```(?:json)?\s*$", "", t2)
+    if t2 != cand:
+        cand, fixes = t2, fixes + ["fence"]
+    s, e = cand.find("{"), cand.rfind("}")
+    if s >= 0 and e > s and (s > 0 or e < len(cand) - 1):
+        cand = cand[s:e + 1]
+        fixes.append("brace")
+    t3 = re.sub(r",\s*([}\]])", r"\1", cand)
+    if t3 != cand:
+        cand, fixes = t3, fixes + ["trailing_comma"]
+    try:
+        json.loads(cand)
+        return cand, ",".join(fixes)
+    except Exception as ex:
+        return None, str(ex)[:100]
 
 
 def _system_prompt(contract):
@@ -159,6 +193,9 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
         # P0 分段计时（秒）；P2 核验标记；P3 工具预算耗尽降级标记
         model_seconds=0.0, tool_seconds=0.0, validation_seconds=0.0,
         cache_hits=0, verified=False, generic=False, degraded=False,
+        # D3：JSON 解析/修复可观测 + 原始本地输出留档（截断）
+        json_raw_ok=False, json_repaired=False, json_repair="",
+        retry_problems=[], last_raw="",
         errors=[], retry_used=False,
     )
 
@@ -256,6 +293,10 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
 
     try:
         budget_out = False
+        # D3：空壳响应（think 模型偶发 content/tool_calls 全空，provider 抛
+        # bad_response）的续跑标记。**最多一次**，且只在现有请求预算内 ——
+        # 不加预算、不改时限、不提权云端；再空就按原路径失败。
+        empty_retried = False
         for _round in range(limits["max_model_requests"]):
             if cancel_event is not None and cancel_event.is_set():
                 return finish("cancelled")
@@ -275,11 +316,26 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                 data = _call_model(
                     payload, deadline - time.monotonic())
             except Exception as e:
-                # 本地模型没起/OOM/坏响应：立即失败，**绝不**自动提权或改派云端。
-                # 主模型拿到 failed 后自己决定怎么跟用户说（hybrid 的回退由它决策）。
                 cat = getattr(e, "category", "model_error")
                 result["errors"].append(
                     {"category": cat, "detail": str(e)[:160]})
+                # bad_response（空壳响应）与 unavailable（连不上/超时/OOM）
+                # 不同：模型进程是活的，think 模式下偶发这一轮 content 与
+                # tool_calls 全空（验收实测 qwen27b 取证 7 轮后撞上，整个
+                # 子任务连同证据全废）。在**现有请求预算内**续跑一次，不新增
+                # 任何限额；第二次再空、或预算/时限已尽，立即失败 ——
+                # 仍然**绝不**自动提权或改派云端，失败如实回灌主模型。
+                if (cat == "bad_response" and not empty_retried
+                        and result["model_requests"] < limits["max_model_requests"]
+                        and time.monotonic() <= deadline):
+                    empty_retried = True
+                    messages.append({"role": "user", "content":
+                        "（系统）你上一条响应是空的。请继续完成任务：勘察没"
+                        "完就继续调用工具；勘察已完成就直接输出最终 JSON 对象，"
+                        "不要输出解释性文字。"})
+                    continue
+                # 本地模型没起/OOM/超时/连续坏响应：立即失败。
+                # 主模型拿到 failed 后自己决定怎么跟用户说（hybrid 的回退由它决策）。
                 return finish("failed")
             if data is None:
                 result["errors"].append({"category": "unavailable",
@@ -374,15 +430,44 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                     {"category": getattr(e, "category", "model_error"),
                      "detail": str(e)[:160]})
 
-        # --- 验收（首次或重试一次）---
-        verdict = _validate_timed(final_text)
+        # --- 验收（原文 → 确定性 JSON 修复 → 最多一次模型修正）---
+        def _accept(raw_text, *, is_retry=False):
+            """返回 (verdict, accepted_text)。D3：原文解析失败先做零模型的
+            机械修复（剥围栏/截对象/去尾逗号），修复文本仍须过**完整**验收；
+            解析状态与原始输出留档，不掩盖失败。"""
+            result["last_raw"] = (raw_text or "")[-_LAST_RAW_KEEP:]
+            verdict = _validate_timed(raw_text)
+            if is_retry:
+                result["retry_problems"] = list(verdict["problems"])
+            if verdict["ok"] and extract_json_object(raw_text) is not None:
+                # 原文（未修复）即可解析 —— 任一轮成立都记上
+                result["json_raw_ok"] = True
+            if verdict["ok"]:
+                return verdict, raw_text
+            # 仅当问题确实是「取不到 JSON 对象」时才尝试机械修复
+            only_json_issue = all("JSON" in p for p in verdict["problems"])
+            if only_json_issue:
+                repaired, how = _repair_json_text(raw_text)
+                if repaired is not None:
+                    v2 = _validate_timed(repaired)
+                    if v2["ok"]:
+                        result["json_repaired"] = True
+                        result["json_repair"] = how
+                        return v2, repaired
+                    result["json_repair"] = "repair_rejected:%s" % how
+                else:
+                    result["json_repair"] = "unrepairable:%s" % how
+            return verdict, raw_text
+
+        verdict, final_text = _accept(final_text)
         if not verdict["ok"]:
             problems = "\n".join(verdict["problems"])
             messages.append({"role": "user", "content":
                              "（系统）你的结果没通过验收，请修正后重新输出最终 JSON："
                              + problems})
             result["retry_used"] = True
-            # 用一次请求做修正（计入预算；不再挂工具）
+            # 用一次请求做修正（计入预算；不再挂工具）。这是**唯一**一次
+            # 模型级重试，预算/时限不变，不允许再多（D3）。
             if (result["model_requests"] < limits["max_model_requests"]
                     and time.monotonic() <= deadline):
                 result["model_requests"] += 1
@@ -391,9 +476,9 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                         {"messages": messages, "temperature": 0.2,
                          "max_tokens": 2048}, deadline - time.monotonic())
                     if data2:
-                        final_text = (data2.get("choices") or [{}])[0] \
-                            .get("message", {}).get("content") or final_text
-                        verdict = _validate_timed(final_text)
+                        raw2 = (data2.get("choices") or [{}])[0] \
+                            .get("message", {}).get("content") or ""
+                        verdict, final_text = _accept(raw2, is_retry=True)
                 except Exception as e:
                     result["errors"].append(
                         {"category": getattr(e, "category", "model_error"),

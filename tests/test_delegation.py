@@ -361,6 +361,36 @@ class TestDispatcher(_Workspace, unittest.TestCase):
         self.assertEqual(r["status"], "failed")
         self.assertTrue(any(e["category"] == "unavailable" for e in r["errors"]))
 
+    def test_空壳响应在预算内续跑一次后成功(self):
+        # 取证后撞上 qwen think 偶发的 content/tool_calls 全空（provider 抛
+        # bad_response）：不立即失败，在现有请求预算内续跑一次，第二轮给
+        # 合法 JSON 即验收通过；坏响应本身留档可观测。
+        from model_providers.base import ProviderResponseError
+        final = ('{"answer":"login 未判空，None 传进 issue_token",'
+                 '"evidence":[{"path":"src/auth.py","line":2,'
+                 '"excerpt":"return issue_token(None)","observation":"未判空"}]}')
+        r, p = self._run([
+            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            ProviderResponseError("Ollama 响应里没有正文也没有工具调用"),
+            _Msg.say(final),
+        ])
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertEqual(p.calls, 3)
+        self.assertTrue(r["verified"])
+        self.assertTrue(any(e["category"] == "bad_response"
+                            for e in r["errors"]))
+
+    def test_连续两次空壳响应仍失败且不无限重试(self):
+        # 续跑最多一次：第二次仍空 → failed，总请求 = 2（首次 + 续跑），
+        # 不吃掉 6 轮预算，更不提权云端。
+        from model_providers.base import ProviderResponseError
+        empty = ProviderResponseError("Ollama 响应里没有正文也没有工具调用")
+        r, p = self._run([empty, empty, empty, empty, empty, empty])
+        self.assertEqual(r["status"], "failed")
+        self.assertEqual(p.calls, 2)
+        self.assertEqual(
+            sum(1 for e in r["errors"] if e["category"] == "bad_response"), 2)
+
     def test_验收失败重试一次后通过(self):
         bad = "我觉得是个问题"            # 不是 JSON
         good = ('{"answer":"login 未判空","evidence":[{"path":"src/auth.py",'
@@ -668,6 +698,375 @@ class TestGateAndBridge(_Workspace, unittest.TestCase):
         self.assertEqual(r["reason"], "router_disabled")
 
 
+class TestKindInference(unittest.TestCase):
+    """D1：Planner 字符串入口的 kind 推断。"""
+
+    def setUp(self):
+        from delegation import router
+        self.router = router
+
+    def test_kind映射(self):
+        k = self.router.kind_for_goal
+        self.assertEqual(k("分析日志找第一个错误和连锁反应"), "log_root_cause")
+        self.assertEqual(k("跨文件查 KeyError 根因，uid 字段对不上"),
+                         "read_only_bug_analysis")
+        self.assertEqual(k("帮我列修复步骤计划，先别动代码"), "plan_draft")
+        self.assertEqual(k("这个项目里重试次数配置在哪个文件"), "file_discovery")
+
+
+def _ok_delegation():
+    """一个经 _render 成功渲染的最小委派结果。"""
+    return {
+        "task_id": "dlg_t", "kind": "log_root_cause", "status": "succeeded",
+        "model_requests": 2, "tool_calls": 3, "elapsed_seconds": 4,
+        "verified": True, "degraded": False,
+        "structured": {"answer": "根因是 crypto 模块缺失",
+                       "evidence": [{"path": "build.log", "line": 39,
+                                     "excerpt": "No module named crypto",
+                                     "observation": "首个 error"}]},
+        "evidence": {"verified": [{"path": "build.log"}]},
+        "needs_main_agent_review": False, "generic": False, "errors": []}
+
+
+class TestD1PlannerDispatch(_Workspace, unittest.TestCase):
+    """D1：tools.run_tool（Planner/文本标签链路）与 invoke_spec（FC）
+    必须共用 delegation.bridge 同一道门。"""
+
+    def setUp(self):
+        super().setUp()
+        import runtime
+        self._old = dict(runtime.API_CFG)
+        runtime.API_CFG.clear()
+        runtime.API_CFG.update(self._old)
+        import tools as tl
+        self.tl = tl
+
+    def tearDown(self):
+        import runtime
+        runtime.API_CFG.clear()
+        runtime.API_CFG.update(self._old)
+        super().tearDown()
+
+    def _hybrid(self):
+        import runtime
+        runtime.API_CFG["model_mode"] = "hybrid"
+        runtime.API_CFG["ollama"] = {"model": "m"}
+        from delegation import bridge
+        bridge.load_delegation_config = lambda: {
+            "enabled": True, "router_enabled": True,
+            "allowed_roots": [self.tmp]}
+
+    def test_cloud模式_字符串委派入口返回None(self):
+        import runtime
+        runtime.API_CFG["model_mode"] = "cloud"
+        runtime.API_CFG["ollama"] = {"model": "m"}
+        out = self.tl.run_tool(
+            "delegate_to_local",
+            "分析 %s 里的日志找根因" % self.ws, src="pc")
+        self.assertIsNone(out)
+
+    def test_无授权路径_返回None让Planner改道(self):
+        self._hybrid()
+        out = self.tl.run_tool(
+            "delegate_to_local", "分析日志找根因（没给路径）", src="pc")
+        self.assertIsNone(out)
+
+    def test_授权根内多步任务_与FC同入口执行并回传verified结果(self):
+        self._hybrid()
+        from delegation import bridge
+        old = bridge.run_delegation
+        seen = {}
+
+        def fake_run(contract, **kw):
+            seen["kind"] = contract["kind"]
+            seen["workspace"] = contract["workspace"]
+            return _ok_delegation()
+        bridge.run_delegation = fake_run
+        try:
+            out = self.tl.run_tool(
+                "delegate_to_local",
+                "分析 %s 里的构建日志，找连锁报错的根因" % self.ws, src="pc")
+        finally:
+            bridge.run_delegation = old
+        self.assertIsNotNone(out)
+        self.assertIn("succeeded", out)
+        self.assertIn("crypto", out)
+        self.assertEqual(seen["kind"], "log_root_cause")
+        self.assertEqual(seen["workspace"], os.path.abspath(self.ws))
+
+    def test_委派失败_错误类别经同一入口返回(self):
+        self._hybrid()
+        from delegation import bridge
+        old = bridge.run_delegation
+        bridge.run_delegation = lambda contract, **kw: {
+            "task_id": "dlg_f", "status": "failed",
+            "model_requests": 6, "tool_calls": 8, "elapsed_seconds": 10,
+            "structured": None, "output": "",
+            "evidence": {}, "errors": [{"category": "tool_limit",
+                                         "detail": "x"}]}
+        try:
+            out = self.tl.run_tool(
+                "delegate_to_local",
+                "分析 %s 里的日志找根因" % self.ws, src="pc")
+        finally:
+            bridge.run_delegation = old
+        self.assertIn("tool_limit", out)
+        self.assertIn("未成功", out)
+
+    def test_planner执行委派_步骤描述并入目标以识别工作区(self):
+        """execute_plan 调 delegate 时把 step_desc 拼进 arg（路径常在步骤里）。"""
+        self._hybrid()
+        import tools as tl
+        import planner
+        old_run = tl.run_tool
+        captured = {}
+
+        def fake_run(tool, arg, src=None):
+            captured["tool"] = tool
+            captured["arg"] = arg
+            return "【本地子任务结果 task=t status=succeeded】结论 ok"
+        tl.run_tool = fake_run
+        try:
+            # all_specs 在 hybrid+门控下含 delegate，permitted 才放行
+            steps = [("在 %s 工作区分析日志找首个错误" % self.ws,
+                      "delegate_to_local", None),
+                     ("整理回答", None, None)]
+            results = planner.execute_plan(
+                steps, src="pc",
+                allowed_tools=["delegate_to_local"], brain=object())
+        finally:
+            tl.run_tool = old_run
+        self.assertEqual(captured["tool"], "delegate_to_local")
+        self.assertIn(self.ws, captured["arg"])
+        # 第一步拿到结果字符串而非 None
+        self.assertTrue(results[0][3])
+
+    def test_规划前确定性委派入口_成功回证据失败回退(self):
+        """D1：run_hybrid_delegation_direct 是 HTTP 规划链路的截获点。"""
+        self._hybrid()
+        from delegation import bridge
+        old = bridge.run_delegation
+        # 成功：授权根内多步勘察 → 回证据文本
+        bridge.run_delegation = lambda contract, **kw: _ok_delegation()
+        try:
+            r = bridge.run_hybrid_delegation_direct(
+                "分析 %s 里的构建日志找连锁报错的根因" % self.ws, src="pc")
+        finally:
+            bridge.run_delegation = old
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["decision"]["route"], "hybrid_delegate")
+        self.assertIn("crypto", r["evidence_text"])
+        # 简单查询不被该入口截获（留给 local_direct）
+        r2 = bridge.run_hybrid_delegation_direct(
+            "%s 里重试次数是多少？在哪个文件？" % self.ws, src="pc")
+        self.assertFalse(r2["ok"])
+        # 委派失败 → ok=False，调用方回退规划链路（不吞错）
+        bridge.run_delegation = lambda contract, **kw: {
+            "task_id": "x", "status": "failed", "errors": [
+                {"category": "tool_limit"}], "evidence": {}}
+        try:
+            r3 = bridge.run_hybrid_delegation_direct(
+                "分析 %s 里的日志找根因" % self.ws, src="pc")
+        finally:
+            bridge.run_delegation = old
+        self.assertFalse(r3["ok"])
+        self.assertEqual(r3["reason"], "delegation_failed")
+
+
+class TestD2PCRouting(_Workspace, unittest.TestCase):
+    """D2：PC 在线时授权路径优先 local_file_*（路由逻辑，非提示词）。"""
+
+    def setUp(self):
+        super().setUp()
+        import localtools
+        import runtime
+        self.lt = localtools
+        self._old_poll = localtools._LAST_POLL
+        self._old_cfg = dict(runtime.API_CFG)
+        runtime.API_CFG["model_mode"] = "hybrid"
+        runtime.API_CFG["ollama"] = {"model": "m"}
+        from delegation import bridge
+        self.bridge = bridge
+        bridge.load_delegation_config = lambda: {
+            "enabled": True, "router_enabled": True,
+            "allowed_roots": [self.tmp]}
+
+    def tearDown(self):
+        import time as _t
+        self.lt._LAST_POLL = self._old_poll
+        self.bridge.lock_delegation(False)
+        import runtime
+        runtime.API_CFG.clear()
+        runtime.API_CFG.update(self._old_cfg)
+        super().tearDown()
+
+    def test_pc_online新鲜期判定(self):
+        import time
+        self.lt._LAST_POLL = time.time()
+        self.assertTrue(self.lt.pc_online())
+        self.lt._LAST_POLL = 0.0
+        self.assertFalse(self.lt.pc_online())
+
+    def test_越权工作区_PC在线_重定向到local_file(self):
+        import time
+        self.lt._LAST_POLL = time.time()
+        other = tempfile.mkdtemp(prefix="dlg_d2_out_")
+        try:
+            class Ctx:
+                src = "pc"
+            out = self.bridge.delegate_to_local(
+                Ctx(), kind="log_root_cause", goal="分析日志",
+                workspace=other)
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+        self.assertIn("local_file", out)
+        self.assertIn("不要再调用 delegate_to_local", out)
+
+    def test_越权工作区_PC离线_普通拒绝不给重定向(self):
+        self.lt._LAST_POLL = 0.0
+        other = tempfile.mkdtemp(prefix="dlg_d2_off_")
+        try:
+            class Ctx:
+                src = "pc"
+            out = self.bridge.delegate_to_local(
+                Ctx(), kind="log_root_cause", goal="分析日志",
+                workspace=other)
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+        self.assertIn("workspace_not_authorized", out)
+        self.assertNotIn("local_file", out)
+
+    def test_工具表描述随PC在线状态变化(self):
+        import time
+        import tools as tl
+        self.lt._LAST_POLL = 0.0
+        off = [t for t in tl.all_specs(brain=object(), src="pc")
+               if t["function"]["name"] == "delegate_to_local"][0]
+        self.assertNotIn("PC 客户端在线", off["function"]["description"])
+        self.lt._LAST_POLL = time.time()
+        on = [t for t in tl.all_specs(brain=object(), src="pc")
+              if t["function"]["name"] == "delegate_to_local"][0]
+        self.assertIn("PC 客户端在线", on["function"]["description"])
+        self.assertIn("local_file", on["function"]["description"])
+
+    def test_路由锁_工具表整项摘除而非描述劝退(self):
+        """D2 硬门控：上锁后工具表里根本没有 delegate_to_local。"""
+        import tools as tl
+        names = lambda: [t["function"]["name"]
+                         for t in tl.all_specs(brain=object(), src="pc")]
+        self.assertIn("delegate_to_local", names())
+        self.bridge.lock_delegation(True)
+        try:
+            self.assertNotIn("delegate_to_local", names())
+        finally:
+            self.bridge.lock_delegation(False)
+        self.assertIn("delegate_to_local", names())
+
+    def test_路由锁_FC入口硬拒且一个委派都不发(self):
+        """锁着时即使绕过工具表（XML 文本兜底）调 invoke_spec，
+        delegate_to_local 也必须硬拒改道，run_delegation 不被调用。"""
+        import tools as tl
+
+        class Ctx:
+            src = "pc"
+        called = []
+        old = self.bridge.run_delegation
+        self.bridge.run_delegation = (
+            lambda contract, **k: called.append(contract) or _ok_delegation())
+        self.bridge.lock_delegation(True)
+        try:
+            out = tl.invoke_spec(
+                "delegate_to_local",
+                {"kind": "log_root_cause", "goal": "分析桌面日志",
+                 "workspace": self.tmp}, ctx=Ctx())
+        finally:
+            self.bridge.lock_delegation(False)
+            self.bridge.run_delegation = old
+        self.assertEqual(called, [])
+        self.assertIn("local_file", out)
+        self.assertIn("不要再调用 delegate_to_local", out)
+
+    def test_路由锁_Planner字符串入口返回None(self):
+        """run_tool（Planner/文本标签链路）与 FC 入口同锁。"""
+        import tools as tl
+        self.bridge.lock_delegation(True)
+        try:
+            out = tl.run_tool(
+                "delegate_to_local",
+                "分析 %s 里的日志找根因" % self.ws, src="pc")
+        finally:
+            self.bridge.lock_delegation(False)
+        self.assertIsNone(out)
+
+
+class TestD3JsonRepair(_Workspace, unittest.TestCase):
+    """D3：有限 JSON 修复 + 原始响应/失败原因留档，不增重试不提预算。"""
+
+    def _run(self, responses, contract=None):
+        """与 TestDispatcher._run 同构的脚本化 provider 执行。"""
+        p = contract or self.contract()
+
+        class P:
+            def __init__(self, rs):
+                self.rs = list(rs)
+                self.calls = 0
+
+            def ready(self):
+                return True
+
+            def chat(self, payload, timeout=None):
+                i = min(self.calls, len(self.rs) - 1)
+                self.calls += 1
+                return self.rs[i]
+        prov = P(responses)
+        r = run_delegation(p, ollama_cfg={"model": "m"},
+                           provider_factory=lambda cfg: prov,
+                           persist=False)
+        return r, prov
+
+    def test_机械修复只做语义无损处理(self):
+        from delegation.dispatcher import _repair_json_text
+        fixed, how = _repair_json_text(
+            '好的，结果是：\n```json\n{"fields": {"name": "张三"},}\n```')
+        self.assertIsNotNone(fixed)
+        self.assertIn("fence", how)
+        self.assertIn("trailing_comma", how)
+        import json
+        self.assertEqual(json.loads(fixed)["fields"]["name"], "张三")
+
+    def test_纯文本无JSON_不强行修复(self):
+        from delegation.dispatcher import _repair_json_text
+        fixed, why = _repair_json_text("我读不到文件，没法给 JSON")
+        self.assertIsNone(fixed)
+        self.assertTrue(why)
+
+    def test_围栏尾逗号输出_零模型修复即成功并标记(self):
+        final = '```json\n{"fields": {"name": "张三"},}\n```'
+        c = self.contract(kind="structured_extraction", expected_schema="extraction_v1")
+        r, _ = self._run([_Msg.say(final)], c)
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertTrue(r["json_repaired"])
+        self.assertEqual(r["structured"]["fields"]["name"], "张三")
+        # 只用了 1 个模型请求（修复零调用），预算没有被提高
+        self.assertEqual(r["model_requests"], 1)
+
+    def test_始终非JSON_保留原始输出与原因_不超过一次重试(self):
+        c = self.contract(kind="structured_extraction", expected_schema="extraction_v1")
+        r, _ = self._run([_Msg.say("不是 JSON 哦"),
+                          _Msg.say("我还是不想输出 JSON")], c)
+        self.assertEqual(r["status"], "failed")
+        self.assertFalse(r["json_repaired"])
+        self.assertTrue(r["json_repair"].startswith("unrepairable"))
+        self.assertEqual(r["last_raw"], "我还是不想输出 JSON")
+        # 首答 + 唯一一次修正 = 2 次请求，绝不更多
+        self.assertEqual(r["model_requests"], 2)
+        cats = [e["category"] for e in r["errors"]]
+        self.assertIn("validation_failed", cats)
+        # 重试轮的验收问题也留了档
+        self.assertTrue(r["retry_problems"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -92,7 +92,7 @@ def classify(text, *, allowed_roots):
         if _HYBRID_HINT.search(text):
             return {"route": "hybrid_delegate",
                     "reason": "multi_step_investigation_hint",
-                    "workspace": ws, "kind": ""}
+                    "workspace": ws, "kind": kind_for_goal(text)}
         if len(text) <= _MAX_LOCAL_DIRECT_LEN and _LOCAL_DIRECT_HINT.search(text):
             return {"route": "local_direct",
                     "reason": "simple_verifiable_local_lookup",
@@ -104,3 +104,20 @@ def classify(text, *, allowed_roots):
         return {"route": "cloud_direct",
                 "reason": "classifier_error:%s" % type(e).__name__,
                 "workspace": "", "kind": ""}
+
+
+def kind_for_goal(text):
+    """从委派目标文本推断合同 kind（纯函数，供 Planner 字符串入口使用）。
+
+    只在 KINDS 白名单内推断；拿不准回落 file_discovery，由合同校验兜底。
+    """
+    t = str(text or "")
+    # 修复计划（"列修复步骤/修复计划/先别动代码"）
+    if re.search(r"修复(计划|步骤)|步骤计划|列一个?修复|帮我列.*(计划|步骤)", t):
+        return "plan_draft"
+    # 跨文件根因（字段名不一致 / KeyError 链路）
+    if re.search(r"跨文件|字段.*不一致|keyerror|uid.*user_id|key\s*不", t, re.I):
+        return "read_only_bug_analysis"
+    if re.search(r"根因|为什么.*(报错|失败|错)|连锁|首个?.*(错误|报错)", t):
+        return "log_root_cause"
+    return "file_discovery"

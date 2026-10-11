@@ -410,6 +410,11 @@ def execute_plan(steps, src=None, allowed_tools=None, brain=None):
             results.append((step_desc, tool, arg, result))
             continue
         try:
+            # D1：delegate_to_local 的工作区路径常常只写在步骤描述里
+            # （arg 是自由文本），执行委派时把步骤描述并进目标，路由才
+            # 能识别授权工作区；其它工具保持只用 arg，行为不变。
+            if str(tool).lower() == "delegate_to_local":
+                arg = ((step_desc or "") + " " + (arg or "")).strip() or None
             result = tools.run_tool(tool, arg, src=src)
             print("[规划] 执行工具 %s(%s) → %s" % (
                 tool, (arg or "")[:30],

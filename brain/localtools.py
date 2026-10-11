@@ -644,3 +644,14 @@ def reset():
         _QUEUE.clear()
         _ACTIVE.clear()
         _COND.notify_all()
+
+
+def pc_online():
+    """是否有 PC 客户端在轮询新鲜期内（D2 路由依据）。
+
+    客户端每 1.5s 轮一次 /api/plugin/remote/poll，take() 每次都刷新
+    _LAST_POLL；超过 POLL_STALE（60s）没轮询即视为离线。这是
+    "local_file_* 此刻能不能用"的事实来源：委派工具与客户端工具二选一时
+    按它路由，不靠猜，也不靠提示词。
+    """
+    return time.time() - _LAST_POLL <= POLL_STALE
