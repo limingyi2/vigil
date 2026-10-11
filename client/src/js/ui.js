@@ -109,7 +109,8 @@
    * 轻量 Markdown 渲染：标题 / 加粗 / 斜体 / 列表 / 代码块 / 行内代码 / 链接。
    * 不依赖外部库，足够 AI 回复用。用户消息不走这个（纯文本更安全）。
    */
-  function md(text) {
+  function md(text, options) {
+    const codeActions = !!(options && options.codeActions);
     const raw = String(text == null ? '' : text);
     if (!raw) return '';
     // 代码块先拎出来，免得里面的 * # 被当格式
@@ -129,6 +130,9 @@
     for (let line of lines) {
       const trimmed = line.trim();
       if (!trimmed) { closeLists(); out.push(''); continue; }
+      if (codeActions && /^\x00CODE\d+\x00$/.test(trimmed)) {
+        closeLists(); out.push(trimmed); continue;
+      }
       // 标题
       let m = trimmed.match(/^(#{1,4})\s+(.*)$/);
       if (m) {
@@ -167,8 +171,17 @@
     closeLists();
     let html = out.join('\n');
     // 把代码块放回去
-    html = html.replace(/\x00CODE(\d+)\x00/g, (_, i) =>
-      '<pre><code>' + esc(blocks[Number(i)].replace(/^\n/, '')) + '</code></pre>');
+    html = html.replace(/\x00CODE(\d+)\x00/g, (_, i) => {
+      const block = blocks[Number(i)];
+      let code = block.replace(/^\n/, '');
+      if (!codeActions) return '<pre><code>' + esc(code) + '</code></pre>';
+      const match = block.match(/^([\w.+#-]+)\r?\n/);
+      const language = match ? match[1] : '代码';
+      code = match ? block.slice(match[0].length) : block.replace(/^\r?\n/, '');
+      return '<div class="codeblock"><div class="codehead"><span>' + esc(language) + '</span>' +
+        '<button type="button" data-copy-code aria-label="复制代码">复制</button></div>' +
+        '<pre><code>' + esc(code) + '</code></pre></div>';
+    });
     return html;
 
     function inline(t) {

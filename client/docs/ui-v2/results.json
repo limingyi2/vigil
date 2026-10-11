@@ -1,0 +1,518 @@
+{
+  "fixture": true,
+  "realModelCalls": 0,
+  "hardwareAcceleration": "Electron default enabled",
+  "gpu": {
+    "features": {
+      "2d_canvas": "enabled",
+      "canvas_oop_rasterization": "enabled_on",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "enabled",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "enabled_on",
+      "rasterization": "enabled",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "video_decode": "enabled",
+      "video_encode": "enabled",
+      "vulkan": "disabled_off",
+      "webgl": "enabled",
+      "webgl2": "enabled",
+      "webgpu": "enabled"
+    },
+    "webgl": "ANGLE (AMD, AMD Radeon RX 9070 XT (0x00007550) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "results": [
+    {
+      "name": "empty session and default collapsed context",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1400,
+          "height": 900
+        },
+        "input": {
+          "x": 387,
+          "y": 700.0729370117188,
+          "width": 920,
+          "height": 131.33334350585938,
+          "bottom": 831.4062805175781
+        },
+        "composer": {
+          "x": 294,
+          "y": 684.0729370117188,
+          "width": 1106,
+          "height": 189.92709350585938,
+          "bottom": 874.0000305175781
+        },
+        "chat": {
+          "x": 294,
+          "y": 92,
+          "width": 1106,
+          "height": 782,
+          "bottom": 874
+        },
+        "hero": {
+          "x": 294,
+          "y": 92,
+          "width": 1106,
+          "height": 592.0729370117188,
+          "bottom": 684.0729370117188
+        },
+        "scroll": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "quick question and blank-content disabled state",
+      "status": "passed"
+    },
+    {
+      "name": "session list and context toggle, dark theme",
+      "status": "passed"
+    },
+    {
+      "name": "textarea auto-height and max-height",
+      "status": "passed"
+    },
+    {
+      "name": "Enter, Shift+Enter, IME, stream state and unchanged IPC payload",
+      "status": "passed"
+    },
+    {
+      "name": "Markdown headings/lists/quotes/link/code and code copy",
+      "status": "passed"
+    },
+    {
+      "name": "existing safety control opens and closes",
+      "status": "passed"
+    },
+    {
+      "name": "history restored and session selection preserved",
+      "status": "passed"
+    },
+    {
+      "name": "ordinary light-theme history and code rendering",
+      "status": "passed"
+    },
+    {
+      "name": "920px aligned content and composer outside message scroll",
+      "status": "passed",
+      "detail": {
+        "left": 0,
+        "right": 0,
+        "width": 920
+      }
+    },
+    {
+      "name": "stream error UI and send state recovery",
+      "status": "passed"
+    },
+    {
+      "name": "attachment FileReader, preview, removal and image-only send eligibility",
+      "status": "passed"
+    },
+    {
+      "name": "image-only send through original stream IPC",
+      "status": "passed"
+    },
+    {
+      "name": "existing model settings navigation and non-chat scope",
+      "status": "passed"
+    },
+    {
+      "name": "global function entries retained",
+      "status": "passed",
+      "detail": 7
+    },
+    {
+      "name": "real wallpaper iframe/host, pause/resume, import entry and appearance settings",
+      "status": "passed"
+    },
+    {
+      "name": "wallpaper welcome has no card or backdrop blur",
+      "status": "passed",
+      "detail": {
+        "welcomeBackground": "rgba(0, 0, 0, 0)",
+        "welcomeBorder": "0px",
+        "welcomeBlur": "none",
+        "inputBlur": "blur(8px)"
+      }
+    },
+    {
+      "name": "wallpaper reading surface and unchanged chat DOM",
+      "status": "passed"
+    },
+    {
+      "name": "window 1280x800",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "input": {
+          "x": 336,
+          "y": 600.0729370117188,
+          "width": 902,
+          "height": 131.33334350585938,
+          "bottom": 731.4062805175781
+        },
+        "composer": {
+          "x": 294,
+          "y": 584.0729370117188,
+          "width": 986,
+          "height": 189.92709350585938,
+          "bottom": 774.0000305175781
+        },
+        "chat": {
+          "x": 294,
+          "y": 92,
+          "width": 986,
+          "height": 682,
+          "bottom": 774
+        },
+        "hero": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "scroll": {
+          "x": 294,
+          "y": 92,
+          "width": 986,
+          "height": 492.07293701171875,
+          "bottom": 584.0729370117188
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "window 900x700",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 900,
+          "height": 700
+        },
+        "input": {
+          "x": 336,
+          "y": 500.07293701171875,
+          "width": 522,
+          "height": 131.33334350585938,
+          "bottom": 631.4062805175781
+        },
+        "composer": {
+          "x": 294,
+          "y": 484.07293701171875,
+          "width": 606,
+          "height": 189.92709350585938,
+          "bottom": 674.0000305175781
+        },
+        "chat": {
+          "x": 294,
+          "y": 92,
+          "width": 606,
+          "height": 582,
+          "bottom": 674
+        },
+        "hero": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "scroll": {
+          "x": 294,
+          "y": 92,
+          "width": 606,
+          "height": 392.07293701171875,
+          "bottom": 484.07293701171875
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "window 600x650",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 600,
+          "height": 650
+        },
+        "input": {
+          "x": 72,
+          "y": 450.07293701171875,
+          "width": 506,
+          "height": 131.33334350585938,
+          "bottom": 581.4062805175781
+        },
+        "composer": {
+          "x": 50,
+          "y": 434.07293701171875,
+          "width": 550,
+          "height": 189.92709350585938,
+          "bottom": 624.0000305175781
+        },
+        "chat": {
+          "x": 50,
+          "y": 92,
+          "width": 550,
+          "height": 532,
+          "bottom": 624
+        },
+        "hero": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "scroll": {
+          "x": 50,
+          "y": 92,
+          "width": 550,
+          "height": 342.07293701171875,
+          "bottom": 434.07293701171875
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "window 800x540",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 800,
+          "height": 540
+        },
+        "input": {
+          "x": 92,
+          "y": 340.07293701171875,
+          "width": 678,
+          "height": 131.33334350585938,
+          "bottom": 471.4062805175781
+        },
+        "composer": {
+          "x": 62,
+          "y": 332.07293701171875,
+          "width": 738,
+          "height": 181.92709350585938,
+          "bottom": 514.0000305175781
+        },
+        "chat": {
+          "x": 62,
+          "y": 92,
+          "width": 738,
+          "height": 422,
+          "bottom": 514
+        },
+        "hero": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "scroll": {
+          "x": 62,
+          "y": 92,
+          "width": 738,
+          "height": 240.0729217529297,
+          "bottom": 332.0729217529297
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "narrow window session overlay can be hidden and restored",
+      "status": "passed"
+    },
+    {
+      "name": "no renderer errors",
+      "status": "passed"
+    }
+  ],
+  "errors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "检查界面",
+        "src": "pc"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "错误场景",
+        "src": "pc"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "",
+        "img": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQYlWM4MS3lPwAGrgLCpMGNwgAAAABJRU5ErkJggg==",
+        "src": "pc"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/models",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/voices",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null
+    }
+  ]
+}

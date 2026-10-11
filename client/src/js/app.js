@@ -65,6 +65,7 @@
   async function go(id) {
     const page = PAGES.find((p) => p.id === id) || PAGES[0];
     state.page = page.id;
+    document.body.dataset.vigilPage = page.id;
     if (gnavEl) gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.classList.toggle('on', b.dataset.page === page.id));
     // 每次切页把三块都清干净，页面自己负责填
@@ -81,6 +82,7 @@
     const ctx = {
       view: viewEl, topbar: topbarEl, panel: panelEl,
       src: state.src, refresh: () => go(page.id),
+      navigate: go,
     };
     try {
       await page.render(ctx);
@@ -91,7 +93,7 @@
     }
     // § 章节编号：页号 = 导航序号（01–08）。子页换名不动编号，
     // 所以渲染完再补；子页只改 h1 文本，编号插在最前不受影响。
-    if (topbarEl && !topbarEl.querySelector('.tnum')) {
+    if (page.id !== 'chat' && topbarEl && !topbarEl.querySelector('.tnum')) {
       topbarEl.insertAdjacentHTML('afterbegin',
         '<span class="tnum mono">§ ' + String(PAGES.indexOf(page) + 1).padStart(2, '0') + '</span>');
     }

@@ -30,28 +30,14 @@
       '<div class="sp"></div>' + (right || '');
   }
 
-  // ── 工作台问好：按时段变化 ──────────────────────────────────
-  // 5-11 早上好 · 11-13 中午好 · 13-18 下午好 · 18-23 晚上好 · 其余 夜深了
-  // big=空会话（Hermes 式大字头版）；否则压缩成消息流上方的一条细横幅。
-  function heroHtml(big) {
-    const now = new Date();
-    const h = now.getHours();
-    const hi = h < 5 ? '夜深了。' : h < 11 ? '早上好。' : h < 13 ? '中午好。' : h < 18 ? '下午好。' : '晚上好。';
-    const wd = '日一二三四五六'[now.getDay()];
-    const pad = (n) => String(n).padStart(2, '0');
-    const ds = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
-    const ts = pad(now.getHours()) + ':' + pad(now.getMinutes());
-    const sub = '<span class="mono">' + ds + '</span><span>·</span><span>周' + wd + '</span><span>·</span><span class="mono">' + ts + '</span>';
-    if (!big) return '<div class="hero slim"><div class="display slim">' + hi + '</div>' +
-      '<div class="hero-sub">' + sub + '</div></div>';
-    return '<div class="hero">' +
-      '<div class="hero-meta mono"><div class="no">NO. 001</div>工作台</div>' +
-      '<div class="hero-main"><div class="display">' + hi + '<small>接下来做什么？</small></div>' +
-      '<div class="hero-sub">' + sub + '</div>' +
+  function heroHtml() {
+    return '<div class="welcome-brand" aria-hidden="true">V</div>' +
+      '<h1>有什么可以帮你？</h1>' +
+      '<p>开始对话，或交给 Vigil 一个任务</p>' +
       '<div class="hero-hints">' +
       ['帮我看看今天的日程', '把刚才那段整理成清单', '看看下载文件夹里有什么']
         .map((x) => '<button class="chip" data-hint="' + x + '">' + esc(x) + '</button>').join('') +
-      '</div></div></div>';
+      '</div>';
   }
 
   /** 左栏：分组标题 + 列表项 */
@@ -74,23 +60,22 @@
     const view = ctx.view, panel = ctx.panel, topbar = ctx.topbar;
     // 聊天页不用 .scroll（那是给卡片列表用的），换成撑满整块的 .chatwrap
     view.className = 'chatwrap';
-    topbar.className = 'topbar center';
+    topbar.className = 'topbar chat-topbar';
     const st = pick(await get('/api/stats'));
-    const model = st.model || '—';
+    const model = (typeof st.model === 'object' && st.model ? st.model.id || st.model.name : st.model) || '—';
     topbar.innerHTML =
-      // 左上是空的，中间也不摆人设 —— 控制台是干活的工具，不扮演角色
-      '<div></div>' +
-      '<div class="tc">' + tag(state.conn.ok ? 'ok' : 'err', state.conn.ok ? '在线' : '离线') +
-      tag('neutral', model) + '</div>' +
+      '<button class="ibtn" id="sessionsBtn" title="折叠或展开会话列表" aria-label="会话列表" aria-controls="panel">' + icon('sidebar', 'sm') + '</button>' +
+      '<span class="chat-title">工作台</span><span class="chat-model" title="' + esc(model) + '">' + esc(model) + '</span>' +
+      '<div class="sp"></div><span class="chat-connection"><span class="led ' + (state.conn.ok ? 'on' : '') + '"></span>' + (state.conn.ok ? 'Agent 已连接' : 'Agent 未连接') + '</span>' +
       '<div class="tr">' +
-      '<button class="btn" id="rpBtn">上下文</button>' +
+      '<button class="btn" id="rpBtn" aria-expanded="false" aria-controls="rp">上下文</button>' +
       '<button class="ibtn" id="clearBtn" title="清空本机（pc）会话历史">' + icon('dots', 'sm') + '</button>' +
       '</div>';
 
     // 左栏照会话列表的样子来：顶部一个动作项，下面按天分组的真实记录，
     // 点一条跳到消息流里那句。不放说明文字 —— 面板里摆的都是能点的东西。
     panel.innerHTML =
-      '<div class="phead"><h2>工作台</h2></div>' +
+      '<div class="phead"><h2>会话</h2><button class="ibtn" id="newTopicBtn" title="新话题：重置上下文，保留记录" aria-label="新话题">' + icon('plus', 'sm') + '</button></div>' +
       '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>';
     const sessList = panel.querySelector('#sessList');
 
@@ -150,65 +135,96 @@
         }
         return String(rows[s.startIdx].m.text || '').replace(/\s+/g, ' ').trim();
       };
-      const parts = [
-        '<div class="li" data-newtopic>' +
-        '<span class="ic">' + icon('plus', 'sm') + '</span>' +
-        '<div class="tx"><b>新话题</b><span>清掉当前上下文 · 聊天记录保留</span></div></div>',
-      ];
+      const parts = [];
       order.slice().reverse().forEach((s) => {
         const title = titleOf(s) || '（空）';
         parts.push(
-          '<div class="li" data-goto="' + s.startIdx + '"' +
+          '<button class="li' + (s === order[order.length - 1] ? ' on' : '') + '" data-goto="' + s.startIdx + '"' +
           ' title="' + esc(s.n + ' 条 · ' + fmtTime(s.firstTs, 'time') + ' – ' + fmtTime(s.lastTs, 'time')) + '">' +
           '<span class="ic">' + icon('chat', 'sm') + '</span>' +
           '<div class="tx"><b>' + esc(title.slice(0, 26)) + '</b>' +
           '<span>' + esc(relative(s.lastTs)) + ' · ' + s.n + ' 条</span></div>' +
-          '<span class="meta">' + esc(fmtTime(s.lastTs, 'time')) + '</span></div>');
+          '</button>');
       });
       sessList.innerHTML = parts.join('');
 
       sessList.querySelectorAll('[data-goto]').forEach((n) => n.addEventListener('click', () => {
         const node = msgs.children[Number(n.dataset.goto)];
         if (!node) return;
+        sessList.querySelectorAll('[data-goto]').forEach((row) => row.classList.toggle('on', row === n));
         node.scrollIntoView({ block: 'center', behavior: 'smooth' });
         node.classList.add('flash');
         setTimeout(() => node.classList.remove('flash'), 1400);
       }));
-      sessList.querySelector('[data-newtopic]').addEventListener('click', async () => {
+    }
+    panel.querySelector('#newTopicBtn').addEventListener('click', async () => {
         if (!confirm('重开一段话题？当前上下文清掉，聊天记录保留。')) return;
         const r = pick(await post('/api/reset', {}));
         if (r.ok) { const a = loadMarkers(); a.push(Date.now()); saveMarkers(a); }
         toast(r.ok ? '新话题开始了' : '重置失败：' + (r._err || ''));
         if (r.ok) setTimeout(() => loadMsgs(true), 200);
-      });
-    }
+    });
 
     view.innerHTML =
-      '<div class="split">' +
+      '<div class="split no-right">' +
       '  <div class="chat">' +
       '    <div class="hero" id="hero" hidden></div>' +
-      '    <div class="msgs" id="msgs"></div>' +
+      '    <div class="msgs" id="msgs" role="log" aria-label="聊天记录"></div>' +
       '    <div class="composer">' +
       '      <div class="localpop" id="localPop" hidden></div>' +
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
-      '      <div class="chead"><span class="cdot"></span><b>新消息</b><span class="sp"></span><span class="ccount mono" id="ccount">0 字</span></div>' +
-      '      <div class="cbox"><textarea id="ta" placeholder="说点什么，或交代一件要做的事…"></textarea>' +
+      '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="给 Vigil 发送消息…"></textarea>' +
       '        <div class="cbar">' +
       '          <button class="ibtn" id="localBtn" title="本地操控：权限模式 · 白名单目录">' + icon('shield', 'sm') + '</button>' +
       '          <button class="ibtn" id="clipBtn" title="附一张图（她能看见）">' + icon('clip', 'sm') + '</button>' +
+      '          <button class="btn composer-model" id="modelBtn" title="打开现有模型与服务商设置">' + esc(model) + ' ▾</button>' +
       '          <div class="sp"></div>' +
       '          <span class="mono hintline">Enter 发送 · Shift+Enter 换行</span>' +
-      '          <button class="btn fill" id="sendBtn">' + icon('send', 'sm') + '发送</button>' +
+      '          <button class="btn fill" id="sendBtn" disabled aria-label="发送消息" title="发送消息">' + icon('arrow-up', 'sm') + '</button>' +
       '        </div></div>' +
-      '    </div></div>' +
+      '    </div><div class="composer-caption"><span>Vigil · AI Agent Workspace</span><span class="ccount" id="ccount">0 字</span></div></div>' +
       '  </div>' +
-      '  <aside class="rp" id="rp"></aside>' +
+      '  <aside class="rp no" id="rp" aria-label="上下文与统计"></aside>' +
       '</div>';
 
     const msgs = view.querySelector('#msgs');
     const heroEl = view.querySelector('#hero');
     const rp = view.querySelector('#rp');
+    const chat = view.querySelector('.chat');
+    const sessionsBtn = topbar.querySelector('#sessionsBtn');
+    let sessionsCollapsed = false;
+    let narrowSessionsOpen = false;
+    try { sessionsCollapsed = localStorage.getItem('vigil.chat.sessionsCollapsed') === 'true'; } catch (_) {}
+    function applySessions() {
+      const collapsed = window.matchMedia('(max-width:860px)').matches ? !narrowSessionsOpen : sessionsCollapsed;
+      document.body.classList.toggle('chat-sessions-collapsed', collapsed);
+      sessionsBtn.setAttribute('aria-expanded', String(!collapsed));
+    }
+    applySessions();
+    sessionsBtn.addEventListener('click', () => {
+      if (window.matchMedia('(max-width:860px)').matches) narrowSessionsOpen = !narrowSessionsOpen;
+      else {
+        sessionsCollapsed = !sessionsCollapsed;
+        try { localStorage.setItem('vigil.chat.sessionsCollapsed', String(sessionsCollapsed)); } catch (_) {}
+      }
+      applySessions();
+    });
+    view.querySelector('#modelBtn').addEventListener('click', () => {
+      if (busy) return;
+      state.settingsSub = 'model';
+      ctx.navigate && ctx.navigate('system');
+    });
+    // Delegate copy actions so history reloads and completed streams share one binding.
+    msgs.addEventListener('click', async (e) => {
+      const button = e.target.closest('[data-copy-code]');
+      if (!button) return;
+      try {
+        await navigator.clipboard.writeText(button.closest('.codeblock').querySelector('code').textContent);
+        button.textContent = '已复制';
+        setTimeout(() => { if (button.isConnected) button.textContent = '复制'; }, 1500);
+      } catch (_) { toast('复制失败，请选中代码手动复制'); }
+    });
 
     const cIn = Number(st.tok_in) || 0, cOut = Number(st.tok_out) || 0;
     rp.innerHTML =
@@ -253,6 +269,21 @@
     let busy = false;
     // 附件：一张图，随下一条消息发出去（她能"看见"——视觉模型先描述成文字再进上下文）
     let imgB64 = '';
+    function updateComposer() {
+      const ta = view.querySelector('#ta');
+      const maxHeight = parseFloat(getComputedStyle(ta).maxHeight) || 180;
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(maxHeight, Math.max(56, ta.scrollHeight)) + 'px';
+      ta.style.overflowY = ta.scrollHeight > maxHeight ? 'auto' : 'hidden';
+      view.querySelector('#ccount').textContent = ta.value.length + ' 字';
+      const button = view.querySelector('#sendBtn');
+      button.disabled = busy || (!ta.value.trim() && !imgB64);
+      button.classList.toggle('is-sending', busy);
+      button.setAttribute('aria-label', busy ? '正在发送' : '发送消息');
+      button.setAttribute('aria-busy', String(busy));
+      button.title = busy ? '正在发送…' : '发送消息';
+      view.querySelector('#modelBtn').disabled = busy;
+    }
     const attachBox = view.querySelector('#attach');
     view.querySelector('#clipBtn').addEventListener('click', () => {
       const inp = document.createElement('input');
@@ -264,6 +295,7 @@
         const r = new FileReader();
         r.onload = () => {
           imgB64 = String(r.result).split(',', 2)[1] || '';
+          updateComposer();
           attachBox.hidden = false;
           attachBox.innerHTML =
             '<img class="athumb" src="' + r.result + '" alt="">' +
@@ -271,6 +303,7 @@
             '<button class="ibtn" id="atClr" title="不发了">' + icon('x', 'sm') + '</button>';
           attachBox.querySelector('#atClr').addEventListener('click', () => {
             imgB64 = '';
+            updateComposer();
             attachBox.hidden = true;
             attachBox.innerHTML = '';
           });
@@ -309,9 +342,10 @@
       if (!force && items.length === lastCount) return;
       lastCount = items.length;
       if (!items.length) {
-        // 空会话：Hermes 式大字问好 + 快捷开场，点一句填进输入框
+        // Empty history: centered welcome and the existing quick questions.
         heroEl.hidden = false;
-        heroEl.innerHTML = heroHtml(true);
+        chat.classList.add('is-empty');
+        heroEl.innerHTML = heroHtml();
         heroEl.querySelectorAll('[data-hint]').forEach((b) => b.addEventListener('click', () => {
           const ta = view.querySelector('#ta');
           if (ta) { ta.value = b.dataset.hint; ta.dispatchEvent(new Event('input')); ta.focus(); }
@@ -321,12 +355,12 @@
         return;
       }
       drawSessions(items);
-      heroEl.hidden = false;
-      heroEl.innerHTML = heroHtml(false);   // 有历史：压缩成细横幅，时段问好仍然可见
+      heroEl.hidden = true;
+      chat.classList.remove('is-empty');
       msgs.innerHTML = items.map((m) => {
         const mine = ['me', 'user', 'self'].includes(String(m.role || '').toLowerCase());
         // 用户消息纯文本（esc），AI 消息用 Markdown 渲染
-        const t = mine ? esc(m.text || '') : U.md(m.text || '');
+        const t = mine ? esc(m.text || '') : U.md(m.text || '', { codeActions: true });
         // 不画头像、不写名字：这是工具界面，不是"跟谁对话"。
         // 她说的在左、你说的在右，不用再靠头像区分。
         if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + '</div></div></div>';
@@ -347,6 +381,9 @@
       attachBox.innerHTML = '';
       ta.value = '';
       busy = true;
+      heroEl.hidden = true;
+      chat.classList.remove('is-empty');
+      updateComposer();
       const btn = view.querySelector('#sendBtn');
       btn.disabled = true;
 
@@ -429,7 +466,7 @@
           if (thinkDirty) { thinkInner.textContent = thinkBuf; thinkDirty = false; }
           if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
           // 正文渲染成 Markdown
-          textEl.innerHTML = U.md(textBuf || evt.text || '');
+          textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true });
           // 思考过程如果为空，隐藏整个思考块
           if (!thinkBuf.trim()) {
             const tb = msgs.querySelector('#' + turnId + ' .think-block');
@@ -440,13 +477,13 @@
           }
           statusEl.textContent = fmtTime(Date.now(), 'time');
           busy = false;
-          btn.disabled = false;
+          updateComposer();
         } else if (evt.type === 'error') {
           streamDone = true;
-          textEl.innerHTML = '<span style="color:var(--danger)">出错了：' + esc(evt.msg || '未知错误') + '</span>';
+          textEl.innerHTML = '<span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '</span>';
           statusEl.textContent = '失败';
           busy = false;
-          btn.disabled = false;
+          updateComposer();
         }
       };
 
@@ -470,13 +507,13 @@
               if (!streamDone) {
                 console.warn('[stream] no done event received, textBuf length:', textBuf.length);
                 if (textBuf) {
-                  textEl.innerHTML = U.md(textBuf);
+                  textEl.innerHTML = U.md(textBuf, { codeActions: true });
                   statusEl.textContent = fmtTime(Date.now(), 'time');
                 } else {
                   statusEl.textContent = '无响应';
                 }
                 busy = false;
-                btn.disabled = false;
+                updateComposer();
                 streamDone = true;
               }
             }, 2000);
@@ -489,41 +526,39 @@
             : { text: text, src: 'pc' }));
           if (!r.ok) throw new Error(r._err || '发送失败');
           textBuf = r.reply || '';
-          textEl.innerHTML = U.md(textBuf);
+          textEl.innerHTML = U.md(textBuf, { codeActions: true });
           statusEl.textContent = fmtTime(Date.now(), 'time');
           busy = false;
-          btn.disabled = false;
+          updateComposer();
         }
       } catch (e) {
         console.error('[stream] error:', e);
         streamDone = true;
-        textEl.innerHTML = '<span style="color:var(--danger)">出错了：' + esc(String(e.message || e)) + '</span>';
+        textEl.innerHTML = '<span style="color:var(--err)">出错了：' + esc(String(e.message || e)) + '</span>';
         statusEl.textContent = '失败';
         busy = false;
-        btn.disabled = false;
+        updateComposer();
       }
     }
 
     view.querySelector('#sendBtn').addEventListener('click', send);
     view.querySelector('#ta').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         send();
       }
     });
-    // 任务卡头部的实时字数（Hermes 式 "0 字"）
     const taEl = view.querySelector('#ta');
-    const ccount = view.querySelector('#ccount');
-    if (taEl && ccount) {
-      const updCount = () => { ccount.textContent = (taEl.value || '').length + ' 字'; };
-      taEl.addEventListener('input', updCount);
-      updCount();
-    }
+    taEl.addEventListener('input', updateComposer);
+    const resizeComposer = () => { if (taEl.isConnected) { updateComposer(); applySessions(); } };
+    window.addEventListener('resize', resizeComposer);
+    updateComposer();
     // 🔴 这两个按钮在**顶栏**里，不在 view 里 —— 用 view.querySelector 会拿到 null，
     // 报的错又是异步的（不进 app.js 那个 try），表现就是"消息区永远空白"。
     ctx.topbar.querySelector('#rpBtn').addEventListener('click', () => {
       view.querySelector('.rp').classList.toggle('no');
       view.querySelector('.split').classList.toggle('no-right');
+      ctx.topbar.querySelector('#rpBtn').setAttribute('aria-expanded', String(!rp.classList.contains('no')));
     });
     ctx.topbar.querySelector('#clearBtn').addEventListener('click', () => {
       if (confirm('清空当前渠道的聊天历史？不可恢复。')) {
@@ -708,7 +743,10 @@
       pop.hidden = true;
     };
     document.addEventListener('pointerdown', closePop);
-    const offDoc = () => document.removeEventListener('pointerdown', closePop);
+    const offDoc = () => {
+      document.removeEventListener('pointerdown', closePop);
+      window.removeEventListener('resize', resizeComposer);
+    };
     localBtn.addEventListener('click', async () => {
       if (pop.hidden) { pop.hidden = false; await drawLocalPop(); }
       else pop.hidden = true;

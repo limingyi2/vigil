@@ -14,25 +14,44 @@ body.vwp-active {
 body.vwp-active > .app { position:relative; z-index:2; background:transparent; }
 body.vwp-active .body,body.vwp-active .main,body.vwp-active .scroll { background:transparent; background-image:none; }
 body.vwp-active .titlebar,body.vwp-active .gnav,body.vwp-active .panel,body.vwp-active .topbar,
-body.vwp-active .statusbar,body.vwp-active .rp,body.vwp-active .composer {
+body.vwp-active .statusbar {
   background:rgba(var(--vwp-rgb,255,255,255),var(--vwp-alpha,.55));
   backdrop-filter:blur(min(12px,var(--vwp-blur,10px))) saturate(118%);
   border-color:rgba(255,255,255,.2);
 }
-body.vwp-active .card,body.vwp-active .turn .txt { background:rgba(var(--vwp-rgb,18,20,24),.88); border-color:rgba(255,255,255,.18); }
-body.vwp-active .rp { border-left-color:rgba(255,255,255,.2); }
-body.vwp-active .rp .card { background:rgba(var(--vwp-rgb,18,20,24),.88); }
-/* 空会话问候只需要包住内容；默认块级宽度会把整列聊天区染成一整块玻璃。 */
-body.vwp-active .hero:not(.slim) { align-self:flex-start; width:fit-content; max-width:calc(100% - 40px); margin:22px 20px 12px; padding:30px 32px; border:1px solid rgba(255,255,255,.18); border-radius:12px; background:rgba(var(--vwp-rgb,18,20,24),.76); backdrop-filter:blur(min(12px,var(--vwp-blur,10px))); }
-body.vwp-active .composer { width:min(calc(100% - 28px),1080px); margin:0 auto 12px; padding:8px 10px 10px; border:1px solid rgba(255,255,255,.2); border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,.22); }
-body.vwp-active .composer::before { display:none; }
-body.vwp-active .composer .col { padding:0 10px; }
-body.vwp-active .composer .chead { color:var(--text); background:transparent; border-color:rgba(255,255,255,.2); }
-body.vwp-active .composer .cbox { background:transparent; border-color:rgba(255,255,255,.2); }
-body.vwp-active .composer .cbar { border-color:rgba(255,255,255,.16); }
-body.vwp-active .composer textarea { color:var(--text); }
-body.vwp-active .composer textarea::placeholder { color:var(--text-3); }
-body.vwp-active .composer .hintline,body.vwp-active .composer .ibtn { color:var(--text-2); }
+body.vwp-active .card { background:rgba(var(--vwp-rgb,18,20,24),.88); border-color:rgba(255,255,255,.18); }
+/* Chat materials: the iframe renderer remains untouched. Opaque tint provides
+   contrast even when Chromium cannot sample an iframe via backdrop-filter. */
+body.vwp-active[data-vigil-page="chat"] {
+  --chat-bg:transparent; --chat-sidebar:rgba(20,24,30,.88);
+  --chat-surface:rgba(24,29,36,.9); --chat-user:rgba(43,52,64,.94);
+  --chat-code:rgba(18,23,30,.96); --chat-text:#f2f4f8;
+  --chat-muted:#c3cbd6; --chat-line:rgba(226,233,245,.16);
+  --chat-accent:#b5cbe7; --chat-selected:rgba(135,168,212,.18);
+  --chat-hover:rgba(197,216,242,.1); --chat-send:#bfd3eb; --chat-on-send:#1c2938;
+}
+body.vwp-active[data-vigil-page="chat"] .titlebar,
+body.vwp-active[data-vigil-page="chat"] .gnav,
+body.vwp-active[data-vigil-page="chat"] .panel,
+body.vwp-active[data-vigil-page="chat"] .statusbar {
+  background:var(--chat-sidebar); backdrop-filter:none;
+}
+body.vwp-active[data-vigil-page="chat"] .chat-topbar { background:rgba(20,24,30,.8); backdrop-filter:none; }
+body.vwp-active[data-vigil-page="chat"] .hero {
+  background:none; border:0; box-shadow:none; backdrop-filter:none;
+  color:#fff; text-shadow:0 1px 5px rgba(0,0,0,.85);
+}
+body.vwp-active[data-vigil-page="chat"] .hero p,
+body.vwp-active[data-vigil-page="chat"] .hero-hints .chip { color:#f2f4f8; }
+body.vwp-active[data-vigil-page="chat"] .hero-hints .chip { background:rgba(20,24,30,.75); text-shadow:none; }
+body.vwp-active[data-vigil-page="chat"] .welcome-brand { background:none; }
+body.vwp-active[data-vigil-page="chat"] .turn:not(.me) .txt { background:var(--chat-surface); border-radius:12px; padding:16px 20px; }
+body.vwp-active[data-vigil-page="chat"] .rp .card { background:transparent; }
+body.vwp-active[data-vigil-page="chat"] .cbox {
+  background:rgba(24,29,36,max(.88,var(--vwp-alpha,.78)));
+  backdrop-filter:blur(min(8px,var(--vwp-blur,8px)));
+}
+body.vwp-active[data-vigil-page="chat"] .composer-caption { color:#eef2f8; text-shadow:0 1px 3px #141820; }
 .vwp-shell { max-width:1120px; margin:0 auto; padding:10px 0 30px; }
 .vwp-header { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:20px; }
 .vwp-header h2 { font-size:26px; letter-spacing:-.6px; margin:0 0 6px; }
