@@ -20,11 +20,8 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-// 默认软件渲染兼容此前出现过崩溃的 AMD 驱动；保留 SwiftShader WebGL，
-// 让 WebWallGL 场景引擎和无硬件 GPU 的机器都能工作。
-app.disableHardwareAcceleration();
-// WebWallGL requires WebGL. Keep software rendering for the affected AMD driver,
-// but leave the GPU service alive so Chromium can provide its SwiftShader context.
+// Keep Chromium's hardware acceleration enabled so WebGL wallpapers and glass
+// surfaces use the selected GPU. SwiftShader remains available as a fallback.
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
 const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App 直连换这个地址

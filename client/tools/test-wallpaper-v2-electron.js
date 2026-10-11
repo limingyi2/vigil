@@ -9,7 +9,7 @@ const assert = require('assert/strict');
 const { spawnSync } = require('child_process');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-wallpaper-v2-'));
 app.setPath('userData', path.join(tmp, 'electron'));
-app.disableHardwareAcceleration();
+if(process.env.VIGIL_TEST_SOFTWARE_RENDERER!=='0')app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 const steam = path.join(tmp, 'steam');
 process.env.DSH_WE_STEAM_ROOT = steam;
@@ -57,7 +57,7 @@ async function main() {
     return {ok:true,json:{}};
   });
   fs.writeFileSync(path.join(tmp,'preload.js'), `const{contextBridge,ipcRenderer}=require('electron');const noop=()=>{};contextBridge.exposeInMainWorld('vigil',{
-    api:(m,p)=>ipcRenderer.invoke('fixture:api',m,p),appVersion:async()=>'0.1.5',
+    api:(m,p)=>ipcRenderer.invoke('fixture:api',m,p),appVersion:async()=>'0.1.6',
     wallpaper:{request:(m,p,b)=>ipcRenderer.invoke('fixture:wallpaper',m,p,b),importFile:async()=>({ok:true,canceled:true}),directory:async()=>({ok:true,canceled:true})},
     cfg:{get:async()=>({wizard_done:true}),set:async()=>({})},plugins:{load:async()=>({ok:true,version:Date.now()})},
     win:{minimize:noop,maximize:noop,close:noop,onState:noop},local:{onConfirm:noop,onStep:noop,onDone:noop},
@@ -68,6 +68,8 @@ async function main() {
   win = new BrowserWindow({show:false,width:1200,height:900,webPreferences:{preload:path.join(tmp,'preload.js'),sandbox:true,contextIsolation:true,offscreen:true,backgroundThrottling:false}});
   win.webContents.on('console-message',(_,level,message)=>{if(level>=2) console.log('[renderer]',message.slice(0,350));});
   await win.loadFile(path.join(root,'src/index.html'));
+  const renderer=await win.webContents.executeJavaScript(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'WebGL unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`);
+  console.log('[gpu] WebGL renderer='+renderer);
   const ev = s => win.webContents.executeJavaScript(s);
   async function until(s, ms=15000) {
     for(let i=0;i<ms/100;i++){if(await ev('Boolean(' + s + ')'))return;await wait(100)}
@@ -85,13 +87,13 @@ async function main() {
   assert.equal(await ev(`document.getElementById('vwp-enabled').checked`),true);
   await ev(`document.querySelector('[data-tab="appearance"]').click();const slider=document.querySelector('[data-range="glassAlpha"]');slider.value='41';slider.dispatchEvent(new Event('input'));`);
   await wait(400);
-  assert.equal((await host.request('GET','/settings')).data.settings.glassAlpha,41);
+  assert.equal((await host.request('GET','/settings')).data.settings.glassAlpha,70);
   await ev(`document.querySelector('[data-tab="library"]').click()`);
   assert.equal(await ev(`document.querySelector('.vwp-stage').getBoundingClientRect().width===innerWidth && document.querySelector('.vwp-stage').getBoundingClientRect().height===innerHeight`),true);
   await wait(250);
   const shots=path.resolve(__dirname,'../_shots');
   fs.mkdirSync(shots,{recursive:true});
-  fs.writeFileSync(path.join(shots,'wallpaper-v2-code13.png'),(await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(shots,'wallpaper-v2-code14.png'),(await win.webContents.capturePage()).toPNG());
   assert.equal((await host.request('GET','/settings')).data.settings.id,'990002');
   const epoch = await ev(`performance.timeOrigin`);
   await wait(11500); // The old timestamp-based backend reload happens at ten seconds.
@@ -99,11 +101,17 @@ async function main() {
   assert.equal(await ev(`document.body.classList.contains('vwp-active')`),true);
   await ev(`document.querySelector('[data-page="chat"]').click()`);
   assert.equal(await ev(`document.body.classList.contains('vwp-active')`),true);
+  const chatGlass = await ev(`(()=>{const rgb=e=>getComputedStyle(e).backgroundColor;return {right:rgb(document.querySelector('.rp')),rightCard:rgb(document.querySelector('.rp .card')),composer:rgb(document.querySelector('.composer')),input:rgb(document.querySelector('.cbox'))}})()`);
+  assert.notEqual(chatGlass.right,'rgb(250, 250, 247)');
+  assert.notEqual(chatGlass.rightCard,'rgb(255, 255, 255)');
+  assert.notEqual(chatGlass.composer,'rgba(0, 0, 0, 0)');
+  assert.notEqual(chatGlass.input,'rgb(255, 255, 255)');
+  fs.writeFileSync(path.join(shots,'wallpaper-chat-code14.png'),(await win.webContents.capturePage()).toPNG());
   await win.reload();
   await until(`document.querySelector('.vwp-stage iframe')`);
   await ev(`document.querySelector('[data-page="wallpaper"]').click()`);
   await until(`document.querySelector('[data-status]')?.textContent==='网页壁纸运行中'`,25000);
-  assert.equal(await ev(`document.documentElement.style.getPropertyValue('--vwp-alpha')`),'0.41');
+  assert.equal(await ev(`document.documentElement.style.getPropertyValue('--vwp-alpha')`),'0.7');
   await ev(`document.querySelector('[data-page="wallpaper"]').click()`);
   await until(`document.querySelector('[data-id="990002"]')`);
   await ev(`document.querySelector('[data-id="990003"]').click()`);

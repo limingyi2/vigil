@@ -1,7 +1,7 @@
 // Vigil UI adapter; actual Wallpaper Engine host and WebWallGL are vendored upstream.
 (function () {
   'use strict';
-  const defaults = { settingsVersion: 6, id: '', scrim: .18, blur: 18, glassAlpha: 52, wallpaperOpacity: 0,
+  const defaults = { settingsVersion: 7, id: '', scrim: .24, blur: 10, glassAlpha: 78, wallpaperOpacity: 0,
     wallpaperBlur: 0, backgroundBrightness: 100, backgroundContrast: 100, backgroundSaturate: 100,
     objectFit: 'cover', sceneLiveFps: 30, videoVolume: .5, videoAudioEnabled: false,
     playbackRate: 1, pauseOnHidden: true, pauseOnBlur: false, flip: false };
@@ -33,10 +33,9 @@
     if (key === 'rotationEnabled' || key === 'rotationInterval') configureRotation();
   }
   function applyStyles() {
-    const dark = document.documentElement.dataset.theme === 'dark';
     const style = document.documentElement.style;
-    style.setProperty('--vwp-rgb', dark ? '22,25,32' : '255,255,255');
-    style.setProperty('--vwp-edge', dark ? '255,255,255' : '0,0,0');
+    style.setProperty('--vwp-rgb', '18,20,24');
+    style.setProperty('--vwp-edge', '255,255,255');
     style.setProperty('--vwp-alpha', settings.glassAlpha / 100);
     style.setProperty('--vwp-blur', settings.blur + 'px');
     if (!media) return;
@@ -49,7 +48,7 @@
     media.style.filter = effects.length ? effects.join(' ') : 'none';
     media.style.transform = settings.flip ? 'scaleX(-1)' : '';
     media.querySelectorAll('img,video').forEach(e => e.style.objectFit = settings.objectFit);
-    scrim.style.background = `rgba(${dark ? '0,0,0' : '255,255,255'},${settings.scrim})`;
+    scrim.style.background = `rgba(0,0,0,${settings.scrim})`;
   }
   function shouldPause() { return paused || settings.pauseOnHidden && document.hidden || settings.pauseOnBlur && !document.hasFocus(); }
   function controls(force) {
@@ -159,7 +158,7 @@
     if (!view?.isConnected) return;
     const w = inventory.wallpapers.find(x => x.id === settings.id);
     const body = tab === 'library' ? `<div class="vwp-toolbar"><input type="search" id="vwp-search" aria-label="搜索壁纸" placeholder="搜索你的壁纸…" value="${esc(search)}"><select id="vwp-filter" aria-label="壁纸类型">${[['all', '全部类型'], ['scene', '实时场景'], ['web', '网页'], ['image', '图片']].map(([v, n]) => `<option value="${v}" ${filter === v ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="vwp-button" id="vwp-refresh">刷新</button><button class="vwp-button primary" id="vwp-import">导入图片</button></div><div class="vwp-grid" id="vwp-grid"></div>`
-      : tab === 'appearance' ? row('glassAlpha', '面板不透明度', 10, 95, 1, '%', '调低后让侧栏、标题栏和卡片呈现玻璃质感') + row('blur', '玻璃雾化', 0, 60, 1, 'px') + row('scrim', '主题遮罩', 0, 1, .01, '%') + row('wallpaperOpacity', '壁纸透明度', 0, 90, 1, '%') + row('wallpaperBlur', '壁纸模糊', 0, 60, 1, 'px') + row('backgroundBrightness', '亮度', 40, 160, 1, '%') + row('backgroundContrast', '对比度', 40, 200, 1, '%') + row('backgroundSaturate', '饱和度', 0, 200, 1, '%')
+      : tab === 'appearance' ? row('glassAlpha', '面板不透明度', 70, 95, 1, '%', '壁纸切换时保持文字清晰，壁纸仍会从面板后透出') + row('blur', '玻璃雾化', 0, 16, 1, 'px') + row('scrim', '暗色遮罩', 0, 1, .01, '%') + row('wallpaperOpacity', '壁纸透明度', 0, 90, 1, '%') + row('wallpaperBlur', '壁纸模糊', 0, 60, 1, 'px') + row('backgroundBrightness', '亮度', 40, 160, 1, '%') + row('backgroundContrast', '对比度', 40, 200, 1, '%') + row('backgroundSaturate', '饱和度', 0, 200, 1, '%')
       : tab === 'playback' ? check('videoAudioEnabled', '启用壁纸声音') + row('videoVolume', '音量', 0, 1, .01, '%') + check('flip', '水平翻转') + check('pauseOnHidden', '最小化时暂停', '暂停播放，不关闭壁纸') + check('pauseOnBlur', '失去焦点时暂停') + check('rotationEnabled', '自动轮播') + row('rotationInterval', '轮播间隔', 10, 300, 10, 's') + `<div class="vwp-row"><label for="vwp-fit">填充方式</label><select id="vwp-fit">${[['cover','填充（裁剪）'],['contain','适应（完整显示）'],['fill','拉伸']].map(([v,n])=>`<option value="${v}" ${settings.objectFit === v ? 'selected' : ''}>${n}</option>`).join('')}</select></div><div class="vwp-row"><label for="vwp-fps">场景渲染帧率</label><select id="vwp-fps">${[15,30,60].map(v=>`<option ${settings.sceneLiveFps === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>`
       : tab === 'system' ? `<h3>本机壁纸库</h3><p class="vwp-note">自动发现 Steam 的 Wallpaper Engine 工程。也可选择包含壁纸工程子目录的文件夹；每个工程应含 project.json 和 scene.pkg / index.html / 图片文件。独立视频壁纸已隐藏。</p><p class="vwp-note">Steam：${esc(inventory.installDir || '未发现安装，可使用自定义目录')}<br>自定义目录：${esc(inventory.uploadDir || '')}</p><button class="vwp-button" id="vwp-dir">选择工程目录</button><p class="vwp-note">配置存储在客户端用户数据目录，与后端连接地址和端口无关。切换页面、断开后端、刷新窗口均保留选择。</p>`
       : `<h3>Wallpaper Engine · Vigil</h3><p class="vwp-note">已接入 dsh-wallpaper-engine 1.3.1 的本机宿主与 WebWallGL 2.1.0 场景渲染器。独立视频壁纸已隐藏；网页通过严格沙箱与 WE API 加载，场景实时 WebGL 渲染。</p><p class="vwp-note">Vigil 提供独立的设置界面。上游的吉祥物、字体集、系统音频与 Now Playing 等扩展尚未接入。Application 类型不执行。</p><button class="vwp-button" id="vwp-upstream">查看上游项目</button>`;
@@ -218,9 +217,15 @@
     for (const event of ['pointermove','pointerdown','pointerup']) window.addEventListener(event, pointer, { passive:true });
     started = (async () => { try {
       const saved = await api('GET', '/settings'); settings = { ...defaults, ...(saved.settings || {}) };
+      const oldAlpha = Number(settings.glassAlpha), oldBlur = Number(settings.blur);
+      settings.glassAlpha = Math.max(70, Math.min(95, Number.isFinite(oldAlpha) ? oldAlpha : defaults.glassAlpha));
+      settings.blur = Math.max(0, Math.min(16, Number.isFinite(oldBlur) ? oldBlur : defaults.blur));
+      const migratedAppearance = settings.glassAlpha !== oldAlpha || settings.blur !== oldBlur || settings.settingsVersion !== defaults.settingsVersion;
+      settings.settingsVersion = defaults.settingsVersion;
       settings.rotationInterval = settings.rotationGroups?.find(g=>g.id === 'vigil-library')?.interval || 30;
       lastSelectedId = settings.id;
       await refresh(); applyStyles();
+      if (migratedAppearance) await persist();
     } catch(e) { report(e); } })();
     return started;
   }

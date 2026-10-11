@@ -1,6 +1,6 @@
 // -*- coding: utf-8 -*-
 /**
- * 壳：顶部编号导航、§ 页号注入、状态栏、主题、分栏拖拽、启动顺序。
+ * 壳：左侧图标导航、§ 页号注入、状态栏、主题、分栏拖拽、启动顺序。
  *
  * 页面本身在 pages.js 里（PAGES: {id,name,icon,render(ctx)}），这里只负责
  * "把舞台搭好、把当前页叫上来"。渲染层不持有任何密钥，网络全走主进程。
@@ -21,13 +21,12 @@
   const topbarEl = document.getElementById('topbar');
   const statusEl = document.getElementById('status');
 
-  // ── 顶部编号导航：01 对话 02 人设 …（活动项黑底白字）────────
-  // 与 Hermes 编辑部版一致：序号 + 页名，活动项实底。图标栏废弃。
+  // ── 左侧主导航：图标栏，页名由原生 tooltip 和 aria-label 提供 ──
   function buildNav() {
     if (!gnavEl) return;
-    gnavEl.innerHTML = PAGES.map((p, i) =>
-      '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + p.id + '" data-tip="' + esc(p.name) + '">' +
-      '<i>' + String(i + 1).padStart(2, '0') + '</i>' + esc(p.name) + '</button>').join('');
+    gnavEl.innerHTML = PAGES.map((p) =>
+      '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
+      U.icon(p.icon === 'image' ? 'img' : (p.icon || 'puzzle'), 'md') + '</button>').join('');
     gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.addEventListener('click', () => go(b.dataset.page)));
   }
