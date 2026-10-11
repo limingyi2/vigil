@@ -23,6 +23,8 @@ import sys
 import tempfile
 import unittest
 
+import httpx
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "brain"))
 
@@ -33,11 +35,15 @@ import tools as tl  # noqa: E402
 
 
 class _Resp(object):
-    def __init__(self, obj):
+    def __init__(self, obj, status=200, text=""):
         self._o = obj
+        self.status_code = status
+        self.text = text
 
     def raise_for_status(self):
-        pass
+        if self.status_code != 200:
+            raise httpx.HTTPStatusError(
+                "stub %s" % self.status_code, request=None, response=self)
 
     def json(self):
         return self._o
@@ -63,6 +69,8 @@ class TestNativeFunctionCalling(unittest.TestCase):
         plugin_host.load(force=True)
         self.seen = []
         self._real_httpx = B.httpx
+        # 模型出口虽收口到 model_providers，但 CloudProvider 经 brain.httpx
+        # 取传输层（见 cloud._active_http），所以桩 B.httpx 一处即可。
 
     def tearDown(self):
         B.httpx = self._real_httpx

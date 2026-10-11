@@ -1,0 +1,6 @@
+# LEGACY - belongs to the old "payment-gateway" subsystem, not this service.
+# Kept here only because the legacy repo was merged. Do not use for retry tuning.
+payment_gateway:
+  endpoint: http://synthetic-gateway.local/api
+  max_retries: 10
+  timeout_ms: 2000

@@ -250,11 +250,27 @@ def current(cfg):
             if host and host in b:
                 provider = pid
                 break
+    ol = cfg.get("ollama") if isinstance(cfg.get("ollama"), dict) else {}
+    dl = cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
     return {
         "provider": provider,
         "provider_name": PROVIDERS.get(provider, {}).get("name", provider),
         "api_base": str(cfg.get("api_base") or ""),
         "api_key": str(cfg.get("api_key") or ""),
+        "model_mode": str(cfg.get("model_mode") or "cloud"),
+        "ollama": {
+            "base": str(ol.get("base") or ""),
+            "model": str(ol.get("model") or ""),
+            "num_ctx": ol.get("num_ctx"),
+            "num_predict": ol.get("num_predict"),
+            "think": ol.get("think", True),
+            "request_timeout": ol.get("request_timeout"),
+        },
+        "delegation": {
+            "enabled": bool(dl.get("enabled", False)),
+            "allowed_roots": [str(r) for r in dl.get("allowed_roots") or []
+                              if str(r).strip()],
+        },
         "chat": str(cfg.get("model") or ""),
         "vision": str(vis.get("model") or ""),
         "vision_enabled": bool(vis.get("enabled", True)),
@@ -478,6 +494,68 @@ def apply_cfg(cfg, p):
     if aud and aud != cfg.get("audio_model"):
         cfg["audio_model"] = aud
         changed.append("语音模型 → " + aud)
+
+    # 运行方式：cloud / local / hybrid（混合模式的委派能力在 P2，首版保存了
+    # 也只会让主模型走云端 —— 不报错，UI 那边负责把未开放项置灰）。
+    mode = str(p.get("model_mode") or "").strip().lower()
+    if mode:
+        if mode not in ("cloud", "local", "hybrid"):
+            return cfg, changed + ["运行方式没保存：只认 cloud/local/hybrid"]
+        if mode != str(cfg.get("model_mode") or "cloud"):
+            cfg["model_mode"] = mode
+            changed.append("运行方式 → "
+                           + {"cloud": "云端模型", "local": "本地 Ollama",
+                              "hybrid": "混合（云端主脑）"}.get(mode, mode))
+
+    # Ollama 连接段：逐键收口，只认白名单字段（防止 UI/请求塞任意键进 config）。
+    ol = p.get("ollama")
+    if isinstance(ol, dict):
+        cur_ol = dict(cfg["ollama"]) if isinstance(cfg.get("ollama"), dict) else {}
+        if str(ol.get("base") or "").strip():
+            # 顺手剥尾斜杠和 /v1 后缀，和 OllamaProvider 的归一保持一致，
+            # 免得"保存的值"和"实际请求的值"看着不一样。
+            b = str(ol["base"]).strip().rstrip("/")
+            if b.endswith("/v1"):
+                b = b[:-3]
+            cur_ol["base"] = b
+        if "model" in ol:
+            cur_ol["model"] = str(ol.get("model") or "").strip()
+        for nk in ("num_ctx", "num_predict", "request_timeout"):
+            if ol.get(nk) is not None:
+                try:
+                    cur_ol[nk] = int(float(ol[nk]))
+                except (TypeError, ValueError):
+                    pass
+        if "think" in ol:
+            cur_ol["think"] = bool(ol["think"]) if ol["think"] is not None else None
+        if cur_ol != (cfg.get("ollama") or {}):
+            cfg["ollama"] = cur_ol
+            changed.append("本地模型设置已更新")
+
+    # 委派段（P3 只读委派）：白名单两键 enabled / allowed_roots。
+    # 只有请求显式带 delegation dict 才改，旧客户端保存不会冲掉已配段。
+    # allowed_roots 空名单是 fail-closed（任何工作区都派不出去），不在服务端
+    # 强制非空 —— 由 UI 提示用户。
+    dl = p.get("delegation")
+    if isinstance(dl, dict):
+        cur_dl = dict(cfg["delegation"]) if isinstance(cfg.get("delegation"), dict) else {}
+        if "enabled" in dl and dl.get("enabled") is not None:
+            cur_dl["enabled"] = bool(dl.get("enabled"))
+        if "allowed_roots" in dl:
+            roots = dl.get("allowed_roots")
+            if isinstance(roots, str):
+                # 文本框：换行不行就认分号
+                roots = roots.replace(";", "\n").replace("\r\n", "\n").splitlines()
+            seen, clean = set(), []
+            for r in roots or []:
+                rs = str(r or "").strip().strip('"').strip("'")
+                if rs and rs not in seen:
+                    seen.add(rs)
+                    clean.append(rs)
+            cur_dl["allowed_roots"] = clean
+        if cur_dl != (cfg.get("delegation") or {}):
+            cfg["delegation"] = cur_dl
+            changed.append("本地委派设置已更新")
 
     return cfg, changed
 

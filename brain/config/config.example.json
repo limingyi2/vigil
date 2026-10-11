@@ -5,6 +5,20 @@
   "model": "zai-org/GLM-5.3",
   "memory_dir": "在这里填记忆目录的绝对路径，例如 D:\\your-project\\brain\\data\\memory",
   "chat_mode": "api",
+  "model_mode": "cloud（云端模型）| local（本机 Ollama）| hybrid（云端主脑 + 只读子任务委派本地）；缺省 cloud",
+  "ollama": {
+    "_说明": "model_mode=local/hybrid 时用。地址不用带 /v1（程序走原生 /api/chat）；模型从 Ollama /api/tags 选",
+    "base": "http://127.0.0.1:11434",
+    "model": "qwen27b-efficientthink:latest",
+    "num_ctx": 16384,
+    "num_predict": 2048,
+    "think": true
+  },
+  "delegation": {
+    "_说明": "仅 hybrid 生效：允许云端主脑把只读子任务委派给本机 Ollama。默认关闭，要显式打开；allowed_roots 是沙箱白名单根目录，委派只能读写这些目录内的文件（第一版只读）",
+    "enabled": false,
+    "allowed_roots": ["D:\\your-project"]
+  },
   "persona_file": "personas/default.json",
   "window": {
     "level": "bottom",

@@ -54,11 +54,16 @@ class TestRefusalDetection(unittest.TestCase):
 
 
 class _Resp(object):
-    def __init__(self, obj):
+    def __init__(self, obj, status=200, text=""):
         self._o = obj
+        self.status_code = status   # CloudProvider 按状态码判错（旧内联调用只走 raise_for_status）
+        self.text = text
 
     def raise_for_status(self):
-        pass
+        if self.status_code != 200:
+            import httpx
+            raise httpx.HTTPStatusError(
+                "stub %s" % self.status_code, request=None, response=self)
 
     def json(self):
         return self._o

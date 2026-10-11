@@ -1,0 +1,22 @@
+{
+  "archived_at": "2026-10-11",
+  "source_run": "results/hybrid-compare-20261011-121938",
+  "path_redaction": "local run/workspace root replaced by <PROJECT>, repo root by <REPO>",
+  "files": [
+    {
+      "name": "summary.json",
+      "source_sha256": "0cccdd316132dce03ad2652ce0f8f4d2de091307c9a03c222b7c4e60dbf02504",
+      "archive_sha256": "0cccdd316132dce03ad2652ce0f8f4d2de091307c9a03c222b7c4e60dbf02504"
+    },
+    {
+      "name": "summary.md",
+      "source_sha256": "fe478729d83b8a0ee42036ce234772e9a5ec96b3122bbc972e7a127fad4339df",
+      "archive_sha256": "fe478729d83b8a0ee42036ce234772e9a5ec96b3122bbc972e7a127fad4339df"
+    },
+    {
+      "name": "raw_events.jsonl",
+      "source_sha256": "68b2eb765d9cab2442ddffb9f09c58d56cb691b033c39111f02cd1f4005b3482",
+      "archive_sha256": "945e2376f417fe49bb1d138689096e3956326bbb48ba5768764808437fe381b8"
+    }
+  ]
+}

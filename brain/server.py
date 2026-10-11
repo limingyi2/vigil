@@ -452,11 +452,22 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
             if trace_out is not None:
                 trace_out["plan_why"] = _plan_why
         if _yes:
-            steps = planner.plan(text)
+            steps = planner.plan(text, src=src)
             _plan_calls += 1
             if steps:
                 b = _LOCAL["brain"]
-                results = planner.execute_plan(steps)
+                # The model-visible tool list is not an authorization boundary.
+                # Re-read the channel-filtered active specs and pass them to the
+                # executor, which intersects them with its own active-spec check.
+                import tools as _tools
+                _allowed_tools = []
+                for _spec in _tools.all_specs(brain=b, src=src):
+                    try:
+                        _allowed_tools.append(_spec["function"]["name"])
+                    except (KeyError, TypeError):
+                        continue
+                results = planner.execute_plan(
+                    steps, src=src, allowed_tools=_allowed_tools, brain=b)
                 # no_tools=True：工具在 planner.execute_plan 那一步已经查过了，
                 # 收尾这步再挂一遍工具表，主模型会拿同样的参数再查一次 ——
                 # 同一条消息两次执行、两次计费（路由模式没有这个问题，
@@ -2423,6 +2434,37 @@ def start_remote_api(brain):
                     errlog.log_exc("api/voices", e)
                     self._json(200, {"ok": False, "err": str(e)[:120],
                                      "current": "", "items": []})
+            elif path == "/api/ollama/status":
+                # 本地模型状态 + 连接测试（管理员；受限设备已被权限闸门挡掉）。
+                # 不带 query = 体检当前配置；带 base/model = 保存前先试这组。
+                from model_providers.ollama import OllamaProvider
+                _obase = _query_param(self.path, "base")
+                _omodel = _query_param(self.path, "model")
+                if _obase:
+                    _op = OllamaProvider({"base": _obase, "model": _omodel or ""})
+                else:
+                    _op = OllamaProvider(API_CFG.get("ollama")
+                                         if isinstance(API_CFG.get("ollama"), dict)
+                                         else {})
+                ok, info = _op.health(timeout=5)
+                self._json(200, {"ok": ok,
+                                 "base": _op.base,
+                                 "model_configured": _op.model,
+                                 **info})
+            elif path == "/api/delegations/recent":
+                # 混合模式「每次委派状态」：本机 data/delegations/ 落盘记录的摘要。
+                # 不进 DEVICE_GET_ALLOW —— 记录里有工作区路径与目标，只给管控端看。
+                try:
+                    _dn = int(_query_param(self.path, "n") or 20)
+                except (TypeError, ValueError):
+                    _dn = 20
+                try:
+                    from delegation import bridge as _dbridge
+                    _items = _dbridge.recent_records(_dn)
+                except Exception as _e:
+                    errlog.log_exc("api/delegations/recent", _e)
+                    _items = []
+                self._json(200, {"ok": True, "items": _items})
             elif path == "/api/models":
                 # force=1 = 用户点了"重新拉取"，不用缓存（换 key 之后必须这样拉一次）
                 #
