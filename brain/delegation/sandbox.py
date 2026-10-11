@@ -120,8 +120,31 @@ class ReadOnlySandbox(object):
         except re.error as e:
             raise SandboxError("bad_args", "非法正则：%s" % e)
         base = self.safe_path(path or ".")
+        # 受控兼容（P3 修复 H03 式重复错误）：path 给的是文件时直接在该文件内
+        # 搜，仍然只读、仍在沙箱内；并提示单文件定位首选 read_file。
+        # 旧版一律回 "不是目录"，模型会原样重试同一个错误调用，白烧预算。
+        if os.path.isfile(base):
+            rel = os.path.relpath(base, self.root).replace(os.sep, "/")
+            hits = []
+            try:
+                with open(base, encoding="utf-8", errors="replace") as f:
+                    for i, line in enumerate(f):
+                        if i >= 500:
+                            break
+                        if rx.search(line):
+                            hits.append("%s:%d:%s"
+                                        % (rel, i + 1, line.strip()[:160]))
+                            if len(hits) >= MAX_GREP_HITS:
+                                break
+            except Exception:
+                pass
+            if hits:
+                return "（提示：path 是文件，已只搜该文件；要看上下文用 read_file）\n" \
+                       + "\n".join(hits)
+            return "没有匹配：%s（文件 %s；要看上下文用 read_file）" % (pattern, rel)
         if not os.path.isdir(base):
-            raise SandboxError("not_found", "不是目录：" + path)
+            raise SandboxError("not_found",
+                               "不是目录也不是文件：" + path)
         hits = []
         scanned = 0
         truncated = False
@@ -166,6 +189,40 @@ class ReadOnlySandbox(object):
     def _inside(self, target):
         return target == self.root or os.path.commonpath(
             [self.root, target]) == self.root
+
+    def version_of(self, rel, recursive=False):
+        """只读工具结果缓存的版本标识（dispatcher 用，不暴露给子模型）。
+
+        文件：(mtime_ns, size)；目录：自身 mtime；递归目录：walk 内最大
+        mtime_ns + 文件数 —— 文件增删改都会让版本变化，缓存立即失效。
+        缓存只存在于单次委派内，无跨用户泄露面。
+        """
+        target = self.safe_path(rel)
+        try:
+            st = os.stat(target)
+            if os.path.isfile(target):
+                return ("f", st.st_mtime_ns, st.st_size)
+            if not recursive:
+                return ("d", st.st_mtime_ns)
+            latest = st.st_mtime_ns
+            n = 0
+            for dirpath, dirnames, filenames in os.walk(target):
+                dirnames[:] = [d for d in dirnames
+                               if not os.path.islink(os.path.join(dirpath, d))]
+                n += len(filenames)
+                for name in filenames:
+                    full = os.path.realpath(os.path.join(dirpath, name))
+                    if not self._inside(full):
+                        continue
+                    try:
+                        mt = os.stat(full).st_mtime_ns
+                        if mt > latest:
+                            latest = mt
+                    except OSError:
+                        continue
+            return ("r", latest, n)
+        except OSError:
+            return None
 
     def execute(self, name, args):
         """Dispatcher 统一入口：args 是 dict；只执行白名单内、存在的方法。"""
