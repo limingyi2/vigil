@@ -1,0 +1,552 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "name": "actual page, production preload and initial historical replay without notification",
+      "status": "passed"
+    },
+    {
+      "name": "automatic polling shows running and current tool type",
+      "status": "passed"
+    },
+    {
+      "name": "tool failure count without falsely failing task",
+      "status": "passed"
+    },
+    {
+      "name": "waiting approval, duplicate event and IPC dedup; no response controls",
+      "status": "passed",
+      "detail": {
+        "nativeSupported": true
+      }
+    },
+    {
+      "name": "disconnect and reconnect expire pending; recovered task unknown/history",
+      "status": "passed"
+    },
+    {
+      "name": "observed inProgress history is unknown with no live progress or control",
+      "status": "passed"
+    },
+    {
+      "name": "normal completed task state",
+      "status": "passed"
+    },
+    {
+      "name": "clear task failure notification",
+      "status": "passed"
+    },
+    {
+      "name": "blocking input notification away from page; native open event navigates back",
+      "status": "passed"
+    },
+    {
+      "name": "cursor gap explicitly warned and resynchronized without historical reminder",
+      "status": "passed"
+    },
+    {
+      "name": "server connection and cursor reset recovered",
+      "status": "passed"
+    },
+    {
+      "name": "401 remains visible and disables operations; authenticated recovery",
+      "status": "passed"
+    },
+    {
+      "name": "light/dark layout 1380x880",
+      "status": "passed"
+    },
+    {
+      "name": "light/dark layout 900x600",
+      "status": "passed"
+    },
+    {
+      "name": "Wallpaper reading material without layered backdrop blur",
+      "status": "passed"
+    },
+    {
+      "name": "create/start uses existing P1 endpoints and current Codex model selector",
+      "status": "passed"
+    },
+    {
+      "name": "owned interrupt uses existing guarded endpoint",
+      "status": "passed"
+    },
+    {
+      "name": "no renderer/preload errors, no approval response, sanitized events",
+      "status": "passed"
+    }
+  ],
+  "errors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona?src=pc",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=0",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace?last=60",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/history?limit=300&src=pc",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=2",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=3",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=4",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=5",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=6",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=7",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=7",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent-center/reconnect",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=8",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=9",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=11",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace?last=60",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/history?limit=300&src=pc",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=13",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=15",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=0",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=2020",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=0",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=1",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=1",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=1",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent-center/tasks/5253c4d7388044a084c01abd1b7fea3d/turns",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=1",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent-center/tasks/5253c4d7388044a084c01abd1b7fea3d/interrupt",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events?after=4",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "authenticated": true
+    }
+  ],
+  "nativeNotificationSupported": true,
+  "nativeAttempts": 3,
+  "nativeOutcomes": [
+    "show",
+    "show",
+    "show"
+  ],
+  "modelApiRequests": 0,
+  "electronVersion": "28.3.3"
+}

@@ -1,0 +1,116 @@
+## python · exit 0
+test_disconnect_expires_approval_and_rejects_old_generation (tests.test_codex_adapter.AdapterTests.test_disconnect_expires_approval_and_rejects_old_generation) ... ok
+test_failed_tool_does_not_fail_turn (tests.test_codex_adapter.AdapterTests.test_failed_tool_does_not_fail_turn) ... ok
+test_history_never_claims_live_status_or_resumes_observed (tests.test_codex_adapter.AdapterTests.test_history_never_claims_live_status_or_resumes_observed) ... ok
+test_http_local_admin_and_response_disabled (tests.test_codex_adapter.AdapterTests.test_http_local_admin_and_response_disabled) ... ok
+test_inherited_unsafe_permissions_are_rejected (tests.test_codex_adapter.AdapterTests.test_inherited_unsafe_permissions_are_rejected) ... ok
+test_late_previous_turn_completion_cannot_finish_current_turn (tests.test_codex_adapter.AdapterTests.test_late_previous_turn_completion_cannot_finish_current_turn) ... ok
+test_native_error_and_failed_turn (tests.test_codex_adapter.AdapterTests.test_native_error_and_failed_turn) ... ok
+test_new_generation_request_id_reuse_has_new_identity (tests.test_codex_adapter.AdapterTests.test_new_generation_request_id_reuse_has_new_identity) ... ok
+test_observed_never_owns_or_controls (tests.test_codex_adapter.AdapterTests.test_observed_never_owns_or_controls) ... ok
+test_p2_history_disconnect_and_terminal_clear_operation (tests.test_codex_adapter.AdapterTests.test_p2_history_disconnect_and_terminal_clear_operation) ... ok
+test_p2_operation_metadata_is_safe_and_lifecycle_bound (tests.test_codex_adapter.AdapterTests.test_p2_operation_metadata_is_safe_and_lifecycle_bound) ... ok
+test_p2_waiting_status_event_uses_current_turn_identity (tests.test_codex_adapter.AdapterTests.test_p2_waiting_status_event_uses_current_turn_identity) ... ok
+test_registry_path_escape_fail_closed (tests.test_codex_adapter.AdapterTests.test_registry_path_escape_fail_closed) ... ok
+test_replayed_old_turn_approval_after_resume_is_not_restored (tests.test_codex_adapter.AdapterTests.test_replayed_old_turn_approval_after_resume_is_not_restored) ... ok
+test_resolved_only_matches_thread_and_typed_request_id (tests.test_codex_adapter.AdapterTests.test_resolved_only_matches_thread_and_typed_request_id) ... ok
+test_restarted_adapter_never_restores_pending (tests.test_codex_adapter.AdapterTests.test_restarted_adapter_never_restores_pending) ... ok
+test_running_and_normal_completion (tests.test_codex_adapter.AdapterTests.test_running_and_normal_completion) ... ok
+test_separate_turns_do_not_dedup_legitimate_waiting_state (tests.test_codex_adapter.AdapterTests.test_separate_turns_do_not_dedup_legitimate_waiting_state) ... ok
+test_stream_deltas_not_deduped_and_cursor (tests.test_codex_adapter.AdapterTests.test_stream_deltas_not_deduped_and_cursor) ... ok
+test_terminal_turn_never_recreates_pending (tests.test_codex_adapter.AdapterTests.test_terminal_turn_never_recreates_pending) ... ok
+test_timeout_and_responses_always_disabled (tests.test_codex_adapter.AdapterTests.test_timeout_and_responses_always_disabled) ... ok
+test_waiting_approval_and_duplicate_payload_variation (tests.test_codex_adapter.AdapterTests.test_waiting_approval_and_duplicate_payload_variation) ... ok
+test_wrong_turn_or_unbound_request_ignored (tests.test_codex_adapter.AdapterTests.test_wrong_turn_or_unbound_request_ignored) ... ok
+test_approval_accept_and_decline_both_disabled (tests.test_codex_adapter_http.BrainHTTPTests.test_approval_accept_and_decline_both_disabled) ... ok
+test_bad_auth_cannot_read (tests.test_codex_adapter_http.BrainHTTPTests.test_bad_auth_cannot_read) ... ok
+test_invalid_cursor_and_unknown_route (tests.test_codex_adapter_http.BrainHTTPTests.test_invalid_cursor_and_unknown_route) ... ok
+test_limited_device_rejected_by_actual_http_gate (tests.test_codex_adapter_http.BrainHTTPTests.test_limited_device_rejected_by_actual_http_gate) ... ok
+test_non_loopback_admin_rejected_by_actual_http_gate (tests.test_codex_adapter_http.BrainHTTPTests.test_non_loopback_admin_rejected_by_actual_http_gate) ... ok
+test_status_real_http_route (tests.test_codex_adapter_http.BrainHTTPTests.test_status_real_http_route) ... ok
+test_approval_dedup_process_exit_and_automatic_reconnect (tests.test_codex_adapter_native.NativeAdapterTests.test_approval_dedup_process_exit_and_automatic_reconnect) ... ok
+test_native_command_never_bypasses_required_approval (tests.test_codex_adapter_native.NativeAdapterTests.test_native_command_never_bypasses_required_approval) ... ok
+test_normal_running_and_failed_turn (tests.test_codex_adapter_native.NativeAdapterTests.test_normal_running_and_failed_turn) ... ok
+
+----------------------------------------------------------------------
+Ran 32 tests in 5.719s
+
+OK
+
+## node · exit 0
+✔ native notification once per key (2.7175ms)
+✔ reject foreign sender, frame and notification payload (0.1514ms)
+✔ unsupported desktop reports failure for in-app fallback (0.0992ms)
+✔ initial realtime backlog is history, no notification (2.476ms)
+✔ status and duplicate approval requests notify exactly once (1.1129ms)
+✔ clear failure and blocking input are separate reminders (1.4047ms)
+✔ tool failure without task failure produces no task failure alert (0.2066ms)
+✔ history, observed, stale generations and late completions never notify (0.2562ms)
+✔ HTTP recovery retains cursor and consumes new events once (0.8617ms)
+✔ gap explicitly warns, resyncs and suppresses replay notifications (0.3041ms)
+✔ server restart cursor reset resyncs instead of ignoring new sequence (0.1916ms)
+✔ new turn and generation have independent reminder identity (1.2119ms)
+✔ poll is serialized and permission denial remains visible (0.2155ms)
+✔ events are read before task snapshot to avoid losing newly created task alerts (0.1806ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 92.0789
+
+## electron · exit 0
+
+
+## chat · exit 0
+
+PASS isolated EPIPE simulation does not open a main-process error dialog
+PASS empty session and default collapsed context
+PASS computed typography, 860px composer and no global scale
+PASS production preload, contextBridge, configuration IPC and security settings
+PASS titlebar maximize/minimize via production preload IPC
+PASS quick question and blank-content disabled state
+PASS session list and context toggle, dark theme
+PASS textarea auto-height and max-height
+PASS Enter, Shift+Enter, IME, stream state and unchanged IPC payload
+PASS Markdown headings/lists/quotes/link/code and code copy
+PASS existing safety control opens and closes
+PASS history restored and session selection preserved
+PASS ordinary light-theme history and code rendering
+PASS 860px aligned content and composer outside message scroll
+PASS stream error UI and send state recovery
+PASS attachment FileReader, preview, removal and image-only send eligibility
+PASS image-only send through original stream IPC
+PASS existing model settings navigation and non-chat scope
+PASS global function entries retained
+PASS history failure is explicit and retry restores empty welcome
+PASS persona data, compact list, editor and existing cloud save IPC
+PASS persona light/dark and narrow-window layouts
+PASS persona empty state is distinguished from service failure
+PASS memory data loads and persona styles leave the subsection
+PASS knowledge-base data and document entry retained
+PASS wallpaper settings light contrast and gallery layout
+PASS wallpaper settings dark contrast and gallery layout
+PASS wallpaper gallery viewport 1920x1080
+PASS wallpaper gallery viewport 1280x800
+PASS wallpaper gallery viewport 800x540
+PASS wallpaper gallery viewport 600x650
+PASS very short wallpaper window has accessible outer scroll
+PASS wallpaper search/filter, all tabs, canceled import/directory and refresh
+PASS wallpaper-on settings uses readable tint without stacked blur
+PASS real wallpaper iframe/host, pause/resume, import entry and appearance settings
+PASS background wallpaper rotation preserves the current chat page
+PASS wallpaper welcome has no card or backdrop blur
+PASS wallpaper reading surface and unchanged chat DOM
+PASS window 1280x800
+PASS window 900x700
+PASS window 600x650
+PASS window 800x540
+PASS narrow window session overlay can be hidden and restored
+PASS wallpaper persona material and disabling restores ordinary layout
+PASS no renderer errors
+PASS Electron missing-preload diagnostic and disabled send
+PASS browser UA preview placeholder and disabled send
+Retained locked temporary Electron cache: <temp>\vigil-chat-v2-MCmT9P

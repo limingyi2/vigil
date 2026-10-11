@@ -62,7 +62,11 @@
   }
 
   // ── 路由 ──────────────────────────────────────────────────
+  let disposePage = () => {};
   async function go(id) {
+    disposePage();
+    const cleanups = [];
+    disposePage = () => cleanups.splice(0).forEach(fn => fn());
     const page = PAGES.find((p) => p.id === id) || PAGES[0];
     state.page = page.id;
     document.body.dataset.vigilPage = page.id;
@@ -83,6 +87,7 @@
       view: viewEl, topbar: topbarEl, panel: panelEl,
       src: state.src, refresh: () => go(page.id),
       navigate: go,
+      onDispose: fn => cleanups.push(fn),
     };
     try {
       await page.render(ctx);
@@ -225,6 +230,10 @@
     };
 
     buildNav();
+    if (window.VigilAgentCenter) {
+      window.VigilAgentCenter.start();
+      window.vigil && window.vigil.agentCenter && window.vigil.agentCenter.onOpen(() => go('agent-center'));
+    }
 
     if (window.VigilWallpaper) window.VigilWallpaper.init();
 

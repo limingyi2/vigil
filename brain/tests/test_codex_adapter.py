@@ -50,6 +50,38 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(task["turns"]["turn-1"]["source"], "realtime")
         self.assertIn("finished_at", task)
 
+    def test_p2_operation_metadata_is_safe_and_lifecycle_bound(self):
+        self.start()
+        self.send(self.event("item/started", turnId="turn-1", item={"id": "tool-1", "type": "commandExecution", "command": "PRIVATE-COMMAND", "arguments": {"secret": "PRIVATE"}}))
+        task = self.center.get_task(self.task_id)
+        self.assertEqual(task["current_operation"]["type"], "commandExecution")
+        self.assertEqual(task["event_key"], self.center._label(self.task_id))
+        self.assertEqual(task["turn_key"], self.center._label("turn-1"))
+        self.assertNotIn("PRIVATE", json.dumps(task))
+        self.send(self.event("item/completed", turnId="turn-1", item={"id": "unrelated", "type": "commandExecution", "status": "completed"}))
+        self.assertIsNotNone(self.center.get_task(self.task_id)["current_operation"])
+        self.send(self.event("item/completed", turnId="turn-1", item={"id": "tool-1", "type": "commandExecution", "status": "completed"}))
+        self.assertIsNone(self.center.get_task(self.task_id)["current_operation"])
+
+    def test_p2_history_disconnect_and_terminal_clear_operation(self):
+        for ending in ("completed", "history", "disconnect"):
+            with self.subTest(ending=ending):
+                task = self.center.tasks[self.task_id]
+                task.update(status="running", live=True, current_operation={"type": "fileChange"})
+                if ending == "history":
+                    self.center._apply_history(task, {"turns": []})
+                elif ending == "disconnect":
+                    self.center._disconnect_generation(self.center.generation, "fixture")
+                else:
+                    task["status"] = "completed"
+                self.assertIsNone(self.center.snapshot()["owned"][0]["current_operation"])
+
+    def test_p2_waiting_status_event_uses_current_turn_identity(self):
+        self.start()
+        self.send(self.event("thread/status/changed", status={"type": "active", "activeFlags": ["waitingOnApproval"]}))
+        event = self.center.event_log()["items"][-1]
+        self.assertEqual(event["turn"], self.center._label("turn-1"))
+
     def test_waiting_approval_and_duplicate_payload_variation(self):
         self.start()
         msg = self.approval()

@@ -108,4 +108,8 @@ contextBridge.exposeInMainWorld('vigil', {
   },
 
   platform: process.platform,
+  agentCenter: {
+    notify: (event) => ipcRenderer.invoke('agent-center:notify', event),
+    onOpen: (fn) => ipcRenderer.on('agent-center:open', () => fn()),
+  },
 });

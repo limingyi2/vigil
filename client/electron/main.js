@@ -11,7 +11,7 @@
  *    Vigil / 渠道切换 / 窗口按钮要能落地，就不能用系统标题栏。
  *    代价是拖拽、最小化、关闭都要自己实现（见下面的 win:* 通道）。
  */
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -19,6 +19,7 @@ const https = require('https');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+if (process.platform === 'win32') app.setAppUserModelId('com.vigil.client');
 
 // Keep Chromium's hardware acceleration enabled so WebGL wallpapers and glass
 // surfaces use the selected GPU. SwiftShader remains available as a fallback.
@@ -30,6 +31,8 @@ const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App �
 const CLIENT_SRC = 'pc';
 
 let win = null;
+require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
+  indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
 // ── 托盘：点关闭 = 隐藏，不退出（2026-10-09 用户要求）──────────────
 // 她是常驻的：微信消息、本地操控轮询、转发通道都在这个进程里跑着。
@@ -914,7 +917,8 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const hasSrc = /(?:\?|&)src=/.test(p);
   const withSrc = wantsSrc && !hasSrc ? p + sep + 'src=' + encodeURIComponent(src) : p;
   const token = await getToken();
-  const r = await request(method, b + withSrc, body, token);
+  const centerTimeout = p.startsWith('/api/agent-center/') ? (method === 'GET' ? 5000 : 45000) : undefined;
+  const r = await request(method, b + withSrc, body, token, centerTimeout);
   if (!r.ok && r.status === 401) return { ...r, err: 'token 不对（设置 → 连接与设备）' };
   return r;
 });

@@ -31,6 +31,7 @@ class BrainHTTPTests(unittest.TestCase):
         ns = {"http": http, "os": os, "json": json, "hmac": hmac, "threading": threading,
               "api_config": {"bind_host": "127.0.0.1"}, "MOB_CFG": {}, "BRAIN_TOKEN": "p1-http-test-token",
               "MAX_BODY": 1024 * 1024, "note_client_ip": lambda ip: None}
+        cls.namespace = ns
         exec(compile(ast.Module(body=constants + nodes, type_ignores=[]), str(source), "exec"), ns)
         with patch.dict(os.environ, {"VIGIL_PORT": "0"}), contextlib.redirect_stdout(io.StringIO()):
             cls.server = ns["start_remote_api"](None)
@@ -60,6 +61,20 @@ class BrainHTTPTests(unittest.TestCase):
 
     def test_bad_auth_cannot_read(self):
         self.assertEqual(self.call("GET", "/api/agent-center/tasks", token="wrong")[0], 401)
+
+    def test_non_loopback_admin_rejected_by_actual_http_gate(self):
+        with patch.dict(self.namespace, {"_is_loopback": lambda ip: False}):
+            code, result = self.call("GET", "/api/agent-center/status")
+        self.assertEqual((code, result["err"]), (403, "local_admin_required"))
+
+    def test_limited_device_rejected_by_actual_http_gate(self):
+        import sys
+        from types import SimpleNamespace
+        with patch.dict(self.namespace, {"_device_role": lambda _: "device"}), patch.dict(sys.modules, {
+                "devices": SimpleNamespace(verify=lambda *args: {"device_id": "isolated-device"})}):
+            code, result = self.call("GET", "/api/agent-center/status", token="dt_isolated-fixture")
+        self.assertEqual(code, 403)
+        self.assertIn("管理员", result["err"])
 
     def test_approval_accept_and_decline_both_disabled(self):
         for decision in ("accept", "decline"):

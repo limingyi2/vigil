@@ -249,6 +249,7 @@ class CodexAdapter:
             for task in self.tasks.values():
                 task["last_known_status"] = task["status"]
                 task["status"], task["live"] = "unknown", False
+                task["current_operation"] = None
             self._record("adapter/disconnected", reason=reason)
             self._save()
             self.cv.notify_all()
@@ -523,6 +524,19 @@ class CodexAdapter:
                     task["tool_failures"] += 1
             elif method == "error":
                 task["last_error"] = "codex_error"
+            # P2 view metadata only: never expose commands, arguments or outputs.
+            if method == "item/started" and live_turn and event_turn == task.get("current_turn"):
+                item = params.get("item") or {}
+                if item.get("type") in ("commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch"):
+                    task["current_operation"] = {"type": item["type"],
+                                                 "item_key": self._label(item.get("id")),
+                                                 "started_at": now}
+            elif method == "item/completed":
+                item = params.get("item") or {}
+                if (task.get("current_operation") or {}).get("item_key") == self._label(item.get("id")):
+                    task["current_operation"] = None
+            if method == "turn/completed":
+                task["current_operation"] = None
             # Only controlled metadata is logged; never persist params wholesale.
             metadata = {}
             item = params.get("item") or {}
@@ -533,7 +547,7 @@ class CodexAdapter:
                 metadata["tokens"] = {k: v for k, v in last.items()
                                       if k in ("inputTokens", "outputTokens", "cachedInputTokens", "totalTokens")
                                       and type(v) is int}
-            self._record(method, task=task, turn=self._label(turn_id),
+            self._record(method, task=task, turn=self._label(event_turn),
                          state=task["status"], server_request="id" in message, **metadata)
             if structural:
                 self._save()
@@ -558,6 +572,7 @@ class CodexAdapter:
     @staticmethod
     def _apply_history(task, thread):
         task["status"], task["source"], task["live"] = "unknown", "history", False
+        task["current_operation"] = None
         task["turn_request_generation"] = None
         task["history_read_at"] = time.time()
         for turn in thread.get("turns", []):
@@ -587,11 +602,19 @@ class CodexAdapter:
 
     def get_task(self, task_id):
         with self.lock:
-            return copy.deepcopy(self._owned(task_id))
+            return self._public_task(self._owned(task_id))
+
+    def _public_task(self, task):
+        out = copy.deepcopy(task)
+        out["event_key"] = self._label(task["id"])
+        out["turn_key"] = self._label(task.get("current_turn"))
+        if not task.get("live") or task.get("status") in TERMINAL:
+            out["current_operation"] = None
+        return out
 
     def snapshot(self):
         with self.lock:
-            return {"owned": copy.deepcopy(list(self.tasks.values())), "observed": copy.deepcopy(list(self.observed.values()))}
+            return {"owned": [self._public_task(t) for t in self.tasks.values()], "observed": copy.deepcopy(list(self.observed.values()))}
 
     def status(self):
         with self.lock:
