@@ -1,0 +1,36 @@
+{
+  "archived_at": "2026-10-11",
+  "path_redaction": "local project root replaced by <PROJECT>",
+  "files": [
+    {
+      "name": "dataset_manifest.json",
+      "source_sha256": "022d4d48aeb31936dbf4f35e8c7c18c8352955248bbe490aeab608bba6654961",
+      "archive_sha256": "bcc86e1aa0fe700ebe18f1f7508f98dab9401b94d56ff2f0991923fa17be1d16"
+    },
+    {
+      "name": "environment.json",
+      "source_sha256": "386a46e23e0492882326d27798a9b6d9f486b1fce3cc8ec30f243fb1b55c7f7d",
+      "archive_sha256": "b22174dd122d3c1f4268f42d8f5160d7db27e57ac9e23dd550f5e3154c9bd8fc"
+    },
+    {
+      "name": "failures.md",
+      "source_sha256": "a7f87a05bbcaed99b3e97b7e135151cea27c764166f73e9b114ab0d167690881",
+      "archive_sha256": "0948c2feed942c519c0c505a24d312d18e990169ecc28418f7379956ece7924d"
+    },
+    {
+      "name": "raw_events.jsonl",
+      "source_sha256": "82f0c082889b389076f219d2381282cf6d32ea98d5d74a28e3fcb150671cdfce",
+      "archive_sha256": "c9ebd15bbd2a967468d89d24749d6431fb426b8d9042aac64482e0104b794c27"
+    },
+    {
+      "name": "report.md",
+      "source_sha256": "e7ccc111e6f53ea9c50bab7707c3de38508f208fd0ad11623669923af86a60b0",
+      "archive_sha256": "62db4f446c8e94a260bc3f7afef98ce851777335178f8403e5a3934ca73641ae"
+    },
+    {
+      "name": "summary.json",
+      "source_sha256": "bc8d3b8bf76c8f195d9d44646396a0902c10ebddbae8ce70d1e74cb0823055df",
+      "archive_sha256": "437e1d71251316cb4658f7585af5a4d31c2c1eeba15a0a3c93746554aa52dd7a"
+    }
+  ]
+}

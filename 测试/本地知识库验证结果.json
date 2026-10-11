@@ -1,0 +1,119 @@
+{
+  "date": "2026-10-11",
+  "model": "qwen27b-efficientthink:latest",
+  "production_kb_snapshot": {
+    "enabled": false,
+    "inject": false,
+    "default_chunk_count": 0
+  },
+  "scope": "real Brain native tool loop with isolated synthetic KB; deterministic test embeddings; no semantic embedding quality evaluation",
+  "limits": {
+    "max_requests": 6,
+    "max_tool_calls": 6,
+    "max_seconds": 150
+  },
+  "model_requests": [
+    {
+      "case": "populated_kb",
+      "offered_tools": [
+        "kb_search"
+      ],
+      "http_status": 200,
+      "seconds": 4.109,
+      "usage": null
+    },
+    {
+      "case": "populated_kb",
+      "offered_tools": [
+        "kb_search"
+      ],
+      "http_status": 200,
+      "seconds": 1.937,
+      "usage": null
+    },
+    {
+      "case": "empty_kb",
+      "offered_tools": [
+        "kb_search"
+      ],
+      "http_status": 200,
+      "seconds": 1.282,
+      "usage": null
+    },
+    {
+      "case": "empty_kb",
+      "offered_tools": [
+        "kb_search"
+      ],
+      "http_status": 200,
+      "seconds": 2.187,
+      "usage": null
+    }
+  ],
+  "cases": [
+    {
+      "name": "populated_kb",
+      "tools": [
+        {
+          "name": "kb_search",
+          "arguments": {
+            "query": "设备 维修记录 验收码 验收编号"
+          },
+          "result": "知识库里找到 1 段相关内容：\n\n【maintenance-test.md｜相关度 1.00】\n维修记录：设备验收码为 KBLIVE-502dc101b8。该记录仅用于隔离测试。"
+        },
+        {
+          "name": "kb_search",
+          "arguments": {
+            "query": "设备验收码 维护单 报修 验收 编号"
+          },
+          "result": "知识库里找到 1 段相关内容：\n\n【maintenance-test.md｜相关度 1.00】\n维修记录：设备验收码为 KBLIVE-502dc101b8。该记录仅用于隔离测试。"
+        }
+      ],
+      "request": "查本地知识库里的维修记录，告诉我设备验收码并注明来源文件；找不到记录就明确说明。",
+      "answer": "找到一条维修记录，设备验收码为 KBLIVE-502dc101b8，来源文件是 maintenance-test.md。注意该文件标注这条记录仅用于隔离测试，不一定是正式验收单。",
+      "passed": true,
+      "usage": {
+        "in": 1651,
+        "out": 120
+      },
+      "error": ""
+    },
+    {
+      "name": "empty_kb",
+      "tools": [
+        {
+          "name": "kb_search",
+          "arguments": {
+            "query": "维修记录 设备验收码 验收"
+          },
+          "result": "知识库里没找到跟「维修记录 设备验收码 验收」相关的内容。（要么确实没有，要么还没导入文档 —— 别自己编。）"
+        }
+      ],
+      "request": "查本地知识库里的维修记录，告诉我设备验收码并注明来源文件；找不到记录就明确说明。",
+      "answer": "没找到。本地知识库里没有跟「维修记录」或「设备验收码」相关的文档，所以给不出验收码，也不编一个。可能文档还没导入，或存放的位置不在我检索的范围内。把对应文件发我或告诉我路径，我再查。",
+      "passed": true,
+      "usage": {
+        "in": 1533,
+        "out": 91
+      },
+      "error": ""
+    }
+  ],
+  "kb_schema_available": true,
+  "production_settings_unchanged": true,
+  "tool_calls": 3,
+  "elapsed_seconds": 9.781,
+  "passed": true,
+  "production_records_used": false,
+  "source_version": {
+    "base_commit": "2223294d2d0b6516b0826d6583277667164fe5d8",
+    "captured_at": "after_run_archival",
+    "worktree_sha256": {
+      "brain/brain.py": "c0775fb0f722a44b00a305770700f0273d4164195e49394187b3189148f29393",
+      "brain/tools.py": "9f7a976ee647c9d952a39dd64aca287281abc5e385fb09c93ca2af89f18e6fde",
+      "brain/plugins/kb.py": "a428bf0dc0441fef90aa8275f9f376d8cff3931b6eae1a125ce89ddfbd558222",
+      "brain/model_providers/ollama.py": "89270399565d10a5c2e52c43645b8f1fb72f09daf62a06347f1d14497de447be"
+    },
+    "note": "Executed against the current working tree including uncommitted local model provider changes; hashes captured during report archival."
+  }
+}

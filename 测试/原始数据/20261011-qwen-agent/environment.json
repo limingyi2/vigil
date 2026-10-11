@@ -1,0 +1,35 @@
+{
+  "run_id": "ollama-agent-smoke-20261011-002805",
+  "started_at": "2026-10-11T00:28:05",
+  "ollama_version": "0.34.1",
+  "ollama_base_url": "http://127.0.0.1:11434",
+  "model_tag": "qwen27b-efficientthink:latest",
+  "provider": "ollama",
+  "num_ctx": 16384,
+  "num_predict": 2048,
+  "think": true,
+  "temperature_in_payload": 0.85,
+  "worker": "<PROJECT>\\vigil-eval\\adapters\\ollama_worker.py",
+  "limits": {
+    "max_model_requests": 6,
+    "max_tool_calls": 8,
+    "max_wall_seconds": 180
+  },
+  "task_ids": [
+    "A01",
+    "A02",
+    "A03",
+    "A04",
+    "A05",
+    "A06"
+  ],
+  "completed_at": "2026-10-11T00:34:17",
+  "venv_python": "<PROJECT>/.venv-wx/Scripts/python.exe",
+  "venv_packages_installed_during_run": [
+    "numpy==2.5.3",
+    "pytest==9.1.1"
+  ],
+  "venv_note": ".venv-wx initially lacked numpy and pytest; both were pip-installed into the venv before the live run. No production code/config changed.",
+  "worker_path": "<PROJECT>/vigil-eval/adapters/ollama_worker.py",
+  "runner_path": "<PROJECT>/vigil-eval/run_ollama_smoke.py"
+}

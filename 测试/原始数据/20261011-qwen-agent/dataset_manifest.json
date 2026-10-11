@@ -1,0 +1,78 @@
+{
+  "source": "vigil-eval/dataset/tasks_a0x.jsonl",
+  "fixtures_root": "<PROJECT>/vigil-eval/dataset/fixtures",
+  "tasks": [
+    {
+      "id": "A01",
+      "fixture_dir": "a01",
+      "files": [
+        "config/app.conf",
+        "config/app.conf.bak.old",
+        "config/backup/config.json",
+        "config/settings.yaml",
+        "README.md"
+      ],
+      "oracle_pass": true,
+      "workspace_used": "<PROJECT>\\results\\ollama-agent-smoke-20261011-002805\\runs\\A01\\workspace"
+    },
+    {
+      "id": "A02",
+      "fixture_dir": "a02",
+      "files": [
+        "error.log",
+        "src/app.py",
+        "src/auth.py",
+        "src/session.py",
+        "tests/test_auth.py"
+      ],
+      "oracle_pass": true,
+      "workspace_used": "<PROJECT>\\results\\ollama-agent-smoke-20261011-002805\\runs\\A02\\workspace"
+    },
+    {
+      "id": "A03",
+      "fixture_dir": "a03",
+      "files": [
+        "calculator.py",
+        "README.md",
+        "test_calculator.py",
+        "utils.py"
+      ],
+      "oracle_pass": true,
+      "workspace_used": "<PROJECT>\\results\\ollama-agent-smoke-20261011-003059\\runs\\A03\\workspace"
+    },
+    {
+      "id": "A04",
+      "fixture_dir": "a04",
+      "files": [
+        "docs/old-guide.md.bak",
+        "docs/readme.txt",
+        "documentation/guide.md"
+      ],
+      "oracle_pass": true,
+      "workspace_used": "<PROJECT>\\results\\ollama-agent-smoke-20261011-002805\\runs\\A04\\workspace"
+    },
+    {
+      "id": "A05",
+      "fixture_dir": "a05",
+      "files": [
+        "build.log",
+        "install.log",
+        "test.log"
+      ],
+      "oracle_pass": false,
+      "workspace_used": "<PROJECT>\\results\\ollama-agent-smoke-20261011-002805\\runs\\A05\\workspace"
+    },
+    {
+      "id": "A06",
+      "fixture_dir": "a06",
+      "files": [
+        ".env",
+        "build.log",
+        "README.md",
+        "src/main.py"
+      ],
+      "oracle_pass": true,
+      "workspace_used": "<PROJECT>\\results\\ollama-agent-smoke-20261011-002805\\runs\\A06\\workspace"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "source_run": "ollama-agent-smoke-20261011-002805",
+  "view": "six-task recorded view including separate A03 rerun",
+  "tasks": 6,
+  "passed": 5,
+  "model_requests": 25,
+  "tool_calls": 27,
+  "input_tokens": 35243,
+  "output_tokens": 2894,
+  "sum_task_seconds": 105.657,
+  "kb_validation": {
+    "passed_cases": 2,
+    "model_requests": 4,
+    "tool_calls": 3,
+    "seconds": 9.781,
+    "input_tokens_brain_aggregate": 3184,
+    "output_tokens_brain_aggregate": 211
+  },
+  "kb_module_regression": {
+    "command": ".venv-wx/Scripts/python.exe -m pytest -p no:cacheprovider tests/test_kb.py -q",
+    "passed": 28,
+    "new_model_requests": 0
+  }
+}

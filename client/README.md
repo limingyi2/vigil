@@ -1,7 +1,10 @@
 # Vigil 桌面客户端
 
-Electron 客户端。云端大脑只有一份（`brain/`），这里只是它的一个前端：
-聊天、管理面板、设置、**本地操控**。**桌宠 Live2D（阶段5）还没开始。**
+Vigil 桌面 Agent，由 Electron 客户端与本地 Brain 组成，提供聊天、管理、设置和
+本地工具执行。云端 Brain 用于可选同步、跨设备入口和远程服务。
+不连接云端 Brain 时仍可使用本地运行端；完全离线生成回答需要配置本机模型。
+部分人设管理页面仍依赖云端接口，这项限制与本地聊天能力分别说明。
+**桌宠 Live2D（阶段5）还没开始。**
 
 排版定稿见 [`docs/client-layout-v1.html`](../docs/client-layout-v1.html)（可点开的可交互稿），
 开发计划见 [`00-客户端开发方案-待办.md`](../00-客户端开发方案-待办.md)。
@@ -13,10 +16,10 @@ Electron 客户端。云端大脑只有一份（`brain/`），这里只是它的
 **桌面上的 `Vigil` 快捷方式**（开始菜单里也有一个）。它指向源码里的 Electron：
 
 ```
-目标：vigil-client\node_modules\electron\dist\electron.exe
+目标：client\node_modules\electron\dist\electron.exe
 参数：.
-起始于：vigil-client
-图标：vigil-client\assets\icon.ico
+起始于：client
+图标：client\assets\icon.ico
 ```
 
 指向源码而不是打包产物，是因为**改完代码双击就是新的**，不用重新打包。
@@ -37,7 +40,7 @@ npm run pack     # 出 dist\win-unpacked\Vigil.exe（约 170MB 的快照，改�
 ## 跑起来（开发）
 
 ```bash
-cd vigil-client
+cd client
 npm start
 ```
 

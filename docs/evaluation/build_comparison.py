@@ -132,7 +132,7 @@ Stub 仅检验执行语义、异常模拟、隔离与 Oracle。以下记录均�
 
 从 4 题 × 2 组的 smoke 扩展到 24 题 × 2 组，说明 Harness 的覆盖面扩展，不能解释为真实 Agent 成功率提高。历史 smoke 报告中的完整实验预算为当时方案，不代表后来执行了 144 个真实 run。
 
-## 4. 用户提供记录中的其他前后信息
+## 4. 既有记录中的其他前后信息
 
 | 项目 | 原记录 | 后续记录 | 可比较性 |
 |---|---|---|---|
@@ -140,9 +140,9 @@ Stub 仅检验执行语义、异常模拟、隔离与 Oracle。以下记录均�
 | Qwen H3 | 最终 JSON 输出不完整 | 三种复测配置均可生成合法 JSON | 可说明配置影响；仅有汇总材料 |
 | 上下文诊断 | 曾误判 32K 设置只能读 16K | 独立诊断记录实际输入 27,847 tokens 并召回标记 | 后一次纠正前一次推断；不证明复杂长任务可靠性 |
 
-这些项目前没有取得原始逐次文件，只能引用[用户提供的记录](vigil-evaluation-record-2026-10-10.md)，不能当作本次从 raw 数据复算的结论。原记录中的 Qwen 真实 Agent 六题“待执行”已经由本目录的后续数据更新。
+这些项目前没有取得原始逐次文件，只能引用[评测记录原文](vigil-evaluation-record-2026-10-10.md)，不能当作本次从 raw 数据复算的结论。原记录中的 Qwen 真实 Agent 六题“待执行”已经由本目录的后续数据更新。
 """
-    (ROOT / "comparison.md").write_text(report, encoding="utf-8")
+    (ROOT / "comparison.md").write_text(report, encoding="utf-8", newline="\n")
     print("Archived comparison validated: 16 MiMo runs, 8 pairs, 5 eligible tasks; no API calls.")
 
 
