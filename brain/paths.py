@@ -52,6 +52,7 @@ PLUGIN_DATA_DIR = os.path.join(DATA_DIR, "plugins")  # 插件自己的持久化
 KB_DIR = os.path.join(DATA_DIR, "kb")                # 本地知识库：语料块 + 向量索引
 DEVICES_PATH = os.path.join(DATA_DIR, "devices.json")  # 已绑定设备表（只存 token 哈希）
 MANAGEMENT_PATH = os.path.join(DATA_DIR, "management.json")  # 服务器与 Agent 运行状态
+AGENT_CENTER_DIR = os.path.join(DATA_DIR, "agent_center")  # 独立 Codex 监督数据
 RUN_DIR = os.path.join(DATA_DIR, "run")
 CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 

@@ -1,0 +1,135 @@
+{
+  "before_initialize_error": "{'code': -32600, 'message': 'Not initialized'}",
+  "initialize": {
+    "userAgent": "Codex Desktop/0.162.0-alpha.17.2 (Windows 10.0.26200; x86_64) dumb (vigil_agent_center_p0; 0.0.1)",
+    "codexHome": "<HOME>\\.codex",
+    "platformFamily": "windows",
+    "platformOs": "windows"
+  },
+  "authentication": {
+    "requiresOpenaiAuth": true,
+    "accountPresent": true,
+    "accountType": "chatgpt"
+  },
+  "models": [
+    {
+      "model": "gpt-6.1-sol",
+      "default": true,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    {
+      "model": "gpt-6-astra",
+      "default": false,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    {
+      "model": "gpt-6-sol",
+      "default": false,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "default": false,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "default": false,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "default": false,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "default": false,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
+  ],
+  "desktop_list": {
+    "count": 2,
+    "currentThreadFound": true,
+    "statuses": {
+      "{'type': 'notLoaded'}": 2
+    },
+    "sourceKinds": {
+      "vscode": 2
+    }
+  },
+  "desktop_current_read": {
+    "id": "desktop_current",
+    "status": {
+      "type": "notLoaded"
+    },
+    "source": "vscode",
+    "historyMode": "paginated",
+    "turnsCount": 0
+  },
+  "desktop_history": {
+    "turnsCount": 34,
+    "lastStatuses": [
+      "completed",
+      "completed",
+      "interrupted"
+    ],
+    "contentsExported": false
+  },
+  "loaded": {
+    "count": 0,
+    "currentThreadLoaded": false
+  },
+  "desktop_observation": {
+    "seconds": 3,
+    "notificationMethods": {}
+  },
+  "stderrLineCount": 0
+}

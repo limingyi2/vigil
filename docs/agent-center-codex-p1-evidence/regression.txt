@@ -1,0 +1,32 @@
+test_disconnect_expires_approval_and_rejects_old_generation (test_codex_adapter.AdapterTests.test_disconnect_expires_approval_and_rejects_old_generation) ... ok
+test_failed_tool_does_not_fail_turn (test_codex_adapter.AdapterTests.test_failed_tool_does_not_fail_turn) ... ok
+test_history_never_claims_live_status_or_resumes_observed (test_codex_adapter.AdapterTests.test_history_never_claims_live_status_or_resumes_observed) ... ok
+test_http_local_admin_and_response_disabled (test_codex_adapter.AdapterTests.test_http_local_admin_and_response_disabled) ... ok
+test_inherited_unsafe_permissions_are_rejected (test_codex_adapter.AdapterTests.test_inherited_unsafe_permissions_are_rejected) ... ok
+test_late_previous_turn_completion_cannot_finish_current_turn (test_codex_adapter.AdapterTests.test_late_previous_turn_completion_cannot_finish_current_turn) ... ok
+test_native_error_and_failed_turn (test_codex_adapter.AdapterTests.test_native_error_and_failed_turn) ... ok
+test_new_generation_request_id_reuse_has_new_identity (test_codex_adapter.AdapterTests.test_new_generation_request_id_reuse_has_new_identity) ... ok
+test_observed_never_owns_or_controls (test_codex_adapter.AdapterTests.test_observed_never_owns_or_controls) ... ok
+test_registry_path_escape_fail_closed (test_codex_adapter.AdapterTests.test_registry_path_escape_fail_closed) ... ok
+test_replayed_old_turn_approval_after_resume_is_not_restored (test_codex_adapter.AdapterTests.test_replayed_old_turn_approval_after_resume_is_not_restored) ... ok
+test_resolved_only_matches_thread_and_typed_request_id (test_codex_adapter.AdapterTests.test_resolved_only_matches_thread_and_typed_request_id) ... ok
+test_restarted_adapter_never_restores_pending (test_codex_adapter.AdapterTests.test_restarted_adapter_never_restores_pending) ... ok
+test_running_and_normal_completion (test_codex_adapter.AdapterTests.test_running_and_normal_completion) ... ok
+test_separate_turns_do_not_dedup_legitimate_waiting_state (test_codex_adapter.AdapterTests.test_separate_turns_do_not_dedup_legitimate_waiting_state) ... ok
+test_stream_deltas_not_deduped_and_cursor (test_codex_adapter.AdapterTests.test_stream_deltas_not_deduped_and_cursor) ... ok
+test_terminal_turn_never_recreates_pending (test_codex_adapter.AdapterTests.test_terminal_turn_never_recreates_pending) ... ok
+test_timeout_and_responses_always_disabled (test_codex_adapter.AdapterTests.test_timeout_and_responses_always_disabled) ... ok
+test_waiting_approval_and_duplicate_payload_variation (test_codex_adapter.AdapterTests.test_waiting_approval_and_duplicate_payload_variation) ... ok
+test_wrong_turn_or_unbound_request_ignored (test_codex_adapter.AdapterTests.test_wrong_turn_or_unbound_request_ignored) ... ok
+test_approval_accept_and_decline_both_disabled (test_codex_adapter_http.BrainHTTPTests.test_approval_accept_and_decline_both_disabled) ... ok
+test_bad_auth_cannot_read (test_codex_adapter_http.BrainHTTPTests.test_bad_auth_cannot_read) ... ok
+test_invalid_cursor_and_unknown_route (test_codex_adapter_http.BrainHTTPTests.test_invalid_cursor_and_unknown_route) ... ok
+test_status_real_http_route (test_codex_adapter_http.BrainHTTPTests.test_status_real_http_route) ... ok
+test_approval_dedup_process_exit_and_automatic_reconnect (test_codex_adapter_native.NativeAdapterTests.test_approval_dedup_process_exit_and_automatic_reconnect) ... ok
+test_native_command_never_bypasses_required_approval (test_codex_adapter_native.NativeAdapterTests.test_native_command_never_bypasses_required_approval) ... ok
+test_normal_running_and_failed_turn (test_codex_adapter_native.NativeAdapterTests.test_normal_running_and_failed_turn) ... ok
+
+----------------------------------------------------------------------
+Ran 27 tests in 5.702s
+
+OK

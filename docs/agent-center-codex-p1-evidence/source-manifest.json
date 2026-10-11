@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-11",
+  "baseline_commit": "f5f1359443d873fd0634f9eb956554b6e07a08d2",
+  "cli_version": "codex-cli 0.162.0-alpha.17.2",
+  "regression": {
+    "passed": 27,
+    "skipped": 0
+  },
+  "file_sha256": {
+    "brain/codex_adapter.py": "2a010fe1c2472e13013832d6700d0375e79ca82b15717818d14b7a83128e64f6",
+    "brain/codex_process.py": "9d117a3fa5db779ce4cddbebf7d23b03706a3df9188999eaf2bdd9f22ad71876",
+    "brain/paths.py": "59f888bb429ad0512d8d6078724193ae1003c41e7e162581a28d6057cebcdba0",
+    "brain/server.py": "e6e6b8bc8eab5383fef150f8582f74b46edff1f39cf574c4479b3fc9900648ae",
+    "brain/tests/test_codex_adapter.py": "13c5d495e63eb881e499c76cd10720ef989356f90a7f54827f867e2814ce633c",
+    "brain/tests/test_codex_adapter_http.py": "fb48e53a57f77315ad3ce5fe25a4f1312a88e43bc8b496b80693877559946ce7",
+    "brain/tests/test_codex_adapter_native.py": "5cc2ac4685f17ca8414f610a7ce25556aa0781c34cd0b7a552c11c268c0dbc89",
+    "tools/verify_agent_center_p1.py": "65f641c6761c01311df99b19fccecfcd083c5b39136bdd4ac3eeb712983f2930"
+  }
+}

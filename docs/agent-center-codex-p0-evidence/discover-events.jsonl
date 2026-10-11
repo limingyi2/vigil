@@ -1,0 +1,19 @@
+{"connection": "independent", "direction": "request", "method": "thread/loaded/list", "requestId": 1}
+{"connection": "independent", "direction": "error", "method": "thread/loaded/list", "error": {"code": -32600, "message": "Not initialized"}}
+{"connection": "independent", "direction": "request", "method": "initialize", "requestId": 2}
+{"connection": "independent", "direction": "response", "method": "initialize", "requestId": 2}
+{"connection": "independent", "at": 98302.306, "method": "remoteControl/status/changed"}
+{"connection": "independent", "direction": "request", "method": "account/read", "requestId": 3}
+{"connection": "independent", "at": 98303.118, "method": "account/updated"}
+{"connection": "independent", "direction": "response", "method": "account/read", "requestId": 3}
+{"connection": "independent", "direction": "request", "method": "model/list", "requestId": 4}
+{"connection": "independent", "direction": "response", "method": "model/list", "requestId": 4}
+{"connection": "independent", "direction": "request", "method": "thread/list", "requestId": 5}
+{"connection": "independent", "direction": "response", "method": "thread/list", "requestId": 5}
+{"connection": "independent", "direction": "request", "method": "thread/read", "requestId": 6}
+{"connection": "independent", "direction": "response", "method": "thread/read", "requestId": 6}
+{"connection": "independent", "direction": "request", "method": "thread/read", "requestId": 7}
+{"connection": "independent", "at": 98303.927, "method": "deprecationNotice"}
+{"connection": "independent", "direction": "response", "method": "thread/read", "requestId": 7}
+{"connection": "independent", "direction": "request", "method": "thread/loaded/list", "requestId": 8}
+{"connection": "independent", "direction": "response", "method": "thread/loaded/list", "requestId": 8}

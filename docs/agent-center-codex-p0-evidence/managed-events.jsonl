@@ -1,0 +1,107 @@
+{"connection": "managed", "direction": "request", "method": "initialize", "requestId": 1}
+{"connection": "managed", "direction": "response", "method": "initialize", "requestId": 1}
+{"connection": "managed", "at": 98404.613, "method": "remoteControl/status/changed"}
+{"connection": "managed", "direction": "request", "method": "config/read", "requestId": 2}
+{"connection": "managed", "direction": "response", "method": "config/read", "requestId": 2}
+{"connection": "managed", "direction": "request", "method": "thread/start", "requestId": 3}
+{"connection": "managed", "direction": "response", "method": "thread/start", "requestId": 3}
+{"connection": "managed", "at": 98404.963, "method": "thread/started", "thread": {"id": "managed_thread", "status": {"type": "idle"}}}
+{"connection": "managed", "direction": "request", "method": "turn/start", "requestId": 4}
+{"connection": "managed", "at": 98405.071, "method": "thread/settings/updated", "threadId": "managed_thread"}
+{"connection": "managed", "direction": "response", "method": "turn/start", "requestId": 4}
+{"connection": "managed", "at": 98405.077, "method": "thread/status/changed", "threadId": "managed_thread"}
+{"connection": "managed", "at": 98405.077, "method": "turn/started", "threadId": "managed_thread", "turn": {"id": "tool_and_completion", "status": "inProgress"}}
+{"connection": "managed", "at": 98405.542, "method": "account/updated"}
+{"connection": "managed", "at": 98408.921, "method": "item/started", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_3", "type": "userMessage"}}
+{"connection": "managed", "at": 98408.921, "method": "item/completed", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_3", "type": "userMessage"}}
+{"connection": "managed", "at": 98412.101, "method": "item/started", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_4", "type": "agentMessage"}}
+{"connection": "managed", "at": 98412.101, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.101, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.101, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.101, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.334, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.513, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_4"}
+{"connection": "managed", "at": 98412.544, "method": "item/completed", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_4", "type": "agentMessage"}}
+{"connection": "managed", "at": 98414.106, "method": "item/started", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_5", "type": "commandExecution", "status": "inProgress", "exitCode": null}}
+{"connection": "managed", "at": 98414.406, "method": "item/commandExecution/outputDelta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_5"}
+{"connection": "managed", "at": 98414.406, "method": "item/commandExecution/outputDelta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_5"}
+{"connection": "managed", "at": 98414.422, "method": "item/completed", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_5", "type": "commandExecution", "status": "failed", "exitCode": 7}}
+{"connection": "managed", "at": 98414.425, "method": "thread/tokenUsage/updated", "threadId": "managed_thread", "turnId": "tool_and_completion"}
+{"connection": "managed", "at": 98414.425, "method": "account/rateLimits/updated"}
+{"connection": "managed", "at": 98417.156, "method": "item/started", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_6", "type": "agentMessage"}}
+{"connection": "managed", "at": 98417.198, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.198, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.198, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.198, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.198, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.198, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.422, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.476, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.476, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.476, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.476, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.477, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "tool_and_completion", "itemId": "id_6"}
+{"connection": "managed", "at": 98417.556, "method": "item/completed", "threadId": "managed_thread", "turnId": "tool_and_completion", "item": {"id": "id_6", "type": "agentMessage"}}
+{"connection": "managed", "at": 98417.616, "method": "thread/tokenUsage/updated", "threadId": "managed_thread", "turnId": "tool_and_completion"}
+{"connection": "managed", "at": 98417.616, "method": "account/rateLimits/updated"}
+{"connection": "managed", "at": 98417.63, "method": "thread/status/changed", "threadId": "managed_thread"}
+{"connection": "managed", "at": 98417.631, "method": "turn/completed", "threadId": "managed_thread", "turn": {"id": "tool_and_completion", "status": "completed"}}
+{"connection": "managed", "direction": "request", "method": "turn/start", "requestId": 5}
+{"connection": "managed", "direction": "response", "method": "turn/start", "requestId": 5}
+{"connection": "managed", "at": 98417.838, "method": "thread/status/changed", "threadId": "managed_thread"}
+{"connection": "managed", "at": 98417.838, "method": "turn/started", "threadId": "managed_thread", "turn": {"id": "approval_observation", "status": "inProgress"}}
+{"connection": "managed", "at": 98417.84, "method": "item/started", "threadId": "managed_thread", "turnId": "approval_observation", "item": {"id": "id_8", "type": "userMessage"}}
+{"connection": "managed", "at": 98417.84, "method": "item/completed", "threadId": "managed_thread", "turnId": "approval_observation", "item": {"id": "id_8", "type": "userMessage"}}
+{"connection": "managed", "at": 98420.681, "method": "item/started", "threadId": "managed_thread", "turnId": "approval_observation", "item": {"id": "id_9", "type": "agentMessage"}}
+{"connection": "managed", "at": 98420.681, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98420.681, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98420.681, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98420.681, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98420.681, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98420.935, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.055, "method": "item/agentMessage/delta", "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_9"}
+{"connection": "managed", "at": 98421.056, "method": "item/completed", "threadId": "managed_thread", "turnId": "approval_observation", "item": {"id": "id_9", "type": "agentMessage"}}
+{"connection": "managed", "at": 98422.468, "method": "thread/status/changed", "threadId": "managed_thread"}
+{"connection": "managed", "at": 98422.468, "method": "item/started", "threadId": "managed_thread", "turnId": "approval_observation", "item": {"id": "id_10", "type": "commandExecution", "status": "inProgress", "exitCode": null}}
+{"connection": "managed", "at": 98422.469, "method": "item/commandExecution/requestApproval", "requestId": 0, "threadId": "managed_thread", "turnId": "approval_observation", "itemId": "id_10", "serverRequest": true}
+{"connection": "managed", "direction": "request", "method": "turn/interrupt", "requestId": 6}
+{"connection": "managed", "at": 98422.633, "method": "thread/tokenUsage/updated", "threadId": "managed_thread", "turnId": "approval_observation"}
+{"connection": "managed", "at": 98422.633, "method": "account/rateLimits/updated"}
+{"connection": "managed", "direction": "response", "method": "turn/interrupt", "requestId": 6}
+{"connection": "managed", "at": 98422.634, "method": "thread/status/changed", "threadId": "managed_thread"}
+{"connection": "managed", "at": 98422.634, "method": "turn/completed", "threadId": "managed_thread", "turn": {"id": "approval_observation", "status": "interrupted"}}
+{"connection": "managed", "at": 98422.634, "method": "serverRequest/resolved", "threadId": "managed_thread", "requestId": "id_11"}

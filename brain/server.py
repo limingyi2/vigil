@@ -1431,6 +1431,13 @@ def start_remote_api(brain):
             # 管理类接口的管理员要求在各自分支里再判（双重保险）。
             if self._deny_if_limited_device("POST", path):
                 return
+            if path.startswith("/api/agent-center/"):
+                import codex_adapter as _codex_center
+                code, out = _codex_center.handle_http(
+                    "POST", path, body, qp, is_admin=self._is_admin(),
+                    is_local=_is_loopback(self.client_address[0]))
+                self._json(code, out)
+                return
             try:
                 if path == "/api/device/register":
                     # 只能用"主人钥匙"注册：设备 token 不能自己给自己发新设备，
@@ -2348,6 +2355,15 @@ def start_remote_api(brain):
             path = self.path.split("?")[0]
             # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
             if self._deny_if_limited_device("GET", path):
+                return
+            if path.startswith("/api/agent-center/"):
+                import codex_adapter as _codex_center
+                from urllib.parse import parse_qs, urlparse
+                query = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+                code, out = _codex_center.handle_http(
+                    "GET", path, query=query, is_admin=self._is_admin(),
+                    is_local=_is_loopback(self.client_address[0]))
+                self._json(code, out)
                 return
             if path.startswith("/api/management/"):
                 # 全局基础设施信息：主人钥匙或 admin 角色设备（桌面管理端），

@@ -1,0 +1,48 @@
+{
+  "hostedModelCalls": 0,
+  "fixture": "authenticated loopback Responses fixture",
+  "home": "<PROBE>/fixture-home",
+  "approvalResponsesSent": 0,
+  "failedTurn": {
+    "status": "failed",
+    "userInput": null,
+    "methods": [
+      "error",
+      "item/completed",
+      "item/started",
+      "thread/started",
+      "thread/status/changed",
+      "turn/completed",
+      "turn/started"
+    ]
+  },
+  "resume": {
+    "sameThread": true,
+    "persistedTurns": 1,
+    "loaded": true
+  },
+  "userInputTurn": {
+    "status": "interrupted",
+    "userInput": {
+      "method": "item/tool/requestUserInput",
+      "bindingValid": true,
+      "isBlocking": true,
+      "questionCount": 1
+    },
+    "methods": [
+      "account/rateLimits/updated",
+      "item/completed",
+      "item/started",
+      "item/tool/requestUserInput",
+      "serverRequest/resolved",
+      "thread/settings/updated",
+      "thread/status/changed",
+      "thread/tokenUsage/updated",
+      "turn/completed",
+      "turn/started"
+    ]
+  },
+  "fixtureRequestCount": 2,
+  "unauthorizedRequests": 0,
+  "requestUserInputToolOffered": false
+}

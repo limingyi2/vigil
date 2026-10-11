@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-11",
+  "mode": "real",
+  "cli_version": "codex-cli 0.162.0-alpha.17.2",
+  "source_commit": "f5f1359443d873fd0634f9eb956554b6e07a08d2",
+  "real_turn_starts": 2,
+  "server_responses_sent": 0,
+  "tasks": [
+    {
+      "name": "real_task_1",
+      "status": "completed",
+      "source": "realtime",
+      "live": true,
+      "ownership": "owned",
+      "model": "gpt-6.1-sol",
+      "tool_failures": 1,
+      "seconds": 11.157,
+      "breaker": null,
+      "fixture_unchanged": true
+    },
+    {
+      "name": "real_task_2",
+      "status": "completed",
+      "source": "realtime",
+      "live": true,
+      "ownership": "owned",
+      "model": "gpt-6.1-sol",
+      "tool_failures": 1,
+      "seconds": 13.969,
+      "breaker": null,
+      "fixture_unchanged": true
+    }
+  ],
+  "approval_response_enabled": false,
+  "passed": true,
+  "reported_usage_records": 4,
+  "reported_tokens": {
+    "inputTokens": 53675,
+    "cachedInputTokens": 45952,
+    "outputTokens": 244,
+    "totalTokens": 53919
+  }
+}
