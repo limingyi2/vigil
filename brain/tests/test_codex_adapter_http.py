@@ -56,8 +56,11 @@ class BrainHTTPTests(unittest.TestCase):
     def test_status_real_http_route(self):
         code, result = self.call("GET", "/api/agent-center/status")
         self.assertEqual(code, 200)
-        self.assertFalse(result["approval_response_enabled"])
+        self.assertTrue(result["approval_response_enabled"])
         self.assertEqual(result["connection_status"], "disconnected")
+        code, approvals = self.call("GET", "/api/agent-center/approvals")
+        self.assertEqual(code, 200)
+        self.assertTrue(approvals["response_enabled"])
 
     def test_bad_auth_cannot_read(self):
         self.assertEqual(self.call("GET", "/api/agent-center/tasks", token="wrong")[0], 401)
@@ -76,10 +79,9 @@ class BrainHTTPTests(unittest.TestCase):
         self.assertEqual(code, 403)
         self.assertIn("管理员", result["err"])
 
-    def test_approval_accept_and_decline_both_disabled(self):
-        for decision in ("accept", "decline"):
-            code, result = self.call("POST", "/api/agent-center/approvals/arbitrary/respond", body={"decision": decision})
-            self.assertEqual((code, result["err"]), (409, "approval_response_disabled"))
+    def test_unknown_approval_route_is_rejected(self):
+        code, result = self.call("POST", "/api/agent-center/approvals/arbitrary/respond", body={"action": "decline"})
+        self.assertEqual((code, result["err"]), (404, "agent_center_route_missing"))
         self.assertEqual(self.center.requests, 0)
 
     def test_invalid_cursor_and_unknown_route(self):

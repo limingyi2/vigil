@@ -1,8 +1,9 @@
-"""P1 Codex supervision. Only registered threads may be resumed or controlled.
+"""Codex supervision and owned-session consent.
 
-No server-request replies exist here: approvals and questions are observation-only.
-The native login stays in Codex; raw prompts, outputs, commands and credentials
-are not persisted in the adapter journal. Polling uses a sequence cursor.
+Only registered owned threads may be resumed, controlled or receive a manually
+submitted response. Observed desktop sessions remain read-only. The native
+login stays in Codex; raw prompts, outputs, commands and credentials are not
+persisted in the adapter journal. Polling uses a sequence cursor.
 """
 import atexit
 import collections
@@ -67,6 +68,9 @@ class CodexAdapter:
         self.events = collections.deque(maxlen=2000)
         self.seen = collections.OrderedDict()
         self.pending = {}
+        # Live item previews are deliberately memory-only. File changes may be
+        # delivered on item/started before the approval request references them.
+        self.live_items = {}
         self.tasks = {}
         self.observed = {}
         self.models = set()
@@ -243,9 +247,10 @@ class CodexAdapter:
             self.connection_status = "disconnected"
             self.last_error = reason
             for request in self.pending.values():
-                if request["state"] == "pending":
+                if request["state"] in ("pending", "responding"):
                     request["state"] = "expired"
                     request["expired_reason"] = reason
+            self.live_items.clear()
             for task in self.tasks.values():
                 task["last_known_status"] = task["status"]
                 task["status"], task["live"] = "unknown", False
@@ -466,13 +471,16 @@ class CodexAdapter:
                 key = hashlib.sha256(identity.encode()).hexdigest()
                 if key in self.pending:
                     return False
+                protocol = self._approval_protocol_data(method, params, task, generation, turn_id)
                 self.pending[key] = {"id": key, "connection": self.connection_id,
-                                     "generation": generation, "task_id": task["id"],
+                                     "generation": generation, "connection_generation": generation,
+                                     "task_id": task["id"],
                                      "thread_id": thread_id, "turn_id": turn_id,
                                      "item_id": params["itemId"], "request_id": request_id,
                                      "method": method, "ownership": "owned", "state": "pending",
                                      "created_at": now, "expires_at": now + 300,
-                                     "response_enabled": False}
+                                     "response_enabled": bool(protocol.get("can_respond")),
+                                     **protocol}
                 if method != "item/tool/requestUserInput" or params.get("isBlocking", True):
                     task["status"] = "waiting_input" if method == "item/tool/requestUserInput" else "waiting_approval"
             elif method in ("turn/started", "turn/completed"):
@@ -520,6 +528,8 @@ class CodexAdapter:
                         request["state"] = "resolved"
             elif method == "item/completed":
                 item = params.get("item") or {}
+                if item.get("id"):
+                    self.live_items.pop((task["id"], generation, event_turn, item["id"]), None)
                 if item.get("type") == "commandExecution" and item.get("status") == "failed":
                     task["tool_failures"] += 1
             elif method == "error":
@@ -527,6 +537,9 @@ class CodexAdapter:
             # P2 view metadata only: never expose commands, arguments or outputs.
             if method == "item/started" and live_turn and event_turn == task.get("current_turn"):
                 item = params.get("item") or {}
+                if item.get("type") == "fileChange" and isinstance(item.get("changes"), list):
+                    self.live_items[(task["id"], generation, event_turn, item.get("id"))] = {
+                        "type": "fileChange", "changes": self._bounded_copy(item["changes"], 512 * 1024)}
                 if item.get("type") in ("commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch"):
                     task["current_operation"] = {"type": item["type"],
                                                  "item_key": self._label(item.get("id")),
@@ -555,8 +568,11 @@ class CodexAdapter:
 
     def _expire_requests(self, task_id, turn_id, reason):
         for request in self.pending.values():
-            if request["task_id"] == task_id and request["turn_id"] == turn_id and request["state"] == "pending":
+            if request["task_id"] == task_id and request["turn_id"] == turn_id and request["state"] in ("pending", "responding"):
                 request["state"], request["expired_reason"] = "expired", reason
+        for key in list(self.live_items):
+            if key[0] == task_id and key[2] == turn_id:
+                self.live_items.pop(key, None)
 
     def approvals(self):
         with self.lock:
@@ -565,9 +581,185 @@ class CodexAdapter:
                     request["state"], request["expired_reason"] = "expired", "timeout"
             return copy.deepcopy(list(self.pending.values()))
 
-    def respond(self, *args, **kwargs):
-        # P1-B deliberately forbids both accept and decline, irrespective of ownership.
-        raise AdapterError("approval_response_disabled", 409)
+    @staticmethod
+    def _bounded_copy(value, limit):
+        try:
+            encoded = json.dumps(value, ensure_ascii=False)
+            if len(encoded.encode("utf-8")) > limit:
+                return None
+            return json.loads(encoded)
+        except (TypeError, ValueError):
+            return None
+
+    def _approval_protocol_data(self, method, params, task, generation, turn_id):
+        """Keep only current-turn, in-memory data needed for informed consent.
+
+        This metadata is never written to owned.json or the event journal.
+        Methods without all P3 identity and review fields remain display-only.
+        """
+        common = {"can_respond": False, "blocked_reason": "unsupported_or_incomplete"}
+        if method == "item/commandExecution/requestApproval":
+            command, cwd = params.get("command"), params.get("cwd")
+            decisions = params.get("availableDecisions")
+            extra_permissions = params.get("additionalPermissions")
+            bounded = None if extra_permissions is None else self._bounded_copy(extra_permissions, 65536)
+            risk = {"command": command if isinstance(command, str) and len(command) <= 32768 else None,
+                    "cwd": cwd if isinstance(cwd, str) and len(cwd) <= 4096 else None,
+                    "reason": params.get("reason") if isinstance(params.get("reason"), str) else None,
+                    "kind": params.get("kind") or "command",
+                    "additional_permissions": bounded,
+                    "command_actions": self._bounded_copy(params.get("commandActions"), 65536),
+                    "environment_id": params.get("environmentId") if isinstance(params.get("environmentId"), str) else None,
+                    "network_approval_context": self._bounded_copy(params.get("networkApprovalContext"), 65536),
+                    "proposed_execpolicy_amendment": self._bounded_copy(params.get("proposedExecpolicyAmendment"), 65536),
+                    "proposed_network_policy_amendments": self._bounded_copy(params.get("proposedNetworkPolicyAmendments"), 65536)}
+            safe = (risk["command"] is not None and bool(risk["command"].strip())
+                    and risk["cwd"] is not None and bool(risk["cwd"].strip())
+                    and risk["kind"] == "command"
+                    and (extra_permissions is None or bounded is not None)
+                    and not extra_permissions
+                    and not params.get("networkApprovalContext")
+                    and not params.get("proposedExecpolicyAmendment")
+                    and not params.get("proposedNetworkPolicyAmendments")
+                    and isinstance(decisions, list) and "accept" in decisions and "decline" in decisions)
+            return {"risk": risk, "can_respond": safe,
+                    "blocked_reason": None if safe else "command_risk_incomplete_or_extra_permissions"}
+        if method == "item/fileChange/requestApproval":
+            item = self.live_items.get((task["id"], generation, turn_id, params.get("itemId")))
+            changes = item.get("changes") if item else None
+            changes = self._bounded_copy(changes, 512 * 1024)
+            safe = isinstance(changes, list) and bool(changes) and all(
+                isinstance(c, dict) and isinstance(c.get("path"), str) and c.get("path")
+                and isinstance(c.get("kind"), str) and isinstance(c.get("diff"), str)
+                for c in changes)
+            risk = {"reason": params.get("reason") if isinstance(params.get("reason"), str) else None,
+                    "grant_root": params.get("grantRoot") if isinstance(params.get("grantRoot"), str) else None,
+                    "changes": changes}
+            return {"risk": risk, "can_respond": safe,
+                    "blocked_reason": None if safe else "file_change_preview_unavailable"}
+        if method == "item/tool/requestUserInput":
+            questions = self._bounded_copy(params.get("questions"), 256 * 1024)
+            safe = (params.get("isBlocking") is True and isinstance(questions, list) and bool(questions)
+                    and all(isinstance(q, dict) and isinstance(q.get("id"), str) and q["id"]
+                            and isinstance(q.get("question"), str) and q["question"]
+                            and isinstance(q.get("header"), str)
+                            and (q.get("options") is None or isinstance(q.get("options"), list)
+                                 and all(isinstance(o, dict) and isinstance(o.get("label"), str)
+                                         and isinstance(o.get("description"), str) for o in q["options"]))
+                            for q in questions)
+                    and len({q["id"] for q in questions}) == len(questions))
+            return {"risk": {"questions": questions, "is_blocking": params.get("isBlocking") is True},
+                    "can_respond": safe,
+                    "blocked_reason": None if safe else "user_input_schema_incomplete_or_nonblocking"}
+        return common
+
+    def respond(self, approval_id, identity, action=None, answers=None):
+        if not isinstance(identity, dict):
+            raise AdapterError("approval_binding_required", 400)
+        with self.lock:
+            request = self.pending.get(approval_id)
+            if not request:
+                raise AdapterError("approval_not_found", 404)
+            fields = {"connection": "connection", "connection_generation": "connection_generation",
+                      "thread_id": "thread_id", "turn_id": "turn_id", "item_id": "item_id"}
+            if any(identity.get(external) != request.get(internal)
+                   for external, internal in fields.items()):
+                raise AdapterError("approval_binding_mismatch", 409)
+            request_id = identity.get("request_id")
+            if type(request_id) is not type(request["request_id"]) or request_id != request["request_id"]:
+                raise AdapterError("approval_binding_mismatch", 409)
+            if request["ownership"] != "owned":
+                raise AdapterError("owned_session_required", 403)
+            if request["state"] != "pending":
+                raise AdapterError("approval_already_processed", 409)
+            if request["expires_at"] <= time.time():
+                request["state"], request["expired_reason"] = "expired", "timeout"
+                raise AdapterError("approval_expired", 409)
+            if (self.connection_status != "connected" or request["generation"] != self.generation
+                    or request["connection"] != self.connection_id):
+                request["state"], request["expired_reason"] = "expired", "connection_changed"
+                raise AdapterError("approval_connection_stale", 409)
+            task = self.tasks.get(request["task_id"])
+            if (not task or task.get("ownership") != "owned" or task.get("thread_id") != request["thread_id"]
+                    or task.get("connection_generation") != self.generation
+                    or task.get("current_turn") != request["turn_id"]
+                    or task.get("status") not in ("running", "waiting_approval", "waiting_input")
+                    or task.get("turns", {}).get(request["turn_id"], {}).get("generation") != self.generation):
+                request["state"], request["expired_reason"] = "expired", "turn_or_ownership_changed"
+                raise AdapterError("approval_turn_stale", 409)
+            if not request.get("response_enabled"):
+                raise AdapterError("approval_risk_incomplete", 409)
+            result = self._make_approval_response(request, action, answers)
+            request["state"] = "responding"
+            generation = request["generation"]
+        try:
+            self._write_server_response(request, result, generation)
+        except AdapterError:
+            with self.lock:
+                if request.get("state") == "responding":
+                    request["state"], request["expired_reason"] = "expired", "response_transport_failed"
+            raise
+        with self.lock:
+            if request.get("state") == "responding":
+                request["state"] = "responded"
+                request["decision"] = "answer_submitted" if request["method"] == "item/tool/requestUserInput" else action
+                request["responded_at"] = time.time()
+            return {"ok": True, "state": request["state"]}
+
+    @staticmethod
+    def _make_approval_response(request, action, answers):
+        method = request["method"]
+        if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
+            if action not in ("accept", "decline"):
+                raise AdapterError("approval_decision_invalid", 400)
+            return {"decision": action}
+        if method == "item/tool/requestUserInput":
+            if action != "answer" or not isinstance(answers, dict):
+                raise AdapterError("user_answers_invalid", 400)
+            questions = request["risk"]["questions"]
+            if set(answers) != {q["id"] for q in questions}:
+                raise AdapterError("user_answers_invalid", 400)
+            normalized = {}
+            for question in questions:
+                answer = answers[question["id"]]
+                if isinstance(answer, str):
+                    answer = [answer]
+                options = question.get("options") or []
+                allowed = {o["label"] for o in options}
+                if (not isinstance(answer, list) or not answer
+                        or any(not isinstance(value, str) or len(value) > 8192 for value in answer)
+                        or allowed and any(value not in allowed for value in answer)
+                        or len(answer) > len(allowed) and allowed and not question.get("isOther")):
+                    raise AdapterError("user_answers_invalid", 400)
+                normalized[question["id"]] = {"answers": answer}
+            return {"answers": normalized}
+        raise AdapterError("approval_method_unsupported", 409)
+
+    def _write_server_response(self, request, result, generation):
+        """Only the validated one-shot respond path may answer App Server requests."""
+        if (request.get("method") not in ("item/commandExecution/requestApproval",
+                                           "item/fileChange/requestApproval",
+                                           "item/tool/requestUserInput")
+                or not isinstance(result, dict)):
+            raise AdapterError("server_response_disabled", 403)
+        with self.write_lock:
+            with self.lock:
+                task = self.tasks.get(request.get("task_id"))
+                if (request.get("state") != "responding" or generation != self.generation
+                        or self.connection_status != "connected" or not self.process
+                        or self.process.poll() is not None or not task
+                        or task.get("current_turn") != request.get("turn_id")
+                        or task.get("thread_id") != request.get("thread_id")
+                        or task.get("connection_generation") != generation
+                        or task.get("status") not in ("running", "waiting_approval", "waiting_input")):
+                    raise AdapterError("approval_connection_stale", 409)
+                message = {"id": request["request_id"], "result": result}
+                try:
+                    self.process.stdin.write((json.dumps(message, ensure_ascii=False) + "\n").encode())
+                    self.process.stdin.flush()
+                    self.transport_counts["server_responses"] += 1
+                except (OSError, ValueError):
+                    raise AdapterError("transport_unavailable", 503) from None
 
     @staticmethod
     def _apply_history(task, thread):
@@ -621,7 +813,7 @@ class CodexAdapter:
             return {"connection_status": self.connection_status, "connection_id": self.connection_id,
                     "generation": self.generation, "last_error": self.last_error,
                     "models": sorted(self.models), "default_model": self.default_model,
-                    "approval_response_enabled": False,
+                    "approval_response_enabled": True,
                     "transport_counts": dict(self.transport_counts)}
 
     def event_log(self, after=0):
@@ -690,12 +882,22 @@ def handle_http(method, path, body=None, query=None, *, is_admin=False, is_local
     if not is_local or not is_admin:
         return 403, {"ok": False, "err": "local_admin_required"}
     route = path[len(prefix):].strip("/")
-    # Check this before constructing/connecting an adapter. Never reply to approvals.
-    if method == "POST" and route.startswith("approvals"):
-        return 409, {"ok": False, "err": "approval_response_disabled"}
     if not isinstance(body or {}, dict):
         return 400, {"ok": False, "err": "invalid_body"}
     body, query = body or {}, query or {}
+    if method == "POST" and route.startswith("approvals"):
+        import re
+        match = re.fullmatch(r"approvals/([0-9a-f]{64})/respond", route)
+        if not match:
+            return 404, {"ok": False, "err": "agent_center_route_missing"}
+        center = adapter or get_adapter()
+        identity = {key: body.get(key) for key in
+                    ("connection", "connection_generation", "thread_id", "turn_id", "request_id", "item_id")}
+        try:
+            return 200, {"ok": True, **center.respond(match.group(1), identity,
+                                                       body.get("action"), body.get("answers"))}
+        except AdapterError as exc:
+            return exc.status, {"ok": False, "err": exc.code}
     center = adapter or get_adapter()
     try:
         if method == "GET" and route == "status":
@@ -703,7 +905,8 @@ def handle_http(method, path, body=None, query=None, *, is_admin=False, is_local
         elif method == "GET" and route == "tasks":
             out = center.snapshot()
         elif method == "GET" and route == "approvals":
-            out = {"items": center.approvals(), "response_enabled": False}
+            out = {"items": center.approvals(),
+                   "response_enabled": center.status().get("approval_response_enabled", False)}
         elif method == "GET" and route == "events":
             out = center.event_log(max(0, int(query.get("after", 0))))
         elif method == "GET" and route == "observed":

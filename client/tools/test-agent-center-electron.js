@@ -83,7 +83,7 @@ async function run(){
   await command('tool_failed');await poll();assert.match(await ev(`document.querySelector('#ac-detail').textContent`),/工具失败次数1/);
   assert.equal(notifications.length,0);result('tool failure count without falsely failing task');
   await command('waiting_status');await poll();await command('approval');await poll();
-  await until(`document.querySelector('#ac-approvals').textContent.includes('等待审批')`);
+  await until(`document.querySelector('#ac-approvals').textContent.includes('命令审批')`);
   const expected=Notification.isSupported()?1:0;assert.equal(notifications.length,expected);
   await command('approval',{duplicate:true});await poll();assert.equal(notifications.length,expected);
   const dup=await ev(`vigil.agentCenter.notify({kind:'approval',key:VigilAgentCenter.controller.state.connection+':'+VigilAgentCenter.controller.state.status.generation+':'+VigilAgentCenter.controller.state.owned[0].event_key+':'+VigilAgentCenter.controller.state.owned[0].turn_key+':approval'})`);

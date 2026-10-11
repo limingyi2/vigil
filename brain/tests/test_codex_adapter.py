@@ -2,6 +2,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 
 from codex_adapter import AdapterError, CodexAdapter, handle_http
@@ -37,7 +38,8 @@ class AdapterTests(unittest.TestCase):
 
     def approval(self, request=0, turn="turn-1", item="item-1"):
         msg = self.event("item/commandExecution/requestApproval", turnId=turn, itemId=item,
-                         command="SECRET-COMMAND", startedAtMs=1)
+                         command="SECRET-COMMAND", cwd=str(self.center._workspace(self.task_id)),
+                         availableDecisions=["accept", "decline"], startedAtMs=1)
         msg["id"] = request
         return msg
 
@@ -94,7 +96,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.center.get_task(self.task_id)["status"], "waiting_approval")
         pending = self.center.approvals()[0]
         self.assertEqual(pending["ownership"], "owned")
-        self.assertFalse(pending["response_enabled"])
+        self.assertTrue(pending["response_enabled"])
         self.assertNotIn("SECRET-COMMAND", (Path(self.temp.name) / "events.jsonl").read_text())
         self.assertNotIn("pending", json.loads((Path(self.temp.name) / "owned.json").read_text()))
 
@@ -198,13 +200,13 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(self.send(waiting))
         self.assertEqual(self.center.get_task(self.task_id)["status"], "waiting_approval")
 
-    def test_timeout_and_responses_always_disabled(self):
+    def test_expired_request_and_direct_response_bypass_are_rejected(self):
         self.start()
         self.send(self.approval())
         self.center.pending[next(iter(self.center.pending))]["expires_at"] = 0
         self.assertEqual(self.center.approvals()[0]["state"], "expired")
-        with self.assertRaisesRegex(AdapterError, "approval_response_disabled"):
-            self.center.respond("anything", "accept")
+        with self.assertRaisesRegex(AdapterError, "approval_not_found"):
+            self.center.respond("anything", {})
         with self.assertRaisesRegex(AdapterError, "rpc_not_allowed"):
             self.center._rpc("approval/respond", {"decision": "decline"})
         with self.assertRaisesRegex(AdapterError, "server_response_disabled"):
@@ -212,13 +214,80 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(AdapterError, "server_response_disabled"):
             self.center._write({"id": 0, "result": {"decision": "decline"}}, self.center.generation)
 
-    def test_http_local_admin_and_response_disabled(self):
+    def test_http_local_admin_and_response_binding(self):
         for admin, local in [(False, True), (True, False), (False, False)]:
             self.assertEqual(handle_http("POST", "/api/agent-center/connect", is_admin=admin, is_local=local, adapter=self.center)[0], 403)
-        for decision in ("accept", "decline"):
-            code, result = handle_http("POST", "/api/agent-center/approvals/a/respond", {"decision": decision}, is_admin=True, is_local=True, adapter=self.center)
-            self.assertEqual((code, result["err"]), (409, "approval_response_disabled"))
+        code, result = handle_http("POST", "/api/agent-center/approvals/" + ("a" * 64) + "/respond", {"action":"accept"}, is_admin=True, is_local=True, adapter=self.center)
+        self.assertEqual((code, result["err"]), (404, "approval_not_found"))
         self.assertEqual(handle_http("GET", "/api/agent-center/status", is_admin=True, is_local=True, adapter=self.center)[0], 200)
+
+    def test_p3_approval_protocol_data_and_one_shot_binding(self):
+        self.start()
+        msg=self.approval(); self.assertTrue(self.send(msg))
+        pending=self.center.approvals()[0]
+        self.assertTrue(pending["response_enabled"])
+        self.assertEqual(pending["connection_generation"], pending["generation"])
+        self.assertEqual(pending["risk"]["command"], "SECRET-COMMAND")
+        self.center._write_server_response=lambda request,result,generation: None
+        identity={k:pending[k] for k in ("connection","thread_id","turn_id","item_id")}
+        identity.update(connection_generation=pending["connection_generation"],request_id=pending["request_id"])
+        self.assertEqual(self.center.respond(pending["id"],identity,"decline")["state"],"responded")
+        with self.assertRaisesRegex(AdapterError,"approval_already_processed"):
+            self.center.respond(pending["id"],identity,"decline")
+
+    def test_p3_misbound_and_stale_requests_cannot_respond(self):
+        self.start(); self.send(self.approval()); pending=self.center.approvals()[0]
+        identity={k:pending[k] for k in ("connection","thread_id","turn_id","item_id")}
+        identity.update(connection_generation=pending["connection_generation"],request_id=pending["request_id"])
+        identity["thread_id"]="wrong"
+        with self.assertRaisesRegex(AdapterError,"approval_binding_mismatch"):
+            self.center.respond(pending["id"],identity,"decline")
+        self.center._disconnect_generation(self.center.generation,"test_disconnect")
+        identity["thread_id"]=pending["thread_id"]
+        with self.assertRaisesRegex(AdapterError,"approval_already_processed|approval_connection_stale"):
+            self.center.respond(pending["id"],identity,"decline")
+
+    def test_p3_user_input_schema_and_exact_answers(self):
+        self.start()
+        msg=self.event("item/tool/requestUserInput", turnId="turn-1", itemId="input-1", isBlocking=True,
+                       questions=[{"header":"Choice","id":"mode","question":"Choose","options":[{"label":"A","description":"first"},{"label":"B","description":"second"}]}])
+        msg["id"]=9; self.assertTrue(self.send(msg)); pending=self.center.approvals()[0]
+        self.assertTrue(pending["response_enabled"])
+        self.center._write_server_response=lambda request,result,generation: self.assertEqual(result,{"answers":{"mode":{"answers":["A"]}}})
+        identity={k:pending[k] for k in ("connection","thread_id","turn_id","item_id")}; identity.update(connection_generation=pending["connection_generation"],request_id=9)
+        self.center.respond(pending["id"],identity,"answer",{"mode":"A"})
+        self.assertEqual(self.center.approvals()[0]["state"],"responded")
+
+    def test_p3_missing_risk_never_enables_response(self):
+        self.start(); msg=self.event("item/commandExecution/requestApproval",turnId="turn-1",itemId="item-1",command="rm -rf",cwd="/tmp",additionalPermissions={"network":{"enabled":True}}); msg["id"]=11; self.assertTrue(self.send(msg)); pending=self.center.approvals()[0]
+        self.assertFalse(pending["response_enabled"])
+        identity={k:pending[k] for k in ("connection","thread_id","turn_id","item_id")}; identity.update(connection_generation=pending["connection_generation"],request_id=11)
+        with self.assertRaisesRegex(AdapterError,"approval_risk_incomplete"):
+            self.center.respond(pending["id"],identity,"accept")
+
+    def test_p3_concurrent_double_response_is_one_shot(self):
+        self.start(); self.send(self.approval()); pending=self.center.approvals()[0]
+        self.center._write_server_response=lambda request,result,generation: None
+        identity={k:pending[k] for k in ("connection","thread_id","turn_id","item_id")}
+        identity.update(connection_generation=pending["connection_generation"],request_id=pending["request_id"])
+        outcomes=[]
+        def answer():
+            try:
+                outcomes.append(self.center.respond(pending["id"],identity,"decline")["state"])
+            except AdapterError as exc:
+                outcomes.append(exc.code)
+        threads=[threading.Thread(target=answer) for _ in range(2)]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join()
+        self.assertEqual(sorted(outcomes), ["approval_already_processed", "responded"])
+
+    def test_p3_expired_bound_request_cannot_respond(self):
+        self.start(); self.send(self.approval()); pending=self.center.approvals()[0]
+        self.center.pending[pending["id"]]["expires_at"] = 0
+        identity={k:pending[k] for k in ("connection","thread_id","turn_id","item_id")}
+        identity.update(connection_generation=pending["connection_generation"],request_id=pending["request_id"])
+        with self.assertRaisesRegex(AdapterError,"approval_expired"):
+            self.center.respond(pending["id"],identity,"decline")
 
     def test_history_never_claims_live_status_or_resumes_observed(self):
         self.center._rpc = lambda method, params: {"thread": {"id": "desktop-thread", "status": {"type": "active"}, "turns": [{"id": "history-turn", "status": "inProgress"}]}}

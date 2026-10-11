@@ -1,0 +1,164 @@
+[
+  {
+    "seq": 1,
+    "method": "adapter/connected",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 2,
+    "method": "task/created",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 6,
+    "method": "turn/started",
+    "source": "realtime",
+    "state": "running",
+    "server_request": false,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 14,
+    "method": "turn/completed",
+    "source": "realtime",
+    "state": "completed",
+    "server_request": false,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 15,
+    "method": "task/created",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 19,
+    "method": "turn/started",
+    "source": "realtime",
+    "state": "running",
+    "server_request": false,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 40,
+    "method": "adapter/disconnected",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": "explicit_disconnect",
+    "code": null
+  },
+  {
+    "seq": 1,
+    "method": "adapter/connected",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 2,
+    "method": "thread/resumed",
+    "source": "history",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 5,
+    "method": "thread/resumed",
+    "source": "history",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 6,
+    "method": "task/created",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 10,
+    "method": "turn/started",
+    "source": "realtime",
+    "state": "running",
+    "server_request": false,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 22,
+    "method": "turn/completed",
+    "source": "realtime",
+    "state": "completed",
+    "server_request": false,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 23,
+    "method": "task/created",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 27,
+    "method": "turn/started",
+    "source": "realtime",
+    "state": "running",
+    "server_request": false,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 49,
+    "method": "task/created",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 51,
+    "method": "task/created",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": null,
+    "code": null
+  },
+  {
+    "seq": 53,
+    "method": "adapter/disconnected",
+    "source": "realtime",
+    "state": null,
+    "server_request": null,
+    "reason": "explicit_disconnect",
+    "code": null
+  }
+]
