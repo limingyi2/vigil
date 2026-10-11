@@ -1,0 +1,20 @@
+{
+  "verified": false,
+  "electron_version": "28.3.3",
+  "codex_version": "0.162.0-alpha.17.2",
+  "isolated_workspace": true,
+  "safe_command_attempt": {
+    "kind": "harmless_echo",
+    "approval_event": false,
+    "execution_state": "completed",
+    "exit_code": 0
+  },
+  "manual_accept": {"verified": false, "reason": "no_safe_approval_request"},
+  "manual_decline": {"verified": false, "reason": "no_safe_approval_request"},
+  "duplicate_expired_old_connection": {
+    "verified": false,
+    "reason": "no_real_answerable_request_to_replay"
+  },
+  "policy_bypass": false,
+  "automatic_response": false
+}
