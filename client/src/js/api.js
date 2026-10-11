@@ -23,8 +23,23 @@
     autoFail: null,      // 启动时自动探测失败的结果（设置页拿它显示原因）
   };
 
+  // A missing bridge in Electron is a preload failure, not a browser preview.
+  const runtime = {
+    kind: global.vigil ? 'electron' : (/\bElectron\//i.test(navigator.userAgent) ? 'electron-missing-preload' : 'browser-preview'),
+    get preview() { return this.kind === 'browser-preview'; },
+  };
+
   async function api(method, path, body, opts) {
-    if (!global.vigil) return { ok: false, status: 0, err: '不在 Electron 里（缺少 preload 桥）' };
+    if (!global.vigil) {
+      // Only an explicit preview gets empty fixture history. Never turn a failed
+      // production history request into an empty conversation.
+      if (runtime.preview && method === 'GET' && path.startsWith('/api/history?')) {
+        return { ok:true, status:200, preview:true, json:{ items:[] } };
+      }
+      return { ok:false, status:0, err: runtime.preview
+        ? '浏览器预览：未连接 Agent，数据与操作仅在 Electron 客户端可用'
+        : 'Electron preload 未加载：请检查启动日志与 preload 路径，IPC 当前不可用' };
+    }
     try {
       const r = await global.vigil.api(method, path, body, opts);
       return r || { ok: false, status: 0, err: '空响应' };
@@ -75,5 +90,5 @@
     return state.cfg;
   }
 
-  global.API = { state, api, get, post, pick, ping, loadCfg, saveCfg };
+  global.API = { state, runtime, api, get, post, pick, ping, loadCfg, saveCfg };
 })(window);

@@ -1,0 +1,31 @@
+/* Only the persona subsection gets new layout; memory and KB keep their DOM. */
+.main:has(.persona-view) { background-image:none; }
+.cfg-wrap[data-section="persona"] .cfg-subnav { border:0; background:none; padding:0; margin-bottom:24px; }
+.cfg-wrap[data-section="persona"] .cfg-subnav .plist { display:none; }
+.cfg-wrap[data-section="persona"] .pseg { padding:4px; margin:0; width:fit-content; border-radius:10px; background:var(--bg-sunken); }
+.cfg-wrap[data-section="persona"] .pseg button { height:36px; border-radius:8px; }
+.persona-view { max-width:1120px; margin:0 auto; }
+.persona-view .sech { border:0; padding:0; margin:0 0 24px; flex-wrap:wrap; gap:8px 16px; }
+.persona-view .sech b::before { content:none; }
+.persona-view .sech .muted { font-family:var(--font); color:var(--text-2); line-height:1.7; }
+.persona-view .pgrid { display:flex; flex-direction:column; gap:8px; }
+.persona-view .pcard { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 24px; padding:18px 20px; border:1px solid transparent; border-radius:12px; background:var(--bg-sub); }
+.persona-view .pcard:hover { border-color:var(--line); }
+.persona-view .pcard.cur { border:1px solid var(--line-strong); background:var(--bg-sunken); }
+.persona-view .pch { grid-column:1; grid-row:1; }
+.persona-view .pch b { flex:none; font-size:16px; font-weight:600; overflow-wrap:anywhere; }
+.persona-view .pdesc { grid-column:1; font-size:14px; color:var(--text-2); line-height:1.7; }
+.persona-view .pft { grid-column:2; grid-row:1 / span 2; margin:0; align-items:center; }
+.persona-view .btn { border-radius:8px; }
+.persona-view .persona-editor { background:none; border:0; padding:0; max-width:960px; }
+.persona-view .field { gap:8px; margin-bottom:20px; }
+.persona-view .input { height:40px; border-color:var(--line); border-radius:10px; background:var(--bg-sub); }
+.persona-view textarea.input { min-height:112px; padding:12px; }
+body.vwp-active .persona-view .pcard,
+body.vwp-active .persona-view .input { background:rgba(24,29,36,.92); }
+body.vwp-active .persona-view .persona-editor { background:none; }
+@media(max-width:760px) {
+  .persona-view .pcard { grid-template-columns:minmax(0,1fr); gap:10px; padding:16px; }
+  .persona-view .pft { grid-column:1; grid-row:auto; }
+  .persona-view .grid.g3 { grid-template-columns:minmax(0,1fr); }
+}

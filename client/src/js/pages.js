@@ -33,7 +33,7 @@
   function heroHtml() {
     return '<div class="welcome-brand" aria-hidden="true">V</div>' +
       '<h1>有什么可以帮你？</h1>' +
-      '<p>开始对话，或交给 Vigil 一个任务</p>' +
+      '<p>与 Vigil 一起思考、编程和执行任务</p>' +
       '<div class="hero-hints">' +
       ['帮我看看今天的日程', '把刚才那段整理成清单', '看看下载文件夹里有什么']
         .map((x) => '<button class="chip" data-hint="' + x + '">' + esc(x) + '</button>').join('') +
@@ -66,7 +66,7 @@
     topbar.innerHTML =
       '<button class="ibtn" id="sessionsBtn" title="折叠或展开会话列表" aria-label="会话列表" aria-controls="panel">' + icon('sidebar', 'sm') + '</button>' +
       '<span class="chat-title">工作台</span><span class="chat-model" title="' + esc(model) + '">' + esc(model) + '</span>' +
-      '<div class="sp"></div><span class="chat-connection"><span class="led ' + (state.conn.ok ? 'on' : '') + '"></span>' + (state.conn.ok ? 'Agent 已连接' : 'Agent 未连接') + '</span>' +
+      '<div class="sp"></div><span class="chat-connection"><span class="led ' + (state.conn.ok ? 'on' : '') + '"></span>' + (API.runtime.preview ? '浏览器预览 · 未连接 Agent' : state.conn.ok ? 'Agent 已连接' : 'Agent 未连接') + '</span>' +
       '<div class="tr">' +
       '<button class="btn" id="rpBtn" aria-expanded="false" aria-controls="rp">上下文</button>' +
       '<button class="ibtn" id="clearBtn" title="清空本机（pc）会话历史">' + icon('dots', 'sm') + '</button>' +
@@ -169,6 +169,7 @@
       '<div class="split no-right">' +
       '  <div class="chat">' +
       '    <div class="hero" id="hero" hidden></div>' +
+      '    <div class="chat-load-state" id="chatLoadState" role="status">正在加载会话…</div>' +
       '    <div class="msgs" id="msgs" role="log" aria-label="聊天记录"></div>' +
       '    <div class="composer">' +
       '      <div class="localpop" id="localPop" hidden></div>' +
@@ -277,7 +278,7 @@
       ta.style.overflowY = ta.scrollHeight > maxHeight ? 'auto' : 'hidden';
       view.querySelector('#ccount').textContent = ta.value.length + ' 字';
       const button = view.querySelector('#sendBtn');
-      button.disabled = busy || (!ta.value.trim() && !imgB64);
+      button.disabled = !global.vigil || busy || (!ta.value.trim() && !imgB64);
       button.classList.toggle('is-sending', busy);
       button.setAttribute('aria-label', busy ? '正在发送' : '发送消息');
       button.setAttribute('aria-busy', String(busy));
@@ -334,10 +335,19 @@
     }
     async function loadMsgs(force) {
       const r = pick(await get('/api/history?limit=300'));
+      if (!msgs.isConnected || busy) return;
+      const loadState = view.querySelector('#chatLoadState');
       if (!r.ok) {
-        if (force) msgs.innerHTML = errBox('读不到聊天记录', r._err || '检查设置 → 连接与设备');
+        if (force || lastCount < 0) {
+          heroEl.hidden = true;
+          chat.classList.remove('is-empty');
+          loadState.hidden = false;
+          loadState.innerHTML = '<b>暂时无法加载会话</b><p>' + esc(r._err || '检查连接设置') + '</p><button class="btn oline" id="retryHistory">重新加载</button>';
+          loadState.querySelector('button').onclick = () => loadMsgs(true);
+        }
         return;
       }
+      loadState.hidden = true;
       const items = r.items || [];
       if (!force && items.length === lastCount) return;
       lastCount = items.length;
@@ -374,7 +384,7 @@
     async function send() {
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if ((!text && !imgB64) || busy) return;
+      if (!global.vigil || (!text && !imgB64) || busy) return;
       const sendingImg = imgB64;
       imgB64 = '';
       attachBox.hidden = true;
@@ -382,6 +392,7 @@
       ta.value = '';
       busy = true;
       heroEl.hidden = true;
+      view.querySelector('#chatLoadState').hidden = true;
       chat.classList.remove('is-empty');
       updateComposer();
       const btn = view.querySelector('#sendBtn');
@@ -928,6 +939,7 @@
   // 🔴 全部接口直达**云端**：微信真身在云端，以前打到本地 sidecar，
   // 改的是本地的账 —— 云端那只根本不知道，"切了人设没变"就是这么来的。
   async function renderPersona(ctx) {
+    ctx.view.classList.add('persona-view');
     const CHANS = [['app', 'App', '全局默认（没单独设置的渠道都跟它）'],
                    ['wechat', '微信私聊', '私聊那一个'],
                    ['wechat_group', '微信群', '群里那一个（@ 她 / 她搭话的）']];
@@ -990,7 +1002,7 @@
       ctx.view.innerHTML = '<div class="wrap">' +
         '<div class="sech"><b>编辑人设：' + esc(fields.name || key) + '</b>' +
         '<span class="muted">' + esc(n) + '渠道 · 保存写回这套人设的文件；她正在用的话，保存即生效</span></div>' +
-        '<div class="card">' +
+        '<div class="card persona-editor">' +
         '<div class="grid g3">' +
         PFIELDS.filter(([, , t]) => t === 'input').map(([k, label]) =>
           '<div class="field"><label>' + esc(label) + '</label>' +
@@ -1037,7 +1049,7 @@
       ctx.view.innerHTML = '<div class="wrap">' +
         '<div class="sech"><b>' + esc(n) + '</b><span class="muted">' + esc(d) + '</span></div>' +
         (cards.length ? '<div class="pgrid">' + cards.map(cardOf).join('') + '</div>'
-                      : errBox('读不到人设列表', r._err || '')) +
+                      : r.ok ? empty('暂无人格配置', '添加人格配置后，可以在这里查看和编辑。') : errBox('读不到人设列表', r._err || '')) +
         '</div>';
       ctx.view.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => {
         editing = b.dataset.edit;
@@ -2446,6 +2458,8 @@
         cur = it.k;
         ctx.panel.querySelectorAll('.li').forEach((n) => n.classList.toggle('on', n.dataset.k === it.k));
         cfgBody.innerHTML = '';
+        cfgBody.className = '';
+        body.dataset.section = it.k;
         subnav.hidden = true; subnav.innerHTML = '';
         const fakePanel = document.createElement('div');
         try {

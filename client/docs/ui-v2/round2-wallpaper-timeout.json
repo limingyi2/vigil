@@ -1,0 +1,522 @@
+{
+  "fixture": true,
+  "preload": "client/electron/preload.js (production, unchanged)",
+  "electron": "28.3.3",
+  "chrome": "120.0.6099.291",
+  "productionMain": false,
+  "realModelCalls": 0,
+  "hardwareAcceleration": "Electron default enabled",
+  "gpu": {
+    "features": {
+      "2d_canvas": "enabled",
+      "canvas_oop_rasterization": "enabled_on",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "enabled",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "enabled_on",
+      "rasterization": "enabled",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "video_decode": "enabled",
+      "video_encode": "enabled",
+      "vulkan": "disabled_off",
+      "webgl": "enabled",
+      "webgl2": "enabled",
+      "webgpu": "enabled"
+    },
+    "webgl": "ANGLE (AMD, AMD Radeon RX 9070 XT (0x00007550) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "results": [
+    {
+      "name": "empty session and default collapsed context",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1400,
+          "height": 900
+        },
+        "input": {
+          "x": 417,
+          "y": 700.0729370117188,
+          "width": 860,
+          "height": 131.33334350585938,
+          "bottom": 831.4062805175781
+        },
+        "composer": {
+          "x": 294,
+          "y": 684.0729370117188,
+          "width": 1106,
+          "height": 189.92709350585938,
+          "bottom": 874.0000305175781
+        },
+        "chat": {
+          "x": 294,
+          "y": 92,
+          "width": 1106,
+          "height": 782,
+          "bottom": 874
+        },
+        "hero": {
+          "x": 294,
+          "y": 92,
+          "width": 1106,
+          "height": 592.0729370117188,
+          "bottom": 684.0729370117188
+        },
+        "scroll": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "computed typography, 860px composer and no global scale",
+      "status": "passed",
+      "detail": {
+        "body": "15px",
+        "input": "15px",
+        "welcome": "32px",
+        "button": "14px",
+        "model": "14px",
+        "sidebar": "14px",
+        "zoom": "1",
+        "transform": "none",
+        "electronZoom": 1
+      }
+    },
+    {
+      "name": "production preload, contextBridge, configuration IPC and security settings",
+      "status": "passed"
+    },
+    {
+      "name": "titlebar maximize/minimize via production preload IPC",
+      "status": "passed"
+    },
+    {
+      "name": "quick question and blank-content disabled state",
+      "status": "passed"
+    },
+    {
+      "name": "session list and context toggle, dark theme",
+      "status": "passed"
+    },
+    {
+      "name": "textarea auto-height and max-height",
+      "status": "passed"
+    },
+    {
+      "name": "Enter, Shift+Enter, IME, stream state and unchanged IPC payload",
+      "status": "passed"
+    },
+    {
+      "name": "Markdown headings/lists/quotes/link/code and code copy",
+      "status": "passed"
+    },
+    {
+      "name": "existing safety control opens and closes",
+      "status": "passed"
+    },
+    {
+      "name": "history restored and session selection preserved",
+      "status": "passed"
+    },
+    {
+      "name": "ordinary light-theme history and code rendering",
+      "status": "passed"
+    },
+    {
+      "name": "860px aligned content and composer outside message scroll",
+      "status": "passed",
+      "detail": {
+        "left": 0,
+        "right": 0,
+        "width": 860
+      }
+    },
+    {
+      "name": "stream error UI and send state recovery",
+      "status": "passed"
+    },
+    {
+      "name": "attachment FileReader, preview, removal and image-only send eligibility",
+      "status": "passed"
+    },
+    {
+      "name": "image-only send through original stream IPC",
+      "status": "passed"
+    },
+    {
+      "name": "existing model settings navigation and non-chat scope",
+      "status": "passed"
+    },
+    {
+      "name": "global function entries retained",
+      "status": "passed",
+      "detail": 7
+    },
+    {
+      "name": "history failure is explicit and retry restores empty welcome",
+      "status": "passed"
+    },
+    {
+      "name": "persona data, compact list, editor and existing cloud save IPC",
+      "status": "passed"
+    },
+    {
+      "name": "persona light/dark and narrow-window layouts",
+      "status": "passed"
+    },
+    {
+      "name": "persona empty state is distinguished from service failure",
+      "status": "passed"
+    },
+    {
+      "name": "memory data loads and persona styles leave the subsection",
+      "status": "passed"
+    },
+    {
+      "name": "knowledge-base data and document entry retained",
+      "status": "passed"
+    },
+    {
+      "status": "failed",
+      "error": "Timeout: document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'"
+    }
+  ],
+  "errors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "检查界面",
+        "src": "pc"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "错误场景",
+        "src": "pc"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "",
+        "img": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQYlWM4MS3lPwAGrgLCpMGNwgAAAABJRU5ErkJggg==",
+        "src": "pc"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/models",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/voices",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona/full",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "POST",
+      "path": "/api/persona/save",
+      "body": {
+        "key": "default",
+        "src": "wechat_group",
+        "fields": {
+          "name": "Vigil",
+          "nicknames": "",
+          "relation": "",
+          "call_user": "",
+          "personality": "清晰、耐心",
+          "background": "协助思考和执行任务",
+          "scene": "",
+          "appearance": "",
+          "notes": "",
+          "label": "Vigil"
+        }
+      },
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/stores",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/list",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugin/kb/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugin/kb/docs",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "body": null,
+      "base": null
+    }
+  ]
+}

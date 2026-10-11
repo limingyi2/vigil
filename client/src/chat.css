@@ -1,6 +1,6 @@
 /* Vigil UI V2: chat-only tokens and layout. Configuration pages keep their styles. */
 body[data-vigil-page="chat"] {
-  --chat-width:920px; --chat-gutter:32px; --chat-radius:10px; --chat-input-radius:20px;
+  --chat-width:860px; --chat-gutter:32px; --chat-radius:10px; --chat-input-radius:20px;
   --chat-bg:#fcfcfd; --chat-sidebar:#f4f5f7; --chat-surface:#f3f4f6;
   --chat-user:#edf1f6; --chat-code:#f1f3f6; --chat-text:#252a32;
   --chat-muted:#636c79; --chat-line:#dfe3e9; --chat-accent:#486a97;
@@ -8,7 +8,7 @@ body[data-vigil-page="chat"] {
   --panel:232px; --text:var(--chat-text); --text-2:var(--chat-muted); --text-3:var(--chat-muted); --text-4:var(--chat-muted);
   --accent:var(--chat-accent); --r-sm:var(--chat-radius); --r-md:var(--chat-radius);
   --line:var(--chat-line); --line-soft:var(--chat-line);
-  font-size:14px; color:var(--chat-text);
+  font-size:var(--type-body); color:var(--chat-text);
 }
 [data-theme="dark"] body[data-vigil-page="chat"] {
   --chat-bg:#202329; --chat-sidebar:#1c1f25; --chat-surface:#292d35;
@@ -31,19 +31,19 @@ body[data-vigil-page="chat"].chat-sessions-collapsed .panel,
 body[data-vigil-page="chat"].chat-sessions-collapsed #gPanel { display:none; }
 body[data-vigil-page="chat"] #gPanel::after { background:transparent; }
 body[data-vigil-page="chat"] .panel .phead { height:60px; padding:0 16px; border:0; }
-body[data-vigil-page="chat"] .panel .phead h2 { font-size:13px; font-weight:600; color:var(--chat-muted); }
+body[data-vigil-page="chat"] .panel .phead h2 { font-size:14px; font-weight:600; color:var(--chat-muted); }
 body[data-vigil-page="chat"] .panel .phead h2::before { content:none; }
 body[data-vigil-page="chat"] .plist { padding:0 10px 16px; }
 body[data-vigil-page="chat"] .li { width:100%; padding:12px 10px; border:0; border-radius:10px; text-align:left; margin:2px 0; }
 body[data-vigil-page="chat"] .li:hover { background:var(--chat-hover); }
 body[data-vigil-page="chat"] .li.on { background:var(--chat-selected); box-shadow:none; }
-body[data-vigil-page="chat"] .li .tx b { font-size:13px; color:var(--chat-text); font-weight:500; }
+body[data-vigil-page="chat"] .li .tx b { font-size:14px; color:var(--chat-text); font-weight:500; }
 body[data-vigil-page="chat"] .li .tx span { font-size:12px; color:var(--chat-muted); }
 body[data-vigil-page="chat"] .li .ic { color:var(--chat-muted); }
 body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chat-topbar { height:56px; padding:0 24px; border:0; gap:12px; background:var(--chat-bg); }
 .chat-title { font-weight:600; font-size:14px; white-space:nowrap; }
-.chat-model { color:var(--chat-muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:240px; }
+.chat-model { color:var(--chat-muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:240px; }
 .chat-connection { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--chat-muted); white-space:nowrap; }
 .chat-connection .led { width:7px; height:7px; flex:none; border-radius:50%; background:var(--err); }
 .chat-connection .led.on { background:var(--ok); }
@@ -64,7 +64,7 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 }
 .chatwrap .hero[hidden] { display:none; }
 .chatwrap .welcome-brand { font-size:20px; font-weight:700; color:var(--chat-muted); margin-bottom:4px; }
-.chatwrap .hero h1 { font-size:28px; font-weight:650; line-height:1.4; letter-spacing:-.025em; }
+.chatwrap .hero h1 { font-size:32px; font-weight:650; line-height:1.4; letter-spacing:-.025em; }
 .chatwrap .hero p { font-size:15px; color:var(--chat-muted); }
 .chatwrap .hero-hints { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .chatwrap .hero-hints .chip { padding:6px 10px; border:0; border-radius:8px; color:var(--chat-muted); background:transparent; font-size:12px; }
@@ -107,7 +107,7 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .cbox textarea::placeholder { color:var(--chat-muted); }
 .chatwrap .cbar { display:flex; align-items:center; gap:6px; margin-top:12px; }
 .chatwrap .ibtn { width:32px; height:32px; color:var(--chat-muted); border-radius:8px; }
-.chatwrap .composer-model { color:var(--chat-muted); padding:0 8px; max-width:260px; overflow:hidden; text-overflow:ellipsis; display:block; font-size:12px; }
+.chatwrap .composer-model { color:var(--chat-muted); padding:0 8px; max-width:260px; overflow:hidden; text-overflow:ellipsis; display:block; font-size:14px; }
 .chatwrap .hintline { font:12px var(--font); color:var(--chat-muted); white-space:nowrap; }
 .chatwrap #sendBtn { width:34px; height:34px; flex:none; border-radius:50%; padding:0; background:var(--chat-send); color:var(--chat-on-send); }
 .chatwrap #sendBtn:disabled { opacity:.4; cursor:not-allowed; }
@@ -138,10 +138,10 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 @media(max-width:600px) {
   body[data-vigil-page="chat"] { --chat-gutter:12px; --rail:50px; }
   body[data-vigil-page="chat"] .gbtn { width:38px; height:42px; }
-  .chat-connection { font-size:11px; }
+  .chat-connection { font-size:12px; }
   .chat-title { display:none; }
   .chat-topbar { gap:6px; }
-  .chatwrap .hero h1 { font-size:24px; }
+  .chatwrap .hero h1 { font-size:28px; }
   .chatwrap .hero-hints { gap:4px; }
   .chatwrap .composer-model { max-width:145px; }
   .chatwrap .ccount { display:none; }
@@ -156,3 +156,9 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
   .chatwrap #sendBtn.is-sending::after { animation:none; }
   .chatwrap .cbox { transition:none; }
 }
+
+/* Loading/error/empty are distinct states; a failed history read stays visible. */
+.chatwrap .chat-load-state { flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px; color:var(--chat-muted); text-align:center; }
+.chatwrap .chat-load-state[hidden], .chatwrap .msgs:empty { display:none; }
+.chatwrap .chat-load-state b { font-size:22px; color:var(--chat-text); }
+.chatwrap .chat-load-state p { max-width:540px; overflow-wrap:anywhere; }

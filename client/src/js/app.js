@@ -40,7 +40,7 @@
     const led = document.getElementById('led');
     if (led) led.classList.toggle('on', !!state.conn.ok);
     const seg = ['<span class="led ' + (state.conn.ok ? 'on' : '') + '"></span>' +
-      '<b>' + (state.conn.ok ? '已连接' : '未连接') + '</b>'];
+      '<b>' + (API.runtime.preview ? '浏览器预览 · 未连接 Agent' : state.conn.ok ? '已连接' : '未连接') + '</b>'];
     if (state.conn.ok && state.conn.ms != null) seg.push(esc(String(state.conn.ms)) + ' ms');
     seg.push('<i class="ssep">│</i>渠道 <b>本机控制台（pc）</b>');
     if (lastStats && lastStats.model) seg.push('<i class="ssep">│</i>模型 <b>' + esc(lastStats.model) + '</b>');
@@ -317,11 +317,13 @@
 
   // boot 失败必须看得见：异常打进状态栏和 __bootErr，不许无声黑屏
   document.addEventListener('DOMContentLoaded', () => {
-    try { boot(); }
-    catch (e) {
+    const reportBootError = (e) => {
       window.__bootErr = e.message;
       console.error('启动失败:', e);
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--err)">启动失败: ' + esc(e.message) + '</span>';
-    }
+      if (viewEl) viewEl.innerHTML = '<div class="wrap"><div class="card err"><b>客户端启动失败</b><p>' + esc(e.message) + '</p></div></div>';
+    };
+    try { boot().catch(reportBootError); }
+    catch (e) { reportBootError(e); }
   });
 })();
