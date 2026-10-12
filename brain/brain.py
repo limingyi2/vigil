@@ -420,26 +420,50 @@ class Brain:
         # 下一轮立即生效，不用重启大脑。
         self.last_provider_kind = ""
 
-    def _provider(self):
+    def _api_snapshot(self):
+        """本轮用的配置快照（浅拷贝）。
+
+        🔴 为什么必须有这一层：`CloudProvider` 在**构造时**就把 api_base /
+        api_key / model 抄进实例，而 payload 里的 `model` 是**发送时**才从
+        self.api 读的。用户在 `/api/models/quick-switch` 上切一下模型
+        （另一个 HTTP 线程，就地改 self.api 那个字典），正在跑的这一轮就会
+        变成"地址是老家的、模型名是新家的"—— 轻则 400，重则悄悄打到另一个
+        模型上，而界面显示的还是他选的那个。
+        每轮开头取一份快照，provider 和 payload 都读它，切换只影响下一轮。
+        """
+        try:
+            return dict(self.api or {})
+        except Exception:
+            return {}
+
+    def _provider(self, cfg=None):
         """这一轮该用哪个模型执行端。取不到一律退回 CloudProvider ——
-        新模块任何异常都不能让她彻底说不出话。"""
+        新模块任何异常都不能让她彻底说不出话。
+
+        cfg 传 None 时才回头读 self.api（老调用点行为不变）。
+        """
+        src = self.api if cfg is None else cfg
         try:
             from model_providers import get_provider
-            return get_provider(self.api)
+            return get_provider(src)
         except Exception as e:
             print("[大脑] model_providers 装载失败，退回云端直调：%s"
                   % str(e)[:100], flush=True)
             from model_providers.cloud import CloudProvider
-            return CloudProvider(self.api)
+            return CloudProvider(src)
 
-    def _provider_ready(self, mp):
-        """入口门：云端要 api_base+api_key；本地 Ollama 要地址+模型名（不要 key）。"""
+    def _provider_ready(self, mp, cfg=None):
+        """入口门：云端要 api_base+api_key；本地 Ollama 要地址+模型名（不要 key）。
+
+        cfg 给的是本轮快照；不传才读 self.api（老调用点行为不变）。
+        """
+        src = self.api if cfg is None else cfg
         try:
             if getattr(mp, "kind", "") == "ollama":
                 return bool(getattr(mp, "ready", lambda: False)())
         except Exception:
             pass
-        return bool(self.api.get("api_key"))
+        return bool(src.get("api_key"))
 
     # --- 渠道 ---
     @property
@@ -859,9 +883,12 @@ class Brain:
         场合用（plan 分支的收尾那一步就是）。不关掉的话，主模型会拿计划里
         刚查过的结果再查一遍 —— 同一条消息两次计费、两次执行。
         """
-        mp = self._provider()
+        # 本轮配置快照：provider 与 payload 的 model 必须来自同一份，
+        # 否则中途切模型会让两者错位（见 _api_snapshot 的说明）。
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
         self.last_provider_kind = getattr(mp, "kind", "cloud")
-        if not self._provider_ready(mp):
+        if not self._provider_ready(mp, _api0):
             return None
 
         # P1 确定性三路路由：只有 hybrid + 委派开关 + 路由开关全满足时才可能
@@ -988,7 +1015,7 @@ class Brain:
                     print("[大脑] %s" % self.last_err, flush=True)
                     break
                 _payload = {
-                    "model": self.api.get("model", "deepseek-chat"),
+                    "model": _api0.get("model") or "deepseek-chat",
                     "messages": msgs,
                     "temperature": 0.85,
                     # 详细回答模式给足空间；闲聊维持原值
@@ -1176,9 +1203,11 @@ class Brain:
         🔴 当前版本**不支持工具调用**：需要工具时模型会在正文里说明，
         客户端可降级到非流式 /api/chat。工具调用的流式支持后续再加。
         """
-        mp = self._provider()
+        # 同 draft_native：provider 与 payload 的 model 必须取自同一份快照
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
         self.last_provider_kind = getattr(mp, "kind", "cloud")
-        if not self._provider_ready(mp):
+        if not self._provider_ready(mp, _api0):
             yield {"type": "error", "msg": "模型没配好（云端 key 或本地模型）"}
             return
 
@@ -1206,7 +1235,7 @@ class Brain:
         _eff = "medium" if _know else "low"
 
         payload = {
-            "model": self.api.get("model", "deepseek-chat"),
+            "model": _api0.get("model") or "deepseek-chat",
             "messages": msgs,
             "temperature": 0.85,
             "max_tokens": _mt,
@@ -1636,10 +1665,11 @@ class Brain:
             tail += "\n" + LIFE_RULES
         msgs.append({"role": "user", "content": tail})
 
-        mp = self._provider()
-        if self._provider_ready(mp):
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
+        if self._provider_ready(mp, _api0):
             try:
-                _j = mp.chat({"model": self.api.get("model", "deepseek-chat"),
+                _j = mp.chat({"model": _api0.get("model") or "deepseek-chat",
                               "messages": msgs,
                               "temperature": 0.9, "max_tokens": 120},
                              timeout=30)

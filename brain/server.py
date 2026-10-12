@@ -174,6 +174,7 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/persona/full",
     "/api/voices",
     "/api/models",
+    "/api/models/saved",                # 主页快速切换下拉：只有名字和布尔状态，无密钥
     "/api/memory/stores",
     "/api/memory/list",
     "/api/device/list",
@@ -2249,7 +2250,16 @@ def start_remote_api(brain):
                     # 写盘之后要 clear + update 内存那份（Brain 拿的是启动时
                     # load_config() 的字典），不然换了模型她还用旧的
                     try:
-                        new_cfg, changed = model_hub.apply_cfg(api_config, body)
+                        # 先记下"正在用的这一组"再改配置：改完 api_config 里
+                        # provider/model 已经换掉了，旧的那组就再也认不出来，
+                        # 于是它会从快速切换清单里消失。顺序反了不行。
+                        pre_cfg, _pre_added = model_hub.remember_current(api_config)
+                        new_cfg, changed = model_hub.apply_cfg(pre_cfg, body)
+                        # 记进主页快速切换清单：用户在设置页选过一次的模型，
+                        # 之后就该在聊天框旁边点得到 —— 不用再"添加"一遍。
+                        new_cfg, _added = model_hub.remember_current(new_cfg)
+                        if _added:
+                            changed.append("已加入主页快速切换清单")
                         if not changed:
                             self._json(200, {"ok": True, "changed": [],
                                              "msg": "没有改动"})
@@ -2278,6 +2288,67 @@ def start_remote_api(brain):
                                 "current": model_hub.public_current(api_config)})
                     except Exception as e:
                         errlog.log_exc("api/models/apply", e)
+                        self._json(200, {"ok": False, "err": str(e)[:120]})
+                elif path == "/api/models/quick-switch":
+                    # 主页聊天框旁边的下拉：切到清单里的某一条。
+                    #
+                    # 和 /api/models/apply 的关系：这一条是**薄封装**，最终还是
+                    # 走 apply_cfg + save + 刷内存那份配置，不另立一套配置通道。
+                    # 多出来的只有三道"别装作切成功"的检查（密钥在不在、
+                    # 切完是不是真生效、云端有没有可用 key），失败一律明说 ——
+                    # 静默换一个能用的模型，用户会拿着 B 的回复以为在用 A。
+                    try:
+                        nc, changed, err, warn = model_hub.quick_switch(
+                            api_config, body.get("provider"), body.get("model"))
+                        if err:
+                            self._json(200, {"ok": False, "err": err,
+                                             "current": model_hub.public_current(api_config)})
+                        elif not changed:
+                            self._json(200, {"ok": True, "changed": [], "warn": warn,
+                                             "msg": "本来就是它",
+                                             "current": model_hub.public_current(api_config)})
+                        else:
+                            model_hub.save(nc)
+                            # 就地更新，不用 clear()+update()：clear() 会有一瞬
+                            # 整份配置是空的，另一个线程正在起步的那一轮会看到
+                            # "模型没配好"（并发切换时偶发）。先删多余的键再并，
+                            # 任何瞬间 api_key 这些必需键都在。
+                            for _k in [k for k in list(api_config.keys())
+                                       if k not in nc]:
+                                api_config.pop(_k, None)
+                            api_config.update(nc)
+                            try:
+                                API_CFG.clear()
+                                API_CFG.update(_runtime.api_cfg_subset(api_config))
+                            except Exception:
+                                pass
+                            print("[模型] 快速切换：" + "；".join(changed), flush=True)
+                            self._json(200, {"ok": True, "changed": changed,
+                                             "warn": warn,
+                                             "current": model_hub.public_current(api_config)})
+                    except Exception as e:
+                        errlog.log_exc("api/models/quick-switch", e)
+                        self._json(200, {"ok": False, "err": str(e)[:120]})
+                elif path == "/api/models/forget":
+                    # 从快速切换清单里移除一条（用户在设置里删掉模型 / 不想再看见它）。
+                    # 只动清单，不碰当前生效配置 —— 见 model_hub.forget_model。
+                    try:
+                        nc, removed = model_hub.forget_model(
+                            api_config, body.get("provider"), body.get("model"))
+                        if not removed:
+                            self._json(200, {"ok": True, "removed": False,
+                                             "msg": "清单里本来就没有它"})
+                        else:
+                            model_hub.save(nc)
+                            # 同 quick-switch：就地更新，别留"整份配置是空的"那一瞬
+                            for _k in [k for k in list(api_config.keys())
+                                       if k not in nc]:
+                                api_config.pop(_k, None)
+                            api_config.update(nc)
+                            self._json(200, {"ok": True, "removed": True,
+                                             "current": model_hub.public_current(api_config)})
+                    except Exception as e:
+                        errlog.log_exc("api/models/forget", e)
                         self._json(200, {"ok": False, "err": str(e)[:120]})
                 elif path == "/api/logs":
                     # App 把手机上的报错报上来，跟云上的存一起（分开两个文件）
@@ -2704,6 +2775,18 @@ def start_remote_api(brain):
                                       for k, v in model_hub.PROVIDERS.items()],
                         "groups": dict(model_hub.FALLBACK),
                         "source": "fallback", "count": 0})
+            elif path == "/api/models/saved":
+                # 主页聊天框旁的快速切换下拉：已保存的模型 + 当前生效的是哪条。
+                # 只读、不发网络请求（不像 /api/models 要在线拉清单），
+                # 所以打开聊天页马上就能用，断网也在。
+                # 响应里**没有任何密钥**，连接状态只给 has_key 布尔值。
+                try:
+                    self._json(200, dict({"ok": True},
+                                         **model_hub.public_saved(api_config)))
+                except Exception as e:
+                    errlog.log_exc("api/models/saved", e)
+                    self._json(200, {"ok": False, "err": str(e)[:120],
+                                     "models": [], "current": {}})
             elif path == "/api/logs":
                 # App「错误日志」页：src=server(云上)/client(手机)，fmt=text 是要导出
                 try:

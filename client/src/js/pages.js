@@ -53,6 +53,200 @@
     root.querySelectorAll('.li[data-k]').forEach((n) => n.addEventListener('click', () => fn(n.dataset.k, n)));
   }
 
+  // ═══ 模型快速切换（主页 composer 旁的模型名）═══════════════════
+  //
+  // 产品意图：在设置里选过一次的模型，之后在聊天框旁边就该点得到，
+  // 不用每次都跑一趟设置页。
+  //
+  // 数据与写入都复用现有机制，**没有第二份模型配置**：
+  //   - 读：GET /api/models/saved   —— 服务端从 config 的 saved_models 派生的清单，
+  //                                    只回名字和服务商，不含任何密钥；
+  //   - 写：POST /api/models/quick-switch —— 服务端最终仍走 model_hub.apply_cfg()
+  //                                    写回同一份配置（与设置页「保存并生效」同一条路）。
+  //
+  // 切换失败一律**明说**（缺密钥 / 被服务商拒绝 / 没能验证），
+  // 绝不静默换成别的模型 —— 那会让人拿着 B 的回复以为在用 A。
+  function modelQuickBind(view, ctx, hooks) {
+    const h = hooks || {};
+    const pop = view.querySelector('#modelPop');
+    const btn = view.querySelector('#modelBtn');
+    if (!pop || !btn) return null;
+    const listEl = view.querySelector('#mqList');
+    const searchEl = view.querySelector('#mqSearch');
+    const msgEl = view.querySelector('#mqMsg');
+    const curEl = view.querySelector('#mqCur');
+
+    let data = { models: [], current: {} };
+    let open = false;
+    let switching = false;
+
+    const nameOf = (m) => m.name || String(m.model || '').split('/').pop() || m.model || '（未命名）';
+    const provOf = (m) => m.provider_name || m.provider || '';
+    // 🔴 顶栏那颗模型名不在 view 里（在 ctx.topbar 里）—— 用 view.querySelector
+    // 拿到的永远是 null，表现就是"composer 上写着 A、顶栏还写着 B"这种自相矛盾。
+    const topEl = () => ((ctx && ctx.topbar) || view).querySelector('.chat-model');
+    function say(text, bad) {
+      if (!msgEl) return;
+      msgEl.textContent = text || '';
+      msgEl.style.color = bad ? 'var(--err)' : '';
+      msgEl.title = text || '';
+    }
+    // 当前模型：三处显示（composer 按钮 / 顶栏 / 下拉头部）一起刷新，
+    // 免得出现"按钮上写着 A、顶栏写着 B"这种自相矛盾。
+    function label() {
+      const c = data.current || {};
+      btn.textContent = (c.name || c.model || '未配置') + ' ▾';
+      btn.title = c.model
+        ? ('当前模型：' + c.model + '（' + (c.provider_name || '?') + '）· 点一下切换')
+        : '还没有可用模型：点开看看，或去设置里配一个';
+      if (curEl) curEl.textContent = c.model ? (provOf(c) + ' · ' + c.model) : '还没配模型';
+      const top = topEl();
+      if (top && c.model) { top.textContent = c.model; top.title = c.model; }
+    }
+    function draw() {
+      const q = String((searchEl && searchEl.value) || '').trim().toLowerCase();
+      const all = data.models || [];
+      const rows = all.filter((m) => !q
+        || (nameOf(m) + ' ' + provOf(m) + ' ' + m.model).toLowerCase().indexOf(q) >= 0);
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="muted" style="padding:12px 0;font-size:12px">'
+          + (all.length ? '没有匹配的模型' : '还没有保存过模型：在设置里选一次，这里就有了') + '</div>';
+        return;
+      }
+      listEl.innerHTML = rows.map((m) => {
+        const i = all.indexOf(m);
+        // 连接状态只用服务端给的事实：这家存没存过密钥。
+        // 真正能不能连通留到切换时探（探不通会明说，不在这儿编）。
+        const st = m.active ? '<span class="tag ok">当前</span>'
+          : (m.has_key ? '<span class="muted" style="font-size:11.5px">已存密钥</span>'
+            : '<span class="tag warn">缺密钥</span>');
+        return '<div class="lprow mqrow' + (m.active ? ' on' : '') + '" role="button" tabindex="0" data-i="' + i + '">' +
+          '<span class="ic">' + icon(m.active ? 'check' : 'plug', 'sm') + '</span>' +
+          '<span class="lb" style="flex:1;min-width:0;text-align:left">' +
+          '<b>' + esc(nameOf(m)) + (m.unsaved ? ' <span class="muted">(未保存)</span>' : '') + '</b>' +
+          '<span class="muted">' + esc(provOf(m)) + ' · ' + esc(m.model) + '</span>' +
+          '</span>' + st +
+          (m.unsaved ? '' : '<span class="mq-x" role="button" tabindex="0" data-x="' + i +
+            '" title="从清单里移除（不影响当前设置）" aria-label="从清单里移除">×</span>') +
+          '</div>';
+      }).join('');
+      listEl.querySelectorAll('.mqrow').forEach((n) => {
+        const pickRow = () => {
+          const m = all[Number(n.dataset.i)];
+          if (m) select(m);
+        };
+        n.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (e.target.closest('.mq-x')) return;
+          pickRow();
+        });
+        n.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickRow(); }
+        });
+      });
+      listEl.querySelectorAll('.mq-x').forEach((n) => {
+        const stop = (e) => { e.stopPropagation(); e.preventDefault(); };
+        n.addEventListener('click', (e) => { stop(e); forget(all[Number(n.dataset.x)]); });
+        n.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { stop(e); forget(all[Number(n.dataset.x)]); }
+        });
+      });
+    }
+    // 从清单移除一条（需求：删掉模型后下拉要跟着变）。只动清单不动当前配置，
+    // 所以正在用的那个模型不会因为"从列表里删掉"就悄悄被换走。
+    async function forget(m) {
+      if (!m) return;
+      if (!confirm('从模型清单里移除「' + nameOf(m) + '」？\n\n只影响这个下拉列表，'
+        + '当前设置和聊天记录都不动。')) return;
+      say('正在移除…');
+      try {
+        const r = pick(await post('/api/models/forget',
+          { provider: m.provider, model: m.model }));
+        if (!r || !r.ok) { say('移除失败：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
+        await load();
+        say(r.removed ? '已从清单移除' : '清单里本来就没有它');
+      } catch (e) {
+        say('移除失败：' + (e && e.message ? e.message : e), true);
+      }
+    }
+    async function load() {
+      const r = pick(await get('/api/models/saved'));
+      if (!r || !r.ok) { say('读不到模型清单：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
+      data = { models: r.models || [], current: r.current || {} };
+      label();
+      draw();
+    }
+    async function select(m) {
+      if (switching) return;
+      if (h.isBusy && h.isBusy()) { say('正在生成回复：等这一轮结束再切，免得上面显示的模型和实际用的对不上', true); return; }
+      if (m.active) { closePop(); return; }
+      if (!m.has_key && m.provider !== 'custom') {
+        // 这份清单可能是旧的：key 也许刚在别处补上（设置页 / 手机上 / 另一个窗口），
+        // 而面板一直开着没重新拉过。先跟服务端对一次再下结论，免得凭过期状态
+        // 拒掉一个其实能用的模型。
+        await load();
+        const fresh = (data.models || []).find((x) =>
+          x.provider === m.provider && x.model === m.model);
+        if (fresh) m = fresh;
+      }
+      if (!m.has_key && m.provider !== 'custom') {
+        // 真缺密钥就直说，别让服务端回落到上一个能用的模型 —— 那正是要避免的"看着切了"
+        say('「' + provOf(m) + '」还没存过密钥：先加一次它的 key（点下面「添加或管理模型」）', true);
+        return;
+      }
+      switching = true;
+      say('正在切到 ' + m.model + '…');
+      try {
+        const r = pick(await post('/api/models/quick-switch',
+          { provider: m.provider, model: m.model }));
+        if (!r || !r.ok) { say('切换失败：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
+        await load();
+        if (r.warn) say(r.warn, true);
+        else say('已切到 ' + ((data.current || {}).model || m.model));
+        h.onSwitched && h.onSwitched(data.current || {});
+      } catch (e) {
+        say('切换失败：' + (e && e.message ? e.message : e), true);
+      } finally {
+        switching = false;
+      }
+    }
+    function closePop() { open = false; pop.hidden = true; }
+    function openPop() {
+      open = true; pop.hidden = false;
+      if (searchEl) searchEl.value = '';
+      say('');
+      load();
+      setTimeout(() => { if (searchEl && searchEl.isConnected) searchEl.focus(); }, 30);
+    }
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (h.isBusy && h.isBusy()) { toast('正在生成回复：这一轮结束再切模型'); return; }
+      if (open) closePop(); else openPop();
+    });
+    view.querySelector('#mqClose').addEventListener('click', closePop);
+    view.querySelector('#mqManage').addEventListener('click', (e) => {
+      e.stopPropagation();
+      closePop();
+      state.settingsSub = 'model';
+      ctx.navigate && ctx.navigate('system');
+    });
+    searchEl.addEventListener('input', draw);
+    searchEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); closePop(); }
+    });
+    // 点面板外面收起。挂在 document 上，视图被换掉后这个闭包里的元素
+    // 已脱离文档（contains 恒 false），不会误伤别的页面。
+    document.addEventListener('click', (e) => {
+      if (!open) return;
+      if (pop.contains(e.target) || e.target === btn || btn.contains(e.target)) return;
+      closePop();
+    });
+
+    label();
+    load();
+    return { load, label };
+  }
+
   // ═══ 1. 对话 ═══════════════════════════════════════════════
   let chatTimer = null;
 
@@ -172,6 +366,18 @@
       '    <div class="chat-load-state" id="chatLoadState" role="status">正在加载会话…</div>' +
       '    <div class="msgs" id="msgs" role="log" aria-label="聊天记录"></div>' +
       '    <div class="composer">' +
+      '      <div class="localpop modelpop" id="modelPop" hidden>' +
+      '        <div class="lph">模型<span class="muted" id="mqCur"></span>' +
+      '          <button class="ibtn" id="mqClose" aria-label="收起模型列表" title="收起">' + icon('x', 'sm') + '</button></div>' +
+      '        <div class="lpbody">' +
+      '          <input class="input" id="mqSearch" placeholder="搜索模型或服务商…" aria-label="搜索模型">' +
+      '          <div id="mqList"></div>' +
+      '        </div>' +
+      '        <div class="lpadd mqfoot">' +
+      '          <button class="btn ghost md" id="mqManage" type="button">添加或管理模型</button>' +
+      '          <span class="muted" id="mqMsg"></span>' +
+      '        </div>' +
+      '      </div>' +
       '      <div class="localpop" id="localPop" hidden></div>' +
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
@@ -186,7 +392,7 @@
       '          <button class="ibtn" id="localBtn" title="本地操控：权限模式 · 白名单目录">' + icon('shield', 'sm') + '</button>' +
       '          <button class="ibtn" id="clipBtn" title="附一张图（她能看见）">' + icon('clip', 'sm') + '</button>' +
       '          <button class="chip" id="creatorBtn" title="创作模式：用自然语言让 Agent 生成插件/技能草稿">创作：关</button>' +
-      '          <button class="btn composer-model" id="modelBtn" title="打开现有模型与服务商设置">' + esc(model) + ' ▾</button>' +
+      '          <button class="btn composer-model" id="modelBtn" title="打开模型列表，点一条即切换">' + esc(model) + ' ▾</button>' +
       '          <div class="sp"></div>' +
       '          <span class="mono hintline">Enter 发送 · Shift+Enter 换行</span>' +
       '          <button class="btn fill" id="sendBtn" disabled aria-label="发送消息" title="发送消息">' + icon('arrow-up', 'sm') + '</button>' +
@@ -218,10 +424,12 @@
       }
       applySessions();
     });
-    view.querySelector('#modelBtn').addEventListener('click', () => {
-      if (busy) return;
-      state.settingsSub = 'model';
-      ctx.navigate && ctx.navigate('system');
+    // 模型快速切换：点左上角那个模型名弹出已保存的模型清单，点一条即切。
+    // 数据来自 /api/models/saved（不带密钥），切换走 /api/models/quick-switch。
+    // 生成过程中禁用（busy）：不让"正在跑的这轮"和"刚选的模型"对不上。
+    const mq = modelQuickBind(view, ctx, {
+      isBusy: () => busy,
+      onSwitched: (c) => { if (c && c.model) toast('已切到 ' + c.model); },
     });
     // 创作模式开关：chip 循环 关 → 插件 → 技能 → 关
     // 创作模式 bar 里的类型直选（不用循环也能一步切到目标类型）
@@ -359,7 +567,10 @@
       button.setAttribute('aria-label', busy ? '正在发送' : '发送消息');
       button.setAttribute('aria-busy', String(busy));
       button.title = busy ? '正在发送…' : '发送消息';
-      view.querySelector('#modelBtn').disabled = busy;
+      // 生成中把模型按钮一起禁掉：不让"正在跑的这轮"和"刚选的模型"对不上。
+      // 防一手 null —— updateComposer 在发送主链路上，这里抛错会连累整个 composer。
+      const mb = view.querySelector('#modelBtn');
+      if (mb) mb.disabled = busy;
     }
     const attachBox = view.querySelector('#attach');
     view.querySelector('#clipBtn').addEventListener('click', () => {

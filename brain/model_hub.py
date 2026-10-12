@@ -202,6 +202,38 @@ def fetch_online(base, key, timeout=12):
         return [], f"{type(e).__name__}: {str(e)[:120]}"
 
 
+def probe_provider(base, key, timeout=6):
+    """切换前先问一句：这个地址 + 这把密钥到底能不能用。返回 (state, detail)。
+
+    state 三档，调用方自己决定怎么处理（这里不替上层做决定）：
+      "ok"       —— 200，能用
+      "auth"     —— 401/403，密钥不被接受。**必须拦下**：放过去的话
+                    界面显示"已切换"，她下一句直接报错。
+      "unknown"  —— 连不上/超时/路径不对，说不准。允许照切，但要在响应里
+                    明说"没能验证"，不假装一切正常。
+
+    只打一次 GET /models（和拉清单同一个路径），不加别的请求。
+    同样走 ProxyHandler({})：不然会被系统代理劫持，拿到假的 502。
+    """
+    b = str(base or "").strip().rstrip("/")
+    if not b:
+        return "unknown", "没有接口地址"
+    if not str(key or "").strip():
+        return "unknown", "没有可用密钥"
+    req = urllib.request.Request(
+        b + "/models", method="GET",
+        headers={"Authorization": "Bearer " + str(key)})
+    try:
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        op.open(req, timeout=timeout).read()
+        return "ok", ""
+    except Exception as e:
+        code = getattr(e, "code", None)
+        if code in (401, 403):
+            return "auth", "服务商拒绝了这把密钥（HTTP %s）" % code
+        return "unknown", "%s: %s" % (type(e).__name__, str(e)[:80])
+
+
 def list_models(base, key, force=False, provider="siliconflow"):
     """给 App 用的模型清单。返回 {ok, source, groups, count, err}；
     source = online（刚拉到）/ cache（用的缓存）/ fallback（拉不到，用内置清单）。
@@ -341,6 +373,19 @@ def has_provider_key(cfg, prov):
     return bool(isinstance(bag, dict) and str(bag.get(prov) or "").strip())
 
 
+def _any_provider_key(cfg):
+    """api_keys 里有没有登记过任何一家的密钥。
+
+    用来区分两种"当前这家没登记"：
+      - 老配置（清单都不存在）→ 手上那把就是它的，该放行；
+      - 新配置（清单里有别家）→ 手上那把是别家的，不能拿来当这家的用。
+    """
+    bag = (cfg or {}).get("api_keys")
+    if not isinstance(bag, dict):
+        return False
+    return any(str(v or "").strip() for v in bag.values())
+
+
 def adopt_current_key(cfg):
     """把当前那把密钥登记到当前服务商名下（原地改，只在缺这一次时写）。
 
@@ -391,6 +436,251 @@ def is_masked(k):
         return True
     # 全是星号也算：短密钥被打码后就是这个形状
     return bool(k) and set(k) == {"*"}
+
+
+# ── 快速切换清单（主页下拉用的"我用过的模型"）──────────────────
+#
+# 🔴 这不是第二份模型配置。真正生效的永远只有 api_config 里那**一份**
+# （provider / api_base / api_key / model）；这份清单只回答"下拉里该列
+# 哪些条目"，点一条仍然走 apply_cfg 那条老路写回同一份配置。
+#
+# 为什么需要它：模型清单是 /v1/models 在线拉的，断网/换 key/平台改版就拉不到，
+# 而且它只反映"服务商有什么"，不反映"我用过什么"。用户想一键切回上个月那个
+# 模型，得有地方记着。
+SAVED_MAX = 40
+
+
+def _short_name(model):
+    """`deepseek-ai/DeepSeek-V4-Flash` → `DeepSeek-V4-Flash`（只给界面显示用）。"""
+    s = str(model or "").strip()
+    return s.rsplit("/", 1)[-1] if "/" in s else s
+
+
+def _norm_entry(it):
+    """把清单里的一条规范化；缺模型名的一律丢弃（返回 None）。"""
+    if not isinstance(it, dict):
+        return None
+    model = str(it.get("model") or "").strip()
+    if not model:
+        return None
+    prov = str(it.get("provider") or "").strip() or "custom"
+    base = str(it.get("base") or "").strip().rstrip("/")
+    if not base:
+        base = str(PROVIDERS.get(prov, {}).get("base") or "")
+    return {
+        "provider": prov,
+        "base": base,
+        "model": model,
+        "name": str(it.get("name") or "").strip() or _short_name(model),
+        "added_at": str(it.get("added_at") or ""),
+    }
+
+
+def _entry_key(e):
+    """判重用的键：(服务商, 地址, 模型)。
+
+    地址也进键 —— 同一个模型名在"自定义"下可能挂在两个不同的本机部署上
+    （比如两台机器各自跑的 vllm），只按 (服务商, 模型) 判重会把它们合成一条，
+    切过去打的是另一个地址。反过来，同名模型来自不同服务商天然就分得开，
+    满足"同名模型跨服务商不混淆"。
+    """
+    return (str(e.get("provider") or "").lower(),
+            str(e.get("base") or "").rstrip("/").lower(),
+            str(e.get("model") or ""))
+
+
+def saved_models(cfg):
+    """读清单（只读，不写盘）。顺手把同一键的重复项并掉。"""
+    out, seen = [], set()
+    for it in (cfg or {}).get("saved_models") or []:
+        e = _norm_entry(it)
+        if not e:
+            continue
+        k = _entry_key(e)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(e)
+    return out
+
+
+def remember_model(cfg, provider, base, model, name=""):
+    """把 (服务商, 地址, 模型) 记进清单。返回 (新配置, 是不是新加的)。
+
+    已存在就只刷新显示名，不动顺序（用户看惯的次序不该因为一次保存就跳）。
+    """
+    e = _norm_entry({"provider": provider, "base": base, "model": model, "name": name})
+    if not e:
+        return cfg, False
+    dst = dict(cfg or {})
+    cur = saved_models(dst)
+    k = _entry_key(e)
+    for old in cur:
+        if _entry_key(old) == k:
+            if e["name"] and e["name"] != old.get("name"):
+                old["name"] = e["name"]
+                dst["saved_models"] = cur
+                return dst, False
+            return cfg, False
+    if not e["added_at"]:
+        e["added_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    cur.append(e)
+    # 只留最近 SAVED_MAX 条：清单会跟着配置一起过同步，别让它无上限地长
+    dst["saved_models"] = cur[-SAVED_MAX:]
+    return dst, True
+
+
+def remember_current(cfg):
+    """把配置里**当前**那组 (provider, base, model) 记进清单。
+
+    在 /api/models/apply 保存成功后调一次：用户只要在设置页选过一次模型，
+    主页下拉里就有它了 —— 不需要再让用户"手动添加"第二遍。
+    """
+    cfg = cfg or {}
+    prov = str(cfg.get("provider") or "").strip()
+    model = str(cfg.get("model") or "").strip()
+    if not prov or not model:
+        return cfg, False
+    return remember_model(cfg, prov, cfg.get("api_base"), model)
+
+
+def public_saved(cfg):
+    """给客户端的下拉数据：清单 + 生效状态。**不含任何密钥**（连打码的都不给）。
+
+    连接状态只用布尔表达：
+      has_key —— 这家自己有存过密钥（切过去能直接调）
+      active  —— 就是眼下生效的这一条
+      unsaved —— 当前生效的组合还不在清单里（老配置 / 手改过 config）
+    """
+    cur = current(cfg)
+    prov, base, model = (cur["provider"], cur["api_base"],
+                         str(cur.get("chat") or ""))
+    out = []
+    hit = False
+    for e in saved_models(cfg):
+        act = (e["provider"] == prov and e["model"] == model
+               and (not e["base"] or not base or e["base"].rstrip("/") == base.rstrip("/")))
+        if act:
+            hit = True
+        out.append(dict(e,
+                        provider_name=PROVIDERS.get(e["provider"], {}).get("name")
+                        or e["provider"],
+                        has_key=has_provider_key(cfg, e["provider"]),
+                        active=act,
+                        unsaved=False))
+    if model and not hit:
+        # 当前这把还没进清单：也列出来标 active+unsaved，否则下拉里
+        # "选中的那一条"不存在，用户会以为模型丢了。
+        out.insert(0, {
+            "provider": prov, "provider_name": PROVIDERS.get(prov, {}).get("name") or prov,
+            "base": base, "model": model, "name": _short_name(model),
+            "added_at": "", "has_key": has_provider_key(cfg, prov),
+            "active": True, "unsaved": True,
+        })
+    return {
+        "models": out,
+        "current": {"provider": prov,
+                    "provider_name": PROVIDERS.get(prov, {}).get("name") or prov,
+                    "base": base, "model": model, "name": _short_name(model),
+                    "has_key": has_provider_key(cfg, prov),
+                    "key_belongs_to": (prov if has_provider_key(cfg, prov) else "")},
+    }
+
+
+def quick_switch(cfg, provider, model):
+    """按清单切到某一条。返回 (新配置, 改动说明, 错误, 警告)。
+
+    失败一律**明说**，绝不"悄悄换一个能用的"：静默兜底会让人以为在用 A，
+    实际拿 B 的回复，比直接报错危险得多。
+
+    切换前会探一次服务商（探不通不阻断，但要把"没验证过"如实带回去）。
+    """
+    prov = str(provider or "").strip()
+    mid = str(model or "").strip()
+    if not mid:
+        return cfg, [], "没指定模型", ""
+    # 🔴 切走之前先把"正在用的这一组"记进清单。
+    # 不记的话：老配置里当前这个模型本来就不在清单里（下拉里显示成"未保存"），
+    # 用户点别的模型切走之后，它就**从下拉里消失**了 —— 再也点不回来，
+    # 只能去设置页重配。"当前选择应能正确恢复"说的就是这件事。
+    cfg, _ = remember_current(cfg)
+    if not prov:
+        prov = str((cfg or {}).get("provider") or "").strip()
+    ent = None
+    for e in saved_models(cfg):
+        if e["model"] == mid and (not prov or e["provider"] == prov):
+            ent = e
+            break
+    if not ent:
+        return cfg, [], "这个模型不在已保存的清单里（先在「模型与服务商」里选一次）", ""
+
+    cur = current(cfg)
+    has_key = has_provider_key(cfg, ent["provider"])
+    key = provider_key(cfg, ent["provider"]) if has_key else ""
+    if not has_key and not _any_provider_key(cfg) and cfg.get("api_key"):
+        # 老配置（只有一把 api_key、api_keys 还没建立起来）里那把就是当前这家的，
+        # 不能因为"没登记"就把老用户锁在门外。注意判据是**一把都没登记过**：
+        # 一旦 api_keys 里有别家的 key，手上这把就属于别家，这家就是真没配。
+        has_key = True
+        key = str(cfg.get("api_key") or "")
+    if not has_key and ent["provider"] != "custom":
+        return cfg, [], ("「%s」还没存过密钥：先在「模型与服务商」里填一次它的 key，"
+                         "再回来一键切换"
+                         % (PROVIDERS.get(ent["provider"], {}).get("name")
+                            or ent["provider"])), ""
+
+    want_base = ent["base"] or PROVIDERS.get(ent["provider"], {}).get("base") or ""
+    warn = ""
+    if str((cfg or {}).get("model_mode") or "cloud") != "local":
+        state, detail = probe_provider(want_base, key)
+        if state == "auth":
+            return cfg, [], ("「%s」拒绝了这把密钥：%s。先在设置里更新 key"
+                             % (PROVIDERS.get(ent["provider"], {}).get("name")
+                                or ent["provider"], detail)), ""
+        if state == "unknown":
+            # 不阻断（可能是本机部署、也可能是临时断网），但绝不装作验证过了
+            warn = "没能连上服务商验证（%s）：已按你的选择切换，下一句若报错就是它" % detail
+
+    new_cfg, changed = apply_cfg(cfg, {"provider": ent["provider"],
+                                       "api_base": want_base,
+                                       "chat": ent["model"]})
+    after = current(new_cfg)
+    if after["provider"] != ent["provider"] or str(after.get("chat")) != ent["model"]:
+        # 理论上到不了这里；真到了也绝不装作切成功
+        return cfg, [], ("切换没生效：服务端现在仍是「%s / %s」"
+                         % (after.get("provider_name") or after["provider"],
+                            after.get("chat") or "（空）")), ""
+    # 地址也要核一遍：apply_cfg 在"换服务商但地址没变"的路径上会套用
+    # PROVIDERS 里的标准地址，自定义/自建/代理地址那条就丢了 —— 少了这一句，
+    # 界面显示切到了新家，实际还在打老地址。
+    if want_base and str(after.get("api_base") or "").rstrip("/") != want_base.rstrip("/"):
+        return cfg, [], ("切换没生效：接口地址还是 %s，没换成 %s"
+                         % (after.get("api_base") or "（空）", want_base)), ""
+    if str(new_cfg.get("model_mode") or "cloud") != "local" and not new_cfg.get("api_key"):
+        return cfg, [], "这家没有可用的密钥，切换会立刻 401：先去设置里补一把 key", ""
+    return new_cfg, changed, "", warn
+
+
+def forget_model(cfg, provider, model):
+    """从清单里去掉一条。返回 (新配置, 是不是真去掉了)。
+
+    🔴 只动清单，**不动当前生效的配置**：用户可能正用着它，把 api_base/model
+    一起清掉等于偷偷换模型。当前那条被移除后仍然生效，只是在下拉里显示成
+    "（未保存）"—— 界面不会因此谎报"当前模型"。
+    """
+    prov = str(provider or "").strip()
+    mid = str(model or "").strip()
+    dst = dict(cfg or {})
+    keep, hit = [], False
+    for e in saved_models(dst):
+        if e["model"] == mid and (not prov or e["provider"] == prov) and not hit:
+            hit = True
+            continue
+        keep.append(e)
+    if not hit:
+        return cfg, False
+    dst["saved_models"] = keep
+    return dst, True
 
 
 def apply_cfg(cfg, p):
