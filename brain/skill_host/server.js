@@ -205,33 +205,40 @@ function readMeta(dir) {
 
 // --- 装载 -------------------------------------------------------------------
 
-async function loadAll() {
-  skills.clear()
+async function loadAll({ allowPartial = false } = {}) {
+  const nextSkills = new Map()
   if (!fs.existsSync(SKILL_DIR)) {
     log(fmt('技能目录不存在：%s（还没有装技能）', SKILL_DIR))
-    return
+    skills.clear()
+    return { ok: true, reloaded: 0, skills: [] }
   }
   const rootStat = lstatSafe(SKILL_DIR)
   if (!rootStat.isDirectory()) throw new Error('Skill 根目录必须是普通目录')
+  const errors = []
   for (const name of fs.readdirSync(SKILL_DIR)) {
     const dir = path.join(SKILL_DIR, name)
     let st = null
     try { st = fs.statSync(dir) } catch (e) { continue }
-    // 跳过非目录和下划线开头的（跟 python 插件同一套规矩，别搞两套标准）
-    //
-    // 🔴 .bak_ 结尾的也必须跳过，而且**后果比"多一个幽灵技能"更隐蔽**：
-    // python 侧的 _uninstall 把目录改名成 `<包名>.bak_<时间戳>` 而不是真删
-    // （不覆盖、不销毁，是有意的）。skills 这个 Map 是拿 manifest 里的 id
-    // 做 key 的，于是备份目录和真技能**同名** → 互相覆盖 →
-    // 日志里三个都"装载成功"，最后 `装好 1 个技能`。
-    // 也就是说：不跳的话，日志完全正常、/skills 数量看着正常，
-    // 但清单里到底是哪一份取决于目录顺序 —— 已卸载的技能可能顶掉在用的。
+    // 跳过非目录和下划线开头的（跟 python 插件同一套规矩，别搞两套标准）。
+    // 事务备份现在保存在 skills 目录内的隐藏同文件系统暂存区；这里跳过
+    // 事务目录和历史 `.bak_` 目录，避免残留被当成正式 Skill。
     if (!st.isDirectory() || name.startsWith('_') || name.startsWith('.')) continue
     if (name.includes('.bak_')) continue
-    await loadOne(name, dir).catch(e =>
-      log(fmt('装载 %s 失败：%s', name, String(e.message || e).slice(0, 120))))
+    try {
+      await loadOne(name, dir, nextSkills)
+    } catch (e) {
+      const message = String(e.message || e).slice(0, 120)
+      errors.push({ skill: name, err: message })
+      log(fmt('装载 %s 失败：%s', name, message))
+    }
   }
+  if (errors.length && !allowPartial) {
+    return { ok: false, reloaded: skills.size, errors }
+  }
+  skills.clear()
+  for (const [id, skill] of nextSkills) skills.set(id, skill)
   log(fmt('装好 %s 个技能：%s', skills.size, [...skills.keys()].join(', ') || '（无）'))
+  return { ok: true, reloaded: skills.size, skills: [...skills.keys()], errors }
 }
 
 /** 技能的真正代码目录。
@@ -261,7 +268,7 @@ function resolveSkillDir(dir) {
   return fs.existsSync(path.join(inner, 'index.js')) ? inner : dir
 }
 
-async function loadOne(name, dir) {
+async function loadOne(name, dir, targetSkills = skills) {
   const checked = validateSkillDirectory(name, dir)
   const realDir = checked.realDir
   const meta = checked.meta
@@ -330,7 +337,7 @@ async function loadOne(name, dir) {
   }
   // 🔴 记 realDir 而不是外层 dir：面板和卸装要靠它定位文件，
   // 记外层的话会指到那个空壳目录上。
-  skills.set(meta.id || name, { id: meta.id || name, dir: realDir, mod, meta, tools })
+  targetSkills.set(meta.id || name, { id: meta.id || name, dir: realDir, mod, meta, tools })
   log(fmt('技能 %s 就绪，工具：%s', meta.id || name, Object.keys(tools).join(', ') || '（无）'))
 }
 
@@ -501,7 +508,7 @@ const server = http.createServer((req, res) => {
   // 走 HTTP 而不是"装完自己重启"，是因为大脑在云端一跑就是一周，
   // 为了加个技能把微信断一下不划算。
   if (req.method === 'POST' && p === '/reload') {
-    loadAll().then(() => send(res, 200, { ok: true, reloaded: skills.size }))
+    loadAll().then((result) => send(res, result.ok ? 200 : 409, result))
       .catch((e) => send(res, 500, { ok: false, err: String(e.message || e).slice(0, 160) }))
     return
   }
@@ -516,7 +523,7 @@ try {
   process.exit(1)
 }
 
-loadAll().then(() => {
+loadAll({ allowPartial: true }).then(() => {
   server.listen(PORT, HOST, () =>
     log(fmt('监听 http://%s:%s，技能目录 %s', HOST, PORT, SKILL_DIR)))
 }).catch((e) => {

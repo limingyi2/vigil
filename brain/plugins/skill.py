@@ -41,6 +41,7 @@ import time
 import threading
 import ipaddress
 from urllib.parse import urlsplit
+import plugin_transaction as _file_transaction
 
 NAME = "skill"
 DESC = "接住 JS 技能：让现成的 skill 能在知夏这边用"
@@ -120,6 +121,7 @@ def channels_of(pkg, src_names):
     return {s: (s in v) for s in src_names}
 
 
+@_file_transaction.serialized
 def set_channels(pkgs, src_names, want):
     """按勾选写 skill.channels。**返回 True 才叫成功**。"""
     pkgs = [str(p).strip() for p in (pkgs or []) if str(p or "").strip()]
@@ -890,6 +892,123 @@ def _read_manifest_from_zip(zf, names):
     return {}
 
 
+def _skill_config_path():
+    try:
+        from runtime import CFG_PATH
+        return CFG_PATH
+    except Exception:
+        try:
+            import paths
+            return paths.CONFIG_PATH
+        except Exception:
+            return None
+
+
+def _skill_config_snapshot():
+    path = _skill_config_path()
+    if not path:
+        return None, None
+    from plugin_transaction import snapshot
+    return path, snapshot(path)
+
+
+def _skill_config_without_package(raw, package):
+    from skill_transaction import channels_config_after_remove
+    return channels_config_after_remove(raw, package)
+
+
+def _host_reload_checked():
+    """Reload through the authenticated Bridge and reject false/partial status."""
+    d = _post_json("/reload", {}, 30)
+    if not isinstance(d, dict) or d.get("ok") is not True:
+        raise RuntimeError(str((d or {}).get("err") or "Skill Host reload 返回失败")[:160])
+    with _cache_lock:
+        _cache["at"] = 0.0
+        _cache["tools"] = []
+        _cache["src"] = None
+    return d
+
+
+def _host_has_skill(package, expected):
+    try:
+        ids = [str(s.get("id") or "") for s in list_skills()]
+    except Exception as exc:
+        return {"ok": False, "err": "无法读取 Skill Host 清单：%s" % str(exc)[:120]}
+    present = package in ids or expected in ids
+    return {"ok": present, "ids": ids,
+            "err": "Skill Host 未确认 %s" % (expected or package) if not present else ""}
+
+
+_CONFIG_SNAPSHOT_MISSING = object()
+
+
+def _skill_transaction(root, package, stage, tmpdir, *, manifest_id=None,
+                       config_after=None, config_before=_CONFIG_SNAPSHOT_MISSING,
+                       action="install"):
+    from skill_transaction import run
+    import shutil
+    import tempfile
+    root = os.path.abspath(root)
+    if not _pkg_name_ok(package):
+        raise ValueError("包名不合法")
+    os.makedirs(root, exist_ok=True)
+    _file_transaction.reject_links(root)
+    transaction_dir = tempfile.mkdtemp(prefix=".vigil-skill-tx-", dir=root)
+    try:
+        new_dir = None
+        if action != "uninstall":
+            new_dir = os.path.join(transaction_dir, "new-skill")
+            shutil.move(stage, new_dir)
+        config_path = _skill_config_path()
+        if config_before is _CONFIG_SNAPSHOT_MISSING:
+            config_path, config_before = _skill_config_snapshot()
+        expected = str(manifest_id or package)
+        old_path = os.path.join(root, package)
+        had_old = os.path.isdir(old_path)
+        restored_expected = package
+        if had_old:
+            try:
+                with open(os.path.join(old_path, "skill.json"), "r", encoding="utf-8") as stream:
+                    old_meta = json.load(stream)
+                if isinstance(old_meta, dict) and isinstance(old_meta.get("id"), str):
+                    restored_expected = old_meta["id"]
+            except (OSError, ValueError, TypeError):
+                pass
+
+        def reload_host():
+            return _host_reload_checked()
+
+        def verify_committed():
+            if action == "uninstall":
+                try:
+                    ids = [str(s.get("id") or "") for s in list_skills()]
+                except Exception as exc:
+                    return {"ok": False, "err": "无法读取卸载后的 Skill 清单：%s" % str(exc)[:120]}
+                present = package in ids or expected in ids
+                return {"ok": not present, "ids": ids,
+                        "err": "Host 仍保留已卸载 Skill" if present else ""}
+            return _host_has_skill(package, expected)
+
+        def verify_restored():
+            if not had_old:
+                try:
+                    ids = [str(s.get("id") or "") for s in list_skills()]
+                except Exception as exc:
+                    return {"ok": False, "err": str(exc)[:120]}
+                return {"ok": package not in ids and expected not in ids, "ids": ids,
+                        "err": "首次安装失败后旧 Skill 仍在 Host 清单中"}
+            return _host_has_skill(package, restored_expected)
+
+        return run(root, package, transaction_dir, new_dir, config_path,
+                   config_before=config_before, config_after=config_after,
+                   reload_host=reload_host, verify_committed=verify_committed,
+                   verify_restored=verify_restored, action=action)
+    except Exception:
+        shutil.rmtree(transaction_dir, ignore_errors=True)
+        raise
+
+
+@_file_transaction.serialized
 def _install_zip(raw, note=""):
     """把一个 zip 装进技能目录。返回 dict（ok/err/skill）。
 
@@ -912,6 +1031,7 @@ def _install_zip(raw, note=""):
 
     # --- 1) 落临时文件（inspect_zip 只认路径）---
     tmpdir = tempfile.mkdtemp(prefix="zxskill_")
+    transaction_result = None
     zpath = os.path.join(tmpdir, "s.zip")
     try:
         with open(zpath, "wb") as f:
@@ -1046,114 +1166,51 @@ def _install_zip(raw, note=""):
                 e["message"] for e in structure["errors"]),
                     "static_validated": False}
 
-        # --- 5) 搬进技能目录 ---
-        sk_dir = _skill_dir()
-        os.makedirs(sk_dir, exist_ok=True)
-        final = os.path.join(sk_dir, pkg)
-        # 同名旧版先挪走而不是覆盖：装一半失败时还能退回去，
-        # 直接覆盖失败就是半个包 + 半个旧的，比不装更难查。
-        backup = None
-        if os.path.isdir(final):
-            backup = _backup_path(final)
-            if backup is None:
-                return {"ok": False, "err": "旧版本备份名取不到了，装不了新的"}
-            try:
-                os.rename(final, backup)
-            except Exception as e:
-                return {"ok": False, "err": "旧版本挪不走（%s），装不了新的"
-                                          % str(e)[:80]}
-        try:
-            shutil.move(stage, final)
-        except Exception as e:
-            if backup and not os.path.isdir(final):
-                try:
-                    os.rename(backup, final)      # 装失败要还原
-                except Exception:
-                    pass
-            return {"ok": False, "err": "搬进技能目录失败：%s" % str(e)[:100]}
-
-        # --- 6) 告诉宿主重载 ---
-        # 装完不打 /reload 的话，宿主内存里的清单还是旧的 ——
-        # 面板显示「已装 1 个」而模型一个工具都看不到。
+        # --- 5) 同文件系统事务提交、reload 和运行状态确认 ---
         meta = structure.get("manifest") or {}
-        reloaded = None
-        reload_err = ""
-        try:
-            d = _post_json("/reload", {}, 30)
-            reloaded = d.get("reloaded")
-            with _cache_lock:                  # 重载完必须清缓存
-                _cache["at"] = 0.0
-                _cache["tools"] = []
-        except Exception as e:
-            reload_err = str(e)[:100]
-
-        # --- 7) 🔴 验一下宿主**到底认没认这个包** ---
-                # 只要"文件搬进去了 + /reload 没抛异常"就报 ok:True 是不够的 —— /reload
-        # **重扫整个目录**：别的技能装载成功它照样返回成功，新装的这个失败与否
-                # 不管。于是"安装成功"和"列表里没有"能同时成立 —— 例如：
-        #
-        #     agent-reach 的文件都在磁盘上，宿主日志写着
-        #     「装载 agent-reach 失败：这个包没有 setup(api)，不是 skill」
-        #     而面板弹的是「已装上「agent-reach」（3 个文件）」
-        #
-        # 用户看到的是"提示安装成功了，但下面列表里没有" —— 属于这一整轮
-        # 反复出现的那个形状：**失败不报错**。所以这里必须回读宿主的清单来确认。
-        sid = str((meta or {}).get("id") or pkg)
-        loaded = None
-        try:
-            ids = [str(s.get("id") or "") for s in list_skills()]
-            loaded = (sid in ids) or (pkg in ids)
-        except Exception:
-            loaded = None                      # 问不到就不下结论，别误报失败
-        if loaded is False:
-            return {"ok": False, "skill": pkg, "name": sid,
-                    "err": "文件装好了，但技能宿主不认这个包（没被装载）。"
-                           "多半是包本身不符合契约：入口要导出 "
-                           "setup(api)（或 QQ Agent 的 register(api)）。"
-                           "宿主日志里有具体原因："
-                           r"C:\vigil\logs\skill_host.log 搜「装载 %s 失败」" % pkg}
-
-        return {"ok": True, "skill": pkg,
-                "name": str(meta.get("name") or pkg)[:60],
-                "files": len(rels), "reloaded": reloaded,
-                "warn": ("文件放好了，但宿主重载失败：%s（面板上点「重载」再试）"
-                         % reload_err) if reload_err else ""}
+        result = _skill_transaction(
+            _skill_dir(), pkg, stage, tmpdir,
+            manifest_id=meta.get("id") or pkg, action="install")
+        transaction_result = result
+        result.update({"skill": pkg, "name": str(meta.get("name") or pkg)[:60],
+                       "files": len(rels)})
+        if result.get("ok"):
+            result["reloaded"] = result.get("runtime", {}).get("reloaded")
+        if not result.get("ok") and result.get("phase") == "host_reload":
+            result["err"] += ("；文件已回滚，Host 仍需人工确认" if
+                               result.get("rollback") == "failed" else "；旧版本已恢复")
+        return result
     finally:
+        # Recovery evidence lives in the Skill-root transaction directory; the
+        # downloaded archive and extracted source are always disposable.
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@_file_transaction.serialized
 def _uninstall(pkg):
-    """卸一个技能：只删目录，不碰数据。
+    """卸载一个 Skill；目录、渠道配置和 Host 注册状态统一事务处理。
 
-    刻意**不做**「连同数据一起删」—— 技能可能已经在她的记忆里留下了东西，
-    删目录不等于回收那些。要清数据得单独一个明确的动作。
+    用户数据目录不属于事务目标，默认保留；purge_data 仍由独立的显式动作处理。
     """
-    import shutil
     if not _pkg_name_ok(pkg):
         return {"ok": False, "err": "包名不合法"}
     sk_dir = _skill_dir()
     final = os.path.join(sk_dir, pkg)
     if not os.path.isdir(final):
         return {"ok": False, "err": "没这个技能：%s" % pkg}
-    # 真删。以前是先改名成 <pkg>.bak_<时间戳> 留一手，但那样每卸一次就在技能目录里
-    # 攒一个残留目录，装装删删几轮后目录里全是 .bak_ 垃圾、还容易被重新扫描到。
-    # 现在前端只弹一道确认窗口，确认即整目录删除（数据仍不碰，见上面的说明）。
     try:
-        shutil.rmtree(final)
-    except Exception as e:
-        return {"ok": False, "err": "删不掉：%s" % str(e)[:80]}
-    try:
-        _post_json("/reload", {}, 30)
-        with _cache_lock:
-            _cache["at"] = 0.0
-            _cache["tools"] = []
-    except Exception:
-        pass                # 卸载已经成功了，宿主重载失败只影响「马上生效」
-    # 顺手摘掉它的渠道配置。不摘的话配置里留一个指向已删包的键，
-    # 而 channels_of 只看键在不在 → 那个包再装回来时会**继承卸载前的渠道开关**，
-    # 界面（默认全开）和实际（全关）不一致，还很难联想到是卸载留下的。
-    _drop_channels(pkg)
-    return {"ok": True, "skill": pkg, "msg": "已卸载"}
+        _config_path, config_before = _skill_config_snapshot()
+        config_after = _skill_config_without_package(config_before, pkg)
+        result = _skill_transaction(
+            sk_dir, pkg, None, None,
+            config_after=config_after, config_before=config_before, action="uninstall")
+        result.update({"skill": pkg, "msg": "已卸载" if result.get("ok") else ""})
+        if not result.get("ok") and result.get("phase") == "host_reload":
+            result["err"] += ("；文件已回滚，Host 仍需人工确认" if
+                               result.get("rollback") == "failed" else "；原版本已恢复")
+        return result
+    except Exception as exc:
+        return {"ok": False, "err": "卸载事务无法启动：%s" % str(exc)[:160]}
 
 
 # --- 面板接口 ---------------------------------------------------------------

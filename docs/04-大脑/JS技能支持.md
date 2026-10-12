@@ -53,6 +53,13 @@ JSON 对象；`id` 要与包目录名一致，`entry` 必须指向根目录内�
 | `POST /skills/call` | 调工具：`{tool, args, ctx}` |
 | `POST /reload` | 重载技能，**不用重启大脑** |
 
+安装和更新分为静态检查、文件提交、Host reload、运行状态确认四步；文件写入成功
+不代表 Skill 已可调用。显式 reload 如有 Skill 无法加载，会返回失败状态并保留当前
+Host 注册表，Brain 会回滚文件和本次修改的渠道配置。回滚失败时返回恢复目录供人工处理。
+更新和卸载会标记 `restart_needed`，因为 `setup()` / `register()` 可能启动线程、网络请求
+或其他外部副作用，Host 没有通用 teardown 契约，文件回滚不能撤销这些行为。
+这些事务处理的是受控错误，不提供进程崩溃后的自动恢复或跨进程锁。
+
 🔴 **宿主只允许绑定 127.0.0.1 或 ::1，端口别开公网。** 所有路由都要求
 `Authorization: Bearer <ZX_SKILL_AUTH_TOKEN>`；缺少或长度不足的运行时凭据时宿主拒绝启动。
 认证只保护 Host HTTP 接口，不能替代 JavaScript 运行时隔离。要远程访问必须经过受控的

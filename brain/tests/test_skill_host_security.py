@@ -189,8 +189,9 @@ export function register(api) {
         try:
             _, initial = self.request(base, "/health", token=TOKEN)
             self.assertEqual(initial["skills"], 0)
-            _, reloaded = self.request(base, "/reload", token=TOKEN, method="POST", payload={})
-            self.assertEqual(reloaded["reloaded"], 0)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request(base, "/reload", token=TOKEN, method="POST", payload={})
+            self.assertEqual(caught.exception.code, 409)
             self.assertFalse(marker.exists())
         finally:
             self.stop_host(proc)
@@ -206,8 +207,11 @@ export function register(api) {
             (package / "index.js").symlink_to(outside)
         except (OSError, NotImplementedError) as exc:
             self.skipTest("symlink creation unavailable: %s" % type(exc).__name__)
-        _, result = self.request(self.base, "/reload", token=TOKEN, method="POST", payload={})
-        self.assertEqual(result["reloaded"], 2)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(self.base, "/reload", token=TOKEN, method="POST", payload={})
+        self.assertEqual(caught.exception.code, 409)
+        _, health = self.request(self.base, "/health", token=TOKEN)
+        self.assertEqual(health["skills"], 2)
         _, listing = self.request(self.base, "/skills", token=TOKEN)
         self.assertNotIn("linked-skill", {item["id"] for item in listing["skills"]})
 
@@ -215,10 +219,28 @@ export function register(api) {
         package = self.skills / "CON"
         package.mkdir()
         (package / "index.js").write_text("export function setup() {}", encoding="utf-8")
-        _, result = self.request(self.base, "/reload", token=TOKEN, method="POST", payload={})
-        self.assertEqual(result["reloaded"], 2)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(self.base, "/reload", token=TOKEN, method="POST", payload={})
+        self.assertEqual(caught.exception.code, 409)
+        _, health = self.request(self.base, "/health", token=TOKEN)
+        self.assertEqual(health["skills"], 2)
         _, listing = self.request(self.base, "/skills", token=TOKEN)
         self.assertNotIn("CON", {item["id"] for item in listing["skills"]})
+
+    def test_reload_failure_preserves_previous_runtime_registry(self):
+        write_skill(self.skills, "invalid-new", entry="index.js")
+        (self.skills / "invalid-new" / "skill.json").write_text(
+            json.dumps({"id": "invalid-new", "entry": "../outside.js"}), encoding="utf-8")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(self.base, "/reload", token=TOKEN, method="POST", payload={})
+        self.assertEqual(caught.exception.code, 409)
+        failure = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertFalse(failure["ok"])
+        self.assertEqual(failure["reloaded"], 2)
+        _, listing = self.request(self.base, "/skills", token=TOKEN)
+        names = {tool["name"] for skill in listing["skills"] for tool in skill["tools"]}
+        self.assertIn("legacy-no-manifest__echo", names)
+        self.assertIn("register-skill__echo", names)
 
 
 if __name__ == "__main__":
