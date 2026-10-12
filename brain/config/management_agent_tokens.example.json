@@ -1,0 +1,11 @@
+{
+  "_说明": "仅示例。复制为 management_agent_tokens.json 后在安全部署环境中填入每个节点独立生成的随机 Token；真实文件已被 Git 忽略。",
+  "tokens": {
+    "server-b": "REPLACE_WITH_SERVER_B_RANDOM_TOKEN",
+    "local-pc": "REPLACE_WITH_LOCAL_PC_RANDOM_TOKEN"
+  },
+  "names": {
+    "server-b": "云端服务器 B",
+    "local-pc": "本地电脑"
+  }
+}
