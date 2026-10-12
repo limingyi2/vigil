@@ -1236,10 +1236,9 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": "包是坏的（不是合法 zip）"})
                     return True
                 import tempfile
-                fp = os.path.join(tempfile.gettempdir(),
-                                  "zxplug_%d.zip" % int(time.time()))
+                fd, fp = tempfile.mkstemp(prefix="zxplug_", suffix=".zip")
                 try:
-                    with open(fp, "wb") as f:
+                    with os.fdopen(fd, "wb") as f:
                         f.write(blob)
                     ok, res = _po.install(fp, note=str(body.get("source") or "")[:40])
                 finally:
@@ -1250,9 +1249,11 @@ def start_remote_api(brain):
                 if not ok:
                     self._json(400, {"ok": False, "err": res.get("err") or "装不上"})
                     return True
-                n, need = self._plugin_reload_now()
+                # Installing files must not execute newly supplied code.
+                # Explicit restart performs activation outside the transaction.
+                import plugin_host as _ph
                 self._json(200, {"ok": True, "installed": res,
-                                 "count": n, "restart_needed": need,
+                                 "count": len(_ph.all_plugins()), "restart_needed": True,
                                  "manage": {"channels": chans,
                                             "items": _po.overview(chans)}})
                 return True

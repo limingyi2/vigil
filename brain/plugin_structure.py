@@ -39,7 +39,7 @@ def _filename_issue(name):
         return _issue("invalid_filename", "文件名不能为空或为 . / ..：%s" % name)
     if any(ord(c) < 32 for c in name):
         return _issue("invalid_filename", "文件名不能包含控制字符：%s" % name[:60])
-    if any(c in name for c in ("/", "\\", ":")):
+    if any(c in name for c in ("/", "\\", ":", "<", ">", "\"", "|", "?", "*")):
         return _issue("invalid_filename", "文件名不能包含路径或冒号：%s" % name[:60])
     if name.endswith((".", " ")):
         return _issue("invalid_filename", "文件名不能以点或空格结尾：%s" % name[:60])
@@ -106,7 +106,7 @@ def _read_manifest(root, package_name, names, errors):
             manifest = json.load(fh)
     except (OSError, UnicodeError, ValueError) as exc:
         errors.append(_issue("manifest_json",
-                             "zxplugin.json 不是有效 UTF-8 JSON：%s" % str(exc)[:120]))
+                             "zxplugin.json 必须是有效 UTF-8 JSON 对象：%s" % str(exc)[:120]))
         return {}
     err = plugin_ops.validate_manifest(manifest, package_name)
     if err:
@@ -144,6 +144,8 @@ def check_plugin_directory(path):
         try:
             if entry.is_symlink():
                 report["errors"].append(_issue("symlink", "不允许符号链接：%s" % entry.name))
+            elif not entry.is_file(follow_symlinks=False) and not entry.is_dir():
+                report["errors"].append(_issue("special_file", "必须是普通文件：%s" % entry.name))
             elif entry.is_dir():
                 report["errors"].append(_issue("nested_directory",
                                                "插件目录不能再嵌套目录：%s" % entry.name))
@@ -195,6 +197,9 @@ def check_plugin_directory(path):
             report["warnings"].append(_issue("manifest_case",
                                               "建议将 Manifest 命名为小写 zxplugin.json"))
 
+    # Never read rejected links/special files, even to parse static metadata.
+    if report["errors"]:
+        return report
     if entry_name:
         _check_python(os.path.join(root, entry_name), package_name,
                       report["errors"], report["warnings"])
