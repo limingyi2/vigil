@@ -166,13 +166,20 @@ function startFixture() {
 }
 
 // ── Brain 服务器子进程（隔离 HOME）────────────────────────────
-// Python 解释器探测：本机 PATH 里的 python 是 WorkBuddy 托管版，没有 httpx；
-// 依次试候选，第一个能 import httpx 的胜出。
+// Python 解释器探测：需要一个装了 httpx 的解释器（托管版 Python 没有）。
+// 必须先试候选、第一个能 import httpx 的胜出。
+//   - VIGIL_PYTHON：显式指定，优先级最高（CI / 本地都用这个最稳）
+//   - <worktree>/venv：仓库自带的 venv（P4 起的惯例）
+//   - VIGIL_PYTHON_CANDIDATES：分号分隔的额外候选（给别的本地布局用，
+//     避免把某台机器的绝对路径写进仓库）
+//   - LOCALAPPDATA 下的常规安装位置 → PATH 上的 python
 async function pickPython() {
+  const extra = String(process.env.VIGIL_PYTHON_CANDIDATES || '')
+    .split(';').map((s) => s.trim()).filter(Boolean);
   const cands = [
     process.env.VIGIL_PYTHON,
     path.join(WT, 'venv', 'Scripts', 'python.exe'),
-    'F:\\Vigil\\venv\\Scripts\\python.exe',
+    ...extra,
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python313', 'python.exe'),
     'python',
   ].filter(Boolean);
