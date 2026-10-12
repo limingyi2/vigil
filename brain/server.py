@@ -1189,12 +1189,16 @@ def start_remote_api(brain):
                 if path == "/api/plugins":
                     try:
                         import plugin_host as _ph
+                        import restart_state as _rs
                         self._json(200, {
                             "plugins": _ph.listing(),
                             "manage": {
                                 "channels": chans,
                                 "items": _po.overview(chans),
                             },
+                            # 持久的"待重启"判据（磁盘改动时刻 vs 本进程启动时刻）。
+                            # 界面刷新后靠它认出待重启态 —— 不是靠 toast 记忆。
+                            "pending_restart": _rs.snapshot("plugin", _po._PLUG_DIR),
                         })
                     except Exception as e:
                         self._json(200, {"plugins": [],
@@ -1265,6 +1269,10 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": res.get("err") or "卸不掉"})
                     return True
                 n, need = self._plugin_reload_now()
+                # 两个来源都要算：卸载返回的是"刚卸掉的那个带不带后台线程"
+                # （重载后它已经不在清单里，问不出来了），重载返回的是"剩下的
+                # 插件里有带的"。漏掉前者就会出现"卸载成功=运行态也停了"的假象。
+                need = bool(res.get("restart_needed")) or bool(need)
                 self._json(200, {"ok": True, "uninstalled": res,
                                  "count": n, "restart_needed": need,
                                  "manage": {"channels": chans,
@@ -2852,6 +2860,18 @@ def start_remote_api(brain):
 
 def run_server():
     base = None
+    # 记下本进程的启动时刻 —— 这是"待重启"判据的另一端
+    # （changed_at > started_at 才算待重启）。重启后它自然推新，
+    # 于是装卸留下的提示自动消解，不需要任何额外的"重启后清除"逻辑，
+    # 也就不存在忘了清除（永远提示）或虚假显示已生效的可能。
+    # 必须赶在任何装卸之前登记，否则本次启动前的旧改动会被误判成待重启。
+    try:
+        import restart_state as _rs
+        import plugin_ops as _po0
+        _rs.note_start("plugin", _po0._PLUG_DIR)
+    except Exception as e:
+        print("[重启提示] 插件启动时刻登记跳过（不影响聊天）：%s" % str(e)[:80],
+              flush=True)
     # 🔴 把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。
     # 不做的话界面会把每一家都显示成"还没存密钥"，
     # 于是"点一下就切换"永远切不动 —— 而实际有一家正拿着它在用。

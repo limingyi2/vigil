@@ -1370,14 +1370,23 @@
         if (f) onZip(f);
       });
     }
-    async function installZip(file, url, body) {
+    async function installZip(file, url, body, kind) {
       if (!/\.zip$/i.test(file.name)) { toast('要 .zip 包'); return; }
       toast('正在装 ' + file.name + ' …');
       const b64 = await fileToB64(file);
       const r = pick(await post(url, Object.assign({ zip_b64: b64 }, body || {})));
       if (!r.ok) { toast('装失败：' + (r._err || r.err || '')); return; }
+      // C1：插件和技能的重启提示不能混用同一句话 —— 两者的"重启"根本不是
+      // 同一个东西。插件要重启**大脑**（start() 起的线程不会自己换掉），
+      // 技能要重启**技能宿主**（热重载已让它当下可用，覆盖安装后才需要宿主
+      // 进程重启一次才完全干净）。说错对象，用户会去重启错的东西，
+      // 然后以为问题已经解决。
+      const RN = {
+        plugin: '有后台线程的插件要重启大脑才完全生效',
+        skill: '覆盖了已有技能，重启技能宿主后才完全干净',
+      };
       toast('已装上（共 ' + (r.count || '?') + ' 个）' +
-        (r.restart_needed ? ' · 有后台线程的插件要重启大脑才完全生效' : ''));
+        (r.restart_needed ? ' · ' + (RN[kind] || RN.plugin) : ''));
       ctx.refresh();
     }
 
@@ -1428,12 +1437,27 @@
       const chans = m.channels || ['app', 'wechat', 'wechat_group', 'pc'];
       const items = m.items || [];
       v.__items = items;
+      // C3：持久的"待重启"提示。判据是服务端磁盘上的两个时间戳
+      //（改动时刻 vs 本进程启动时刻），不是 toast、也不是前端变量 ——
+      // 所以刷新页面、重启客户端之后这条都还在，直到大脑真的重启过。
+      // 服务端算不出来时（老大脑没这个字段）就不显示，不猜。
+      const pend = r.pending_restart || {};
+      const pendOn = !!pend.pending;
+      const pendWhy = (pend.reasons || []).filter(Boolean).join('；');
       v.innerHTML =
+        (pendOn ? '<div class="card" style="margin-bottom:12px;border-color:var(--warn)">' +
+          '<div style="display:flex;align-items:center;gap:8px"><b>有改动还没生效</b>' +
+          tag('warn', '待重启大脑') + '</div>' +
+          '<div class="muted" style="font-size:12px;margin-top:6px">' +
+          esc(pendWhy || '插件目录有改动') +
+          '。上面这份清单是磁盘上的样子，内存里跑的可能还是旧的那份 —— ' +
+          '重启大脑后两边才一致。</div></div>' : '') +
         '<div class="sech"><b>添加插件</b><div class="sp"></div><span class="muted">zip 上传</span></div>' +
         '<div class="drop" id="plDrop">' + icon('upload', 'md') +
         '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 装上自动热重载，不用重启大脑</span></div>' +
         '<div class="sech"><b>已安装的插件</b><div class="sp"></div>' +
         '<span class="tag neutral">' + items.length + ' 个</span>' +
+        (pendOn ? tag('warn', '待重启生效') : '') +
         '<button class="btn oline" id="plReload">重载</button></div>' +
         (r.ok === false && !items.length ? errBox('读不到插件清单', r._err || '') :
          items.length ? items.map((p) =>
@@ -1453,7 +1477,7 @@
           '</div></div>').join('')
           : empty('一个插件都没装', '上面拖一个 .zip 试试'));
 
-      bindDrop(v.querySelector('#plDrop'), (f) => installZip(f, '/api/plugins/install', { source: '客户端' }));
+      bindDrop(v.querySelector('#plDrop'), (f) => installZip(f, '/api/plugins/install', { source: '客户端' }, 'plugin'));
       v.querySelector('#plReload').addEventListener('click', async () => {
         const rr = pick(await post('/api/plugins/reload', {}));
         toast(rr.ok ? '已重载：' + (rr.count || '?') + ' 个插件' : '重载失败');
@@ -1461,7 +1485,14 @@
       });
       v.querySelectorAll('[data-un]').forEach((b) => b.addEventListener('click', async () => {
         if (!confirm('卸载插件 ' + b.dataset.un + '？')) return;
-        await post('/api/plugins/uninstall', { name: b.dataset.un, purge_data: false });
+        // C2：卸载接口会回 restart_needed，必须消费。文件删掉只代表磁盘上
+        // 没了，已经 import 的那份（连同它 start() 起的线程）还在跑 ——
+        // 不告诉用户"要重启才真正停"，他就会以为线程也跟着没了。
+        const rr = pick(await post('/api/plugins/uninstall', { name: b.dataset.un, purge_data: false }));
+        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
+        toast(rr.restart_needed
+          ? '文件已卸载，但它注册的后台线程还在跑 —— 要重启大脑才真正停止'
+          : '已卸载（剩 ' + (rr.count != null ? rr.count : '?') + ' 个）');
         plugins();
       }));
       bindChanChips('/api/plugins/channels', 'plugin');
@@ -1473,7 +1504,20 @@
       const r = pick(await post('/api/skill/status', {}));
       const list = r.skills || [];
       v.__items = list;
+      // C3（技能侧）：判据同上，但"重启"指的是**技能宿主**（Node 进程），
+      // 不是大脑。宿主自己启动时会登记 started_at，所以这条提示同样
+      // 会一直显示到宿主真的重启过为止。
+      const skPend = r.pending_restart || {};
+      const skPendOn = !!skPend.pending;
+      const skPendWhy = (skPend.reasons || []).filter(Boolean).join('；');
       v.innerHTML =
+        (skPendOn ? '<div class="card" style="margin-bottom:12px;border-color:var(--warn)">' +
+          '<div style="display:flex;align-items:center;gap:8px"><b>有改动还没生效</b>' +
+          tag('warn', '待重启技能宿主') + '</div>' +
+          '<div class="muted" style="font-size:12px;margin-top:6px">' +
+          esc(skPendWhy || '技能目录有改动') +
+          '。热重载已经让新版本能用，但要宿主进程重启一次才完全干净 —— ' +
+          '上面这份清单是磁盘上的样子。</div></div>' : '') +
         '<div class="sech"><b>运行环境</b><div class="sp"></div>' +
         (r.alive ? tag('ok', '可以装') : tag('err', '宿主没起来，装了不生效')) + '</div>' +
         '<div class="env">' +
@@ -1486,6 +1530,7 @@
         '<b>把技能 .zip 拖到这里</b><span class="muted">或点击选择文件 · 宿主自动热重载，不用重启大脑</span></div>' +
         '<div class="sech"><b>已安装的技能</b><div class="sp"></div>' +
         '<span class="tag neutral">' + list.length + ' 个</span>' +
+        (skPendOn ? tag('warn', '待重启生效') : '') +
         '<button class="btn oline" id="skRe">重载宿主</button></div>' +
         (r.ok === false && !list.length ? errBox('读不到技能清单', r._err || '技能宿主（Node）没起来的话装了也不生效') :
          list.length ? list.map((s) =>
@@ -1506,7 +1551,7 @@
           '</div></div>').join('')
           : empty('还没有装技能', '技能是 Node 里的独立程序，跟 .py 插件是两条通道'));
 
-      bindDrop(v.querySelector('#skDrop'), (f) => installZip(f, '/api/skill/install', { note: '客户端' }));
+      bindDrop(v.querySelector('#skDrop'), (f) => installZip(f, '/api/skill/install', { note: '客户端' }, 'skill'));
       v.querySelector('#skRe').addEventListener('click', async () => {
         await post('/api/skill/reload', {});
         toast('宿主重载中…');
@@ -1514,8 +1559,12 @@
       });
       v.querySelectorAll('[data-sun]').forEach((b) => b.addEventListener('click', async () => {
         if (!confirm('卸载技能 ' + b.dataset.sun + '？')) return;
+        // C2（技能侧同理）：文件删了不等于宿主里那份也没了。
         const rr = pick(await post('/api/skill/uninstall', { skill: b.dataset.sun }));
-        toast(rr.ok ? '已卸载' : '卸载失败：' + (rr._err || rr.err || ''));
+        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
+        toast(rr.restart_needed
+          ? '文件已卸载，宿主里那份可能还在 —— 重启技能宿主后才完全干净'
+          : '已卸载');
         skills();
       }));
       bindChanChips('/api/skill/channels', 'skill');

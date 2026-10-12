@@ -516,6 +516,33 @@ const server = http.createServer((req, res) => {
   send(res, 404, { ok: false, err: '没这个路由' })
 })
 
+// 把「本进程已启动」记进技能根目录的状态文件 —— 这是「待重启」判据的一端
+// （changed_at > started_at 才算待重启）。重启后它自然推新，之前装卸留下的
+// 提示自动消解：不需要任何额外的清除动作，也就不存在「忘了清除而永远提示」，
+// 更不可能「虚假显示已生效」。
+// 文件形状与 brain/restart_state.py 同构；这里只动 started_at，
+// changed_at / reasons 由大脑那侧写，读出来原样写回，不猜不覆盖。
+function noteStartedAt() {
+  const file = path.join(SKILL_DIR, '_pending_restart.json')
+  let d = {}
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) d = raw
+  } catch (_) {
+    d = {}
+  }
+  d.started_at = Date.now() / 1000
+  try {
+    fs.mkdirSync(SKILL_DIR, { recursive: true })
+    const tmp = file + '.tmp-' + process.pid
+    fs.writeFileSync(tmp, JSON.stringify(d))
+    fs.renameSync(tmp, file)
+  } catch (e) {
+    // 状态文件只是提示层，写不进去不能让宿主起不来。
+    log('启动时刻写不进去（不影响运行）：' + String(e.message || e))
+  }
+}
+
 try {
   validateRuntimeConfig()
 } catch (e) {
@@ -524,8 +551,10 @@ try {
 }
 
 loadAll({ allowPartial: true }).then(() => {
-  server.listen(PORT, HOST, () =>
-    log(fmt('监听 http://%s:%s，技能目录 %s', HOST, PORT, SKILL_DIR)))
+  server.listen(PORT, HOST, () => {
+    noteStartedAt()
+    log(fmt('监听 http://%s:%s，技能目录 %s', HOST, PORT, SKILL_DIR))
+  })
 }).catch((e) => {
   console.error('[skill-host] 安全检查失败，拒绝启动：' + String(e.message || e))
   process.exit(1)

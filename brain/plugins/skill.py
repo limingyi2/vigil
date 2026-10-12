@@ -1183,6 +1183,18 @@ def _install_zip(raw, note=""):
                        "files": len(rels)})
         if result.get("ok"):
             result["reloaded"] = result.get("runtime", {}).get("reloaded")
+            # 持久记一笔"待重启宿主"。热重载已经让新版本当下可用，但"完全干净"
+            # 要等宿主进程重启一次才知道 —— 尤其覆盖安装（restart_needed 为真
+            # 的就是覆盖，因为最终目录本来就在）。这个状态必须能被回看，
+            # 不能只存在于装完那一刻的 toast 里。
+            try:
+                import restart_state as _rst
+                _rst.note_change(
+                    "skill", _skill_dir(),
+                    "%s技能 %s" % ("更新" if result.get("restart_needed") else "安装",
+                                   pkg))
+            except Exception:
+                pass
         if not result.get("ok") and result.get("phase") == "host_reload":
             result["err"] += ("；文件已回滚，Host 仍需人工确认" if
                                result.get("rollback") == "failed" else "；旧版本已恢复")
@@ -1212,6 +1224,14 @@ def _uninstall(pkg):
             sk_dir, pkg, None, None,
             config_after=config_after, config_before=config_before, action="uninstall")
         result.update({"skill": pkg, "msg": "已卸载" if result.get("ok") else ""})
+        if result.get("ok"):
+            # 同插件那边：卸载成功只代表文件没了，宿主进程里那份可能还在。
+            # 记一笔，让界面在用户回来看的时候还知道要重启宿主。
+            try:
+                import restart_state as _rst
+                _rst.note_change("skill", _skill_dir(), "卸载技能 %s" % pkg)
+            except Exception:
+                pass
         if not result.get("ok") and result.get("phase") == "host_reload":
             result["err"] += ("；文件已回滚，Host 仍需人工确认" if
                                result.get("rollback") == "failed" else "；原版本已恢复")
@@ -1286,6 +1306,15 @@ def _r_status(body, query):
          "channels": srcs,
          "ext": list(SKILL_EXT),
          "host_missing": (not os.path.isdir(_skill_dir()))}
+    # 持久的"待重启宿主"判据。写的一端是这里（大脑），读的一端还有 Node
+    # 宿主自己启动时写的 started_at —— 两个时间戳比大小，界面刷新后
+    # 照样认得出待重启态，不依赖任何前端记忆。
+    try:
+        import restart_state as _rst
+        d["pending_restart"] = _rst.snapshot("skill", _skill_dir())
+    except Exception as e:
+        d["pending_restart"] = {"pending": False, "reasons": [],
+                                "err": str(e)[:80]}
     try:
         import subprocess
         r = subprocess.run(["node", "-v"], capture_output=True, timeout=20)

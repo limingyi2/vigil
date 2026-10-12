@@ -28,6 +28,7 @@ import time
 import zipfile
 import tempfile
 import plugin_transaction as transaction
+import restart_state
 
 try:
     import paths
@@ -366,6 +367,15 @@ def _commit_install(stage, name, replacements, old, manifest, note):
                   activation="restart_required" if ok else "unchanged")
     if ok:
         result.update(ok=True, package=name, name=name, manifest=manifest)
+        # 落一个持久的"待重启"：安装只提交文件、不 import，所以磁盘状态和
+        # 运行状态从这一刻起就不一致，要一直提示到大脑重启为止。
+        try:
+            ver = str((manifest or {}).get("version") or "")
+            restart_state.note_change(
+                "plugin", _PLUG_DIR,
+                "安装插件 %s%s" % (name, (" v" + ver) if ver else ""))
+        except Exception:
+            pass
     return ok, result
 
 
@@ -517,6 +527,24 @@ def validate_manifest(manifest, package_name=""):
     return ""
 
 
+def _has_start_hook(name):
+    """这个插件是不是声明了 `start` 钩子 —— 也就是装卸后要重启大脑才真正生效。
+
+    必须在文件被删掉**之前**问。`plugin_host` 的清单是从 plugins/ 现扫的，
+    文件一没它就再也问不出来；而"卸完了后台线程还在跑、要重启才停"这个
+    信息只有这一刻拿得到。错过这一刻，界面就永远只会说"已卸载"，
+    用户以为线程也跟着停了 —— 那是骗人。
+    """
+    try:
+        import plugin_host as _ph
+        p = (_ph.all_plugins() or {}).get(str(name))
+        return bool(p is not None and callable(p.hook("start")))
+    except Exception:
+        # 问不出来时按"需要重启"处理：多提示一次重启的代价，
+        # 远小于漏提示一次（用户以为停了，实际还在跑）。
+        return True
+
+
 @transaction.serialized
 def uninstall(name, purge_data=False):
     """卸一个插件。返回 (ok, 信息)。
@@ -532,7 +560,11 @@ def uninstall(name, purge_data=False):
     hit = ""
     f = os.path.join(_PLUG_DIR, name + ".py")
     d = os.path.join(_PLUG_DIR, name)
-        # 必须在删文件**之前**读出 FEATURE：文件一删就再也读不到，
+    # 删文件之前先记下它带不带后台线程（上面 _has_start_hook 的注释解释了
+    # 为什么必须赶在删除前）。卸载的返回里要带这个信息，否则前端
+    # 只会显示"已卸载"，而那个 start() 起的线程还在跑。
+    had_bg = _has_start_hook(name)
+    # 必须在删文件**之前**读出 FEATURE：文件一删就再也读不到，
     # 而渠道开关的键（features_by_src.<src>.<FEATURE>）得靠它才能摘掉。
     feat = _feature_of(f)
     if os.path.isfile(f):
@@ -580,7 +612,18 @@ def uninstall(name, purge_data=False):
                 extra = "，数据也清了"
         except Exception:
             pass
-    return True, {"ok": True, "removed": os.path.basename(hit), "msg": "已卸载" + extra}
+    # 持久记一笔"待重启"。卸载之后磁盘与运行态就不一致了：文件没了，
+    # 但已经 import 的那份（连同它 start() 起的线程）还在内存里。
+    # 这个不一致要一直提示到用户重启为止 —— 只靠 toast 说一次等于没说。
+    try:
+        restart_state.note_change(
+            "plugin", _PLUG_DIR,
+            "卸载插件 %s%s" % (name, "（带后台线程）" if had_bg else ""))
+    except Exception:
+        pass
+    return True, {"ok": True, "removed": os.path.basename(hit),
+                  "msg": "已卸载" + extra,
+                  "restart_needed": bool(had_bg)}
 
 
 # --- 给面板的完整视图 ---
