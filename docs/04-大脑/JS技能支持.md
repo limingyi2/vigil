@@ -26,6 +26,24 @@ JS 技能      skill_host/skills/*/   → Node 侧跑，大脑用 HTTP 调
 | `brain/skill_host/skills/` | 装技能的地方。每个技能一个目录 |
 | `brain/plugins/skill.py` | 知夏侧插件。把技能工具接进模型，给模型两个入口 |
 
+### 创作前的静态检查
+
+Skill 目录可以先用检查器验证，不会导入或执行 JavaScript：
+
+```bash
+python tools/check_skill_structure.py templates/skill-basic
+```
+
+`skill.json` 是可选的，缺失时保留历史 `index.js` Skill 的兼容性。存在时必须是
+JSON 对象；`id` 要与包目录名一致，`entry` 必须指向根目录内的入口文件。单层目录
+支持 `index.js`、`index.mjs` 和 `index.cjs`，后两者需要在 Manifest 中明确写出
+`entry`。当前 Host 只会对内层 `index.js` 自动下钻同名双层目录，因此双层的
+`index.mjs` / `index.cjs` 会被检查器拒绝。
+
+检查器还会拒绝路径越界、反斜杠、控制字符、Windows 保留名称、符号链接、特殊文件
+和大小写冲突路径。未知 Manifest 字段会保留，方便未来扩展。安装接口会在任何
+持久化目录写入前检查暂存目录；静态检查不执行 Skill 代码。
+
 ### 三个路由（宿主侧，只监听 127.0.0.1）
 
 | 路由 | 用途 |

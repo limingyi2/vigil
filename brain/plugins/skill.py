@@ -904,15 +904,31 @@ def _install_zip(raw, note=""):
                                       % (len(infos), MAX_FILES)}
         total = 0
         names = []
+        seen_paths = set()
         for inf in infos:
             if inf.flag_bits & 0x1:
                 return {"ok": False, "err": "不支持加密的包"}
             total += int(inf.file_size or 0)
+            # zipfile would otherwise materialize a symlink entry as a normal
+            # file and erase the original file type before the static checker
+            # can inspect it.
+            mode = (int(inf.external_attr or 0) >> 16) & 0o170000
+            if mode == 0o120000 or mode not in (0, 0o100000, 0o040000):
+                return {"ok": False, "err": "包里不允许符号链接或特殊文件：%s" % inf.filename[:80]}
+            if "\\" in str(inf.filename):
+                return {"ok": False, "err": "包内路径不能包含反斜杠：%s" % str(inf.filename)[:80]}
             n = _norm_entry(inf.filename)
             if isinstance(n, tuple):
                 return {"ok": False, "err": n[1]}
             if n is None:
                 continue
+            parts = n.split("/")
+            if any(p in ("", ".", "..") for p in parts):
+                return {"ok": False, "err": "包内路径不能包含空段、. 或 ..：%s" % n[:80]}
+            folded = n.casefold()
+            if folded in seen_paths:
+                return {"ok": False, "err": "包里存在重复或大小写冲突的路径：%s" % n[:80]}
+            seen_paths.add(folded)
             ext = os.path.splitext(n)[1].lower()
             if ext not in SKILL_EXT:
                 return {"ok": False, "err": (
@@ -997,6 +1013,15 @@ def _install_zip(raw, note=""):
                 f.write(zf.read(root + "/" + r))
         zf.close()
 
+        # The checker reads only the staged tree. It never imports JavaScript,
+        # so all persistent writes below remain behind the static gate.
+        from skill_structure import check_skill_directory
+        structure = check_skill_directory(stage, package_name=pkg)
+        if not structure["ok"]:
+            return {"ok": False, "err": "; ".join(
+                e["message"] for e in structure["errors"]),
+                    "static_validated": False}
+
         # --- 5) 搬进技能目录 ---
         sk_dir = _skill_dir()
         os.makedirs(sk_dir, exist_ok=True)
@@ -1026,8 +1051,7 @@ def _install_zip(raw, note=""):
         # --- 6) 告诉宿主重载 ---
         # 装完不打 /reload 的话，宿主内存里的清单还是旧的 ——
         # 面板显示「已装 1 个」而模型一个工具都看不到。
-        meta = _read_manifest_from_zip(
-            _zip.ZipFile(zpath), names) if os.path.isfile(zpath) else {}
+        meta = structure.get("manifest") or {}
         reloaded = None
         reload_err = ""
         try:
