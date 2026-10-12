@@ -1336,6 +1336,86 @@ def start_remote_api(brain):
 
             return False
 
+        def _creator_admin(self, method, path, body):
+            """Creator Mode 草稿面：生成 / 修改 / 验证 / 查看 / 删除。
+
+            和插件管理面的分工：这里只产**可审核的草稿** —— 独立工作区
+            （``<DATA_DIR>/creator_drafts/``）+ 真实模型生成 + P4 静态检查器。
+            没有任何安装/装载入口：装不装由人在 MVP-2 的审核安装流程里决定，
+            现在没有那条安全审批链路，就不在这里开旁门。
+            写操作（生成要花模型 token）只允许管理员；读操作任何已认证身份可看。
+            命中返回 True（已回包）。
+            """
+            if not path.startswith("/api/creator"):
+                return False
+            if method == "POST" and not self._is_admin():
+                self._json(403, {"ok": False,
+                                 "err": "创作草稿的生成/修改只允许管理员"})
+                return True
+            try:
+                import creator as _cr
+            except Exception as e:
+                self._json(500, {"ok": False,
+                                 "err": "创作模块不可用：%s" % str(e)[:80]})
+                return True
+            body = body or {}
+
+            if method == "GET":
+                if path == "/api/creator/drafts":
+                    try:
+                        self._json(200, {"ok": True, "drafts": _cr.list_drafts()})
+                    except Exception as e:
+                        self._json(200, {"ok": False, "err": str(e)[:100]})
+                    return True
+                if path == "/api/creator/draft":
+                    try:
+                        from urllib.parse import urlparse, parse_qs
+                        q = parse_qs(urlparse(self.path).query)
+                        did = (q.get("id") or [""])[0]
+                    except Exception:
+                        did = ""
+                    meta, err = _cr.get_draft(did)
+                    if err:
+                        self._json(404, {"ok": False, "err": err})
+                    else:
+                        self._json(200, {"ok": True, "draft": meta})
+                    return True
+                return False
+
+            if path == "/api/creator/draft":
+                meta, err = _cr.generate_draft(str(body.get("kind") or ""),
+                                               str(body.get("requirement") or ""),
+                                               API_CFG)
+                if err:
+                    self._json(400, {"ok": False, "err": err})
+                else:
+                    self._json(200, {"ok": True, "draft": meta})
+                return True
+            if path == "/api/creator/revise":
+                meta, err = _cr.revise_draft(str(body.get("id") or ""),
+                                             str(body.get("feedback") or ""),
+                                             API_CFG)
+                if err:
+                    self._json(400, {"ok": False, "err": err})
+                else:
+                    self._json(200, {"ok": True, "draft": meta})
+                return True
+            if path == "/api/creator/validate":
+                rep, err = _cr.validate_draft(str(body.get("id") or ""))
+                if err:
+                    self._json(404, {"ok": False, "err": err})
+                else:
+                    self._json(200, {"ok": True, "validation": rep})
+                return True
+            if path == "/api/creator/delete":
+                ok, err = _cr.delete_draft(str(body.get("id") or ""))
+                if not ok:
+                    self._json(400, {"ok": False, "err": err or "删不掉"})
+                else:
+                    self._json(200, {"ok": True})
+                return True
+            return False
+
         def _plugin_route(self, method, path, body):
             """插件的 HTTP 接口。命中返回 True（已经自己回过包）。
 
@@ -2284,6 +2364,11 @@ def start_remote_api(brain):
                 else:
                     # 插件管理面（装/卸/渠道开关）优先于插件自带路由：
                     # 前者只在 /api/plugins* 这一小片里，前缀不重叠。
+                    # Creator Mode 草稿面（/api/creator*）同理独立一片，
+                    # 只产草稿不安装，优先落在这里。
+                    if path.startswith("/api/creator"):
+                        if self._creator_admin("POST", path, body):
+                            return
                     if not self._plugin_admin("POST", path, body):
                         # 插件自己的接口（ROUTES）。放最后当兜底：核心路由都叫
                         # /api/xxx，插件要求自己的路径带 /api/plugin/ 前缀，
@@ -2693,6 +2778,11 @@ def start_remote_api(brain):
                          if (_q.get("src") or "").strip() else None)
                 self._json(200, {"levels": _ch.all_levels(),
                                  "level": _ch.level(_csrc)})
+            elif path.startswith("/api/creator"):
+                # Creator Mode 草稿查询（GET 只读：清单/详情）
+                if self._creator_admin("GET", path, None):
+                    return
+                self._json(404, {"err": "no such creator api"})
             elif path.startswith("/api/plugins"):
                 # 插件清单 + 管理视图（渠道视图）+ 前端注入资源。
                 # 微信桥接和 VM 启动器拿 /api/plugins 当"大脑还活着吗"

@@ -121,6 +121,12 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .localpop { left:50%; right:auto; transform:translateX(-50%); width:min(560px,calc(100% - 24px)); }
 body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accent); outline-offset:3px; }
 .chatwrap .cbox textarea:focus-visible { outline:none; }
+/* ── 创作模式：textarea 与按钮条之间的窄条 + cbar 里的开关 chip ── */
+.chatwrap .creatorbar { display:flex; align-items:center; gap:8px; margin-top:10px; padding:8px 10px; border-radius:8px; background:var(--chat-hover); }
+.chatwrap .creatorbar[hidden] { display:none; }
+.chatwrap .creatorbar .chip { height:24px; padding:0 10px; font-size:12px; }
+.chatwrap #creatorBtn { height:28px; padding:0 10px; flex:none; font-size:12.5px; }
+.chatwrap #creatorBtn.on { background:var(--chat-accent); border-color:var(--chat-accent); color:var(--chat-on-send, #fff); font-weight:500; }
 @keyframes chat-spin { to { transform:rotate(360deg); } }
 @media(max-width:1120px) {
   .chatwrap .split { grid-template-columns:minmax(0,1fr); }

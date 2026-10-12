@@ -176,9 +176,16 @@
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
       '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="给 Vigil 发送消息…"></textarea>' +
+      '        <div class="creatorbar" id="creatorBar" hidden>' +
+      '          <span class="muted" style="font-size:12px">创作模式：直接描述你要的插件/技能，Agent 生成草稿（只保存与审核，不自动安装）</span>' +
+      '          <div class="sp"></div>' +
+      '          <button class="chip" data-kind="plugin">插件</button>' +
+      '          <button class="chip" data-kind="skill">技能</button>' +
+      '        </div>' +
       '        <div class="cbar">' +
       '          <button class="ibtn" id="localBtn" title="本地操控：权限模式 · 白名单目录">' + icon('shield', 'sm') + '</button>' +
       '          <button class="ibtn" id="clipBtn" title="附一张图（她能看见）">' + icon('clip', 'sm') + '</button>' +
+      '          <button class="chip" id="creatorBtn" title="创作模式：用自然语言让 Agent 生成插件/技能草稿">创作：关</button>' +
       '          <button class="btn composer-model" id="modelBtn" title="打开现有模型与服务商设置">' + esc(model) + ' ▾</button>' +
       '          <div class="sp"></div>' +
       '          <span class="mono hintline">Enter 发送 · Shift+Enter 换行</span>' +
@@ -216,6 +223,24 @@
       state.settingsSub = 'model';
       ctx.navigate && ctx.navigate('system');
     });
+    // 创作模式开关：chip 循环 关 → 插件 → 技能 → 关
+    // 创作模式 bar 里的类型直选（不用循环也能一步切到目标类型）
+    // 🔴 监听注册可以提前，但 applyCreatorMode() 的立即调用必须晚于
+    // let creatorMode 声明（TDZ：提前调会 "Cannot access before initialization"，
+    // 整页画不出来 —— 2026-10-12 实测踩过）
+    view.querySelector('#creatorBtn').addEventListener('click', () => {
+      if (busy) return;
+      creatorMode = creatorMode === 'off' ? 'plugin' : creatorMode === 'plugin' ? 'skill' : 'off';
+      applyCreatorMode();
+      toast(creatorMode === 'off' ? '已回到普通对话'
+        : '创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿，发消息即生成');
+    });
+    view.querySelector('#creatorBar').querySelectorAll('.chip[data-kind]').forEach((c) =>
+      c.addEventListener('click', () => {
+        creatorMode = c.dataset.kind;
+        applyCreatorMode();
+        toast('创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿');
+      }));
     // Delegate copy actions so history reloads and completed streams share one binding.
     msgs.addEventListener('click', async (e) => {
       const button = e.target.closest('[data-copy-code]');
@@ -251,6 +276,31 @@
       (st.last_err ? '<div class="card"><div class="gtitle" style="padding:0 0 6px">最近错误</div>' +
         '<div class="mono" style="font-size:11.5px;color:var(--err)">' + esc(String(st.last_err).slice(0, 120)) + '</div></div>' : '');
 
+    // 右栏「我的草稿」：创作模式生成的所有草稿，点一条就回到对话流里
+    // 继续看/改。没有草稿时整卡隐藏，不占地方。
+    const rpDrafts = U.el('<div class="card" id="rpDrafts" style="margin-bottom:10px" hidden>'
+      + '<div class="gtitle" style="padding:0 0 6px">我的草稿</div></div>');
+    rp.appendChild(rpDrafts);
+    async function loadRpDrafts() {
+      if (!rpDrafts.isConnected) return;
+      const r = pick(await API.get('/api/creator/drafts'));
+      const ds = (r && r.ok && r.drafts) || [];
+      if (!ds.length) { rpDrafts.hidden = true; return; }
+      rpDrafts.hidden = false;
+      rpDrafts.innerHTML = '<div class="gtitle" style="padding:0 0 6px">我的草稿 '
+        + ds.length + '</div>' + ds.map((d) =>
+        '<button class="li" data-did="' + esc(d.id) + '" style="width:100%;text-align:left;background:none;border:none;cursor:pointer">' +
+          '<span class="ic">' + icon(d.kind === 'skill' ? 'puzzle' : 'plug', 'sm') + '</span>' +
+          '<div class="tx"><b>' + esc((d.summary || d.requirement || '未命名草稿').slice(0, 30)) + '</b>' +
+          '<span>' + esc(d.kind === 'skill' ? '技能' : '插件') + ' · v' + esc(String(d.version)) +
+          (d.valid ? ' · <span style="color:var(--ok)">验证通过</span>'
+            : ' · <span style="color:var(--err)">' + esc(String(d.error_count)) + ' 个问题</span>') +
+          '</span></div></button>').join('');
+      rpDrafts.querySelectorAll('[data-did]').forEach((b) =>
+        b.addEventListener('click', () => openDraftInChat(b.dataset.did)));
+    }
+    loadRpDrafts();
+
     // 迷你趋势线：异步拉，拉不到就算了（不挡消息区、不打扰聊天）
     get('/api/trace?last=60').then((r) => {
       const box = view.querySelector('#tokSpark');
@@ -268,6 +318,32 @@
 
     let lastCount = -1;
     let busy = false;
+    // ── 创作模式（Creator Mode MVP-1）─────────────────────────
+    // 主页对话里的一个模式：切到「创作」后，发给 Agent 的自然语言不再进
+    // /api/chat，而是进 /api/creator/draft 生成草稿卡。草稿只存独立工作区、
+    // 不安装、不执行 —— 这一层边界在服务端 creator.py 钉死，UI 只负责展示。
+    let creatorMode = 'off';
+    try { creatorMode = localStorage.getItem('vigil.chat.creatorMode') || 'off'; } catch (_) {}
+    if (['off', 'plugin', 'skill'].indexOf(creatorMode) < 0) creatorMode = 'off';
+    function applyCreatorMode() {
+      const btn = view.querySelector('#creatorBtn');
+      const bar = view.querySelector('#creatorBar');
+      const ta = view.querySelector('#ta');
+      if (!btn || !bar || !ta) return;
+      const label = creatorMode === 'off' ? '关' : creatorMode === 'plugin' ? '插件' : '技能';
+      btn.textContent = '创作：' + label;
+      btn.classList.toggle('on', creatorMode !== 'off');
+      bar.hidden = creatorMode === 'off';
+      bar.querySelectorAll('.chip[data-kind]').forEach((c) =>
+        c.classList.toggle('on', c.dataset.kind === creatorMode));
+      ta.placeholder = creatorMode === 'off'
+        ? '给 Vigil 发送消息…'
+        : '描述你想要的' + (creatorMode === 'skill' ? '技能' : '插件')
+          + '。例如：一个每小时整点提醒我喝水的插件；一个把一段文字反转后返回的技能。';
+      try { localStorage.setItem('vigil.chat.creatorMode', creatorMode); } catch (_) {}
+    }
+    // 立即调用必须在这里：let creatorMode 已声明（TDZ 已过）
+    applyCreatorMode();
     // 附件：一张图，随下一条消息发出去（她能"看见"——视觉模型先描述成文字再进上下文）
     let imgB64 = '';
     function updateComposer() {
@@ -367,6 +443,10 @@
       drawSessions(items);
       heroEl.hidden = true;
       chat.classList.remove('is-empty');
+      // 草稿卡不在聊天历史里（草稿在独立工作区，不走 /api/chat）。重绘消息流
+      // 前先把 .crturn 摘下来，画完按原顺序贴回末尾 —— 否则之后每来一条
+      // 新历史消息，之前生成的草稿卡就凭空没了（用户会以为草稿丢了）。
+      const draftCards = [...msgs.querySelectorAll('.crturn')];
       msgs.innerHTML = items.map((m) => {
         const mine = ['me', 'user', 'self'].includes(String(m.role || '').toLowerCase());
         // 用户消息纯文本（esc），AI 消息用 Markdown 渲染
@@ -378,6 +458,7 @@
           '<div class="txt md">' + t + '</div>' +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span></div></div></div>';
       }).join('');
+      draftCards.forEach((n) => msgs.appendChild(n));
       msgs.scrollTop = msgs.scrollHeight;
     }
 
@@ -385,6 +466,8 @@
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
       if (!global.vigil || (!text && !imgB64) || busy) return;
+      // 创作模式：同一条输入框，发给 creator 而不是聊天历史
+      if (creatorMode !== 'off' && text) { creatorSend(text); return; }
       const sendingImg = imgB64;
       imgB64 = '';
       attachBox.hidden = true;
@@ -560,6 +643,52 @@
       }
     });
     const taEl = view.querySelector('#ta');
+    // ── 创作模式发送：需求 → /api/creator/draft → 草稿卡气泡 ──
+    // 不走 /api/chat/stream：创作不产生对话历史，草稿是独立工作区里的
+    // 文件 + 静态验证结果。模型失败时明说，不假装生成了东西。
+    async function creatorSend(text) {
+      if (busy) return;
+      busy = true;
+      updateComposer();
+      taEl.value = '';
+      heroEl.hidden = true;
+      view.querySelector('#chatLoadState').hidden = true;
+      chat.classList.remove('is-empty');
+      msgs.insertAdjacentHTML('beforeend',
+        '<div class="turn me"><div class="bdy"><div class="txt">' + esc(text) + '</div></div></div>');
+      const turnId = 'crturn_' + Date.now();
+      msgs.insertAdjacentHTML('beforeend',
+        '<div class="turn" id="' + turnId + '"><div class="bdy"><div class="txt md" style="color:var(--text-3)">' +
+        '正在调用模型生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿，可能要几十秒…</div></div></div>');
+      msgs.scrollTop = msgs.scrollHeight;
+      let r = null;
+      try {
+        // 🔴 必须 pick() 拆包：API.post 返回的是 {ok,status,json}，
+        // draft 在 r.json 里。直接读 r.draft 会永远拿到失败+未知错误
+        // （2026-10-12 实测：HTTP 200 也被显示成"生成失败：未知错误"）。
+        r = pick(await API.post('/api/creator/draft',
+          { kind: creatorMode, requirement: text }));
+      } catch (e) {
+        r = { ok: false, err: String((e && e.message) || e) };
+      }
+      const el = document.getElementById(turnId);
+      if (!r || !r.ok || !r.draft) {
+        if (el) el.querySelector('.txt').innerHTML =
+          '<span style="color:var(--err)">生成失败：' + esc((r && r.err) || '未知错误') + '</span>';
+      } else {
+        const holder = document.createElement('div');
+        holder.innerHTML = draftCardHtml(r.draft);
+        const card = holder.firstChild;
+        if (el) el.replaceWith(card); else msgs.appendChild(card);
+        bindDraftCard(card, r.draft, loadRpDrafts);
+        toast(r.draft.validation && r.draft.validation.ok
+          ? '草稿已生成，静态验证通过' : '草稿已生成，但有验证问题，见卡片');
+        loadRpDrafts();
+      }
+      msgs.scrollTop = msgs.scrollHeight;
+      busy = false;
+      updateComposer();
+    }
     taEl.addEventListener('input', updateComposer);
     const resizeComposer = () => { if (taEl.isConnected) { updateComposer(); applySessions(); } };
     window.addEventListener('resize', resizeComposer);
@@ -2737,6 +2866,139 @@
   }
 
   // ── 插件市场 ──────────────────────────────────────────────
+  // ═══ Creator Mode（MVP-1）：自然语言草稿 + 静态验证 ═══
+  // 边界（与 brain/creator.py 的约定一一对应）：
+  // - 生成走 Brain 的真实模型链路（/api/creator/draft），没有假装生成的旁路；
+  // - 草稿落 Brain 的独立工作区，不碰正式插件/技能目录；
+  // - 静态验证复用 P4 检查器，只查结构不执行代码；
+  // - 这一版只有"保存与审核"：没有安装按钮。安装要等 MVP-2 的人工审核链路，
+  //   在那之前不在这里开旁门。
+  // ═══ Creator Mode：草稿卡（聊天页内创作 + 草稿列表共用）═══════
+  // 入口在主页对话：composer 的「创作」chip 切到创作模式后，直接把需求
+  // 当消息发给 Agent，回来的就是一个草稿卡。这里只负责"一个草稿怎么画、
+  // 卡上几个按钮怎么绑"，不管入口在哪。
+  function creatorFenceFor(s) {
+    const m = String(s).match(/`{3,}/g);
+    let n = 3;
+    if (m) n = Math.max.apply(null, m.map((x) => x.length)) + 1;
+    return '`'.repeat(n);
+  }
+  function creatorLangOf(name) {
+    return /\.(py)$/.test(name) ? 'python' : /\.(js|mjs|cjs)$/.test(name) ? 'javascript' : 'json';
+  }
+  // 一条草稿的完整卡片（聊天气泡形态：外层 .turn/.bdy，内部复用 .card）
+  function draftCardHtml(d) {
+    const v = d.validation || {};
+    const errs = v.errors || [];
+    const warns = v.warnings || [];
+    const okBadge = v.ok ? tag('ok', '通过') : tag('err', '未通过 ' + errs.length);
+    const errHtml = errs.length
+      ? '<ul style="margin:8px 0;padding-left:20px">' + errs.map((e) =>
+          '<li><b>' + esc(e.code || '') + '</b>：' + esc(e.message || '') + '</li>').join('') + '</ul>'
+      : '';
+    const warnHtml = warns.length
+      ? '<ul style="margin:8px 0;padding-left:20px" class="muted">' + warns.map((w) =>
+          '<li>' + esc(w.code || '') + '：' + esc(w.message || '') + '</li>').join('') + '</ul>'
+      : '';
+    return '<div class="turn crturn" data-crid="' + esc(d.id) + '"><div class="bdy">' +
+      '<div class="card">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<span class="tag">' + esc(d.kind === 'skill' ? '技能' : '插件') + '</span>' +
+          '<strong>' + esc(d.summary || '未命名草稿') + '</strong>' +
+          '<span class="muted mono" style="font-size:12px">' + esc(d.id) + ' · v' + esc(String(d.version)) + '</span>' +
+          '<span class="muted" style="font-size:12px">模型：' + esc(d.model || '?') + '</span>' +
+          '<div style="flex:1"></div>' +
+          '<button class="btn ghost" id="crReval">重新验证</button>' +
+          '<button class="btn danger" id="crDel">删除草稿</button>' +
+        '</div>' +
+        '<p class="muted" style="font-size:12px;margin:8px 0 0">需求：' + esc(d.requirement || '') + '</p>' +
+        '<p style="margin:8px 0 0"><b>用途：</b>' + esc(d.summary || '（模型没给）') + '</p>' +
+        '<p style="margin:4px 0 0"><b>风险与限制：</b>' + esc(d.risks || '无') + '</p>' +
+        '<p class="muted" style="font-size:12px;margin:8px 0 0">' +
+          '静态验证只检查目录结构与 Manifest，不执行生成的代码；' +
+          '<b>通过 ≠ 沙箱安全</b>。安装前仍需人工阅读上面的代码。</p>' +
+      '</div>' +
+      '<div class="card" style="margin-top:8px">' +
+        '<div class="pkg-h">静态验证 ' + okBadge + '</div>' +
+        errHtml + warnHtml +
+        (!errs.length && !warns.length ? '<p class="muted" style="font-size:12px">没有错误或警告。</p>' : '') +
+      '</div>' +
+      (d.files || []).map((f) =>
+        '<div class="card" style="margin-top:8px">' +
+          '<div class="pkg-h">' + icon('clip', 'sm') + ' ' + esc(f.name) +
+          '<span class="muted" style="font-size:12px;margin-left:8px">' + f.content.length + ' 字符</span></div>' +
+          '<div class="cr-code"><div class="md">' + U.md(creatorFenceFor(f.content) + creatorLangOf(f.name) + '\n' + f.content + '\n' + creatorFenceFor(f.content), { codeActions: true }) + '</div></div>' +
+        '</div>').join('') +
+      '<div class="card" style="margin-top:8px">' +
+        '<div class="pkg-h">修改草稿</div>' +
+        '<textarea id="crFb" rows="2" style="width:100%;box-sizing:border-box" ' +
+          'placeholder="告诉它要改什么，例如：把提醒文案改成「该喝水了」、间隔改成 30 分钟。"></textarea>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
+          '<button class="btn" id="crRev">提交修改（生成新版本）</button>' +
+          '<span class="muted" style="font-size:12px">旧版本会保存在草稿工作区的 .history/ 里。</span>' +
+        '</div>' +
+      '</div>' +
+      '</div></div>';
+  }
+  // 绑定一张草稿卡上的交互。root 是 .crturn 元素；任何改动后整卡重绘、
+  // 重新绑一次（旧元素已丢弃，监听不会叠加）。
+  function bindDraftCard(root, d, onGone) {
+    root.addEventListener('click', async (e) => {
+      const button = e.target.closest('[data-copy-code]');
+      if (button) {
+        try {
+          await navigator.clipboard.writeText(button.closest('.codeblock').querySelector('code').textContent);
+          button.textContent = '已复制';
+          setTimeout(() => { if (button.isConnected) button.textContent = '复制'; }, 1500);
+        } catch (_) { toast('复制失败，请选中代码手动复制'); }
+        return;
+      }
+      if (e.target.closest('#crReval')) {
+        const r = pick(await API.post('/api/creator/validate', { id: d.id }));
+        if (!r || !r.ok || !r.validation) { toast('验证失败：' + ((r && r.err) || '未知错误')); return; }
+        redrawCard(root, Object.assign({}, d, { validation: r.validation }));
+        toast(r.validation.ok ? '静态验证通过' : '有 ' + (r.validation.errors || []).length + ' 个问题');
+        return;
+      }
+      if (e.target.closest('#crRev')) {
+        const fb = (root.querySelector('#crFb').value || '').trim();
+        if (!fb) { toast('先写修改意见'); return; }
+        const r = pick(await API.post('/api/creator/revise', { id: d.id, feedback: fb }));
+        if (!r || !r.ok || !r.draft) { toast('修改失败：' + ((r && r.err) || '未知错误')); return; }
+        redrawCard(root, r.draft);
+        toast('已生成新版本 v' + r.draft.version);
+        return;
+      }
+      if (e.target.closest('#crDel')) {
+        if (!confirm('删除草稿 ' + d.id + '？此操作不可恢复。')) return;
+        const r = pick(await API.post('/api/creator/delete', { id: d.id }));
+        if (!r || !r.ok) { toast('删不掉：' + ((r && r.err) || '未知错误')); return; }
+        root.remove();
+        toast('草稿已删除');
+        onGone && onGone();
+      }
+    });
+  }
+  function redrawCard(root, d) {
+    root.outerHTML = draftCardHtml(d);
+    const fresh = document.querySelector('.crturn[data-crid="' + d.id + '"]');
+    if (fresh) bindDraftCard(fresh, d);
+  }
+  // 把一张草稿卡追加到聊天流末尾（草稿列表点条目时用）
+  async function openDraftInChat(id) {
+    const r = pick(await API.get('/api/creator/draft?id=' + encodeURIComponent(id)));
+    if (!r || !r.ok || !r.draft) { toast('打不开草稿：' + ((r && r.err) || '未知错误')); return; }
+    const holder = document.createElement('div');
+    holder.innerHTML = draftCardHtml(r.draft);
+    const node = holder.firstChild;
+    const box = document.querySelector('#msgs');
+    if (!box) return;
+    box.appendChild(node);
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    bindDraftCard(node, r.draft);
+  }
+
+
   async function renderPluginMarket(ctx) {
     ctx.topbar.innerHTML =
       '<span class="tag">§ 插件市场</span>' +

@@ -408,3 +408,15 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.55; resize: ver
 /* ── 修正：工作台顶栏（center 网格）里 § 01 绝对定位，不挤占三栏 ── */
 .topbar.center { position: relative; }
 .topbar.center .tnum { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); }
+
+/* ═══ Creator Mode：草稿代码展示 ═══
+   复用聊天页 .codeblock 的 DOM 结构（U.md codeActions 生成），
+   这里把同一套规则挂到 .cr-code 作用域（--chat-* 变量由 chat.css 的
+   :root 全局提供，明暗主题自动跟随）。 */
+.cr-code .codeblock { margin:12px 0; overflow:hidden; border:1px solid var(--chat-line); border-radius:12px; background:var(--chat-code); }
+.cr-code .codehead { display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid var(--chat-line); color:var(--chat-muted); font-size:12px; }
+.cr-code .codehead button { padding:2px 6px; border-radius:5px; }
+.cr-code .codehead button:hover { background:var(--chat-hover); color:var(--chat-text); }
+.cr-code .md pre { overflow-x:auto; padding:14px 16px; white-space:pre; user-select:text; margin:0; }
+.cr-code .md pre code { padding:0; background:none; }
+.cr-code .md code { font:13px/1.7 var(--mono); padding:2px 5px; background:var(--chat-code); border-radius:5px; }
