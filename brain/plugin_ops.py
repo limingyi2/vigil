@@ -53,7 +53,8 @@ def _blank():
 def read_registry():
     """读元数据。读不出来就当空的 —— 宁可没信息，不能装不了插件。"""
     try:
-        d = json.load(open(REGISTRY, encoding="utf-8"))
+        with open(REGISTRY, encoding="utf-8") as fh:
+            d = json.load(fh)
         if not isinstance(d, dict) or not isinstance(d.get("plugins"), dict):
             return _blank()
         return d
@@ -330,6 +331,11 @@ def install(zip_path, note=""):
         if bad:
             return False, {"err": bad}
         man = _read_manifest(tmp, names)
+        if man is None:
+            return False, {"err": "zxplugin.json 必须是 UTF-8 JSON 对象"}
+        manifest_err = validate_manifest(man, pname)
+        if manifest_err:
+            return False, {"err": manifest_err}
         # 正式落盘。inspect_zip 已经保证只有单文件一种形状（目录包被拒了），
         # 所以这里只处理单文件 —— 别留一条走不到的分支，
         # 它会在"以后放开目录支持"时悄悄生效，而那时早就没人记得它写于何时。
@@ -413,15 +419,60 @@ def _syntax_check(tmp_root, names):
 
 
 def _read_manifest(tmp_root, names):
-    """读 zxplugin.json（可选）。没有就返回空 dict。"""
+    """读 zxplugin.json（可选）。文件存在但格式错误时返回 None。"""
     p = _find_manifest(names)
     if not p:
         return {}
     try:
-        d = json.load(open(os.path.join(tmp_root, *p.split("/")), encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
+        with open(os.path.join(tmp_root, *p.split("/")), encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else None
     except Exception:
-        return {}
+        return None
+
+
+_MANIFEST_TEXT_LIMITS = {
+    "name": 64,
+    "author": 60,
+    "version": 32,
+    "desc": 120,
+    "license": 80,
+    "homepage": 240,
+    "repository": 240,
+}
+
+
+def validate_manifest(manifest, package_name=""):
+    """Validate optional ``zxplugin.json`` metadata without importing plugin code.
+
+    The manifest is descriptive metadata, not a permission declaration. Unknown
+    keys remain allowed for forward compatibility, while known fields get stable
+    scalar and length checks. A declared name must match the install package so
+    registry identity cannot silently diverge from the file being installed.
+    Returns a user-facing error string or an empty string when valid.
+    """
+    if manifest is None:
+        return "zxplugin.json 必须是 JSON 对象"
+    if not isinstance(manifest, dict):
+        return "zxplugin.json 必须是 JSON 对象"
+    for key, limit in _MANIFEST_TEXT_LIMITS.items():
+        if key not in manifest or manifest[key] is None:
+            continue
+        value = manifest[key]
+        if not isinstance(value, str):
+            return "zxplugin.json 的 %s 必须是字符串" % key
+        stripped = value.strip()
+        if key == "name" and value != stripped:
+            return "zxplugin.json 的 name 不能包含首尾空白"
+        value = stripped
+        if len(value) > limit:
+            return "zxplugin.json 的 %s 超过 %d 个字符" % (key, limit)
+        if key == "name" and value:
+            if not re_name_ok_safe(value):
+                return "zxplugin.json 的 name 只能用英文/数字/下划线/短横线"
+            if package_name and value != package_name:
+                return "zxplugin.json 的 name 必须与插件文件名一致：%s" % package_name
+    return ""
 
 
 def uninstall(name, purge_data=False):
