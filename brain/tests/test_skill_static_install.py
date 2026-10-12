@@ -24,6 +24,18 @@ def make_zip(entries):
     return out.getvalue()
 
 
+def make_raw_path_zip(name, value):
+    """Build a ZIP then rewrite an equal-length path in both ZIP headers.
+
+    Python's zipfile normalizes backslashes on Windows, so this keeps the
+    malformed entry available to the installer without depending on the host
+    filesystem.
+    """
+    normalized = name.replace("\\", "/")
+    raw = make_zip({normalized: value})
+    return raw.replace(normalized.encode("utf-8"), name.encode("utf-8"))
+
+
 class TestSkillStaticInstall(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="vigil-skill-install-")
@@ -61,7 +73,12 @@ class TestSkillStaticInstall(unittest.TestCase):
         self.assertTrue((self.skills / "demo" / "index.js").exists())
 
     def test_zip_backslash_and_duplicate_paths_are_rejected_without_side_effect(self):
-        raw = make_zip({"demo\\index.js": "x"})
+        raw = make_raw_path_zip("demo\\index.js", "x")
+        result = skill_plugin._install_zip(raw)
+        self.assertFalse(result["ok"])
+        self.assertFalse(self.skills.exists())
+
+        raw = make_zip({"demo/index.js": "x", "demo/INDEX.JS": "y"})
         result = skill_plugin._install_zip(raw)
         self.assertFalse(result["ok"])
         self.assertFalse(self.skills.exists())
@@ -76,10 +93,26 @@ class TestSkillStaticInstall(unittest.TestCase):
         result = skill_plugin._install_zip(out.getvalue())
         self.assertFalse(result["ok"])
         self.assertFalse(self.skills.exists())
-        raw = make_zip({"demo/index.js": "x", "demo/INDEX.JS": "y"})
-        result = skill_plugin._install_zip(raw)
+
+    def test_failed_first_install_removes_new_empty_root(self):
+        raw = make_zip({
+            "demo/index.js": "export function setup(api) {}\n",
+            "demo/skill.json": json.dumps({"id": "demo", "entry": "index.js"}),
+        })
+        with patch.object(skill_plugin, "_post_json",
+                          side_effect=[RuntimeError("reload failed"), {"ok": True}]), \
+             patch.object(skill_plugin, "list_skills", return_value=[]):
+            result = skill_plugin._install_zip(raw)
         self.assertFalse(result["ok"])
         self.assertFalse(self.skills.exists())
+
+    def test_invalid_install_preserves_existing_skill_root(self):
+        self.skills.mkdir()
+        marker = self.skills / "keep.txt"
+        marker.write_text("user data", encoding="utf-8")
+        result = skill_plugin._install_zip(make_raw_path_zip("demo\\index.js", "x"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(marker.read_text(encoding="utf-8"), "user data")
 
 
 if __name__ == "__main__":

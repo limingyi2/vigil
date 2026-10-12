@@ -5,10 +5,12 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "brain"))
 
+import skill_structure
 from skill_structure import check_skill_directory
 
 
@@ -97,12 +99,13 @@ class TestSkillStructure(unittest.TestCase):
 
     def test_paths_symlinks_reserved_and_case_conflicts(self):
         self.write("index.js", "export function setup(api) {}\n")
-        self.write("A.js", "")
-        self.write("a.js", "")
-        report = check_skill_directory(self.root)
+        # NTFS is case-insensitive, so construct the conflicting inventory at
+        # the filesystem-walk boundary instead of requiring A.js/a.js on disk.
+        walk = [(str(self.root), [], ["A.js", "a.js", "index.js"])]
+        with patch.object(skill_structure.os, "walk", return_value=walk):
+            report = check_skill_directory(self.root)
         self.assertFalse(report["ok"])
         self.assertTrue(any(e["code"] == "duplicate_path" for e in report["errors"]))
-        (self.root / "A.js").unlink(); (self.root / "a.js").unlink()
         self.write("CON.txt", "")
         self.assertFalse(check_skill_directory(self.root)["ok"])
         (self.root / "CON.txt").unlink()

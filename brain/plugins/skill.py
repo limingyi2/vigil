@@ -951,6 +951,7 @@ def _skill_transaction(root, package, stage, tmpdir, *, manifest_id=None,
     root = os.path.abspath(root)
     if not _pkg_name_ok(package):
         raise ValueError("包名不合法")
+    root_existed = os.path.isdir(root)
     os.makedirs(root, exist_ok=True)
     _file_transaction.reject_links(root)
     transaction_dir = tempfile.mkdtemp(prefix=".vigil-skill-tx-", dir=root)
@@ -999,10 +1000,16 @@ def _skill_transaction(root, package, stage, tmpdir, *, manifest_id=None,
                         "err": "首次安装失败后旧 Skill 仍在 Host 清单中"}
             return _host_has_skill(package, restored_expected)
 
-        return run(root, package, transaction_dir, new_dir, config_path,
+        result = run(root, package, transaction_dir, new_dir, config_path,
                    config_before=config_before, config_after=config_after,
                    reload_host=reload_host, verify_committed=verify_committed,
                    verify_restored=verify_restored, action=action)
+        # A rejected first install must not leave an empty persistent root.
+        # Keep pre-existing roots and any recovery evidence intact.
+        if (not result.get("ok") and not root_existed and
+                os.path.isdir(root) and not os.listdir(root)):
+            os.rmdir(root)
+        return result
     except Exception:
         shutil.rmtree(transaction_dir, ignore_errors=True)
         raise

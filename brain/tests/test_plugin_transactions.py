@@ -116,7 +116,8 @@ class TransactionTests(unittest.TestCase):
         before = self.state()
         original = os.replace
         def fail(source, target):
-            if str(source).endswith('/demo/demo.py'):
+            source_path = Path(source)
+            if source_path.name == 'demo.py' and source_path.parent.name == 'demo':
                 raise OSError('injected replacement failure')
             return original(source, target)
         with patch.object(tx.os, 'replace', side_effect=fail):
@@ -172,12 +173,22 @@ class TransactionTests(unittest.TestCase):
     def test_source_root_symlink_rejected(self):
         source = self.source()
         link = self.repo / 'linked'
-        link.symlink_to(source, target_is_directory=True)
+        try:
+            link.symlink_to(source, target_is_directory=True)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                self.skipTest('Windows symlink creation requires a privilege not enabled in this test environment')
+            raise
         self.assertFalse(self.market_install('linked')['ok'])
 
     def test_source_child_symlink_rejected_without_read(self):
         source = self.source()
-        (source / 'zxplugin.json').symlink_to(self.config)
+        try:
+            (source / 'zxplugin.json').symlink_to(self.config)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                self.skipTest('Windows symlink creation requires a privilege not enabled in this test environment')
+            raise
         self.assertFalse(self.market_install()['ok'])
         self.assertEqual(self.config.read_bytes(), self.config_before)
 
@@ -186,7 +197,12 @@ class TransactionTests(unittest.TestCase):
         outside = self.home / 'outside'
         outside.mkdir()
         (outside / 'user.txt').write_text('preserve')
-        (self.plugins / 'demo').symlink_to(outside, target_is_directory=True)
+        try:
+            (self.plugins / 'demo').symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                self.skipTest('Windows symlink creation requires a privilege not enabled in this test environment')
+            raise
         self.assertFalse(self.market_install()['ok'])
         self.assertEqual((outside / 'user.txt').read_text(), 'preserve')
 
