@@ -476,6 +476,9 @@ class QuickSwitchHttpTests(unittest.TestCase):
 
     def test_05_quick_switch_uses_the_chosen_provider_and_model(self):
         """点一下切换 → 服务端配置真的换了 → 下一条聊天真的打到那家、那个模型。"""
+        # 每个用例自己把前置状态铺好（下面几处同理）：类里共用一个大脑，
+        # 但"靠兄弟用例先跑过"是隐形的顺序依赖 —— 单跑 -k 就会假失败。
+        self.save_in_settings("siliconflow", self.A.base, "shared-model")
         obj = self.switch("siliconflow", "shared-model")
         self.assertEqual(obj["current"]["provider"], "siliconflow")
         self.assertEqual(obj["current"]["chat"], "shared-model")
@@ -493,6 +496,7 @@ class QuickSwitchHttpTests(unittest.TestCase):
         self.assertTrue(hit_a[0]["auth"], "打到 A 的请求必须带着 A 的密钥")
 
     def test_06_switch_to_the_other_provider_routes_there(self):
+        self.save_in_settings("xiaomi", self.B.base, "shared-model", self.B.secret)
         obj = self.switch("xiaomi", "shared-model")
         self.assertEqual(obj["current"]["provider"], "xiaomi")
         self.assertEqual(obj["current"]["api_base"], self.B.base)
@@ -510,6 +514,7 @@ class QuickSwitchHttpTests(unittest.TestCase):
 
     def test_07_creator_draft_follows_the_selected_model(self):
         """Creator 草稿必须用"当前明确选中的那个模型"，而不是某个默认值。"""
+        self.save_in_settings("xiaomi", self.B.base, "shared-model", self.B.secret)
         self.switch("xiaomi", "shared-model")
         code, obj = self.h.post("/api/creator/draft", {
             "kind": "plugin", "requirement": "ZXFIX_DRAFT 随便来一个插件"}, timeout=90)
@@ -548,6 +553,7 @@ class QuickSwitchHttpTests(unittest.TestCase):
 
     def test_10_forget_removes_row_but_keeps_current(self):
         self.save_in_settings("siliconflow", self.A.base, "a-only")
+        self.save_in_settings("siliconflow", self.A.base, "shared-model")
         self.assertIn("a-only", [r["model"] for r in self.rows()])
         self.switch("siliconflow", "shared-model")        # 当前切回另一条
         code, obj = self.h.post("/api/models/forget",
