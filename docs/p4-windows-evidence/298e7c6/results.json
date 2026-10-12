@@ -1,0 +1,153 @@
+{
+  "started": "2026-10-12T17:42:58.282Z",
+  "commit": "298e7c6bad8f56981d0fd99f9ed63848125a1bd1",
+  "python": "Python 3.13.15",
+  "harness_sha256_16": "aa74bfce3c5c1502",
+  "brain_port": 18790,
+  "host_port": 8791,
+  "electron": "electron@28.3.3",
+  "node": "v24.21.0",
+  "results": [
+    {
+      "id": "H0 Host 启动(Bearer/回环/临时目录)",
+      "ok": true,
+      "detail": "{\"ok\":true,\"skills\":0,\"dir\":\"%TEMP%\\\\vigil_p4\\\\skills\"}"
+    },
+    {
+      "id": "E1 Electron 启动并连接测试 Brain",
+      "ok": true,
+      "detail": "{\"device_id\":\"\",\"token_kind\":\"\",\"base\":\"http://127.0.0.1:18790\"}"
+    },
+    {
+      "id": "P1 路径穿越包被拒且 toast 报错",
+      "ok": true,
+      "detail": "装失败：zip 里不许用 .. 跳目录：../escape.py"
+    },
+    {
+      "id": "P2 双根结构包被拒",
+      "ok": true,
+      "detail": "装失败：包里塞了 2 个 .py，插件只能是单文件。请只留插件本身（多余的依赖文件暂不支持）：aaa.py、bbb.py"
+    },
+    {
+      "id": "P2b 非法插件未进入列表",
+      "ok": true,
+      "detail": "[{\"name\":\"calc\",\"state\":\"运行中\",\"file\":\"calc.py\"},{\"name\":\"gate\",\"state\":\"运行中\",\"file\":\"gate.py\"},{\"name\":\"kb\",\"state\":\"运行中\",\"file\":\"kb.py\"},{\"name\":\"meme\",\"state\":\"运行中\",\"file\":\"meme.py\"},{\"name\":\"plugin_market\",\"state\":\"运行中\",\"file\":\"plugin_market.py\"},{\"name\":\"react\",\"state\":\"运行中\",\"file\":\"react.py\"},{\"name\":\"reminder\",\"state\":\"运行中\",\"file\":\"reminder.py\"},{\"name\":\"remote\",\"state\":\"运行中\",\"file\":\"remote.py\"},{\"name\":\"skill\",\"state\":\"运行中\",\"file\":\"skill.py\"},{\"name\":\"sticker_pack\",\"state\":\"运行中\",\"file\":\"sticker_pack.py\"},{\"name\":\"websearch\",\"state\":\"运行中\",\"file\":\"websearch.py\"}]"
+    },
+    {
+      "id": "P3 v1 文件/注册表已提交且 toast 提示需重启",
+      "ok": true,
+      "detail": "已装上（共 11 个） · 有后台线程的插件要重启大脑才完全生效 | registry=1.0.0"
+    },
+    {
+      "id": "P4 重启后 p4plug 运行中无装载错误",
+      "ok": true,
+      "detail": "{\"err\":\"\",\"tools\":[\"p4ping\"]}"
+    },
+    {
+      "id": "P5 更新 v2 重启后注册表 2.0.0 且运行中",
+      "ok": true,
+      "detail": "已装上（共 12 个） · 有后台线程的插件要重启大脑才完全生效 | registry={\"version\":\"2.0.0\",\"err\":\"\"}"
+    },
+    {
+      "id": "P5b 落盘文件确为 v2",
+      "ok": true,
+      "detail": "P4PONG-V2 marker"
+    },
+    {
+      "id": "P6 卸载后清单无 p4plug（文件/注册表已移除）",
+      "ok": true,
+      "detail": "[\"calc\",\"gate\",\"kb\",\"meme\",\"plugin_market\",\"react\",\"reminder\",\"remote\",\"skill\",\"sticker_pack\",\"websearch\"]"
+    },
+    {
+      "id": "S0 宿主在线状态显示「可以装」",
+      "ok": true,
+      "detail": "可以装"
+    },
+    {
+      "id": "S1 entry 越界包静态拒绝（toast + 不落地）",
+      "ok": true,
+      "detail": "装失败：路径不能包含空段、. 或 ..：../../evil.js | dir=false"
+    },
+    {
+      "id": "S2 无 setup 包安装失败且文件已回滚（目录不留存）",
+      "ok": true,
+      "detail": "装失败：Skill install 事务失败（host_reload: HTTP Error 409: Conflict）；旧版本已恢复 | dir_exists=false"
+    },
+    {
+      "id": "S3 v1 热装载成功且工具可调用",
+      "ok": true,
+      "detail": "已装上（共 ? 个） | call={\"ok\":true,\"content\":\"P4-SKILL-V1\",\"tool\":\"p4skill__echo\"}"
+    },
+    {
+      "id": "S3b UI 列出 p4skill 和工具",
+      "ok": true,
+      "detail": "[{\"name\":\"P4验收技能\",\"state\":\"已装载\",\"tools\":[\"p4skill__echo\"],\"id\":\"p4skill\"}]"
+    },
+    {
+      "id": "S4 更新 v2：提示 restart_needed 且新代码热重载立即生效",
+      "ok": true,
+      "detail": "已装上（共 ? 个） · 覆盖了已有技能，重启技能宿主后才完全干净 | call=P4-SKILL-V2"
+    },
+    {
+      "id": "S5 Host 重启后 v2 仍在（注册持久）",
+      "ok": true,
+      "detail": "call=P4-SKILL-V2 skills=1"
+    },
+    {
+      "id": "S6a 无认证仍 401",
+      "ok": true,
+      "detail": "status=401"
+    },
+    {
+      "id": "S6 错误凭据时 UI 显示宿主离线",
+      "ok": true,
+      "detail": "宿主没起来，装了不生效|0 个"
+    },
+    {
+      "id": "S7 正确凭据恢复后 UI 回在线",
+      "ok": true,
+      "detail": "可以装|1 个"
+    },
+    {
+      "id": "S8 更新失败 toast 报错且运行时回滚为先前 v2.0.0（非 broken）",
+      "ok": true,
+      "detail": "装失败：Skill install 事务失败（host_reload: HTTP Error 409: Conflict）；旧版本已恢复 | call=P4-SKILL-V2"
+    },
+    {
+      "id": "S8b status 清单仍为旧版 v2.0.0 条目（非 broken）",
+      "ok": true,
+      "detail": "[{\"id\":\"p4skill\",\"v\":\"2.0.0\"}]"
+    },
+    {
+      "id": "S9 含 junction 的技能树 reload 被拒(409)",
+      "ok": true,
+      "detail": "{\"ok\":false,\"reloaded\":1,\"errors\":[{\"skill\":\"eviljunction\",\"err\":\"不允许符号链接或 junction：%TEMP%\\\\vigil_p4\\\\skills\\\\eviljunction\"}]}"
+    },
+    {
+      "id": "S10 双层包自动钻层并装载（同包名更新）",
+      "ok": true,
+      "detail": "已装上（共 ? 个） · 覆盖了已有技能，重启技能宿主后才完全干净 | call=P4-SKILL-DOUBLE"
+    },
+    {
+      "id": "S11 卸载后 UI 无条目、Host 无工具、目录删除",
+      "ok": true,
+      "detail": "{\"rows\":0,\"call\":\"没有这个技能工具：p4skill__echo\"}"
+    },
+    {
+      "id": "S12 UI 渠道片点击即持久化（wechat 关、pc/群保持开）",
+      "ok": true,
+      "detail": "chip-clicked | channels={\"wechat\":false,\"wechat_group\":true,\"pc\":true}"
+    },
+    {
+      "id": "S12b 非法渠道 app 被服务端拒绝",
+      "ok": true,
+      "detail": "{\"ok\":false,\"err\":\"不认识的渠道：app\"}"
+    },
+    {
+      "id": "E2 Electron 全程无渲染层严重报错",
+      "ok": true,
+      "detail": "electron.log 已留存"
+    }
+  ],
+  "sanitize_note": "本文件的 detail 字段经脱敏后处理：仅将本机用户名与临时目录前缀替换为 %TEMP%/%USERPROFILE%（沿用 REPORT.md §七 惯例，两种反斜杠转义形态均已处理），端口/回环地址/包名/断言文本与全部 results 未改动；写回后仍是合法 JSON（已复验）。"
+}

@@ -10,7 +10,37 @@ const WebSocket = require(path.join(CLIENT, 'node_modules', 'ws'));
 const ELECTRON = path.join(CLIENT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const ROOT = path.join(os.tmpdir(), 'vigil_p4');
 const PKGS = path.join(ROOT, 'pkgs');
-const EV = path.join(WT, 'docs', 'p4-windows-evidence');
+// 本轮（c0346e5）证据进独立子目录：7bcc925 轮的证据原样留在上层，不被覆盖。
+// 2026-10-12 改动仅此一处路径 +  results.json 元数据 + 进程清理，28 个用例逻辑零改动。
+// 2026-10-13：目录名改成按**实际 HEAD** 动态生成（纯文件读，兼容 worktree 的
+// .git 指针文件）—— 修复提交 298e7c6 复跑时证据自动进 298e7c6/，与
+// c0346e5/ 两轮并存，不会互相覆盖。读不到才退回 c0346e5。
+function commitNow() {
+  try {
+    const fsx = require('fs'), pathx = require('path');
+    const gp = pathx.join(WT, '.git');
+    let gd = gp;
+    try {
+      const dot = fsx.readFileSync(gp, 'utf8').trim();
+      if (dot.startsWith('gitdir:')) gd = dot.slice(7).trim();
+    } catch (_) {}
+    let common = gd;
+    try {
+      const c = fsx.readFileSync(pathx.join(gd, 'commondir'), 'utf8').trim();
+      common = pathx.resolve(gd, c);
+    } catch (_) {}
+    let head = fsx.readFileSync(pathx.join(gd, 'HEAD'), 'utf8').trim();
+    if (head.startsWith('ref:')) {
+      const ref = head.slice(4).trim();
+      for (const base of [gd, common]) {
+        const p = pathx.join(base, ref);
+        if (fsx.existsSync(p)) { head = fsx.readFileSync(p, 'utf8').trim(); break; }
+      }
+    }
+    return /^[0-9a-f]{40}$/.test(head) ? head.slice(0, 7) : 'c0346e5';
+  } catch (_) { return 'c0346e5'; }
+}
+const EV = path.join(WT, 'docs', 'p4-windows-evidence', commitNow());
 fs.mkdirSync(EV, { recursive: true });
 const BRAIN_PORT = 18790, HOST_PORT = 8791, CDP = 9356;
 const tokens = Object.fromEntries(fs.readFileSync(path.join(ROOT, 'root.txt'), 'utf8')
@@ -21,12 +51,51 @@ const log = (...a) => console.log(...a);
 const results = [];
 const rec = (id, ok, detail) => { results.push({ id, ok, detail }); log((ok ? '  OK  ' : '  FAIL ') + id + '  ' + String(detail || '').slice(0, 240)); };
 
+// 进程台账：brain/host 是本脚本的子进程，上一轮异常退出会留下孤儿
+// （不监听端口的 killPort 抓不到，半死的 brain 会一直占着 VIGIL_HOME）。
+// 落一个 pid 文件，启动时先按它清一遍，finally 再清一遍。
+const PIDS = path.join(ROOT, 'pids.json');
+function trackPid(k, pid) {
+  let d = {};
+  try { d = JSON.parse(fs.readFileSync(PIDS, 'utf8')); } catch (_) {}
+  d[k] = pid;
+  try { fs.writeFileSync(PIDS, JSON.stringify(d)); } catch (_) {}
+}
+function killTracked() {
+  let d = {};
+  try { d = JSON.parse(fs.readFileSync(PIDS, 'utf8')); } catch (_) {}
+  for (const k of Object.keys(d)) {
+    try { process.kill(d[k]); log('  [清理] 杀掉上个进程 ' + k + ' pid=' + d[k]); } catch (_) {}
+  }
+  try { fs.unlinkSync(PIDS); } catch (_) {}
+}
+
 function killPort(port) {
   try {
     execSync('powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ' + port
       + ' -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"',
       { stdio: 'ignore' });
   } catch (_) {}
+}
+
+// 🔴 内建插件必须从 worktree 同步进隔离 HOME，且 __pycache__ 一起清。
+// 2026-10-13 教训：临时 HOME 里的 plugins/*.py 是昨天复制进去的旧版，
+// 大脑加载的 skill.py 停留在 c0346e5 之前的版本（没有 note_change），
+// C123 整条技能 scope 的用例全部假失败。更阴的是 PYTHONDONTWRITEBYTECODE=1
+// 的环境里旧 .pyc 不会重写、却会被继续使用 —— 不同步 + 不清缓存，
+// "跑的哪份代码"根本说不清。验收前必须同步，否则证据无效。
+function syncBuiltinPlugins() {
+  const src = path.join(WT, 'brain', 'plugins');
+  const dst = path.join(ROOT, 'home', 'plugins');
+  fs.mkdirSync(dst, { recursive: true });
+  fs.rmSync(path.join(dst, '__pycache__'), { recursive: true, force: true });
+  let n = 0;
+  for (const f of fs.readdirSync(src)) {
+    if (!f.endsWith('.py') || f.startsWith('_test') || /^p4plug/.test(f)) continue;
+    fs.copyFileSync(path.join(src, f), path.join(dst, f));
+    n++;
+  }
+  log('  [同步] 内建插件 ' + n + ' 个 → 隔离 HOME（清掉旧副本与 __pycache__）');
 }
 
 function startBrain() {
@@ -38,8 +107,10 @@ function startBrain() {
     PYTHONUNBUFFERED: '1',
   };
   const out = fs.openSync(path.join(ROOT, 'logs', 'brain_harness.log'), 'a');
-  return spawn('python', [path.join(WT, 'brain', 'server.py')],
+  const p = spawn('python', [path.join(WT, 'brain', 'server.py')],
     { cwd: path.join(WT, 'brain'), env, stdio: ['ignore', out, out] });
+  trackPid('brain', p.pid);
+  return p;
 }
 
 function startHost(token) {
@@ -49,8 +120,10 @@ function startHost(token) {
     ZX_SKILL_HOST: '127.0.0.1', ZX_SKILL_AUTH_TOKEN: token,
   };
   const out = fs.openSync(path.join(ROOT, 'logs', 'host_harness.log'), 'a');
-  return spawn('node', [path.join(WT, 'brain', 'skill_host', 'server.js')],
+  const p = spawn('node', [path.join(WT, 'brain', 'skill_host', 'server.js')],
     { cwd: WT, env, stdio: ['ignore', out, out] });
+  trackPid('host', p.pid);
+  return p;
 }
 
 async function waitPort(port, ms = 20000) {
@@ -103,11 +176,19 @@ let app = null, ctl = null, sendCdp;
 async function startElectron() {
   const prof = path.join(ROOT, 'profile');
   fs.rmSync(prof, { recursive: true, force: true });
+  // Electron 的启动环境必须干净：ELECTRON_RUN_AS_NODE=1 会让 electron.exe
+  // 退化成普通 Node（require('electron') 拿到 npm 壳，app 是 undefined，
+  // 主进程第 22 行就崩）。这个变量是宿主环境自带的，必须显式摘掉 ——
+  // 2026-10-12 复跑就因为继承它，"CDP 连不上"卡了整轮。
+  const eenv = { ...process.env, VIGIL_SIDECAR_DISABLE: '1' };
+  delete eenv.ELECTRON_RUN_AS_NODE;
+  for (const k of Object.keys(eenv)) {
+    if (k.startsWith('ELECTRON_')) delete eenv[k];
+  }
   const elog = fs.openSync(path.join(ROOT, 'logs', 'electron.log'), 'a');
   app = spawn(ELECTRON, ['.', '--user-data-dir=' + prof, '--remote-debugging-port=' + CDP,
     '--disable-gpu', '--no-sandbox'],
-    { cwd: CLIENT, stdio: ['ignore', elog, elog],
-      env: { ...process.env, VIGIL_SIDECAR_DISABLE: '1' } });
+    { cwd: CLIENT, stdio: ['ignore', elog, elog], env: eenv });
   let t = null;
   for (let i = 0; i < 60 && !t; i++) {
     try {
@@ -217,7 +298,14 @@ async function restartBrain() {
 async function untilBrainReady() {
   const ok = await waitPort(BRAIN_PORT);
   for (let i = 0; i < 30; i++) {
-    try { const r = await brainApi('GET', '/api/plugins'); if (r.status === 200) return; } catch (_) {}
+    try {
+      const r = await brainApi('GET', '/api/plugins');
+      if (r.status === 200) return;
+      // 纯诊断日志（不影响判定）：非 200 时把状态和响应体打出来，
+      // 上一轮 P4 就是在这里看不出 401 才卡的。
+      log('  [诊断] /api/plugins status=' + r.status + ' body='
+        + JSON.stringify(r.json || r.raw).slice(0, 300));
+    } catch (e) { log('  [诊断] brainApi 异常: ' + e.message); }
     await sleep(500);
   }
   if (!ok) throw new Error('brain 未监听');
@@ -229,6 +317,7 @@ async function untilBrainReady() {
   try {
     // ── 接管进程：杀掉先前终端起的 Brain/Host，由本脚本控制重启 ──
     log('[1] 接管 Brain/Host 进程…');
+    killTracked();
     killPort(BRAIN_PORT); killPort(HOST_PORT); await sleep(2500);
     // 清掉上一轮残留：技能根所有正式目录（保留根本身）+ p4plug 插件与注册表项
     for (const n of fs.readdirSync(path.join(ROOT, 'skills'))) {
@@ -239,6 +328,7 @@ async function untilBrainReady() {
     for (const n of fs.readdirSync(pdir)) {
       if (n === 'p4plug.py' || n.startsWith('_p4plug_')) fs.rmSync(path.join(pdir, n), { force: true });
     }
+    syncBuiltinPlugins();
     try {
       const rp = path.join(pdir, '_registry.json');
       const reg = JSON.parse(fs.readFileSync(rp, 'utf8'));
@@ -304,6 +394,10 @@ async function untilBrainReady() {
     await gotoAbility('pl');
     let pr1 = await pluginRows();
     let pv1b = await brainApi('GET', '/api/plugins');
+    if (!pv1b.json || !pv1b.json.manage) {
+      log('  [诊断] P4 /api/plugins status=' + pv1b.status + ' body='
+        + JSON.stringify(pv1b.json || pv1b.raw).slice(0, 400));
+    }
     let it1 = (pv1b.json.manage.items || []).find((x) => x.name === 'p4plug');
     rec('P4 重启后 p4plug 运行中无装载错误', !!it1 && !it1.err && pr1.some((x) => /p4plug/.test(x.name) && /运行中/.test(x.state)),
       JSON.stringify({ err: it1 && it1.err, tools: it1 && it1.tools, version: it1 && it1.version }));
@@ -315,6 +409,10 @@ async function untilBrainReady() {
     let t4 = await waitToast(m4);
     await restartBrain();
     let pv2 = await brainApi('GET', '/api/plugins');
+    if (!pv2.json || !pv2.json.manage) {
+      log('  [诊断] P5 /api/plugins status=' + pv2.status + ' body='
+        + JSON.stringify(pv2.json || pv2.raw).slice(0, 400));
+    }
     let it2 = (pv2.json.manage.items || []).find((x) => x.name === 'p4plug');
     const regPath = path.join(ROOT, 'home', 'plugins', '_registry.json');
     let reg2 = {};
@@ -425,11 +523,21 @@ async function untilBrainReady() {
     log('[16] NTFS junction：Host reload 必须拒绝越界链接');
     const jdir = path.join(ROOT, 'skills', 'eviljunction');
     try { fs.rmSync(jdir, { recursive: true, force: true }); } catch (_) {}
-    execSync('powershell -NoProfile -Command "New-Item -ItemType Junction -Path '
-      + `'${jdir}' -Target '${path.join(ROOT, 'pkgs')}' | Out-Null"`);
-    const jr = await hostApi('POST', '/reload', {});
-    rec('S9 含 junction 的技能树 reload 被拒(409)', jr.status === 409 && /junction|符号链接/.test(JSON.stringify(jr.json)),
-      JSON.stringify(jr.json).slice(0, 200));
+    // junction 用 Node 原生 API 建，不再起 powershell/cmd：
+    // 2026-10-13 复跑时 execSync  spawning cmd.exe 撞上 EBUSY 整轮崩在这里。
+    // 测的是"Host 拒不拒越界链接"，怎么建的不影响被测对象。
+    let jok = false, jerr = '';
+    try {
+      fs.symlinkSync(path.join(ROOT, 'pkgs'), jdir, 'junction');
+      jok = true;
+    } catch (e) { jerr = String(e && e.message || e); }
+    if (!jok) {
+      rec('S9 junction 创建失败（环境问题，非被测对象）', false, jerr);
+    } else {
+      const jr = await hostApi('POST', '/reload', {});
+      rec('S9 含 junction 的技能树 reload 被拒(409)', jr.status === 409 && /junction|符号链接/.test(JSON.stringify(jr.json)),
+        JSON.stringify(jr.json).slice(0, 200));
+    }
     fs.rmSync(jdir, { recursive: true, force: true });
     await hostApi('POST', '/reload', {});
 
@@ -494,8 +602,70 @@ async function untilBrainReady() {
     if (app) app.kill();
     await sleep(1000);
     try { execSync('taskkill /F /IM electron.exe /T', { stdio: 'ignore' }); } catch (_) {}
+    // 收尾把 Brain/Host 也收掉：不留孤儿进程占着临时 HOME 和端口
+    killTracked();
+    killPort(BRAIN_PORT); killPort(HOST_PORT);
+    // 元数据：验收报告要能回答"这轮到底跑的哪份代码、什么版本"。
+    // 两个都不走 execSync —— 沙箱里 cmd.exe 会 EBUSY / reg.exe 被拦截，
+    // 元数据静默变空。commit 纯文件读（兼容 worktree：.git 可能是指针文件）；
+    // python 版本用 spawnSync 直起，不借 cmd.exe。
+    let commit = '', pyver = '', hsha = '';
+    try {
+      const gp = path.join(WT, '.git');
+      let gd = gp;
+      try {
+        const dot = fs.readFileSync(gp, 'utf8').trim();
+        if (dot.startsWith('gitdir:')) gd = dot.slice(7).trim();
+      } catch (_) {}
+      // worktree：.git 是指针文件，且分支 ref 不在 gd 里 —— 要顺
+      // commondir 回主仓库找，否则 ref 读不到、commit 静默变空
+      // （298e7c6-c123 首轮复跑实测：refpath exists=false）。
+      let common = gd;
+      try {
+        const c = fs.readFileSync(path.join(gd, 'commondir'), 'utf8').trim();
+        common = path.resolve(gd, c);
+      } catch (_) {}
+      let head = fs.readFileSync(path.join(gd, 'HEAD'), 'utf8').trim();
+      if (head.startsWith('ref:')) {
+        const ref = head.slice(4).trim();
+        for (const base of [gd, common]) {
+          const p = path.join(base, ref);
+          if (fs.existsSync(p)) { head = fs.readFileSync(p, 'utf8').trim(); break; }
+        }
+      }
+      if (/^[0-9a-f]{40}$/.test(head)) commit = head;
+    } catch (_) {}
+    try {
+      // 裸 'python' 会撞 PATH 解析问题，按绝对路径候选依次试；
+      // ⚠️ 必须用异步 spawn：这台机器上 spawnSync 一律 EBUSY
+      // （实测 status=null，连绝对路径都起不来），同步采集只会静默变空。
+      const cands = [
+        process.env.VIGIL_PYTHON,
+        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python313', 'python.exe'),
+        'C:\\Python313\\python.exe', 'python',
+      ].filter(Boolean);
+      for (const py of cands) {
+        try {
+          if (py !== 'python' && !fs.existsSync(py)) continue;
+          pyver = await new Promise((res) => {
+            const c = require('child_process').spawn(py, ['--version'],
+              { cwd: WT, stdio: ['ignore', 'pipe', 'pipe'] });
+            let o = '';
+            c.stdout.on('data', (d) => { o += d; });
+            c.stderr.on('data', (d) => { o += d; });
+            c.on('error', () => res(''));
+            c.on('exit', () => res(o.trim()));
+          });
+          if (pyver) break;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    try { hsha = require('crypto').createHash('sha256')
+      .update(fs.readFileSync(__filename)).digest('hex').slice(0, 16); } catch (_) {}
     fs.writeFileSync(path.join(EV, 'results.json'), JSON.stringify({
-      started: new Date().toISOString(), brain_port: BRAIN_PORT, host_port: HOST_PORT,
+      started: new Date().toISOString(), commit, python: pyver,
+      harness_sha256_16: hsha,
+      brain_port: BRAIN_PORT, host_port: HOST_PORT,
       electron: 'electron@' + (require(path.join(CLIENT, 'node_modules', 'electron', 'package.json')).version),
       node: process.version, results,
     }, null, 2));
