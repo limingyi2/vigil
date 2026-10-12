@@ -23,6 +23,13 @@
 * `skill`  → `<skill_dir>/_pending_restart.json`，大脑写 `changed_at`，
   Node 宿主启动时写 `started_at`（宿主是独立进程，重启它才让技能状态落地）。
 
+🔴 **`note_start` 的调用时机就是"服务真的起来了"的那一刻**：大脑侧在
+`start_remote_api` 里 HTTP 绑定成功之后调用，宿主侧在 `server.listen` 的
+回调里调用。不能图省事放在进程入口 —— 绑定失败（端口被占）时进程不会
+立即退出（run_server 只打印一行然后继续跑收尾循环），入口处的登记会被
+这次失败的重启推新 `started_at`，"重启失败"反倒把待重启提示抹掉，
+界面看着像重启成功了。真实 UI 验收（C3-7b/c）实测复现过，别改回去。
+
 文件形状（两个 scope 同构，Node 侧只认这两个键）：
 
     {"changed_at": 1728.0, "started_at": 1728.0, "reasons": ["安装插件 foo"]}

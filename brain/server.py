@@ -1269,10 +1269,14 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": res.get("err") or "卸不掉"})
                     return True
                 n, need = self._plugin_reload_now()
-                # 两个来源都要算：卸载返回的是"刚卸掉的那个带不带后台线程"
-                # （重载后它已经不在清单里，问不出来了），重载返回的是"剩下的
-                # 插件里有带的"。漏掉前者就会出现"卸载成功=运行态也停了"的假象。
-                need = bool(res.get("restart_needed")) or bool(need)
+                # restart_needed **只认刚卸掉的那个插件**（plugin_ops 在删
+                # 文件前查过它的 start 钩子，信息只有那一刻拿得到）。
+                # 曾经把重载返回的"剩下的插件里有带的"也 OR 进来，理由是
+                # "别漏报"—— 但重载刚把内存重拼到和磁盘一致，其余插件的
+                # 线程本来就是当前代码在跑，不需要为它们重启。真实 UI 验收
+                # （C2-4）实测：卸一个没有 start 钩子的插件，界面照样说
+                # "它注册的后台线程还在跑"—— 那句话是谎话。
+                need = bool(res.get("restart_needed"))
                 self._json(200, {"ok": True, "uninstalled": res,
                                  "count": n, "restart_needed": need,
                                  "manage": {"channels": chans,
@@ -2855,16 +2859,12 @@ def start_remote_api(brain):
     srv = http.server.ThreadingHTTPServer((host, port), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"[大脑] 远程大脑 API 就绪：{host}:{port}", flush=True)
-    return srv
-
-
-def run_server():
-    base = None
-    # 记下本进程的启动时刻 —— 这是"待重启"判据的另一端
-    # （changed_at > started_at 才算待重启）。重启后它自然推新，
-    # 于是装卸留下的提示自动消解，不需要任何额外的"重启后清除"逻辑，
-    # 也就不存在忘了清除（永远提示）或虚假显示已生效的可能。
-    # 必须赶在任何装卸之前登记，否则本次启动前的旧改动会被误判成待重启。
+    # 「待重启」判据的另一端：本进程的服务**真的起来了**才登记启动时刻。
+    # 🔴 必须放在绑定成功之后：端口被占（一次失败的重启）时 run_server 只是
+    # 打印"没起来"然后继续跑收尾循环，进程并不会退出 —— 要是在函数开头就
+    # 登记，started_at 会被这次失败的重启推新，"重启失败"反倒把用户真正
+    # 待重启的提示悄悄抹掉，界面看着像重启成功了。真实 UI 验收
+    # （harness-p4-c123-e2e.js C3-7b/c）实测复现过这个假象，故移到这里。
     try:
         import restart_state as _rs
         import plugin_ops as _po0
@@ -2872,6 +2872,13 @@ def run_server():
     except Exception as e:
         print("[重启提示] 插件启动时刻登记跳过（不影响聊天）：%s" % str(e)[:80],
               flush=True)
+    return srv
+
+
+def run_server():
+    base = None
+    # 注：插件 scope 的"启动时刻"登记在 start_remote_api 里绑定成功之后
+    # （见那边注释）—— 放这里会在"重启失败"时虚假清除待重启提示。
     # 🔴 把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。
     # 不做的话界面会把每一家都显示成"还没存密钥"，
     # 于是"点一下就切换"永远切不动 —— 而实际有一家正拿着它在用。

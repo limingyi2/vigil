@@ -144,12 +144,23 @@ class C3PendingStateHasAReliableSource(unittest.TestCase):
         i = self.server.index('if path == "/api/plugins":')
         self.assertIn("pending_restart", self.server[i:i + 1200])
 
-    def test_uninstall_merges_both_restart_sources(self):
-        """卸载返回的（刚卸掉的那个）+ 重载返回的（剩下的），两个都要算。"""
+    def test_uninstall_restart_needed_comes_from_the_uninstalled_one_only(self):
+        """卸载的 restart_needed 只准是"刚卸掉的那个"的信号。
+
+        曾经把重载返回的"剩下的插件里有带的"也 OR 进来。真实 UI 验收
+        （harness-p4-c123-e2e.js C2-4）实测：卸一个没有 start 钩子的插件，
+        内置插件（reminder 等）照样让 need=True，界面于是说"它注册的后台
+        线程还在跑"—— 被卸的插件根本没有线程，这句话是谎话。重载刚把内存
+        重拼到和磁盘一致，其余插件的线程本来就是当前代码在跑，不需要为
+        它们重启，所以第二个来源必须去掉。
+        """
         i = self.server.index('if path == "/api/plugins/uninstall":')
         block = self.server[i:i + 900]
         self.assertIn('res.get("restart_needed")', block,
-                      "卸载没合并 plugin_ops 返回的 restart_needed")
+                      "卸载没消费 plugin_ops 返回的 restart_needed")
+        self.assertNotIn('bool(res.get("restart_needed")) or bool(need)', block,
+                         "又把重载的 need OR 进来了 —— 没有 start 钩子的插件"
+                         "会被谎称后台线程还在跑（C2-4 实测回归）")
 
     def test_skill_status_returns_the_judgement(self):
         self.assertIn('d["pending_restart"]', _read(SKILL))
@@ -173,11 +184,27 @@ class C3PendingStateHasAReliableSource(unittest.TestCase):
         self.assertIn('d["changed_at"] > d["started_at"]', src)
         self.assertIn("note_start", src)
 
-    def test_start_time_is_registered_in_run_server(self):
-        """run_server 必须登记启动时刻，否则本次启动前的旧改动会被误判成待重启。"""
+    def test_start_time_is_registered_after_the_bind(self):
+        """启动时刻必须登记在 HTTP 绑定成功之后。
+
+        曾经登记在 run_server 开头。真实 UI 验收（C3-7b/c）实测复现了后果：
+        端口被占时 run_server 只打印"没起来"然后继续跑收尾循环、进程并不退出，
+        started_at 被这次失败的重启推新，"重启失败"反而把用户真正待重启的
+        提示悄悄抹掉 —— 界面看着像重启成功了。所以登记点只能在 srv 构造
+        成功之后；重载/装卸都在服务起来之后，不会漏登记。
+        """
         srv = _read(SERVER)
-        i = srv.index("def run_server():")
-        self.assertIn('note_start("plugin"', srv[i:i + 2500])
+        i = srv.index("def start_remote_api(")
+        j = srv.index("def run_server():")
+        block = srv[i:j]
+        k = block.index("ThreadingHTTPServer(")
+        self.assertIn('note_start("plugin"', block[k:],
+                      "note_start 没在绑定成功之后调用 —— 重启失败会虚假清除待重启提示")
+        # 反向护栏：run_server 在调到 start_remote_api 之前不许再登记一遍
+        tail = srv[j:]
+        call_at = tail.index("start_remote_api(")
+        self.assertNotIn('note_start("plugin"', tail[:call_at],
+                         "run_server 在绑定之前又登记了一遍启动时刻")
 
 
 if __name__ == "__main__":
