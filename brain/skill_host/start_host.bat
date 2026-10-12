@@ -36,6 +36,11 @@ rem deploy the next brain restart necessarily starts the new code.
 rem Set ZX_SKILL_FORCE=1 to restart even when one is running.
 setlocal
 
+if not defined ZX_SKILL_AUTH_TOKEN (
+    echo [skill-host] ZX_SKILL_AUTH_TOKEN is required; refusing to start without authentication
+    exit /b 1
+)
+
 set "ZX_SKILL_DIR=%~dp0skills"
 if "%ZX_SKILL_DIR:~-1%"=="\" set "ZX_SKILL_DIR=%ZX_SKILL_DIR:~0,-1%"
 cd /d "%~dp0"

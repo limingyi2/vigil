@@ -31,19 +31,23 @@ class TestSkillHostTemplate(unittest.TestCase):
             port = free_port()
             env = os.environ.copy()
             env.update({"ZX_SKILL_DIR": str(skills), "ZX_SKILL_PORT": str(port),
-                        "ZX_SKILL_HOST": "127.0.0.1"})
+                        "ZX_SKILL_HOST": "127.0.0.1",
+                        "ZX_SKILL_AUTH_TOKEN": "template-test-auth-token-32-characters-minimum"})
             proc = subprocess.Popen(
                 ["node", str(ROOT / "brain" / "skill_host" / "server.js")],
                 cwd=str(ROOT), env=env, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True)
             try:
                 base = "http://127.0.0.1:%d" % port
+                auth = {"Authorization": "Bearer " + env["ZX_SKILL_AUTH_TOKEN"]}
                 health = listing = None
                 for _ in range(50):
                     try:
-                        with urllib.request.urlopen(base + "/health", timeout=1) as response:
+                        request = urllib.request.Request(base + "/health", headers=auth)
+                        with urllib.request.urlopen(request, timeout=1) as response:
                             health = json.loads(response.read())
-                        with urllib.request.urlopen(base + "/skills", timeout=1) as response:
+                        request = urllib.request.Request(base + "/skills", headers=auth)
+                        with urllib.request.urlopen(request, timeout=1) as response:
                             listing = json.loads(response.read())
                         if health.get("ok"):
                             break
@@ -56,7 +60,7 @@ class TestSkillHostTemplate(unittest.TestCase):
                 body = json.dumps({"tool": "skill-basic__echo",
                                    "args": {"text": "template-ok"}, "ctx": {}}).encode()
                 req = urllib.request.Request(base + "/skills/call", data=body,
-                                             headers={"Content-Type": "application/json"})
+                                             headers={"Content-Type": "application/json", **auth})
                 with urllib.request.urlopen(req, timeout=3) as response:
                     called = json.loads(response.read())
                 self.assertTrue(called.get("ok"), called)

@@ -39,6 +39,8 @@ import json
 import sys
 import time
 import threading
+import ipaddress
+from urllib.parse import urlsplit
 
 NAME = "skill"
 DESC = "接住 JS 技能：让现成的 skill 能在知夏这边用"
@@ -60,14 +62,30 @@ def _cfg():
 
 
 def _host():
-    """宿主地址。**只认 127.0.0.1** —— 别让人配公网地址。
+    """宿主地址只允许 HTTP 回环 URL；不把认证流量发送到任意配置主机。"""
+    value = str(_cfg().get("host") or "http://127.0.0.1:8790").strip()
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        address = ipaddress.ip_address(host)
+        if (parsed.scheme != "http" or not address.is_loopback or
+                parsed.username or parsed.password or parsed.query or parsed.fragment or
+                parsed.path not in ("", "/")):
+            raise ValueError
+        port = parsed.port or 80
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise RuntimeError("Skill Host 只允许配置 HTTP 数字回环地址和有效端口")
+    return "http://%s:%d" % ("[%s]" % host if ":" in host else host, port)
 
-    云端防火墙只放了 22 / 8788 / Tailscale，8790 没放行；但更重要的是：
-    这个接口**没有任何鉴权**，谁能连上就能调任意技能工具、
-    还能通过技能的 sendTextBatch 让她发消息。放到公网等于不设防。
-    远程访问走 SSH 隧道，端口跟 8787 一样在本地，不冲突。
-    """
-    return str(_cfg().get("host") or "http://127.0.0.1:8790")
+
+def _host_token():
+    """从安全运行环境读取 Host 凭据；缺失时拒绝所有 Brain→Host 调用。"""
+    token = str(os.environ.get("ZX_SKILL_AUTH_TOKEN") or "").strip()
+    if len(token) < 32:
+        raise RuntimeError("ZX_SKILL_AUTH_TOKEN 缺失或长度不足")
+    return token
 
 
 # --- 按渠道开关 --------------------------------------------------------------
@@ -187,6 +205,7 @@ def _get_json(path, timeout):
     op = _opener()
     r = _u.Request(_host() + path)
     r.add_header("Content-Type", "application/json")
+    r.add_header("Authorization", "Bearer " + _host_token())
     with op.open(r, timeout=timeout) as f:
         return json.loads(f.read().decode("utf-8", "replace") or "{}")
 
@@ -196,6 +215,7 @@ def _post_json(path, payload, timeout):
     op = _opener()
     r = _u.Request(_host() + path, data=json.dumps(payload).encode("utf-8"))
     r.add_header("Content-Type", "application/json")
+    r.add_header("Authorization", "Bearer " + _host_token())
     with op.open(r, timeout=timeout) as f:
         return json.loads(f.read().decode("utf-8", "replace") or "{}")
 
@@ -217,7 +237,11 @@ def host_alive(timeout=3):
         # NameError 这类是代码 bug，不是"宿主没起来"，分开说，
         # 否则面板上只会看到"没起来"，人就去查网络了。
         kind = "代码有问题" if isinstance(e, (NameError, AttributeError, TypeError)) else "连不上"
-        print("[技能] 宿主%s：%s（%s）" % (kind, _host(), msg), flush=True)
+        try:
+            host = _host()
+        except Exception:
+            host = "<配置被拒绝>"
+        print("[技能] 宿主%s：%s（%s）" % (kind, host, msg), flush=True)
         return False
 
 

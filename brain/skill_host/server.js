@@ -35,12 +35,16 @@
 const http = require('node:http')
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
 const { pathToFileURL } = require('node:url')
 
 // --- 配置：环境变量给默认值，配置文件可覆盖 ---------------------------------
 const SKILL_DIR = process.env.ZX_SKILL_DIR || path.join(__dirname, 'skills')
 const PORT = Number(process.env.ZX_SKILL_PORT || 8790)
 const HOST = process.env.ZX_SKILL_HOST || '127.0.0.1'
+const AUTH_TOKEN = String(process.env.ZX_SKILL_AUTH_TOKEN || '')
+// Do not expose the bridge secret through process.env to imported Skill code.
+delete process.env.ZX_SKILL_AUTH_TOKEN
 // 调 skill 工具的硬超时。skill 可能去爬图（P站很慢），但知夏一轮对话
 // 不能被它拖死 —— 超时后大脑那边照样能回话，只是这个工具算失败。
 const CALL_TIMEOUT = Number(process.env.ZX_SKILL_TIMEOUT || 25000)
@@ -58,6 +62,131 @@ const fmt = (tpl, ...vals) => {
 
 /** 已装载的技能：{ id -> {mod, meta, tools:{toolName->def}} } */
 const skills = new Map()
+
+const WINDOWS_RESERVED = new Set([
+  'CON', 'PRN', 'AUX', 'NUL',
+  ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`),
+])
+
+function validateRuntimeConfig() {
+  if (AUTH_TOKEN.length < 32) {
+    throw new Error('ZX_SKILL_AUTH_TOKEN 缺失或长度不足（至少 32 个字符）')
+  }
+  if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error('ZX_SKILL_PORT 必须是有效端口')
+  }
+  // Bind only to numeric loopback addresses. Avoid localhost name resolution
+  // and accidental public listeners from an inherited environment variable.
+  if (HOST !== '127.0.0.1' && HOST !== '::1') {
+    throw new Error('ZX_SKILL_HOST 只允许 127.0.0.1 或 ::1')
+  }
+}
+
+function authorized(req) {
+  const value = String(req.headers.authorization || '')
+  const match = /^Bearer ([^\s]+)$/i.exec(value)
+  if (!match) return false
+  const got = Buffer.from(match[1], 'utf8')
+  const expected = Buffer.from(AUTH_TOKEN, 'utf8')
+  return got.length === expected.length && crypto.timingSafeEqual(got, expected)
+}
+
+function safeName(name) {
+  if (!name || name === '.' || name === '..' || /[\x00-\x1f\x7f<>:"/\\|?*]/.test(name)) return false
+  if (/[. ]$/.test(name)) return false
+  const stem = name.split('.', 1)[0].replace(/[ .]+$/, '').toUpperCase()
+  return !WINDOWS_RESERVED.has(stem)
+}
+
+function lstatSafe(target) {
+  const st = fs.lstatSync(target)
+  // On Windows Node reports directory junctions as symbolic links as well.
+  if (st.isSymbolicLink()) throw new Error(`不允许符号链接或 junction：${target}`)
+  return st
+}
+
+function walkSkillTree(root) {
+  const rootReal = fs.realpathSync(root)
+  const seen = new Map()
+  const files = []
+  function walk(dir) {
+    for (const name of fs.readdirSync(dir).sort()) {
+      if (!safeName(name)) throw new Error(`非法 Skill 文件名：${name.slice(0, 80)}`)
+      const target = path.join(dir, name)
+      const st = lstatSafe(target)
+      const real = fs.realpathSync(target)
+      const rel = path.relative(rootReal, real)
+      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+        throw new Error(`Skill 路径越界：${name}`)
+      }
+      const relativeName = path.relative(rootReal, target).split(path.sep).join('/')
+      const folded = relativeName.toLocaleLowerCase('en-US')
+      const prior = seen.get(folded)
+      if (prior && prior !== relativeName) {
+        throw new Error(`Skill 路径大小写冲突：${prior} / ${relativeName}`)
+      }
+      seen.set(folded, relativeName)
+      if (st.isDirectory()) walk(target)
+      else if (st.isFile()) files.push(relativeName)
+      else throw new Error(`Skill 目录中存在特殊文件：${relativeName}`)
+    }
+  }
+  walk(rootReal)
+  return { rootReal, files }
+}
+
+function validateSkillDirectory(name, dir) {
+  if (!safeName(name)) throw new Error(`非法 Skill 目录名：${String(name).slice(0, 80)}`)
+  const topStat = lstatSafe(dir)
+  if (!topStat.isDirectory()) throw new Error('Skill 根必须是普通目录')
+  const outerReal = fs.realpathSync(dir)
+  walkSkillTree(outerReal)
+  const realDir = resolveSkillDir(outerReal)
+  const real = fs.realpathSync(realDir)
+  const relRoot = path.relative(outerReal, real)
+  if (relRoot === '..' || relRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relRoot)) {
+    throw new Error('Skill 实际目录越出安装根目录')
+  }
+  const { files } = walkSkillTree(real)
+  const metaPath = path.join(real, 'skill.json')
+  let meta = {}
+  if (files.includes('skill.json')) {
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+    } catch (e) {
+      throw new Error(`skill.json 无效：${String(e.message || e).slice(0, 100)}`)
+    }
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+      throw new Error('skill.json 顶层必须是对象')
+    }
+  }
+  const entry = meta.entry === undefined ? 'index.js' : meta.entry
+  if (typeof entry !== 'string' || !entry || entry.includes('\\') || entry.startsWith('/') ||
+      /^[A-Za-z]:/.test(entry) || entry.split('/').some(p => !p || p === '.' || p === '..')) {
+    throw new Error('Manifest entry 必须是 Skill 根目录内的相对路径')
+  }
+  const entryPath = path.resolve(real, ...entry.split('/'))
+  const relative = path.relative(real, entryPath)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('Manifest entry 越出 Skill 根目录')
+  }
+  const entryStat = lstatSafe(entryPath)
+  if (!entryStat.isFile() || !files.includes(entry.split('/').join('/'))) {
+    throw new Error('Manifest entry 必须指向 Skill 根目录内的普通文件')
+  }
+  const entryReal = fs.realpathSync(entryPath)
+  const realRelative = path.relative(real, entryReal)
+  if (realRelative === '..' || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) {
+    throw new Error('Manifest entry 实际路径越出 Skill 根目录')
+  }
+  // Older installed packages may intentionally expose an id different from
+  // their directory name; keep that Host behavior while rejecting unsafe ids.
+  if (meta.id !== undefined && (typeof meta.id !== 'string' || !safeName(meta.id))) {
+    throw new Error('Manifest id 不是安全名称')
+  }
+  return { realDir: real, meta, entry }
+}
 
 // --- skill.json 读取 ---------------------------------------------------------
 
@@ -82,6 +211,8 @@ async function loadAll() {
     log(fmt('技能目录不存在：%s（还没有装技能）', SKILL_DIR))
     return
   }
+  const rootStat = lstatSafe(SKILL_DIR)
+  if (!rootStat.isDirectory()) throw new Error('Skill 根目录必须是普通目录')
   for (const name of fs.readdirSync(SKILL_DIR)) {
     const dir = path.join(SKILL_DIR, name)
     let st = null
@@ -131,9 +262,10 @@ function resolveSkillDir(dir) {
 }
 
 async function loadOne(name, dir) {
-  const realDir = resolveSkillDir(dir)
-  const meta = readMeta(realDir)
-  const entry = meta.entry || 'index.js'
+  const checked = validateSkillDirectory(name, dir)
+  const realDir = checked.realDir
+  const meta = checked.meta
+  const entry = checked.entry
   const main = path.join(realDir, entry)
   if (!fs.existsSync(main)) {
     throw new Error(fmt('找不到入口文件 %s（在 %s）', entry, realDir))
@@ -322,6 +454,7 @@ function send(res, code, obj) {
 }
 
 const server = http.createServer((req, res) => {
+  if (!authorized(req)) return send(res, 401, { ok: false, err: '未授权' })
   const url = new URL(req.url, 'http://localhost')
   const p = url.pathname
 
@@ -369,13 +502,24 @@ const server = http.createServer((req, res) => {
   // 为了加个技能把微信断一下不划算。
   if (req.method === 'POST' && p === '/reload') {
     loadAll().then(() => send(res, 200, { ok: true, reloaded: skills.size }))
+      .catch((e) => send(res, 500, { ok: false, err: String(e.message || e).slice(0, 160) }))
     return
   }
 
   send(res, 404, { ok: false, err: '没这个路由' })
 })
 
-server.listen(PORT, HOST, () =>
-  log(fmt('监听 http://%s:%s，技能目录 %s', HOST, PORT, SKILL_DIR)))
+try {
+  validateRuntimeConfig()
+} catch (e) {
+  console.error('[skill-host] 配置拒绝启动：' + String(e.message || e))
+  process.exit(1)
+}
 
-loadAll()
+loadAll().then(() => {
+  server.listen(PORT, HOST, () =>
+    log(fmt('监听 http://%s:%s，技能目录 %s', HOST, PORT, SKILL_DIR)))
+}).catch((e) => {
+  console.error('[skill-host] 安全检查失败，拒绝启动：' + String(e.message || e))
+  process.exit(1)
+})

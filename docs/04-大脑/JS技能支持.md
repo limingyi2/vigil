@@ -22,7 +22,7 @@ JS 技能      skill_host/skills/*/   → Node 侧跑，大脑用 HTTP 调
 
 | 文件 | 干什么 |
 |---|---|
-| `brain/skill_host/server.js` | Node 宿主。垫出 QQ Agent 那套 `api`/`ctx` 契约，暴露三个路由 |
+| `brain/skill_host/server.js` | Node 宿主。垫出 QQ Agent 那套 `api`/`ctx` 契约，暴露 HTTP 接口 |
 | `brain/skill_host/skills/` | 装技能的地方。每个技能一个目录 |
 | `brain/plugins/skill.py` | 知夏侧插件。把技能工具接进模型，给模型两个入口 |
 
@@ -44,7 +44,7 @@ JSON 对象；`id` 要与包目录名一致，`entry` 必须指向根目录内�
 和大小写冲突路径。未知 Manifest 字段会保留，方便未来扩展。安装接口会在任何
 持久化目录写入前检查暂存目录；静态检查不执行 Skill 代码。
 
-### 三个路由（宿主侧，只监听 127.0.0.1）
+### Host 接口（只监听回环且需要认证）
 
 | 路由 | 用途 |
 |---|---|
@@ -97,6 +97,15 @@ if (!Number.isFinite(tier)) return ''   // 宿主没给档位 → 不拦
 但**只在恰好只有一个子目录时**钻：多个子目录说明是在放多个技能，钻进去会装错。
 
 ### 4. `import()` 会缓存模块
+
+所有 Host 接口均要求 `Authorization: Bearer <ZX_SKILL_AUTH_TOKEN>`。
+Brain 与 Node Host 必须由服务管理器或操作系统凭据环境注入同一个至少 32 字符的随机值；
+不要将真实值写入 `config.json`、批处理文件或仓库。缺少凭据或配置公开监听地址时，
+Host 会拒绝启动。Windows `start_host.bat` 也会在缺少凭据时退出。
+
+`ctx` 中的 `src`、`tier` 等字段只是 Skill 兼容上下文，不是 Host 认证凭据。
+渠道过滤仍由 Python Bridge 执行；Host Bearer 认证保护本机 HTTP 接口，不能隔离已加载
+JavaScript。Skill 仍在当前 Node 进程用户权限下执行。
 
 `/reload` 不加时间戳 query 的话，重载只是把同一个旧模块对象再拿出来一次——
 表现为"重载了但改了代码没生效"。
