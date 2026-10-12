@@ -1,5 +1,9 @@
 # Vigil P4 Windows 兼容补丁 — Electron + Brain + Skill Host 真实联动验收报告
 
+> 📌 本报告对应 **7bcc925 轮**（P4 Windows 兼容补丁首验，HEAD `7bcc925a52f213ed36a44a4573d6299451fcdd4c`）。
+> 其留下的 C1/C2/C3 三个 UI 问题的修复轮验收（c0346e5 → 298e7c6，含两个真实缺陷的复现与修复）
+> 见同目录 **REPORT-c0346e5.md**，两轮报告并存，本文件未删改。
+
 - 验收日期：2026-10-12
 - worktree：`F:\sync-checks\creator-mode-p4-4b-2`
 - 分支：`creator-mode-p4-windows-fixes`
