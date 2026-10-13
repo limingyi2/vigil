@@ -158,8 +158,10 @@
     return (h >>> 0).toString(16);
   }
 
-  async function loadPluginFrontends() {
-    try {
+  let pluginLoadInFlight = null;
+  function loadPluginFrontends() {
+    if (pluginLoadInFlight) return pluginLoadInFlight;
+    pluginLoadInFlight = (async () => { try {
       const r = await get('/api/plugins/frontend');
       if (!r || !r.ok || !r.json) return;
       const { plugins } = r.json;
@@ -186,7 +188,10 @@
       lastPluginVersion = pluginFingerprint(plugins);
     } catch (e) {
       console.warn('插件前端加载失败:', e);
-    }
+    } finally {
+      pluginLoadInFlight = null;
+    } })();
+    return pluginLoadInFlight;
   }
 
   async function boot() {
@@ -282,7 +287,7 @@
           toast('已重新连上 ' + again.base);
         }
       }
-      if (state.conn.ok && lastPluginVersion === 0) await loadPluginFrontends();
+      if (state.conn.ok && lastPluginVersion === 0) void loadPluginFrontends();
       setStatus();
       refreshStats();
       perf('cloud-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
