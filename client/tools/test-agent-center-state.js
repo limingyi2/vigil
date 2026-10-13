@@ -31,3 +31,9 @@ test('events are read before task snapshot to avoid losing newly created task al
   assert.ok(f.paths.findIndex(p=>p.includes('/events?'))<f.paths.findIndex(p=>p.endsWith('/tasks')));
   assert.equal(f.notices.length,1);
 });
+test('missing Agent Center route is reported as a Brain version mismatch',async()=>{
+  const c=create({request:async()=>({ok:false,status:404,err:'agent_center_route_missing'})});
+  await c.poll();
+  assert.equal(c.state.error,'当前 Brain 版本不支持 Agent Center，请检查版本');
+  assert.equal(c.state.stale,true);
+});

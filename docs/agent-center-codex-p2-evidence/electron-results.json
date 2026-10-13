@@ -2,6 +2,10 @@
   "ok": true,
   "results": [
     {
+      "name": "workspace overview shows one live Codex and two honest pending adapters",
+      "status": "passed"
+    },
+    {
       "name": "actual page, production preload and initial historical replay without notification",
       "status": "passed"
     },
@@ -86,6 +90,31 @@
     },
     {
       "method": "GET",
+      "path": "/api/stats",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace?last=60",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/history?limit=300&src=pc",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
       "path": "/api/plugins/frontend",
       "authenticated": true
     },
@@ -102,6 +131,16 @@
     {
       "method": "GET",
       "path": "/api/stats",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
       "authenticated": true
     },
     {
@@ -336,6 +375,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/models/saved",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "authenticated": true
+    },
+    {
+      "method": "GET",
       "path": "/api/trace?last=60",
       "authenticated": true
     },
@@ -491,7 +540,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/agent-center/tasks/5253c4d7388044a084c01abd1b7fea3d/turns",
+      "path": "/api/agent-center/tasks/142d478007a14576a1ced43968c5b371/turns",
       "authenticated": true
     },
     {
@@ -516,7 +565,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/agent-center/tasks/5253c4d7388044a084c01abd1b7fea3d/interrupt",
+      "path": "/api/agent-center/tasks/142d478007a14576a1ced43968c5b371/interrupt",
       "authenticated": true
     },
     {

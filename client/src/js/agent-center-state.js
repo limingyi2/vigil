@@ -6,6 +6,17 @@
   'use strict';
   const prefix = '/api/agent-center/';
   const kinds = { waiting_approval:'approval', waiting_input:'input', failed:'failure' };
+  function explainError(r) {
+    const raw = String(r && (r.err || r._err || '') || '');
+    const status = Number(r && (r.status || r._status) || 0);
+    if (status === 404 || /agent_center_route_missing|no such api|not found/i.test(raw))
+      return '当前 Brain 版本不支持 Agent Center，请检查版本';
+    if (status === 401 || status === 403 || /bad token|permission|admin|forbidden|权限|token/i.test(raw))
+      return 'Agent Center 连接被拒绝：请检查 Token 和管理员权限';
+    if (/codex.*(not running|unavailable)|agent_center_unavailable|app server.*(未启动|不可用)/i.test(raw))
+      return 'Codex App Server 未启动或当前不可用';
+    return raw || 'Agent Center 暂时无法连接';
+  }
   function create({request, notify = () => {}, changed = () => {}}) {
     const state = { status:{}, owned:[], observed:[], approvals:[], events:[], cursor:0,
       connection:null, ready:false, stale:true, error:'', gapCount:0, notice:'', updatedAt:0 };
@@ -13,7 +24,12 @@
     let pending = null;
     async function read(route) {
       const r = await request(prefix + route);
-      if (!r || !r.ok) throw new Error(r && (r.err || r._err) || 'Agent Center 无响应');
+      if (!r || !r.ok) {
+        const error = new Error(explainError(r));
+        error.code = r && (r.err || r._err) || '';
+        error.status = r && (r.status || r._status) || 0;
+        throw error;
+      }
       return r;
     }
     function emit(event, tasks, status) {
