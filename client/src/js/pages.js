@@ -358,34 +358,80 @@
       const url = URL.createObjectURL(file);
       const video = document.createElement('video');
       video.muted = true;
-      video.preload = 'metadata';
-      video.src = url;
-      await new Promise((resolve, reject) => {
-        video.onloadedmetadata = resolve;
-        video.onerror = () => reject(new Error('无法读取视频元数据'));
+      video.playsInline = true;
+      video.preload = 'auto';
+      const waitFor = (eventName, timeoutMs, errorText) => new Promise((resolve, reject) => {
+        let done = false;
+        const finish = (fn, value) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          video.removeEventListener(eventName, onEvent);
+          video.removeEventListener('error', onError);
+          fn(value);
+        };
+        const onEvent = () => finish(resolve);
+        const onError = () => finish(reject, new Error(errorText));
+        const timer = setTimeout(() => finish(reject, new Error(errorText)), timeoutMs);
+        video.addEventListener(eventName, onEvent, { once: true });
+        video.addEventListener('error', onError, { once: true });
       });
-      const duration = Number(video.duration) || 0;
-      if (!duration || !isFinite(duration)) throw new Error('视频时长不可用');
-      const canvas = document.createElement('canvas');
-      const scale = Math.min(1, 768 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
-      canvas.width = Math.max(1, Math.round((video.videoWidth || 768) * scale));
-      canvas.height = Math.max(1, Math.round((video.videoHeight || 432) * scale));
-      const times = Array.from({ length: Math.min(count || 3, 3) }, (_, i) =>
-        Math.min(Math.max(0.1, duration * ((i + 1) / (Math.min(count || 3, 3) + 1))), Math.max(0.1, duration - 0.1)));
-      const files = [];
-      for (let i = 0; i < times.length; i++) {
-        await new Promise((resolve, reject) => {
-          video.onseeked = resolve;
-          video.onerror = () => reject(new Error('关键帧定位失败'));
-          video.currentTime = times[i];
-        });
-        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
-        if (!blob) throw new Error('关键帧编码失败');
-        const stem = file.name.replace(/\.[^.]+$/, '').slice(0, 80);
-        files.push(new File([blob], stem + '.frame-' + (i + 1) + '.jpg', { type: 'image/jpeg' }));
+      try {
+        video.src = url;
+        video.load();
+        await waitFor('loadedmetadata', 15000, '无法读取视频元数据；原视频仍可上传');
+        const duration = Number(video.duration) || 0;
+        if (!duration || !isFinite(duration)) throw new Error('视频时长不可用；原视频仍可上传');
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, 768 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+        canvas.width = Math.max(1, Math.round((video.videoWidth || 768) * scale));
+        canvas.height = Math.max(1, Math.round((video.videoHeight || 432) * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('当前环境无法创建关键帧画布；原视频仍可上传');
+        const total = Math.min(count || 3, 3);
+        const times = Array.from({ length: total }, (_, i) =>
+          Math.min(Math.max(0.1, duration * ((i + 1) / (total + 1))), Math.max(0.1, duration - 0.1)));
+        const files = [];
+        for (let i = 0; i < times.length; i++) {
+          const target = times[i];
+          if (Math.abs(Number(video.currentTime || 0) - target) > 0.01 || video.readyState < 2) {
+            await new Promise((resolve, reject) => {
+              let done = false;
+              const finish = (fn, value) => {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                video.removeEventListener('seeked', onSeeked);
+                video.removeEventListener('error', onError);
+                fn(value);
+              };
+              const onSeeked = () => finish(resolve);
+              const onError = () => finish(reject, new Error('关键帧定位失败；原视频仍可上传'));
+              const timer = setTimeout(() => finish(reject, new Error('关键帧定位超时；原视频仍可上传')), 15000);
+              video.addEventListener('seeked', onSeeked, { once: true });
+              video.addEventListener('error', onError, { once: true });
+              video.currentTime = target;
+            });
+          }
+          // 必须先把当前视频帧绘制到画布，再编码；否则 toBlob 可能得到空白帧。
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+          if (!blob || blob.size <= 0) throw new Error('关键帧编码为空；原视频仍可上传');
+          const stem = file.name.replace(/\.[^.]+$/, '').slice(0, 80);
+          files.push(new File([blob], stem + '.frame-' + (i + 1) + '.jpg', { type: 'image/jpeg' }));
+        }
+        return files;
+      } finally {
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
+        URL.revokeObjectURL(url);
       }
-      URL.revokeObjectURL(url);
-      return files;
+    }
+
+    async function extractVideoFramesViaBrain(id, count) {
+      const r = pick(await post('/api/attachments/frames', { id, count: Math.min(count || 3, 3) }));
+      if (!r || !r.ok) throw new Error((r && (r.err || r._err)) || '本机 FFmpeg 无法解析视频');
+      return Array.isArray(r.attachments) ? r.attachments : [];
     }
 
     function updateComposer() {
@@ -420,6 +466,15 @@
     dropTarget.addEventListener('drop', (e) => {
       e.preventDefault(); dropTarget.classList.remove('drop-active');
       chooseFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+    });
+    // 原生右键菜单的“粘贴”会触发这里；图片或从资源管理器复制的文件
+    // 进入同一套类型、大小和用户确认流程，普通文本仍由 textarea 默认粘贴。
+    dropTarget.addEventListener('paste', (e) => {
+      const files = e.clipboardData && e.clipboardData.files;
+      if (files && files.length) {
+        e.preventDefault();
+        chooseFile(files[0]);
+      }
     });
 
     /**
@@ -504,6 +559,10 @@
         pending.status = '准备上传';
         updateComposer();
         try {
+          // 原视频先独立保存。后续元数据/关键帧分析失败时，不能丢弃
+          // 这份已经上传完成的原文件。
+          const original = await uploadAttachment(pending);
+          uploadedAttachments.push(original);
           if (pending.kind === 'video') {
             let cap = null;
             try { cap = pick(await get('/api/attachments/capabilities')); } catch (_) {}
@@ -512,15 +571,29 @@
               if (wantFrames) {
                 pending.status = '提取关键帧…';
                 renderAttachment();
-                const frameFiles = await extractVideoFrames(pending.file, 3);
-                for (const frame of frameFiles) {
-                  const frameAtt = { file: frame, kind: 'image', progress: 0, status: '上传中' };
-                  uploadedAttachments.push(await uploadAttachment(frameAtt, true));
+                try {
+                  let frameFiles = [];
+                  try {
+                    frameFiles = await extractVideoFrames(pending.file, 3);
+                  } catch (browserError) {
+                    if (!cap || cap.video_frames !== true) throw browserError;
+                    pending.status = '浏览器解析失败，改用本机 FFmpeg…';
+                    renderAttachment();
+                    uploadedAttachments.push(...await extractVideoFramesViaBrain(original.id, 3));
+                  }
+                  for (const frame of frameFiles) {
+                    const frameAtt = { file: frame, kind: 'image', progress: 0, status: '上传中' };
+                    uploadedAttachments.push(await uploadAttachment(frameAtt, true));
+                  }
+                  pending.status = '已上传，关键帧已准备';
+                } catch (frameError) {
+                  pending.status = '已上传；关键帧提取失败';
+                  renderAttachment();
+                  toast('原视频已保存，但关键帧提取失败：' + String(frameError.message || frameError).slice(0, 100));
                 }
               }
             }
           }
-          uploadedAttachments.unshift(await uploadAttachment(pending));
         } catch (e) {
           pending.status = '上传失败：' + String(e.message || e).slice(0, 80);
           renderAttachment();

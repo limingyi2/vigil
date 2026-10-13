@@ -8,6 +8,8 @@ import json
 import mimetypes
 import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -187,7 +189,83 @@ def capabilities(api_config):
     model = str(vision_cfg.get("model") or "").strip()
     enabled = vision_cfg.get("enabled", True) is not False
     return {"ok": True, "image": bool(enabled and model), "video": False,
-            "video_note": "当前模型不直接读取视频；可在确认后提取最多 3 个关键帧"}
+            "video_frames": bool(_find_tool("ffmpeg")),
+            "video_note": "当前模型不直接读取视频；可在确认后提取最多 3 个关键帧。关键帧兼容处理仅使用本机已有 FFmpeg，不会自动安装。"}
+
+
+def _find_tool(name):
+    """只查找用户已配置的本机工具，不下载或安装依赖。"""
+    env_name = "VIGIL_FFMPEG" if name == "ffmpeg" else "VIGIL_FFPROBE"
+    configured = str(os.environ.get(env_name) or "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.is_file():
+            return str(candidate)
+    found = shutil.which(name)
+    return str(found) if found else ""
+
+
+def _probe_duration(ffprobe, path):
+    if not ffprobe:
+        return 0.0
+    flags = 0x08000000 if os.name == "nt" else 0
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            timeout=15, creationflags=flags,
+        )
+        return max(0.0, float(out.stdout.decode("utf-8", errors="replace").strip() or 0))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0.0
+
+
+def extract_frames(aid, count=3):
+    """用本机已有 FFmpeg 生成少量 JPEG 关键帧并作为附件保存。"""
+    rec = get(aid)
+    if not rec or not str(rec.get("mime") or "").startswith("video/"):
+        raise ValueError("视频附件不存在或尚未上传完成")
+    ffmpeg = _find_tool("ffmpeg")
+    if not ffmpeg:
+        raise ValueError("未找到本机 FFmpeg；原视频已保存，暂无法提取关键帧")
+    ffprobe = _find_tool("ffprobe")
+    duration = _probe_duration(ffprobe, rec["file_path"])
+    n = max(1, min(3, int(count or 3)))
+    if duration > 0:
+        times = [max(0.05, min(duration - 0.05, duration * (i + 1) / (n + 1)))
+                 for i in range(n)]
+    else:
+        # 没有 ffprobe 时仍尝试少量固定时间点，失败不会影响原视频。
+        times = [0.5 * (i + 1) for i in range(n)]
+    flags = 0x08000000 if os.name == "nt" else 0
+    stem = Path(rec["name"]).stem[:70] or "video"
+    frames = []
+    for index, timestamp in enumerate(times, 1):
+        try:
+            out = subprocess.run(
+                [ffmpeg, "-loglevel", "error", "-ss",
+                 "%.3f" % timestamp, "-i", rec["file_path"], "-frames:v", "1",
+                 "-vf", "scale=768:-1", "-an", "-f", "image2pipe",
+                 "-vcodec", "mjpeg", "pipe:1"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                timeout=45, creationflags=flags,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        blob = bytes(out.stdout or b"")
+        if out.returncode != 0 or not blob or len(blob) > MAX_CHUNK_SIZE:
+            continue
+        frame_id = "att_" + uuid.uuid4().hex
+        try:
+            frames.append(append_chunk(
+                frame_id, "%s.frame-%d.jpg" % (stem, index), "image/jpeg",
+                len(blob), 0, blob))
+        except ValueError:
+            continue
+    if not frames:
+        raise ValueError("本机 FFmpeg 无法解析此视频；原视频已保存")
+    return frames
 
 
 def context_for(meta_list, api_config):

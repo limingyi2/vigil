@@ -193,6 +193,7 @@ DEVICE_POST_ALLOW = frozenset({
     "/api/chat",
     "/api/chat/stream",
     "/api/attachments/upload",
+    "/api/attachments/frames",
     "/api/logs",                         # 客户端上报错误
     "/api/stickers/collect",
     "/api/sync/flush",                   # 客户端「立即同步」
@@ -1506,6 +1507,22 @@ def start_remote_api(brain):
                              out.get("role", "device")), flush=True)
                     out["ok"] = True
                     self._json(200, out)
+                    return
+                if path == "/api/attachments/frames":
+                    # 原视频必须先完成上传；关键帧是可选分析步骤，使用本机
+                    # 已存在的 FFmpeg，不下载依赖，也不把原视频放进 JSON。
+                    try:
+                        import attachments as _att
+                        aid = str(body.get("id") or "")
+                        count = max(1, min(3, int(body.get("count") or 3)))
+                        out = _att.extract_frames(aid, count)
+                        self._json(200, {"ok": True, "attachments": out})
+                    except ValueError as e:
+                        self._json(422, {"ok": False, "err": str(e)[:180]})
+                    except Exception as e:
+                        print("[附件] 关键帧提取失败：%s: %s" %
+                              (type(e).__name__, str(e)[:120]), flush=True)
+                        self._json(500, {"ok": False, "err": "关键帧提取失败"})
                     return
                 if path == "/api/device/list":
                     import devices

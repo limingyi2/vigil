@@ -497,6 +497,26 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
+  // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。
+  win.webContents.on('context-menu', (_event, params) => {
+    if (!win || win.isDestroyed()) return;
+    const items = [];
+    if (params.isEditable) {
+      if (params.editFlags && params.editFlags.canUndo) items.push({ role: 'undo' });
+      if (params.editFlags && params.editFlags.canRedo) items.push({ role: 'redo' });
+      if (items.length) items.push({ type: 'separator' });
+      if (params.editFlags && params.editFlags.canCut) items.push({ role: 'cut' });
+      if (params.editFlags && params.editFlags.canCopy) items.push({ role: 'copy' });
+      if (params.editFlags && params.editFlags.canPaste) {
+        items.push({ label: '粘贴', click: () => win.webContents.paste() });
+      }
+      if (params.editFlags && params.editFlags.canSelectAll) items.push({ role: 'selectAll' });
+    } else if (String(params.selectionText || '').trim()) {
+      items.push({ role: 'copy' });
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
   win.once('ready-to-show', () => win.show());
   // 2026-10-09 兜底：GPU 进程连环崩的机器上 renderer 可能永远不发
   // ready-to-show，show:false 的窗口就永远不出来 = "打不开"。

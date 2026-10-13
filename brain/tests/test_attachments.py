@@ -1,6 +1,9 @@
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 import attachments
 import paths
@@ -39,6 +42,35 @@ class AttachmentStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             attachments.append_chunk("att_bad_offset_1234", "a.txt", "text/plain",
                                      4, 1, b"abc")
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "本机没有 FFmpeg，跳过兼容抽帧验证")
+    def test_existing_ffmpeg_extracts_nonempty_keyframe(self):
+        source = Path(self.tmp.name) / "safe-video.mp4"
+        subprocess.run([
+            "ffmpeg", "-loglevel", "error", "-f", "lavfi",
+            "-i", "color=c=red:s=320x180:d=1", "-pix_fmt", "yuv420p",
+            "-y", str(source),
+        ], check=True)
+        payload = source.read_bytes()
+        aid = "att_test_ffmpeg_1234"
+        attachments.append_chunk(aid, source.name, "video/mp4",
+                                  len(payload), 0, payload)
+        frames = attachments.extract_frames(aid, 1)
+        self.assertEqual(len(frames), 1)
+        frame = attachments.get(frames[0]["id"])
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame["mime"], "image/jpeg")
+        self.assertTrue(Path(frame["file_path"]).read_bytes().startswith(b"\xff\xd8"))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "本机没有 FFmpeg，跳过失败保留验证")
+    def test_unparseable_video_remains_saved_when_frames_fail(self):
+        aid = "att_bad_video_1234"
+        payload = b"not-a-real-video"
+        attachments.append_chunk(aid, "broken.mp4", "video/mp4",
+                                  len(payload), 0, payload)
+        with self.assertRaises(ValueError):
+            attachments.extract_frames(aid, 1)
+        self.assertIsNotNone(attachments.get(aid))
 
 
 if __name__ == "__main__":
