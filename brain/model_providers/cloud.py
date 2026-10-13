@@ -41,6 +41,23 @@ class CloudProvider(ModelProvider):
         self.api_base = str(cfg.get("api_base") or "").rstrip("/")
         self.api_key = str(cfg.get("api_key") or "")
         self.model = str(cfg.get("model") or "")
+        self.provider = str(cfg.get("provider") or "").strip().lower()
+        if (not self.provider
+                and self.api_base.lower() == "https://api.xiaomimimo.com/v1"):
+            # Older configs may predate the provider field. The exact
+            # first-party base is safe to recognize; arbitrary custom URLs
+            # remain unsupported for the XML compatibility path.
+            self.provider = "xiaomi"
+        # MiMo's OpenAI-compatible endpoint accepts the tools schema, but
+        # some MiMo versions emit their tool request in the documented
+        # XML-like response form instead of message.tool_calls. Keep this
+        # opt-in narrowly bound to the first-party provider and model family;
+        # arbitrary custom endpoints must never gain a text execution path.
+        self.supports_xml_tools = (
+            self.provider == "xiaomi"
+            and self.model.lower().startswith("mimo-")
+            and cfg.get("allow_xml_tool_fallback", True) is not False
+        )
 
     def _url(self):
         return self.api_base + "/chat/completions"

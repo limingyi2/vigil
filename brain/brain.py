@@ -9,6 +9,7 @@ import datetime
 import time
 import threading
 import httpx
+from html.parser import HTMLParser
 
 from persona_store import (
     load as load_persona, build_system_text, build_draft_rules,
@@ -213,31 +214,84 @@ def _extract_reasoning(msg, raw=""):
     return ""
 
 
-# XML 格式工具调用的兜底解析（小米 MiMo 等不支持结构化 tool_calls 的供应商）。
+# MiMo's legacy response uses tag names such as
+# ``<function=local_file_list><parameter=path>…``. It is not valid XML, so
+# use a small HTMLParser-based reader rather than regex-executing arbitrary
+# model text. The caller filters names against the tools schema and dispatches
+# only through tools.invoke_spec(), where existing permission and approval
+# gates remain in force.
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.S | re.I)
-_TOOL_FUNC_RE = re.compile(r"<function=([^>]+)>(.*?)</function>", re.S | re.I)
 
 
-_TOOL_PARAM_RE = re.compile(r"<parameter=([^>]+)>(.*?)</" + "parameter>", re.S | re.I)  # restored P1: XML tool-call parse NameError
+class _LegacyToolCallParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.current = None
+        self.active_param = None
+        self.out = []
+
+    @staticmethod
+    def _tag_value(tag, prefix):
+        low = str(tag or "").lower()
+        if low.startswith(prefix):
+            return str(tag)[len(prefix):].strip()
+        return ""
+
+    def handle_starttag(self, tag, attrs):
+        low = str(tag or "").lower()
+        if low == "tool_call":
+            self.current = {"name": "", "params": {}}
+            self.active_param = None
+            return
+        if self.current is None:
+            return
+        name = self._tag_value(tag, "function=")
+        if name:
+            self.current["name"] = name
+            self.active_param = None
+            return
+        name = self._tag_value(tag, "parameter=")
+        if name:
+            self.active_param = name
+            self.current["params"].setdefault(name, [])
+
+    def handle_data(self, data):
+        if self.current is not None and self.active_param:
+            self.current["params"][self.active_param].append(str(data))
+
+    def handle_endtag(self, tag):
+        low = str(tag or "").lower()
+        if low == "parameter":
+            self.active_param = None
+        elif low == "tool_call":
+            if self.current and self.current.get("name"):
+                self.out.append(self.current)
+            self.current = None
+            self.active_param = None
 
 
-def _parse_xml_tool_calls(text):
+def _parse_xml_tool_calls(text, allowed_names=None):
     if not text or "<tool_call" not in text.lower():
         return []
+    parser = _LegacyToolCallParser()
+    try:
+        parser.feed(str(text)[:32768])
+        parser.close()
+    except Exception:
+        return []
+    allowed = (None if allowed_names is None
+               else set(str(x) for x in (allowed_names or ())))
     out = []
-    for i, m in enumerate(_TOOL_CALL_RE.finditer(text)):
-        fm = _TOOL_FUNC_RE.search(m.group(1))
-        if not fm:
+    for i, item in enumerate(parser.out[:8]):
+        name = str(item.get("name") or "").strip()
+        if not name or (allowed is not None and name not in allowed):
             continue
-        name = fm.group(1).strip()
-        args = {}
-        for pm in _TOOL_PARAM_RE.finditer(fm.group(2)):
-            args[pm.group(1).strip()] = pm.group(2).strip()
-        if name:
-            out.append({"id": "xml_%d_%d" % (int(time.time()), i),
-                        "type": "function",
-                        "function": {"name": name,
-                                     "arguments": json.dumps(args, ensure_ascii=False)}})
+        args = {key: "".join(value).strip()
+                for key, value in (item.get("params") or {}).items()}
+        out.append({"id": "xml_%d_%d" % (time.time_ns(), i),
+                    "type": "function",
+                    "function": {"name": name,
+                                 "arguments": json.dumps(args, ensure_ascii=False)}})
     return out
 
 
@@ -1050,21 +1104,33 @@ class Brain:
                 _raw_content = msg.get("content") or ""
                 _xml_mode = False
                 if not tcs and _raw_content:
-                    _xml_allowed = bool(_api0.get("allow_xml_tool_fallback")) \
+                    _xml_flag = _api0.get("allow_xml_tool_fallback", True)
+                    if isinstance(_xml_flag, str):
+                        _xml_flag = _xml_flag.strip().lower() not in ("0", "false", "no", "off")
+                    _xml_allowed = bool(_xml_flag) \
+                        and bool(tool_specs) \
                         and bool(getattr(mp, "supports_xml_tools", False))
                     if "<tool_call" in _raw_content.lower():
                         if not _xml_allowed:
                             self.last_err = "当前模型返回了不兼容的工具调用格式，请切换支持结构化工具调用的模型"
                             self.last_tools_used = []
                             return self.last_err
-                        _xml_tcs = _parse_xml_tool_calls(_raw_content)
-                        if _xml_tcs:
-                            tcs = _xml_tcs
-                            _xml_mode = True
-                            print("[大脑] 供应商明确允许 XML 工具协议，解析到 %d 个调用: %s"
-                                  % (len(tcs), "、".join(
-                                      (tc.get("function") or {}).get("name", "")
-                                      for tc in tcs)), flush=True)
+                        _allowed_names = {
+                            str((item.get("function") or {}).get("name") or "")
+                            for item in (tool_specs or [])
+                        }
+                        _xml_tcs = _parse_xml_tool_calls(
+                            _raw_content, allowed_names=_allowed_names)
+                        if not _xml_tcs:
+                            self.last_err = "模型返回了无法识别的工具调用，请重试或切换支持 tools 的模型"
+                            self.last_tools_used = []
+                            return self.last_err
+                        tcs = _xml_tcs
+                        _xml_mode = True
+                        print("[大脑] 供应商明确允许 XML 工具协议，解析到 %d 个调用: %s"
+                              % (len(tcs), "、".join(
+                                  (tc.get("function") or {}).get("name", "")
+                                  for tc in tcs)), flush=True)
 
                 # 没有工具调用 → 这就是最终回复
                 if not tcs:
