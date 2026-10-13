@@ -50,6 +50,15 @@
     media.querySelectorAll('img,video').forEach(e => e.style.objectFit = settings.objectFit);
     scrim.style.background = `rgba(0,0,0,${settings.scrim})`;
   }
+  function activateStage() {
+    stage.hidden = false;
+    document.body.classList.add('vwp-active');
+    applyStyles();
+  }
+  function deactivateStage() {
+    stage.hidden = true;
+    document.body.classList.remove('vwp-active');
+  }
   function shouldPause() { return paused || settings.pauseOnHidden && document.hidden || settings.pauseOnBlur && !document.hasFocus(); }
   function controls(force) {
     const volume = settings.videoAudioEnabled ? settings.videoVolume : 0;
@@ -95,15 +104,32 @@
     if (!settings.id) { generation++; release(); stage.hidden = true; document.body.classList.remove('vwp-active'); status = '壁纸已关闭'; syncStatus(); return; }
     if (!selected) { status = '上次选择的壁纸暂未找到，配置已保留；请刷新壁纸库'; syncStatus(); return; }
     const key = selected.id + ':' + settings.sceneLiveFps;
-    stage.hidden = false; document.body.classList.add('vwp-active'); applyStyles();
     if (!force && currentKey === key) { controls(); return; }
     release(); currentKey = key; const run = ++generation; const w = selected;
-    showPreview(w);
+    // Keep the normal local layout visible while an image is decoding. The
+    // old order exposed a raw, unstyled image during cold start.
+    deactivateStage();
     if (w.type === 'image') {
-      media.replaceChildren(); const img = document.createElement('img'); img.alt = ''; img.src = w.media; media.append(img);
+      const img = document.createElement('img'); img.alt = ''; img.style.opacity = '0';
+      img.addEventListener('load', () => {
+        if (run !== generation) return;
+        img.style.opacity = '1';
+        activateStage();
+      }, { once: true });
+      img.addEventListener('error', () => {
+        if (run !== generation) return;
+        media.replaceChildren();
+        deactivateStage();
+      }, { once: true });
+      img.src = w.media; media.append(img);
+      if (img.complete && img.naturalWidth) queueMicrotask(() => img.dispatchEvent(new Event('load')));
       status = '图片壁纸已启用';
-    } else if (w.type === 'video') { status = '正在加载视频'; createVideo(w.media); }
-    else if ((w.type === 'scene' && w.sceneLive) || (w.type === 'web' && w.webLive)) {
+    } else {
+      showPreview(w);
+      activateStage();
+      if (w.type === 'video') { status = '正在加载视频'; createVideo(w.media); }
+    }
+    if ((w.type === 'scene' && w.sceneLive) || (w.type === 'web' && w.webLive)) {
       frame = document.createElement('iframe'); frame.title = 'WebWallGL 壁纸渲染器';
       // This frame contains only our trusted renderer. Workshop HTML is nested in its strict sandbox.
       frame.sandbox = 'allow-scripts allow-same-origin'; frame.style.opacity = '0';

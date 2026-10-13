@@ -190,6 +190,11 @@
   }
 
   async function boot() {
+    const bootAt = performance.now();
+    const perf = (name, extra) => {
+      try { console.info('[perf] ' + name + ' +' + Math.round(performance.now() - bootAt) + 'ms' + (extra ? ' ' + extra : '')); } catch (_) {}
+    };
+    perf('renderer-dom-ready');
     if (window.vigil?.appVersion) state.version = await window.vigil.appVersion();
     let t = 'light';
     try { t = localStorage.getItem('vigil_theme') || 'light'; } catch (_) {}
@@ -230,15 +235,11 @@
     };
 
     buildNav();
+    perf('nav-built');
     if (window.VigilAgentCenter) {
       window.VigilAgentCenter.start();
       window.vigil && window.vigil.agentCenter && window.vigil.agentCenter.onOpen(() => go('agent-center'));
     }
-
-    if (window.VigilWallpaper) window.VigilWallpaper.init();
-
-    // 加载插件前端资源（CSS/JS 自动注入）
-    await loadPluginFrontends();
 
     bindGutter(document.getElementById('gPanel'), { var: '--panel', min: 180, max: 460, def: 240, dir: 1 });
 
@@ -262,11 +263,19 @@
       if (state.page !== 'chat') go('chat');
     });
 
+    // 首屏先使用本地 shell；壁纸、插件和云端连接都异步进行。
+    void go(state.page).then(() => perf('first-usable'));
+    if (window.VigilWallpaper) setTimeout(() => window.VigilWallpaper.init(), 0);
+    void loadPluginFrontends();
+
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
     // 没有这段：换过地址（隧道 ↔ 本机）后会一直停在"未连接"，
     // 因为"有 token"就以为配好了，永远不会重新探测。
+    perf('cloud-connect-start');
+    setStatus('连接中');
     ping().then(async () => {
       if (!state.conn.ok && window.vigil && state.conn.err) {
+        setStatus('探活失败，正在重新探测');
         const again = await window.vigil.autoConnect().catch(() => null);
         if (again && again.ok) {
           await ping();
@@ -276,7 +285,8 @@
       if (state.conn.ok && lastPluginVersion === 0) await loadPluginFrontends();
       setStatus();
       refreshStats();
-      if (state.page === 'chat') go('chat');
+      perf('cloud-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
+      if (state.page === 'chat') void go('chat');
       maybeWizard();
     });
 

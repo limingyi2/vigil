@@ -63,7 +63,7 @@
   /** 探活 + 记录延迟：只用 /api/persona，它轻且一定在 */
   async function ping() {
     const t0 = Date.now();
-    const r = await get('/api/persona');
+    const r = await get('/api/persona', { timeoutMs: 5000 });
     const ms = Date.now() - t0;
     state.conn = r.ok
       ? { ok: true, ms, err: '' }

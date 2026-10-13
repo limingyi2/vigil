@@ -255,11 +255,14 @@
     // 聊天页不用 .scroll（那是给卡片列表用的），换成撑满整块的 .chatwrap
     view.className = 'chatwrap';
     topbar.className = 'topbar chat-topbar';
-    const st = pick(await get('/api/stats'));
+    // Render the local shell first. Stats and history continue asynchronously
+    // so an unavailable Brain cannot block the first usable frame.
+    let st = { ok: false, model: '—', tok_in: 0, tok_out: 0, turns: 0, avg_ms: 0, mem_hit_turns: 0, agenda: {} };
+    const statsPromise = get('/api/stats', { timeoutMs: 3000 }).then(pick).catch(() => st);
     const model = (typeof st.model === 'object' && st.model ? st.model.id || st.model.name : st.model) || '—';
     topbar.innerHTML =
       '<button class="ibtn" id="sessionsBtn" title="折叠或展开会话列表" aria-label="会话列表" aria-controls="panel">' + icon('sidebar', 'sm') + '</button>' +
-      '<span class="chat-title">工作台</span><span class="chat-model" title="' + esc(model) + '">' + esc(model) + '</span>' +
+      '<span class="chat-title">工作台</span><span class="chat-model" id="chatModel" title="' + esc(model) + '">' + esc(model) + '</span>' +
       '<div class="sp"></div><span class="chat-connection"><span class="led ' + (state.conn.ok ? 'on' : '') + '"></span>' + (API.runtime.preview ? '浏览器预览 · 未连接 Agent' : state.conn.ok ? 'Agent 已连接' : 'Agent 未连接') + '</span>' +
       '<div class="tr">' +
       '<button class="btn" id="rpBtn" aria-expanded="false" aria-controls="rp">上下文</button>' +
@@ -463,26 +466,42 @@
     const cIn = Number(st.tok_in) || 0, cOut = Number(st.tok_out) || 0;
     rp.innerHTML =
       '<div class="card" style="margin-bottom:10px"><div class="gtitle" style="padding:0 0 6px">本轮上下文</div>' +
-      '<div class="kv"><span>当前人设</span><b>' + esc(st.name || '—') + '</b></div>' +
-      '<div class="kv"><span>模型</span><b>' + esc(model) + '</b></div>' +
-      '<div class="kv"><span>今日轮次</span><b>' + esc(fmtNum(st.turns == null ? '—' : st.turns)) + '</b></div>' +
-      '<div class="kv"><span>Token 合计（今日）</span><b>' + esc(fmtNum(cIn + cOut)) + '</b></div>' +
-      '<div class="kv sub"><span>├ 入</span><b>' + esc(fmtNum(cIn)) + '</b></div>' +
-      '<div class="kv sub"><span>└ 出</span><b>' + esc(fmtNum(cOut)) + '</b></div>' +
-      '<div class="kv"><span>平均延迟</span><b>' + esc(st.avg_ms ? (st.avg_ms / 1000).toFixed(1) + 's' : '—') + '</b></div>' +
-      '<div class="kv"><span>记忆命中</span><b>' + esc((st.mem_hit_turns || 0) + ' / ' + (st.turns || 0)) + '</b></div>' +
+      '<div class="kv"><span>当前人设</span><b data-chat-stat="name">' + esc(st.name || '—') + '</b></div>' +
+      '<div class="kv"><span>模型</span><b data-chat-stat="model">' + esc(model) + '</b></div>' +
+      '<div class="kv"><span>今日轮次</span><b data-chat-stat="turns">' + esc(fmtNum(st.turns == null ? '—' : st.turns)) + '</b></div>' +
+      '<div class="kv"><span>Token 合计（今日）</span><b data-chat-stat="total">' + esc(fmtNum(cIn + cOut)) + '</b></div>' +
+      '<div class="kv sub"><span>├ 入</span><b data-chat-stat="in">' + esc(fmtNum(cIn)) + '</b></div>' +
+      '<div class="kv sub"><span>└ 出</span><b data-chat-stat="out">' + esc(fmtNum(cOut)) + '</b></div>' +
+      '<div class="kv"><span>平均延迟</span><b data-chat-stat="latency">' + esc(st.avg_ms ? (st.avg_ms / 1000).toFixed(1) + 's' : '—') + '</b></div>' +
+      '<div class="kv"><span>记忆命中</span><b data-chat-stat="memory">' + esc((st.mem_hit_turns || 0) + ' / ' + (st.turns || 0)) + '</b></div>' +
       '</div>' +
       '<div class="card" style="margin-bottom:10px"><div class="gtitle" style="padding:0 0 6px">Token 趋势 · 最近 60 轮</div>' +
       '<div class="sparkbox" id="tokSpark"><span class="muted" style="font-size:11.5px">…</span></div>' +
       '<div class="kv sub" id="tokSparkSum" style="display:none"></div>' +
       '</div>' +
       '<div class="card" style="margin-bottom:10px"><div class="gtitle" style="padding:0 0 6px">约定账本</div>' +
-      '<div class="kv"><span>共</span><b>' + esc((st.agenda && st.agenda.total) || 0) + ' 条</b></div>' +
-      '<div class="kv"><span>待办</span><b>' + esc((st.agenda && st.agenda.pending) || 0) + '</b></div>' +
-      '<div class="kv"><span>错过</span><b>' + esc((st.agenda && st.agenda.missed) || 0) + '</b></div>' +
+       '<div class="kv"><span>共</span><b data-chat-stat="agenda-total">' + esc((st.agenda && st.agenda.total) || 0) + ' 条</b></div>' +
+       '<div class="kv"><span>待办</span><b data-chat-stat="agenda-pending">' + esc((st.agenda && st.agenda.pending) || 0) + '</b></div>' +
+       '<div class="kv"><span>错过</span><b data-chat-stat="agenda-missed">' + esc((st.agenda && st.agenda.missed) || 0) + '</b></div>' +
       '</div>' +
       (st.last_err ? '<div class="card"><div class="gtitle" style="padding:0 0 6px">最近错误</div>' +
         '<div class="mono" style="font-size:11.5px;color:var(--err)">' + esc(String(st.last_err).slice(0, 120)) + '</div></div>' : '');
+
+    void statsPromise.then((fresh) => {
+      if (!fresh || !fresh.ok || state.page !== 'chat') return;
+      st = fresh;
+      const m = (typeof st.model === 'object' && st.model ? st.model.id || st.model.name : st.model) || '—';
+      const modelEl = topbar.querySelector('#chatModel');
+      if (modelEl) { modelEl.textContent = m; modelEl.title = m; }
+      const put = (key, value) => { const el = rp.querySelector('[data-chat-stat="' + key + '"]'); if (el) el.textContent = value; };
+      const inTok = Number(st.tok_in) || 0, outTok = Number(st.tok_out) || 0;
+      put('name', st.name || '—'); put('model', m); put('turns', fmtNum(st.turns == null ? '—' : st.turns));
+      put('total', fmtNum(inTok + outTok)); put('in', fmtNum(inTok)); put('out', fmtNum(outTok));
+      put('latency', st.avg_ms ? (st.avg_ms / 1000).toFixed(1) + 's' : '—');
+      put('memory', (st.mem_hit_turns || 0) + ' / ' + (st.turns || 0));
+      put('agenda-total', ((st.agenda && st.agenda.total) || 0) + ' 条');
+      put('agenda-pending', (st.agenda && st.agenda.pending) || 0); put('agenda-missed', (st.agenda && st.agenda.missed) || 0);
+    });
 
     // 右栏「我的草稿」：创作模式生成的所有草稿，点一条就回到对话流里
     // 继续看/改。没有草稿时整卡隐藏，不占地方。
@@ -1103,7 +1122,7 @@
       else pop.hidden = true;
     });
 
-    await loadMsgs(true);
+    void loadMsgs(true);
     clearInterval(chatTimer);
     chatTimer = setInterval(() => {
       if (state.page === 'chat' && state.conn.ok) loadMsgs(false);
