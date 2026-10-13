@@ -231,6 +231,8 @@ def probe_provider(base, key, timeout=6):
         code = getattr(e, "code", None)
         if code in (401, 403):
             return "auth", "服务商拒绝了这把密钥（HTTP %s）" % code
+        if code == 404:
+            return "unknown", "服务商没有兼容的 /models 接口（HTTP 404）"
         return "unknown", "%s: %s" % (type(e).__name__, str(e)[:80])
 
 

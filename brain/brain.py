@@ -1044,20 +1044,27 @@ class Brain:
                 msg = _j["choices"][0]["message"]
                 tcs = msg.get("tool_calls") or []
 
-                # XML 兜底：部分供应商（小米 MiMo 等）不支持结构化 tool_calls，
-                # 模型会在正文里输出 <tool_call><function=Bash>...</tool_call>。
-                # 解析出来走同一条执行链路，剥掉标签后的正文才是给用户看的。
+                # XML-like text is not a tool protocol unless the provider has
+                # explicitly opted in.  Executing arbitrary command-looking text
+                # from a normal content field would bypass the provider contract.
                 _raw_content = msg.get("content") or ""
                 _xml_mode = False
                 if not tcs and _raw_content:
-                    _xml_tcs = _parse_xml_tool_calls(_raw_content)
-                    if _xml_tcs:
-                        tcs = _xml_tcs
-                        _xml_mode = True
-                        print("[大脑] 从正文解析到 %d 个 XML 工具调用: %s"
-                              % (len(tcs), "、".join(
-                                  (tc.get("function") or {}).get("name", "")
-                                  for tc in tcs)), flush=True)
+                    _xml_allowed = bool(_api0.get("allow_xml_tool_fallback")) \
+                        and bool(getattr(mp, "supports_xml_tools", False))
+                    if "<tool_call" in _raw_content.lower():
+                        if not _xml_allowed:
+                            self.last_err = "当前模型返回了不兼容的工具调用格式，请切换支持结构化工具调用的模型"
+                            self.last_tools_used = []
+                            return self.last_err
+                        _xml_tcs = _parse_xml_tool_calls(_raw_content)
+                        if _xml_tcs:
+                            tcs = _xml_tcs
+                            _xml_mode = True
+                            print("[大脑] 供应商明确允许 XML 工具协议，解析到 %d 个调用: %s"
+                                  % (len(tcs), "、".join(
+                                      (tc.get("function") or {}).get("name", "")
+                                      for tc in tcs)), flush=True)
 
                 # 没有工具调用 → 这就是最终回复
                 if not tcs:
@@ -1173,6 +1180,13 @@ class Brain:
             self.last_err = "%s: %s" % (type(e).__name__, str(e)[:120])
             print("[大脑] 原生FC失败：%s" % self.last_err, flush=True)
             if tool_specs:
+                # A provider that rejects the native tools schema must be
+                # identified as a capability mismatch.  Do not silently retry
+                # as if the tool request had succeeded, and do not expose the
+                # provider's raw XML/content as an execution result.
+                if getattr(e, "status", None) in (400, 404, 422):
+                    self.last_tools_used = []
+                    return "当前模型或服务商不支持结构化工具调用，请切换支持 tools 的模型"
                 # 🔴 **降级：去掉工具表再来一次。**
                 #
                 # 上游不认 tools 的时候（换模型/换供应商、参数被静默拒绝、

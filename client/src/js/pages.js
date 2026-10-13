@@ -2288,9 +2288,9 @@
     // 本地操控不再是设置里的一页：确认走聊天气泡，权限/目录/工具开关
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：云端 brain 没有 /api/device/*（点了就是 no such api）。
-    const subs = [['conn', '连接与设备'], ['model', '模型与服务商'], ['sync', '云端同步'], ['danger', '危险操作'], ['about', '关于']];
+    const subs = [['conn', '连接与设备'], ['model', '模型与服务商'], ['wechat', '微信聊天集成'], ['sync', '云端同步'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'wechat' ? 'chat' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('连接与设备', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -2410,11 +2410,16 @@
       const mb = () => (hasCloud && state.mSrc === 'cloud') ? 'cloud' : null;
       const mget = (p) => get(p, { base: mb() });
       const mpost = (p, b) => post(p, b, { base: mb() });
-      const qs = [];
-      if (pv && pv.base) qs.push('base=' + encodeURIComponent(pv.base));
-      if (pv && pv.provider) qs.push('provider=' + encodeURIComponent(pv.provider));
-      const r = pick(await mget('/api/models' + (qs.length ? '?' + qs.join('&') : '')));
-      if (!r.current && !r.providers) { v.innerHTML = errBox('读不到模型配置', r._err || '先在「连接与设备」里把地址和 token 填对'); return; }
+      const r = pick(await mpost('/api/models/list', {
+        base: (pv && pv.base) || '', provider: (pv && pv.provider) || ''
+      }));
+      if (!r.current && !r.providers) {
+        const st = Number(r._status || 0);
+        const msg = st === 404 ? '当前 Brain 没有模型列表接口，请升级 Brain 或检查客户端版本' :
+          (st === 401 || st === 403 ? 'Brain 拒绝了请求，请检查 Token 或设备权限' :
+            (r._err || '先在「连接与设备」里把地址和 token 填对'));
+        v.innerHTML = errBox('读不到模型配置', msg); return;
+      }
       const cur = r.current || {};
       const provs = r.providers || [];
       const groups = r.groups || {};
@@ -2433,6 +2438,17 @@
         if (c.key_belongs_to && c.key_belongs_to !== c.provider)
           return '⚠ 当前这把是「' + esc(provName(c.key_belongs_to)) + '」的密钥——这样她是调不通的，先填这一家的 key';
         return '这把就是当前服务商的密钥。切回存过密钥的服务商不用重填';
+      };
+      const modelErr = (rr) => {
+        const raw = String(rr && (rr._err || rr.err || '') || '');
+        const st = Number(rr && rr._status || 0);
+        if (st === 404 || /no such api|不存在|not found/i.test(raw)) return '当前 Brain 没有这个模型接口，请升级 Brain 或检查客户端版本';
+        if (/HTTP(?: Error)?\s*404|\/models 接口/i.test(raw)) return '服务商没有兼容的模型列表接口，请检查 Base URL 和 Brain 版本';
+        if (st === 401 || st === 403) return 'Brain 拒绝了请求：请检查 Token 或设备权限';
+        if (st >= 500) return 'Brain 内部错误：' + raw.slice(0, 100);
+        if (/timeout|timed out|连接|connect|network|不可达/i.test(raw)) return '服务商不可达或网络超时：' + raw.slice(0, 100);
+        if (/401|403|密钥|key|auth/i.test(raw)) return '服务商拒绝了密钥或模型配置：' + raw.slice(0, 100);
+        return raw || '模型列表暂时不可用，请检查 Brain 版本、服务商地址和模型配置';
       };
       const ol = cur.ollama || {};
       const dl = cur.delegation || {};
@@ -2504,6 +2520,8 @@
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center">' +
         '<button class="btn fill md" id="mSave">保存并生效（免重启）</button>' +
         '<button class="btn oline md" id="mPull">重新拉取模型</button>' +
+        '<button class="btn oline md" id="mTest">测试连接</button>' +
+        '<button class="btn oline md" id="mDeleteKey">删除此家密钥</button>' +
         '<span class="muted" id="mRes" style="font-size:12px">来源：' + esc(r.source || '') + ' · 共 ' + esc(r.count || 0) + ' 个' +
         (r.err ? ' · ' + esc(String(r.err).slice(0, 60)) : '') + '</span></div>';
       const provSel = v.querySelector('#mProv');
@@ -2522,8 +2540,8 @@
             return '<option value="' + esc(mid) + '">' + esc(mid) + '</option>';
           }).join('');
         });
-        mRes.textContent = '来源：' + esc(rr.source || '') + ' · 共 ' + esc(rr.count || 0) + ' 个' +
-          (rr.err ? ' · ' + esc(String(rr.err).slice(0, 60)) : '');
+        mRes.textContent = rr.groups ? ('来源：' + esc(rr.source || '') + ' · 共 ' + esc(rr.count || 0) + ' 个' +
+          (rr.err ? ' · ' + esc(String(rr.err).slice(0, 60)) : '')) : ('✗ ' + esc(modelErr(rr)));
       };
       // 云端/本机切换：两边是两份独立配置，整页重画
       if (hasCloud) v.querySelectorAll('#mSrc button').forEach((b) => b.addEventListener('click', () => {
@@ -2623,23 +2641,38 @@
           keyHint.innerHTML = '「' + esc(provName(pk)) + '」还没存过密钥——先在密钥框填它的 key，再点「重新拉取模型」';
           return;
         }
-        const rr = pick(await mget('/api/models?base=' + encodeURIComponent(baseInp.value.trim()) + '&provider=' + encodeURIComponent(pk)));
+        const rr = pick(await mpost('/api/models/list', { base: baseInp.value.trim(), provider: pk }));
         if (rr.groups) applyList(rr);
-        else mRes.textContent = '清单没拉到：' + (rr.err || rr._err || '先填这一家的密钥');
+        else mRes.textContent = '✗ ' + modelErr(rr);
       };
       provSel.addEventListener('change', provPull);
       v.querySelector('#mPull').addEventListener('click', async () => {
         const base = baseInp.value.trim();
         const pk = provSel.value;
         const key = keyInp.value.trim();
-        const rr = pick(await mget('/api/models?force=1&base=' + encodeURIComponent(base) +
-          '&provider=' + encodeURIComponent(pk) +
-          (key ? '&key=' + encodeURIComponent(key) : '')));
+        const rr = pick(await mpost('/api/models/list', {
+          force: true, base: base, provider: pk, api_key: key
+        }));
         toast(rr.groups && rr.source !== 'fallback' ? '已重新拉取'
-          : (rr.err ? '拉取失败：' + String(rr.err).slice(0, 60) : '拉取失败'));
+          : '拉取失败：' + modelErr(rr));
         // 带上刚用的 base/provider 重画，清单别弹回已保存的旧家；
         // key 不回传（明文不进 URL），服务端存过这家的会自己认领。
         model({ base: base, provider: pk });
+      });
+      v.querySelector('#mTest').addEventListener('click', async () => {
+        const rr = pick(await mpost('/api/models/test', {
+          provider: provSel.value, base: baseInp.value.trim(), api_key: keyInp.value.trim()
+        }));
+        mRes.textContent = rr.ok ? '✓ 连接正常' : '✗ ' + modelErr(rr);
+      });
+      v.querySelector('#mDeleteKey').addEventListener('click', async () => {
+        const pk = provSel.value;
+        if (!hasKey(pk)) { mRes.textContent = '当前服务商没有已保存的密钥'; return; }
+        if (!confirm('删除「' + provName(pk) + '」的已保存密钥？')) return;
+        const rr = pick(await mpost('/api/models/key/delete', { provider: pk }));
+        if (!rr.ok) { mRes.textContent = '✗ ' + modelErr(rr); return; }
+        toast('已删除该服务商密钥');
+        model({ provider: pk, base: baseInp.value.trim() });
       });
       // 语音合成音色（含训练音色）：/api/voices 是死数据清单，永远打得开。
       // pick() 返回的是普通对象不是 Promise，直接 await 拿结果。
@@ -2813,6 +2846,71 @@
       } catch (e) { /* 无云端配置等，静默 */ }
     }
 
+    // ── 微信聊天集成：路由、开关、渠道设置和连接诊断 ───────────────
+    async function wechat() {
+      ctx.topbar.querySelector('h1').textContent = '微信聊天集成';
+      const rt = pick(await get('/api/route'));
+      const route = rt.wechat_route || 'cloud';
+      const enabled = rt.enabled !== false;
+      const fwd = rt.forward || {};
+      const model = rt.model || '由 Brain 当前模型配置提供';
+      const models = rt.models || { chat: model };
+      v.innerHTML =
+        '<div class="card" style="margin-bottom:14px">' +
+        '<div class="kv"><span>集成状态</span><b id="wxState">' + (enabled ? '已启用' : '已停用') + '</b></div>' +
+        '<div class="kv"><span>当前路由</span><b>' + (route === 'local' ? '本机大脑优先' : '云端大脑优先') + '</b></div>' +
+        '<div class="kv"><span>对话模型</span><b class="mono" style="font-size:11px">' + esc(models.chat || model) + '</b></div>' +
+        '<div class="kv"><span>视觉 / 生图</span><b class="mono" style="font-size:11px">' + esc(models.vision || '未配置') + ' / ' + esc(models.image || '未配置') + '</b></div>' +
+        '<div class="kv"><span>Bridge 状态</span><b>' + esc(fwd.online ? '在线' : '未连接') + '</b></div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">' +
+        '<button class="btn ' + (enabled ? 'fill' : 'oline') + ' md" id="wxToggle">' + (enabled ? '停用微信聊天' : '启用微信聊天') + '</button>' +
+        '<button class="btn ' + (route === 'cloud' ? 'fill' : 'oline') + ' md" id="wxCloud">云端模型</button>' +
+        '<button class="btn ' + (route === 'local' ? 'fill' : 'oline') + ' md" id="wxLocal">本机模型</button>' +
+        '<button class="btn oline md" id="wxCheck">连接检测</button><span class="muted" id="wxRes"></span></div></div>' +
+        '<div class="sec">私聊与群聊</div><div class="card" style="margin-bottom:14px">' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px">两种渠道独立保存说话档位和功能开关；不会跟随桌面聊天模型下拉切换。模型引用来自「模型与服务商」中的已保存配置，微信模块不重复保存 API Key。</div>' +
+        '<div class="grid g2"><div><b>微信私聊说话档位</b><input class="input" id="wxPrivate" type="number" min="1" max="10" value="5"></div><div><b>微信群聊说话档位</b><input class="input" id="wxGroup" type="number" min="1" max="10" value="5"></div></div>' +
+        '<button class="btn oline md" id="wxSaveChatty" style="margin-top:10px">保存渠道设置</button></div>' +
+        '<div class="sec">Bridge 配置与说明</div><div class="card">' +
+        '<div class="kv"><span>连接配置</span><span class="mono" style="font-size:11px">使用当前 Brain 地址与设备 Token</span></div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">Bridge 进程仍由现有微信桥接服务管理。本页只读连接状态并切换路由，不自动安装、执行或修改 Bridge 命令。微信不支持的版本、扫码限制和外部进程风险请以桥接文档为准。</div>' +
+        '<div style="margin-top:10px"><b>最近 Brain 日志</b><div id="wxLogs" class="muted mono" style="font-size:11px;max-height:160px;overflow:auto;margin-top:6px">加载中…</div></div></div>';
+      const loadChatty = async () => {
+        const a = pick(await get('/api/chatty?src=wechat'));
+        const b = pick(await get('/api/chatty?src=wechat_group'));
+        v.querySelector('#wxPrivate').value = a.level || 5;
+        v.querySelector('#wxGroup').value = b.level || 5;
+      };
+      loadChatty();
+      const logs = pick(await get('/api/logs?src=server&n=20'));
+      v.querySelector('#wxLogs').textContent = logs.ok && logs.items?.length
+        ? logs.items.map((x) => String(x.msg || x.where || '').slice(0, 180)).join('\n')
+        : (logs.err || '暂无日志');
+      const sendRoute = async (next) => {
+        const r = pick(await post('/api/route', { wechat_route: next, enabled: enabled }));
+        v.querySelector('#wxRes').textContent = r.ok ? '已保存' : (r.err || '保存失败');
+        if (r.ok) ctx.refresh();
+      };
+      v.querySelector('#wxCloud').addEventListener('click', () => sendRoute('cloud'));
+      v.querySelector('#wxLocal').addEventListener('click', () => sendRoute('local'));
+      v.querySelector('#wxToggle').addEventListener('click', async () => {
+        const r = pick(await post('/api/route', { wechat_route: route, enabled: !enabled }));
+        v.querySelector('#wxRes').textContent = r.ok ? '已保存' : (r.err || '保存失败');
+        if (r.ok) ctx.refresh();
+      });
+      v.querySelector('#wxCheck').addEventListener('click', async () => {
+        const r = pick(await get('/api/route'));
+        v.querySelector('#wxRes').textContent = r.ok ? ('Brain 可达 · Bridge ' + (r.forward?.online ? '在线' : '未连接')) : (r.err || '连接失败');
+      });
+      v.querySelector('#wxSaveChatty').addEventListener('click', async () => {
+        const a = Number(v.querySelector('#wxPrivate').value);
+        const b = Number(v.querySelector('#wxGroup').value);
+        await post('/api/chatty', { src: 'wechat', level: a });
+        await post('/api/chatty', { src: 'wechat_group', level: b });
+        toast('微信私聊和群聊设置已保存');
+      });
+    }
+
     // ── 云端同步（M5）：本地大脑 ↔ 云端权威源 ─────────────────
     // 本地优先架构：本地大脑跑着，记忆/人设的改动走 outbox 上云，
     // 云端的增量定时拉下来。这里管"云端在哪 + 主人钥匙 + 同步状态"，
@@ -2885,7 +2983,7 @@
       });
     }
 
-    const draw = { conn, model, sync, danger, about };
+    const draw = { conn, model, wechat, sync, danger, about };
     bindLi(ctx.panel, (k, n) => {
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[k] && draw[k]();

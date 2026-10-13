@@ -633,6 +633,26 @@ def _wechat_route():
         return "cloud"
 
 
+def _wechat_enabled():
+    try:
+        return bool((API_CFG or {}).get("wechat_enabled", True))
+    except Exception:
+        return True
+
+
+def _set_wechat_enabled(v):
+    val = bool(v)
+    API_CFG["wechat_enabled"] = val
+    cfg = {}
+    try:
+        cfg = json.load(open(config_path(), encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    cfg["wechat_enabled"] = val
+    with open(config_path(), "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
 def _set_wechat_route(v):
     """热改 + 落盘。落盘照 /api/persona/apply 的写法：整份读出、改键、写回。"""
     if v not in ("cloud", "local"):
@@ -1690,9 +1710,11 @@ def start_remote_api(brain):
                     return
                 if path == "/api/route":
                     # M3：一键切"微信消息谁答"。热改 + 落盘，秒生效不重启。
-                    _v = str(body.get("wechat_route") or "")
+                    _v = str(body.get("wechat_route") or body.get("route") or "")
                     try:
                         _set_wechat_route(_v)
+                        if "enabled" in body:
+                            _set_wechat_enabled(body.get("enabled"))
                     except Exception as e:
                         self._json(400, {"ok": False, "err": str(e)[:80]})
                         return
@@ -1700,7 +1722,77 @@ def start_remote_api(brain):
                     print("[路由] wechat_route -> %s（本地在线：%s）"
                           % (_v, _fwd.HUB.online()), flush=True)
                     self._json(200, {"ok": True, "wechat_route": _v,
+                                     "enabled": _wechat_enabled(),
                                      "forward": _fwd.HUB.stats()})
+                    return
+                if path == "/api/models/list":
+                    # Model discovery accepts a freshly entered key in the JSON
+                    # body.  Do not put credentials in a query string where a
+                    # proxy or access log could retain them.
+                    try:
+                        force = bool(body.get("force"))
+                        p_base = str(body.get("base") or "").strip()
+                        p_key = str(body.get("api_key") or "").strip()
+                        p_prov = str(body.get("provider") or "").strip()
+                        cur = model_hub.current(api_config)
+                        if p_base:
+                            if not p_key and p_prov in model_hub.PROVIDERS \
+                                    and model_hub.has_provider_key(api_config, p_prov):
+                                p_key = model_hub.provider_key(api_config, p_prov)
+                            cur = dict(cur, api_base=p_base,
+                                       api_key=p_key or cur.get("api_key") or "")
+                        lst = model_hub.list_models(cur["api_base"],
+                                                    cur["api_key"], force=force)
+                        self._json(200, {
+                            "ok": True, "current": model_hub.public_current(api_config),
+                            "providers": [{"key": k, "name": v["name"],
+                                           "base": v["base"]}
+                                          for k, v in model_hub.PROVIDERS.items()],
+                            "groups": lst["groups"], "source": lst["source"],
+                            "count": lst["count"], "err": lst["err"],
+                        })
+                    except Exception as e:
+                        errlog.log_exc("api/models/list", e)
+                        self._json(500, {"ok": False,
+                                         "err": "模型列表请求失败，请检查 Brain 版本和服务商配置"})
+                    return
+                if path == "/api/models/test":
+                    try:
+                        p = str(body.get("provider") or "").strip()
+                        base = str(body.get("base") or "").strip()
+                        key = str(body.get("api_key") or "").strip()
+                        if p in model_hub.PROVIDERS and not key:
+                            key = model_hub.provider_key(api_config, p)
+                        if not base and p in model_hub.PROVIDERS:
+                            base = model_hub.PROVIDERS[p].get("base") or ""
+                        state, detail = model_hub.probe_provider(base, key)
+                        self._json(200, {"ok": state == "ok", "state": state,
+                                         "provider": p, "detail": detail,
+                                         "err": detail if state != "ok" else ""})
+                    except Exception as e:
+                        errlog.log_exc("api/models/test", e)
+                        self._json(500, {"ok": False, "state": "error",
+                                         "err": "模型连接测试失败，请检查 Brain 版本和服务商配置"})
+                    return
+                if path == "/api/models/key/delete":
+                    try:
+                        p = str(body.get("provider") or "").strip()
+                        if p not in model_hub.PROVIDERS:
+                            self._json(400, {"ok": False, "err": "未知服务商"})
+                            return
+                        bag = dict(api_config.get("api_keys") or {})
+                        removed = bool(str(bag.pop(p, "") or "").strip())
+                        if str(api_config.get("provider") or "") == p:
+                            api_config["api_key"] = ""
+                        api_config["api_keys"] = bag
+                        model_hub.save(api_config)
+                        API_CFG.clear()
+                        API_CFG.update(_runtime.api_cfg_subset(api_config))
+                        self._json(200, {"ok": True, "removed": removed,
+                                         "current": model_hub.public_current(api_config)})
+                    except Exception as e:
+                        errlog.log_exc("api/models/key/delete", e)
+                        self._json(500, {"ok": False, "err": "删除密钥失败"})
                     return
                 if path == "/api/stickers/collect":
                     # 表情包改版（2026-10-09）：桥接把聊天里**每张**图送进
@@ -1769,6 +1861,12 @@ def start_remote_api(brain):
                     # 双重注入（快递单号注册两次、插件提醒说两遍）。
                     # 只有 wechat / wechat_group 参与路由；app 渠道的客户端
                     # 连的就是云端，永远直答。离线 → 落到下面正常直答。
+                    if _src in ("wechat", "wechat_group") and not _wechat_enabled():
+                        _msg = "微信聊天集成已停用，请在设置中重新启用"
+                        self._json(200, {"reply": _msg,
+                                         "messages": split_messages(_msg),
+                                         "mode": "微信已停用", "err": ""})
+                        return
                     if _src in ("wechat", "wechat_group") \
                             and _wechat_route() == "local":
                         import ws_forward as _fwd
@@ -2019,9 +2117,25 @@ def start_remote_api(brain):
                     self.end_headers()
                     try:
                         with _chat_lock():
-                            for evt in _LOCAL["brain"].stream_chat(_in_text, src=_src):
-                                self.wfile.write(("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                            # The streaming provider path does not carry a tools
+                            # schema.  Route requests that may need tools through
+                            # the native non-streaming ReAct loop, so a provider
+                            # cannot leak XML-like tool text into the chat UI.
+                            # This only changes transport for tool-shaped prompts;
+                            # ordinary chat keeps the existing SSE path.
+                            import tools as _chat_tools
+                            if _chat_tools.schema_needed(_in_text):
+                                _ans, _mode = _LOCAL["brain"].chat(
+                                    _in_text, src=_src)
+                                _evt = {"type": "done", "text": _ans or "",
+                                        "mode": _mode or ""}
+                                self.wfile.write(("data: " + json.dumps(
+                                    _evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
                                 self.wfile.flush()
+                            else:
+                                for evt in _LOCAL["brain"].stream_chat(_in_text, src=_src):
+                                    self.wfile.write(("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                                    self.wfile.flush()
                     except _Busy:
                         self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "她正忙着，等会儿再说"}, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     except Exception as e:
@@ -3030,7 +3144,15 @@ def start_remote_api(brain):
             elif path == "/api/route":
                 # M3：当前路由 + 转发通道状态（客户端设置页显示用）
                 import ws_forward as _fwd
+                _vis = (API_CFG or {}).get("vision")
+                _vis = _vis if isinstance(_vis, dict) else {}
                 self._json(200, {"wechat_route": _wechat_route(),
+                                 "enabled": _wechat_enabled(),
+                                 "model": str((API_CFG or {}).get("model") or ""),
+                                 "provider": str((API_CFG or {}).get("provider") or ""),
+                                 "models": {"chat": str((API_CFG or {}).get("model") or ""),
+                                            "vision": str(_vis.get("model") or ""),
+                                            "image": str((API_CFG or {}).get("image_model") or "")},
                                  "forward": _fwd.HUB.stats()})
             elif path.startswith("/api/sync/"):
                 # 同步拉取（权威源 → 本地）。只读接口，设备 token 也能用：

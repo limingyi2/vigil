@@ -56,6 +56,10 @@ class ModelProvider(object):
 
     #: 这台执行端的能力声明（供 UI/上层做功能降级）
     supports_tools = True
+    # XML-like tool text is never treated as an executable protocol by default.
+    # Providers must opt in explicitly after proving that format is part of their
+    # supported API contract; native structured tool_calls remain the only default.
+    supports_xml_tools = False
     supports_stream = True
     supports_vision = False
     kind = "base"
@@ -75,6 +79,8 @@ class ModelProvider(object):
         return {
             "kind": self.kind,
             "tools": self.supports_tools,
+            "native_tool_calls": self.supports_tools,
+            "xml_tool_text": self.supports_xml_tools,
             "stream": self.supports_stream,
             "vision": self.supports_vision,
         }
