@@ -2507,7 +2507,9 @@
         '<div class="field"><label>接口地址</label><input class="input mono" id="mBase" value="' + esc(cur.api_base || '') + '">' +
         '<div class="muted" style="font-size:11.5px">跟着服务商自动换，只有「自定义」才需要手填</div></div>' +
         '<div class="field"><label>密钥</label><input class="input" id="mKey" type="password" placeholder="' + (cur.api_key_set ? '已有一把，留空 = 不改' : '还没配') + '">' +
-        '<div class="muted" style="font-size:11.5px" id="mKeyHint">' + keyHintText(cur) + '</div></div>' +
+        '<div class="muted" style="font-size:11.5px" id="mKeyHint">' + keyHintText(cur) + '</div>' +
+        '<div style="font-size:11.5px;margin-top:5px" id="mKeyState">' +
+        (cur.api_key_set ? '状态：已保存 · 掩码：<span class="mono">' + esc(cur.api_key || '********') + '</span>' : '状态：未配置') + '</div></div>' +
         '</div>' +
         '<div class="sec">模型分配（下拉选或直接输入；本地部署的 Qwen 填它的模型名）</div>' +
         '<div class="grid g3">' +
@@ -2529,6 +2531,7 @@
       const keyInp = v.querySelector('#mKey');
       const keyHint = v.querySelector('#mKeyHint');
       const mRes = v.querySelector('#mRes');
+      const mKeyState = v.querySelector('#mKeyState');
       // 清单就地换血：只刷四个下拉的候选和来源行，不整页重画 —— 整页重画
       // 会把用户刚输到一半的密钥洗掉。
       const applyList = (rr) => {
@@ -2660,10 +2663,12 @@
         model({ base: base, provider: pk });
       });
       v.querySelector('#mTest').addEventListener('click', async () => {
+        mKeyState.textContent = '状态：测试中…';
         const rr = pick(await mpost('/api/models/test', {
           provider: provSel.value, base: baseInp.value.trim(), api_key: keyInp.value.trim()
         }));
         mRes.textContent = rr.ok ? '✓ 连接正常' : '✗ ' + modelErr(rr);
+        mKeyState.textContent = rr.ok ? '状态：测试成功' : '状态：测试失败 · ' + modelErr(rr);
       });
       v.querySelector('#mDeleteKey').addEventListener('click', async () => {
         const pk = provSel.value;
@@ -2859,7 +2864,7 @@
         '<div class="card" style="margin-bottom:14px">' +
         '<div class="kv"><span>集成状态</span><b id="wxState">' + (enabled ? '已启用' : '已停用') + '</b></div>' +
         '<div class="kv"><span>当前路由</span><b>' + (route === 'local' ? '本机大脑优先' : '云端大脑优先') + '</b></div>' +
-        '<div class="kv"><span>对话模型</span><b class="mono" style="font-size:11px">' + esc(models.chat || model) + '</b></div>' +
+        '<div class="kv"><span>Brain 全局对话模型</span><b class="mono" style="font-size:11px">' + esc(models.chat || model) + '</b></div>' +
         '<div class="kv"><span>视觉 / 生图</span><b class="mono" style="font-size:11px">' + esc(models.vision || '未配置') + ' / ' + esc(models.image || '未配置') + '</b></div>' +
         '<div class="kv"><span>Bridge 状态</span><b>' + esc(fwd.online ? '在线' : '未连接') + '</b></div>' +
         '<div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">' +
@@ -2868,7 +2873,7 @@
         '<button class="btn ' + (route === 'local' ? 'fill' : 'oline') + ' md" id="wxLocal">本机模型</button>' +
         '<button class="btn oline md" id="wxCheck">连接检测</button><span class="muted" id="wxRes"></span></div></div>' +
         '<div class="sec">私聊与群聊</div><div class="card" style="margin-bottom:14px">' +
-        '<div class="muted" style="font-size:11.5px;margin-bottom:8px">两种渠道独立保存说话档位和功能开关；不会跟随桌面聊天模型下拉切换。模型引用来自「模型与服务商」中的已保存配置，微信模块不重复保存 API Key。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px">当前微信仍使用 Brain 的全局模型配置；本页展示真实来源、路由和 Bridge 状态，不宣称已经完成微信独立模型。私聊和群聊的说话档位独立保存。后续独立模型只需增加渠道 model_ref，不重复保存 API Key。</div>' +
         '<div class="grid g2"><div><b>微信私聊说话档位</b><input class="input" id="wxPrivate" type="number" min="1" max="10" value="5"></div><div><b>微信群聊说话档位</b><input class="input" id="wxGroup" type="number" min="1" max="10" value="5"></div></div>' +
         '<button class="btn oline md" id="wxSaveChatty" style="margin-top:10px">保存渠道设置</button></div>' +
         '<div class="sec">Bridge 配置与说明</div><div class="card">' +

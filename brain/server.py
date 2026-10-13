@@ -27,6 +27,20 @@ from runtime import (
 # （vision/voice/persona_file/uapi 已经栽过四回）。
 import runtime as _runtime
 
+
+def _refresh_api_cfg(src):
+    """Refresh the shared config without exposing an empty intermediate dict.
+
+    Brain request threads read the same API_CFG object.  clear()+update() made
+    a concurrent request observe a zero-key config and fail as if credentials
+    were missing.  Publish new values first, then remove keys that disappeared.
+    """
+    next_cfg = _runtime.api_cfg_subset(src)
+    API_CFG.update(next_cfg)
+    for key in list(API_CFG):
+        if key not in next_cfg:
+            API_CFG.pop(key, None)
+
 # 模型中枢 + 错误日志：App 在手机上换模型、导出日志都走这两个模块。
 # 异常钩子装上后，线程里静默死掉的异常也会留下记录
 import model_hub
@@ -1736,15 +1750,17 @@ def start_remote_api(brain):
                         p_prov = str(body.get("provider") or "").strip()
                         cur = model_hub.current(api_config)
                         if p_base:
-                            if not p_key and p_prov in model_hub.PROVIDERS \
-                                    and model_hub.has_provider_key(api_config, p_prov):
-                                p_key = model_hub.provider_key(api_config, p_prov)
-                            cur = dict(cur, api_base=p_base,
-                                       api_key=p_key or cur.get("api_key") or "")
+                            if not p_key and p_prov in model_hub.PROVIDERS:
+                                p_key = model_hub.provider_key(api_config, p_prov,
+                                                               p_base)
+                            # An explicit Base URL never inherits the active
+                            # provider's key.  Empty means the endpoint is
+                            # intentionally probed without credentials.
+                            cur = dict(cur, api_base=p_base, api_key=p_key or "")
                         lst = model_hub.list_models(cur["api_base"],
                                                     cur["api_key"], force=force)
                         self._json(200, {
-                            "ok": True, "current": model_hub.public_current(api_config),
+                            "ok": bool(lst.get("ok")), "current": model_hub.public_current(api_config),
                             "providers": [{"key": k, "name": v["name"],
                                            "base": v["base"]}
                                           for k, v in model_hub.PROVIDERS.items()],
@@ -1762,9 +1778,11 @@ def start_remote_api(brain):
                         base = str(body.get("base") or "").strip()
                         key = str(body.get("api_key") or "").strip()
                         if p in model_hub.PROVIDERS and not key:
-                            key = model_hub.provider_key(api_config, p)
+                            key = model_hub.provider_key(api_config, p, base)
                         if not base and p in model_hub.PROVIDERS:
                             base = model_hub.PROVIDERS[p].get("base") or ""
+                            if not key:
+                                key = model_hub.provider_key(api_config, p, base)
                         state, detail = model_hub.probe_provider(base, key)
                         self._json(200, {"ok": state == "ok", "state": state,
                                          "provider": p, "detail": detail,
@@ -1782,12 +1800,14 @@ def start_remote_api(brain):
                             return
                         bag = dict(api_config.get("api_keys") or {})
                         removed = bool(str(bag.pop(p, "") or "").strip())
+                        bases = dict(api_config.get("api_key_bases") or {})
+                        bases.pop(p, None)
                         if str(api_config.get("provider") or "") == p:
                             api_config["api_key"] = ""
                         api_config["api_keys"] = bag
+                        api_config["api_key_bases"] = bases
                         model_hub.save(api_config)
-                        API_CFG.clear()
-                        API_CFG.update(_runtime.api_cfg_subset(api_config))
+                        _refresh_api_cfg(api_config)
                         self._json(200, {"ok": True, "removed": removed,
                                          "current": model_hub.public_current(api_config)})
                     except Exception as e:
@@ -2423,18 +2443,7 @@ def start_remote_api(brain):
                             api_config.clear()
                             api_config.update(new_cfg)
                             try:
-                                API_CFG.clear()
-                                # 🔴 这里**不能重抄一份白名单**。
-                                # 比如漏掉 voice / uapi / persona_file ——
-                                # update 是**整体替换**，少一个键那个键就当場消失。
-                                # 后果：换一次模型，语音配置和 uapi 静默失效；
-                                # 最要命的是 persona_file —— Brain 只认 API_CFG 里的它，
-                                # 丢了之后 key_from_config 一律返回 "default"，
-                                # 于是**所有分区名都算成空**：换人设不换记忆、
-                                # 换渠道不换存档，看着分区建了，其实全写进同一份。
-                                # 白名单抄一次错一次（vision、voice、persona_file 已栽过三回），
-                                # 所以唯一真源只能是 runtime 那个列表本身。
-                                API_CFG.update(_runtime.api_cfg_subset(api_config))
+                                _refresh_api_cfg(api_config)
                             except Exception:
                                 pass
                             print("[模型] " + "；".join(changed), flush=True)
@@ -2473,8 +2482,7 @@ def start_remote_api(brain):
                                 api_config.pop(_k, None)
                             api_config.update(nc)
                             try:
-                                API_CFG.clear()
-                                API_CFG.update(_runtime.api_cfg_subset(api_config))
+                                _refresh_api_cfg(api_config)
                             except Exception:
                                 pass
                             print("[模型] 快速切换：" + "；".join(changed), flush=True)
@@ -2890,30 +2898,32 @@ def start_remote_api(brain):
                 # 缓存在 model_hub 里按 base 分键，所以切地址本来就能拿到各自的列表，
                 # 缺的只是"用请求里的参数而不是配置里的参数"这一条路。
                 #
-                # 密钥留空时回落到当前那把：用户可能只想换个地址、key 沿用现有的。
+                # 密钥留空时只允许使用同一服务商、同一地址的已绑定密钥。
                 try:
                     force = str(_query_param(self.path, "force") or "") == "1"
                     p_base = str(_query_param(self.path, "base") or "").strip()
-                    p_key = str(_query_param(self.path, "key") or "").strip()
+                    # Legacy GET callers sometimes put a key in the query
+                    # string.  Ignore it: credentials in URLs are retained by
+                    # browser/proxy logs.  Use POST /api/models/list instead.
+                    p_key = ""
                     p_prov = str(_query_param(self.path, "provider") or "").strip()
                     cur = model_hub.current(api_config)
                     if p_base:
-                        # 预拉用哪把 key：显式传的 > 这家**自己存的** > 当前那把。
+                        # 预拉用哪把 key：显式传的 > 这家同一地址绑定的密钥。
                         # 中间这层是给"切回存过密钥的老家"用的 —— 没有它，明知道
                         # 用户切到了某家、那家的 key 也存着，却还拿当前家（别家）
                         # 的 key 去试拉，必然 401，客户端只能看到一份兜底清单
                         # 冒充这家的模型（"换了服务商模型列表不变"的元凶）。
                         k = p_key
-                        if not k and p_prov in model_hub.PROVIDERS \
-                                and model_hub.has_provider_key(api_config, p_prov):
-                            k = model_hub.provider_key(api_config, p_prov)
+                        if not k and p_prov in model_hub.PROVIDERS:
+                            k = model_hub.provider_key(api_config, p_prov, p_base)
                         cur = dict(cur, api_base=p_base,
-                                   api_key=k or cur.get("api_key") or "")
+                                   api_key=k or "")
                     lst = model_hub.list_models(cur["api_base"],
                                                 cur["api_key"], force=force)
                     # 回客户端用脱敏版：cur 里的真 key 只留在这一次调用里
                     self._json(200, {
-                        "ok": True, "current": model_hub.public_current(api_config),
+                        "ok": bool(lst.get("ok")), "current": model_hub.public_current(api_config),
                         "providers": [{"key": k, "name": v["name"],
                                        "base": v["base"]}
                                       for k, v in model_hub.PROVIDERS.items()],
