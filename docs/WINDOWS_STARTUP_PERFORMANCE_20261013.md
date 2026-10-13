@@ -8,6 +8,7 @@
 - 验收分支：`codex/windows-startup-performance-20261013`
 - 基线：`29345eb05bb8166919a4871221480244fed7afde`
 - 性能代码提交：`fd6ec556a24487132574dcda136a5e64bbc7225a`
+- 插件启动去重提交：`74158283392e28d0cd6b68b3aa7db73567cef0ea`
 - 验收报告提交：`b1d8d386fe7e85cac4a24721b039c4faa3ffa6e6`
 
 测试只使用临时 userData、临时 HTTP 夹具和无敏感内容的返回值。没有读取生产 Token、生产配置或连接生产 Brain。
