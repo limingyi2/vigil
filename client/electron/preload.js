@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('vigil', {
 
   // 流式聊天：开始 SSE 请求 + 监听逐块事件
   apiStream: (path, body) => ipcRenderer.invoke('api:stream', { path, body }),
+  attachments: {
+    chunk: (bytes, headers) => ipcRenderer.invoke('attachment:chunk', { bytes, headers }),
+  },
   onStreamEvent: (fn) => {
     if (!_streamBound) {
       _streamBound = true;

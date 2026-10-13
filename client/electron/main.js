@@ -386,6 +386,39 @@ function request(method, urlStr, body, token, timeoutMs) {
   });
 }
 
+// 二进制附件分块请求：与 JSON API 共用同一套目标限制和 token，
+// 但正文直接以 Buffer 发送，避免把视频/文档编码进聊天 JSON。
+function requestBinary(method, urlStr, bytes, token, headers, timeoutMs) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(urlStr); } catch (e) {
+      return resolve({ ok: false, status: 0, err: '地址不合法：' + urlStr });
+    }
+    const mod = u.protocol === 'https:' ? https : http;
+    const data = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+    const reqHeaders = { Accept: 'application/json', ...(headers || {}),
+      'Content-Length': data.length };
+    if (token) reqHeaders.Authorization = 'Bearer ' + token;
+    const req = mod.request({ method, hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), headers: reqHeaders,
+      timeout: timeoutMs || 120000 }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch (_) {}
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode, json, text });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('请求超时')));
+    req.on('error', (e) => resolve({ ok: false, status: 0, err: e.message }));
+    req.end(data);
+  });
+}
+
 // 流式请求：SSE 逐块推送，onEvent 每收到一个 data: 事件就调用一次。
 // 用于 /api/chat/stream 的实时思考过程和正文。
 function requestStream(method, urlStr, body, token, onEvent) {
@@ -921,6 +954,20 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const r = await request(method, b + withSrc, body, token, centerTimeout);
   if (!r.ok && r.status === 401) return { ...r, err: 'token 不对（设置 → 连接与设备）' };
   return r;
+});
+
+ipcMain.handle('attachment:chunk', async (_e, { bytes, headers = {} } = {}) => {
+  const cfg = readCfg();
+  const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
+  const b = (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE;
+  const safeHeaders = {};
+  for (const key of ['X-Attachment-Id', 'X-Attachment-Name', 'X-Attachment-Mime',
+    'X-Attachment-Total', 'X-Attachment-Offset', 'X-Attachment-Confirmed']) {
+    if (headers[key] != null) safeHeaders[key] = String(headers[key]);
+  }
+  const token = await getToken();
+  return requestBinary('POST', String(b).replace(/\/+$/, '') + '/api/attachments/upload',
+    bytes, token, safeHeaders, 120000);
 });
 
 // 流式聊天：主进程发 SSE 请求，逐块通过 webContents.send 推给渲染层。

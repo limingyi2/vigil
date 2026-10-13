@@ -178,7 +178,7 @@
       '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="给 Vigil 发送消息…"></textarea>' +
       '        <div class="cbar">' +
       '          <button class="ibtn" id="localBtn" title="本地操控：权限模式 · 白名单目录">' + icon('shield', 'sm') + '</button>' +
-      '          <button class="ibtn" id="clipBtn" title="附一张图（她能看见）">' + icon('clip', 'sm') + '</button>' +
+      '          <button class="ibtn" id="clipBtn" title="添加图片、视频或普通文件">' + icon('clip', 'sm') + '</button>' +
       '          <button class="btn composer-model" id="modelBtn" title="打开现有模型与服务商设置">' + esc(model) + ' ▾</button>' +
       '          <div class="sp"></div>' +
       '          <span class="mono hintline">Enter 发送 · Shift+Enter 换行</span>' +
@@ -268,8 +268,126 @@
 
     let lastCount = -1;
     let busy = false;
-    // 附件：一张图，随下一条消息发出去（她能"看见"——视觉模型先描述成文字再进上下文）
+    // 附件：文件只在发送时分块上传；聊天请求只携带服务端返回的附件元数据。
     let imgB64 = '';
+    let attachment = null;
+    const ATTACH_MAX = 256 * 1024 * 1024;
+    const ATTACH_ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.csv,.json';
+    const ATTACH_EXT = /\.(jpe?g|png|gif|webp|mp4|mov|webm|pdf|txt|md|csv|json)$/i;
+
+    function clearAttachment() {
+      if (attachment && attachment.previewUrl && global.URL) {
+        try { URL.revokeObjectURL(attachment.previewUrl); } catch (_) {}
+      }
+      attachment = null;
+      imgB64 = '';
+      attachBox.hidden = true;
+      attachBox.innerHTML = '';
+      updateComposer();
+    }
+
+    function renderAttachment() {
+      if (!attachment) { attachBox.hidden = true; attachBox.innerHTML = ''; return; }
+      attachBox.hidden = false;
+      const f = attachment.file;
+      const preview = attachment.preview || attachment.previewUrl || '';
+      let media = '<span class="afile-icon">' + icon(attachment.kind === 'image' ? 'img' : 'clip', 'sm') + '</span>';
+      if (attachment.kind === 'image' && preview) media = '<img class="athumb" src="' + esc(preview) + '" alt="">';
+      if (attachment.kind === 'video' && preview) media = '<video class="avideo" controls preload="metadata" src="' + esc(preview) + '"></video>';
+      const pct = Math.max(0, Math.min(100, Number(attachment.progress || 0)));
+      attachBox.innerHTML = '<div class="attachment-row">' + media +
+        '<div class="attachment-info"><b class="aname" title="' + esc(f.name) + '">' + esc(f.name) + '</b>' +
+        '<span class="muted">' + esc(bytes(f.size)) + ' · ' + esc(f.type || '未知类型') + '</span>' +
+        '<progress class="aupload" max="100" value="' + pct + '"></progress>' +
+        '<span class="muted attachment-status">' + esc(attachment.status || '待发送') + '</span></div>' +
+        '<button class="ibtn" id="atClr" title="移除附件" aria-label="移除附件">' + icon('x', 'sm') + '</button></div>';
+      attachBox.querySelector('#atClr').addEventListener('click', clearAttachment);
+    }
+
+    function chooseFile(file) {
+      if (!file) return;
+      if (file.size <= 0 || file.size > ATTACH_MAX) {
+        toast('附件必须大于 0 且不超过 256 MB'); return;
+      }
+      if (!ATTACH_EXT.test(file.name)) {
+        toast('不支持此附件类型：请选择图片、MP4/MOV/WebM、PDF、TXT 等'); return;
+      }
+      clearAttachment();
+      const kind = /^video\//i.test(file.type) || /\.(mp4|mov|webm)$/i.test(file.name)
+        ? 'video' : /^image\//i.test(file.type) || /\.(jpe?g|png|gif|webp)$/i.test(file.name)
+          ? 'image' : 'file';
+      attachment = { file, kind, progress: 0, status: '待发送', previewUrl: '' };
+      if (kind === 'image') {
+        const fr = new FileReader();
+        fr.onload = () => { attachment.preview = String(fr.result || ''); imgB64 = attachment.preview.split(',', 2)[1] || ''; renderAttachment(); updateComposer(); };
+        fr.onerror = () => toast('图片预览失败');
+        fr.readAsDataURL(file);
+      } else {
+        attachment.previewUrl = URL.createObjectURL(file);
+        renderAttachment();
+      }
+      updateComposer();
+    }
+
+    async function uploadAttachment(att, silent) {
+      if (!global.vigil || !global.vigil.attachments || !global.vigil.attachments.chunk) {
+        throw new Error('当前客户端不支持附件上传，请更新客户端');
+      }
+      const id = 'att_' + (global.crypto && global.crypto.randomUUID ? global.crypto.randomUUID().replace(/-/g, '') : (Date.now() + '_' + Math.random().toString(36).slice(2)));
+      const chunkSize = 1024 * 1024;
+      for (let offset = 0; offset < att.file.size; offset += chunkSize) {
+        const end = Math.min(att.file.size, offset + chunkSize);
+        const buf = await att.file.slice(offset, end).arrayBuffer();
+        const r = await global.vigil.attachments.chunk(buf, {
+          'X-Attachment-Id': id,
+          'X-Attachment-Name': encodeURIComponent(att.file.name),
+          'X-Attachment-Mime': att.file.type || 'application/octet-stream',
+          'X-Attachment-Total': String(att.file.size),
+          'X-Attachment-Offset': String(offset),
+          'X-Attachment-Confirmed': '1',
+        });
+        if (!r || !r.ok) throw new Error((r && (r.err || (r.json && r.json.err))) || '附件上传失败');
+        att.progress = Math.round((end / att.file.size) * 100);
+        att.status = att.progress >= 100 ? '已上传' : '上传中 ' + att.progress + '%';
+        if (!silent) renderAttachment();
+      }
+      return { id, name: att.file.name, mime: att.file.type || 'application/octet-stream', size: att.file.size, kind: att.kind };
+    }
+
+    async function extractVideoFrames(file, count) {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.muted = true;
+      video.preload = 'metadata';
+      video.src = url;
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve;
+        video.onerror = () => reject(new Error('无法读取视频元数据'));
+      });
+      const duration = Number(video.duration) || 0;
+      if (!duration || !isFinite(duration)) throw new Error('视频时长不可用');
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 768 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+      canvas.width = Math.max(1, Math.round((video.videoWidth || 768) * scale));
+      canvas.height = Math.max(1, Math.round((video.videoHeight || 432) * scale));
+      const times = Array.from({ length: Math.min(count || 3, 3) }, (_, i) =>
+        Math.min(Math.max(0.1, duration * ((i + 1) / (Math.min(count || 3, 3) + 1))), Math.max(0.1, duration - 0.1)));
+      const files = [];
+      for (let i = 0; i < times.length; i++) {
+        await new Promise((resolve, reject) => {
+          video.onseeked = resolve;
+          video.onerror = () => reject(new Error('关键帧定位失败'));
+          video.currentTime = times[i];
+        });
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+        if (!blob) throw new Error('关键帧编码失败');
+        const stem = file.name.replace(/\.[^.]+$/, '').slice(0, 80);
+        files.push(new File([blob], stem + '.frame-' + (i + 1) + '.jpg', { type: 'image/jpeg' }));
+      }
+      URL.revokeObjectURL(url);
+      return files;
+    }
+
     function updateComposer() {
       const ta = view.querySelector('#ta');
       const maxHeight = parseFloat(getComputedStyle(ta).maxHeight) || 180;
@@ -278,7 +396,8 @@
       ta.style.overflowY = ta.scrollHeight > maxHeight ? 'auto' : 'hidden';
       view.querySelector('#ccount').textContent = ta.value.length + ' 字';
       const button = view.querySelector('#sendBtn');
-      button.disabled = !global.vigil || busy || (!ta.value.trim() && !imgB64);
+      button.disabled = !global.vigil || busy || (!ta.value.trim() && !imgB64 && !attachment) ||
+        !!(attachment && attachment.kind === 'image' && !imgB64);
       button.classList.toggle('is-sending', busy);
       button.setAttribute('aria-label', busy ? '正在发送' : '发送消息');
       button.setAttribute('aria-busy', String(busy));
@@ -289,29 +408,18 @@
     view.querySelector('#clipBtn').addEventListener('click', () => {
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = 'image/*';
+      inp.accept = ATTACH_ACCEPT;
       inp.onchange = () => {
-        const f = inp.files && inp.files[0];
-        if (!f) return;
-        const r = new FileReader();
-        r.onload = () => {
-          imgB64 = String(r.result).split(',', 2)[1] || '';
-          updateComposer();
-          attachBox.hidden = false;
-          attachBox.innerHTML =
-            '<img class="athumb" src="' + r.result + '" alt="">' +
-            '<span class="aname">' + esc(f.name) + '</span>' +
-            '<button class="ibtn" id="atClr" title="不发了">' + icon('x', 'sm') + '</button>';
-          attachBox.querySelector('#atClr').addEventListener('click', () => {
-            imgB64 = '';
-            updateComposer();
-            attachBox.hidden = true;
-            attachBox.innerHTML = '';
-          });
-        };
-        r.readAsDataURL(f);
+        chooseFile(inp.files && inp.files[0]);
       };
       inp.click();
+    });
+    const dropTarget = view.querySelector('.cbox');
+    dropTarget.addEventListener('dragover', (e) => { e.preventDefault(); dropTarget.classList.add('drop-active'); });
+    dropTarget.addEventListener('dragleave', () => dropTarget.classList.remove('drop-active'));
+    dropTarget.addEventListener('drop', (e) => {
+      e.preventDefault(); dropTarget.classList.remove('drop-active');
+      chooseFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
     });
 
     /**
@@ -371,9 +479,12 @@
         const mine = ['me', 'user', 'self'].includes(String(m.role || '').toLowerCase());
         // 用户消息纯文本（esc），AI 消息用 Markdown 渲染
         const t = mine ? esc(m.text || '') : U.md(m.text || '', { codeActions: true });
+        const atts = mine && Array.isArray(m.attachments) ? m.attachments.map((a) =>
+          '<div class="msg-attachment">' + icon(a.kind === 'image' ? 'img' : 'clip', 'sm') + ' ' +
+          esc(a.name || '附件') + (a.size ? ' · ' + esc(bytes(a.size)) : '') + '</div>').join('') : '';
         // 不画头像、不写名字：这是工具界面，不是"跟谁对话"。
         // 她说的在左、你说的在右，不用再靠头像区分。
-        if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + '</div></div></div>';
+        if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + atts + '</div></div></div>';
         return '<div class="turn"><div class="bdy">' +
           '<div class="txt md">' + t + '</div>' +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span></div></div></div>';
@@ -384,8 +495,46 @@
     async function send() {
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if (!global.vigil || (!text && !imgB64) || busy) return;
+      if (!global.vigil || (!text && !imgB64 && !attachment) || busy) return;
+      const pending = attachment;
+      if (pending && !confirm('确认把「' + pending.file.name + '」上传到当前 Brain 并发送吗？')) return;
+      const uploadedAttachments = [];
+      if (pending && pending.kind !== 'image') {
+        busy = true;
+        pending.status = '准备上传';
+        updateComposer();
+        try {
+          if (pending.kind === 'video') {
+            let cap = null;
+            try { cap = pick(await get('/api/attachments/capabilities')); } catch (_) {}
+            if (!cap || cap.video !== true) {
+              const wantFrames = confirm('当前模型不能直接分析完整视频。是否仅额外提取最多 3 个关键帧供视觉模型参考？');
+              if (wantFrames) {
+                pending.status = '提取关键帧…';
+                renderAttachment();
+                const frameFiles = await extractVideoFrames(pending.file, 3);
+                for (const frame of frameFiles) {
+                  const frameAtt = { file: frame, kind: 'image', progress: 0, status: '上传中' };
+                  uploadedAttachments.push(await uploadAttachment(frameAtt, true));
+                }
+              }
+            }
+          }
+          uploadedAttachments.unshift(await uploadAttachment(pending));
+        } catch (e) {
+          pending.status = '上传失败：' + String(e.message || e).slice(0, 80);
+          renderAttachment();
+          busy = false;
+          updateComposer();
+          return;
+        }
+      }
       const sendingImg = imgB64;
+      const sendingAttachments = uploadedAttachments;
+      if (attachment && attachment.previewUrl && global.URL) {
+        try { URL.revokeObjectURL(attachment.previewUrl); } catch (_) {}
+      }
+      attachment = null;
       imgB64 = '';
       attachBox.hidden = true;
       attachBox.innerHTML = '';
@@ -402,6 +551,7 @@
       msgs.insertAdjacentHTML('beforeend',
         '<div class="turn me"><div class="bdy"><div class="txt">' + esc(text) +
         (sendingImg ? '<img class="msgimg" src="data:image/png;base64,' + sendingImg + '" alt="">' : '') +
+        (sendingAttachments.length ? '<div class="msg-attachment">' + sendingAttachments.map((a) => icon(a.kind === 'image' ? 'img' : 'clip', 'sm') + ' ' + esc(a.name) + ' · ' + esc(bytes(a.size))).join('<br>') + '</div>' : '') +
         '</div></div></div>');
 
       // AI 气泡：思考过程 + 正文，实时渲染
@@ -506,11 +656,26 @@
       }
 
       try {
-        // 开始流式请求
-        if (global.vigil && global.vigil.apiStream) {
+        const chatPayload = { text: text, src: 'pc' };
+        if (sendingImg) chatPayload.img = sendingImg;
+        if (sendingAttachments.length) chatPayload.attachments = sendingAttachments;
+        // 附件走普通 JSON 元数据请求；二进制已经在此前分块上传，
+        // 这样聊天请求不会再次携带文件内容。纯文本仍使用原有 SSE 流。
+        if (sendingAttachments.length) {
+          const r = pick(await post('/api/chat', chatPayload));
+          if (!r.ok) throw new Error(r._err || '附件消息发送失败');
+          streamDone = true;
+          textBuf = r.reply || '';
+          textEl.innerHTML = U.md(textBuf, { codeActions: true });
+          const tb = msgs.querySelector('#' + turnId + ' .think-block');
+          if (tb) tb.remove();
+          statusEl.textContent = fmtTime(Date.now(), 'time');
+          busy = false;
+          updateComposer();
+        } else if (global.vigil && global.vigil.apiStream) {
+          // 开始流式请求
           console.log('[stream] starting apiStream...');
-          const r = await global.vigil.apiStream('/api/chat/stream',
-            sendingImg ? { text: text, img: sendingImg, src: 'pc' } : { text: text, src: 'pc' });
+          const r = await global.vigil.apiStream('/api/chat/stream', chatPayload);
           console.log('[stream] apiStream returned:', r);
           if (!streamDone) {
             // 如果请求返回了但还没收到 done 事件，等一下
@@ -532,9 +697,7 @@
         } else {
           console.warn('[stream] vigil.apiStream not found, falling back to non-stream');
           // 降级到非流式
-          const r = pick(await post('/api/chat', sendingImg
-            ? { text: text, img: sendingImg, src: 'pc' }
-            : { text: text, src: 'pc' }));
+          const r = pick(await post('/api/chat', chatPayload));
           if (!r.ok) throw new Error(r._err || '发送失败');
           textBuf = r.reply || '';
           textEl.innerHTML = U.md(textBuf, { codeActions: true });
