@@ -1,0 +1,174 @@
+# -*- coding: utf-8 -*-
+"""Targeted Creator MVP-2 approval/transaction tests.
+
+The fixture uses an isolated temporary data/plugins root.  Skill installation is
+stubbed at the existing ``plugins.skill._install_zip`` boundary because the
+Node Skill Host is an external process; the tests still assert that the exact
+approved archive is delegated to that boundary.
+"""
+import json
+import os
+import threading
+import time
+
+import pytest
+
+import creator
+import creator_install as ci
+import paths
+
+
+ADMIN = {"is_admin": True, "token_kind": "device", "device_id": "test-admin"}
+GUEST = {"is_admin": False, "token_kind": "device", "device_id": "test-viewer"}
+
+
+@pytest.fixture()
+def isolated(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    drafts = data / "creator_drafts"
+    plugins = tmp_path / "plugins"
+    drafts.mkdir(parents=True)
+    plugins.mkdir()
+    monkeypatch.setattr(paths, "DATA_DIR", str(data))
+    monkeypatch.setattr(creator, "drafts_root", lambda: str(drafts))
+    monkeypatch.setattr(ci, "_root", lambda: str(data / "creator_approvals"))
+    monkeypatch.setattr(ci.paths, "DATA_DIR", str(data))
+    monkeypatch.setattr(ci, "_LOCK", threading.RLock())
+    import plugin_ops
+    monkeypatch.setattr(plugin_ops, "_PLUG_DIR", str(plugins))
+    monkeypatch.setattr(plugin_ops, "REGISTRY", str(plugins / "_registry.json"))
+    return tmp_path, drafts, plugins
+
+
+def _draft(drafts, kind="plugin", name="creator_probe", valid=True):
+    did = "cr_test_%s" % name
+    root = drafts / did
+    root.mkdir()
+    if kind == "plugin":
+        (root / (name + ".py")).write_text(
+            'NAME = %r\nDESC = "safe test"\n' % name +
+            ('def on_message(text, ctx):\n    return "ok"\n' if valid else 'def broken(:\n'),
+            encoding="utf-8")
+        (root / "zxplugin.json").write_text(json.dumps({"name": name, "version": "0.0.1", "desc": "safe test"}), encoding="utf-8")
+    else:
+        (root / "index.js").write_text("export function setup(api) { api.registerTool({id:'probe',name:'probe',description:'safe',parameters:{},async execute(){return {content:'ok'}}}); }\n", encoding="utf-8")
+        (root / "skill.json").write_text(json.dumps({"id": name, "name": "Safe test", "version": "0.0.1", "entry": "index.js"}), encoding="utf-8")
+    meta = {"id": did, "kind": kind, "version": 1, "files": [p.name for p in root.iterdir()], "validation": {}}
+    (root / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    return did
+
+
+def _approve(did):
+    return ci.approve(did, ADMIN)
+
+
+def test_approval_requires_admin_and_invalid_draft_is_rejected(isolated):
+    _, drafts, _ = isolated
+    did = _draft(drafts)
+    with pytest.raises(PermissionError):
+        ci.approve(did, GUEST)
+    bad = _draft(drafts, name="bad", valid=False)
+    with pytest.raises(ValueError):
+        ci.approve(bad, ADMIN)
+
+
+def test_changed_draft_invalidates_old_approval(isolated):
+    _, drafts, _ = isolated
+    did = _draft(drafts)
+    approval = _approve(did)
+    (drafts / did / "creator_probe.py").write_text('NAME = "creator_probe"\nDESC = "changed"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="改变|失效"):
+        ci.install(approval["approval_id"], ADMIN)
+
+
+def test_expired_and_repeated_approvals_are_rejected(isolated, monkeypatch):
+    _, drafts, _ = isolated
+    did = _draft(drafts)
+    approval = _approve(did)
+    rec = ci._read(approval["approval_id"])
+    rec["expires_at_epoch"] = time.time() - 1
+    ci._write(rec)
+    with pytest.raises(ValueError, match="过期"):
+        ci.install(approval["approval_id"], ADMIN)
+
+    approval = _approve(did)
+    import plugin_ops
+    monkeypatch.setattr(plugin_ops, "install", lambda path, note="": (True, {"ok": True, "restart_needed": True}))
+    assert ci.install(approval["approval_id"], ADMIN)["ok"]
+    with pytest.raises(ValueError, match="使用|失效"):
+        ci.install(approval["approval_id"], ADMIN)
+
+
+def test_install_requires_admin_and_delegates_once_under_concurrency(isolated, monkeypatch):
+    _, drafts, _ = isolated
+    did = _draft(drafts)
+    approval = _approve(did)
+    import plugin_ops
+    calls = []
+    def fake_install(path, note=""):
+        time.sleep(0.03)
+        calls.append(path)
+        return True, {"ok": True, "restart_needed": False}
+    monkeypatch.setattr(plugin_ops, "install", fake_install)
+    with pytest.raises(PermissionError):
+        ci.install(approval["approval_id"], GUEST)
+    with pytest.raises(PermissionError, match="身份不一致"):
+        ci.install(approval["approval_id"], {"is_admin": True, "token_kind": "brain", "device_id": ""})
+    results = []
+    def consume():
+        try:
+            results.append(ci.install(approval["approval_id"], ADMIN))
+        except ValueError as exc:
+            results.append({"ok": False, "err": str(exc)})
+    threads = [threading.Thread(target=consume) for _ in range(2)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert sum(bool(r.get("ok")) for r in results) == 1
+    assert len(calls) == 1
+
+
+def test_failed_transaction_is_recorded_and_not_replayed(isolated, monkeypatch):
+    _, drafts, _ = isolated
+    did = _draft(drafts)
+    approval = _approve(did)
+    import plugin_ops
+    monkeypatch.setattr(plugin_ops, "install", lambda path, note="": (False, {"ok": False, "rollback": "restored", "err": "probe"}))
+    result = ci.install(approval["approval_id"], ADMIN)
+    assert result["ok"] is False
+    assert result["install"]["rollback"] == "restored"
+    with pytest.raises(ValueError):
+        ci.install(approval["approval_id"], ADMIN)
+
+
+def test_valid_plugin_is_installed_by_existing_transaction_without_import(isolated, monkeypatch):
+    _, drafts, plugins = isolated
+    did = _draft(drafts, name="no_exec")
+    marker = plugins / "executed.txt"
+    (drafts / did / "no_exec.py").write_text(
+        'from pathlib import Path\nPath(%r).write_text("bad")\nNAME="no_exec"\nDESC="safe"\n' % str(marker), encoding="utf-8")
+    import plugin_ops
+    approval = _approve(did)
+    result = ci.install(approval["approval_id"], ADMIN)
+    assert result["ok"] is True
+    assert result["install"]["static_validated"] is True
+    assert (plugins / "no_exec.py").is_file()
+    assert not marker.exists(), "approval install must not import generated code"
+
+
+def test_skill_archive_uses_existing_skill_transaction_boundary(isolated, monkeypatch):
+    root, drafts, _ = isolated
+    did = _draft(drafts, kind="skill", name="creator_skill")
+    from plugins import skill as skill_ops
+    skill_root = root / "skills"
+    config_path = root / "config.json"
+    monkeypatch.setattr(skill_ops, "_skill_dir", lambda: str(skill_root))
+    monkeypatch.setattr(skill_ops, "_skill_config_path", lambda: str(config_path))
+    monkeypatch.setattr(skill_ops, "_skill_config_snapshot", lambda: (str(config_path), None))
+    monkeypatch.setattr(skill_ops, "_host_reload_checked", lambda: {"ok": True, "reloaded": True})
+    monkeypatch.setattr(skill_ops, "list_skills", lambda timeout=8: (
+        [{"id": "creator_skill"}] if (skill_root / "creator_skill").is_dir() else []))
+    approval = _approve(did)
+    result = ci.install(approval["approval_id"], ADMIN)
+    assert result["ok"] is True
+    assert result["install"]["files_committed"] is True
+    assert (skill_root / "creator_skill" / "index.js").is_file()

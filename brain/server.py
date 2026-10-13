@@ -1338,12 +1338,10 @@ def start_remote_api(brain):
             return False
 
         def _creator_admin(self, method, path, body):
-            """Creator Mode 草稿面：生成 / 修改 / 验证 / 查看 / 删除。
+            """Creator Mode 草稿面：生成 / 修改 / 验证 / 审批安装 / 查看 / 删除。
 
             和插件管理面的分工：这里只产**可审核的草稿** —— 独立工作区
             （``<DATA_DIR>/creator_drafts/``）+ 真实模型生成 + P4 静态检查器。
-            没有任何安装/装载入口：装不装由人在 MVP-2 的审核安装流程里决定，
-            现在没有那条安全审批链路，就不在这里开旁门。
             写操作（生成要花模型 token）只允许管理员；读操作任何已认证身份可看。
             命中返回 True（已回包）。
             """
@@ -1360,6 +1358,11 @@ def start_remote_api(brain):
                                  "err": "创作模块不可用：%s" % str(e)[:80]})
                 return True
             body = body or {}
+
+            def _identity():
+                who, who_id = getattr(self, "_who", ("", ""))
+                return {"is_admin": self._is_admin(),
+                        "token_kind": who, "device_id": who_id}
 
             if method == "GET":
                 if path == "/api/creator/drafts":
@@ -1380,6 +1383,20 @@ def start_remote_api(brain):
                         self._json(404, {"ok": False, "err": err})
                     else:
                         self._json(200, {"ok": True, "draft": meta})
+                    return True
+                if path == "/api/creator/approvals":
+                    try:
+                        from urllib.parse import urlparse, parse_qs
+                        q = parse_qs(urlparse(self.path).query)
+                        did = (q.get("draft_id") or [""])[0]
+                    except Exception:
+                        did = ""
+                    try:
+                        import creator_install as _ci
+                        self._json(200, {"ok": True,
+                                         "approvals": _ci.list_approvals(did)})
+                    except Exception as e:
+                        self._json(500, {"ok": False, "err": str(e)[:120]})
                     return True
                 return False
 
@@ -1414,6 +1431,30 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": err or "删不掉"})
                 else:
                     self._json(200, {"ok": True})
+                return True
+            if path == "/api/creator/approve":
+                try:
+                    import creator_install as _ci
+                    approval = _ci.approve(str(body.get("id") or ""), _identity())
+                    self._json(200, {"ok": True, "approval": approval})
+                except PermissionError as e:
+                    self._json(403, {"ok": False, "err": str(e)})
+                except (ValueError, OSError) as e:
+                    self._json(400, {"ok": False, "err": str(e)[:180]})
+                except Exception as e:
+                    self._json(500, {"ok": False, "err": "审批失败：%s" % str(e)[:120]})
+                return True
+            if path == "/api/creator/install":
+                try:
+                    import creator_install as _ci
+                    result = _ci.install(str(body.get("approval_id") or ""), _identity())
+                    self._json(200 if result.get("ok") else 400, result)
+                except PermissionError as e:
+                    self._json(403, {"ok": False, "err": str(e)})
+                except (ValueError, OSError) as e:
+                    self._json(400, {"ok": False, "err": str(e)[:180]})
+                except Exception as e:
+                    self._json(500, {"ok": False, "err": "安装失败：%s" % str(e)[:120]})
                 return True
             return False
 

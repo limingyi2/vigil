@@ -2005,6 +2005,11 @@
     }
 
     const draw = { pl: plugins, sk: skills, ft: features };
+    window.__vigilRefreshExtensions = () => {
+      if (!document.querySelector('#abView')) return;
+      const active = ctx.panel.querySelector('.li.on')?.dataset.k || 'pl';
+      if (draw[active]) draw[active]();
+    };
     ctx.panel.querySelectorAll('.li[data-k]').forEach((n) => n.addEventListener('click', () => {
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[n.dataset.k] && draw[n.dataset.k]();
@@ -3101,8 +3106,7 @@
   // - 生成走 Brain 的真实模型链路（/api/creator/draft），没有假装生成的旁路；
   // - 草稿落 Brain 的独立工作区，不碰正式插件/技能目录；
   // - 静态验证复用 P4 检查器，只查结构不执行代码；
-  // - 这一版只有"保存与审核"：没有安装按钮。安装要等 MVP-2 的人工审核链路，
-  //   在那之前不在这里开旁门。
+  // - MVP-2 在静态验证通过后展示人工审核与一次性受控安装；生成完成不会自动安装。
   // ═══ Creator Mode：草稿卡（聊天页内创作 + 草稿列表共用）═══════
   // 入口在主页对话：composer 的「创作」chip 切到创作模式后，直接把需求
   // 当消息发给 Agent，回来的就是一个草稿卡。这里只负责"一个草稿怎么画、
@@ -3115,6 +3119,19 @@
   }
   function creatorLangOf(name) {
     return /\.(py)$/.test(name) ? 'python' : /\.(js|mjs|cjs)$/.test(name) ? 'javascript' : 'json';
+  }
+  function creatorTargetOf(d) {
+    const fs = d.files || [];
+    const mf = fs.find((f) => f.name === 'skill.json' || f.name.toLowerCase() === 'zxplugin.json');
+    if (mf) {
+      try {
+        const j = JSON.parse(mf.content || '{}');
+        if (d.kind === 'skill' && j.id) return String(j.id);
+        if (d.kind === 'plugin' && j.name) return String(j.name);
+      } catch (_) { /* validation result carries malformed manifest details */ }
+    }
+    const py = fs.find((f) => /\.py$/i.test(f.name));
+    return py ? py.name.replace(/\.py$/i, '') : (d.kind === 'skill' ? '（由 skill.json 决定）' : '（由插件文件名决定）');
   }
   // 一条草稿的完整卡片（聊天气泡形态：外层 .turn/.bdy，内部复用 .card）
   function draftCardHtml(d) {
@@ -3139,6 +3156,7 @@
           '<span class="muted" style="font-size:12px">模型：' + esc(d.model || '?') + '</span>' +
           '<div style="flex:1"></div>' +
           '<button class="btn ghost" id="crReval">重新验证</button>' +
+          (v.ok ? '<button class="btn" id="crReview">审核并安装</button>' : '') +
           '<button class="btn danger" id="crDel">删除草稿</button>' +
         '</div>' +
         '<p class="muted" style="font-size:12px;margin:8px 0 0">需求：' + esc(d.requirement || '') + '</p>' +
@@ -3153,6 +3171,17 @@
         errHtml + warnHtml +
         (!errs.length && !warns.length ? '<p class="muted" style="font-size:12px">没有错误或警告。</p>' : '') +
       '</div>' +
+      (v.ok ? '<div class="card" id="crReviewBox" style="margin-top:8px;display:none;border-color:var(--warn)">' +
+        '<div class="pkg-h">安装前人工审核</div>' +
+        '<p style="margin:6px 0"><b>安装目标：</b><span id="crTarget">' + esc(creatorTargetOf(d)) + '</span></p>' +
+        '<p class="muted" style="font-size:12px;margin:6px 0">将使用现有 ' + (d.kind === 'skill' ? 'Skill Host' : 'Plugin') +
+        ' 事务安装。静态验证不会执行生成代码；技能热重载可能立即加载入口代码，请确认风险说明和完整代码后再批准。</p>' +
+        '<div id="crApprovalState" class="muted" style="font-size:12px;margin:6px 0">尚未批准。审批有效期 10 分钟，且只能使用一次。</div>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
+          '<button class="btn" id="crApproveNow">明确批准</button>' +
+          '<button class="btn" id="crInstallNow" style="display:none">仅本次安装</button>' +
+          '<button class="btn ghost" id="crCancel">取消</button>' +
+        '</div></div>' : '') +
       (d.files || []).map((f) =>
         '<div class="card" style="margin-top:8px">' +
           '<div class="pkg-h">' + icon('clip', 'sm') + ' ' + esc(f.name) +
@@ -3188,6 +3217,50 @@
         if (!r || !r.ok || !r.validation) { toast('验证失败：' + ((r && r.err) || '未知错误')); return; }
         redrawCard(root, Object.assign({}, d, { validation: r.validation }));
         toast(r.validation.ok ? '静态验证通过' : '有 ' + (r.validation.errors || []).length + ' 个问题');
+        return;
+      }
+      if (e.target.closest('#crReview')) {
+        const box = root.querySelector('#crReviewBox');
+        if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        return;
+      }
+      if (e.target.closest('#crCancel')) {
+        const box = root.querySelector('#crReviewBox');
+        if (box) box.style.display = 'none';
+        return;
+      }
+      if (e.target.closest('#crApproveNow')) {
+        const approveButton = e.target.closest('#crApproveNow');
+        approveButton.disabled = true;
+        const r = pick(await API.post('/api/creator/approve', { id: d.id }));
+        if (!r || !r.ok || !r.approval) {
+          approveButton.disabled = false;
+          toast('审批失败：' + ((r && r.err) || '未知错误'));
+          return;
+        }
+        const state = root.querySelector('#crApprovalState');
+        if (state) state.textContent = '已批准草稿 v' + r.approval.version + '，审批编号 ' + r.approval.approval_id.slice(0, 14) + '…；请点击“仅本次安装”完成一次性消费。';
+        approveButton.style.display = 'none';
+        const installButton = root.querySelector('#crInstallNow');
+        if (installButton) { installButton.style.display = 'inline-block'; installButton.dataset.approval = r.approval.approval_id; }
+        toast('已记录人工批准，等待一次性安装');
+        return;
+      }
+      if (e.target.closest('#crInstallNow')) {
+        const installButton = e.target.closest('#crInstallNow');
+        const aid = installButton.dataset.approval || '';
+        if (!aid || !confirm('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
+        installButton.disabled = true;
+        const r = pick(await API.post('/api/creator/install', { approval_id: aid }));
+        if (!r || !r.ok) {
+          installButton.disabled = false;
+          toast('安装失败：' + ((r && (r.err || r.install?.err)) || '事务已回滚或审批已失效'));
+          return;
+        }
+        const state = root.querySelector('#crApprovalState');
+        if (state) state.textContent = '已安装，审批已消费，不能重复使用。';
+        toast('已受控安装 ' + creatorTargetOf(d) + (r.install?.restart_needed ? ' · 需要重启/确认生效' : ''));
+        if (typeof window.__vigilRefreshExtensions === 'function') window.__vigilRefreshExtensions();
         return;
       }
       if (e.target.closest('#crRev')) {
