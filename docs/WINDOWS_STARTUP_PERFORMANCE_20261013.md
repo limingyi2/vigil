@@ -7,7 +7,8 @@
 - Electron 运行时：28.3.3（使用隔离测试目录中的已安装运行时）
 - 验收分支：`codex/windows-startup-performance-20261013`
 - 基线：`29345eb05bb8166919a4871221480244fed7afde`
-- 当前提交：`fd6ec556a24487132574dcda136a5e64bbc7225a`
+- 性能代码提交：`fd6ec556a24487132574dcda136a5e64bbc7225a`
+- 验收报告提交：`b1d8d386fe7e85cac4a24721b039c4faa3ffa6e6`
 
 测试只使用临时 userData、临时 HTTP 夹具和无敏感内容的返回值。没有读取生产 Token、生产配置或连接生产 Brain。
 
