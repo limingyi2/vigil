@@ -1,23 +1,31 @@
 @echo off
+setlocal
 echo ========================================
-echo   Vigil 开发环境启动
+echo   Vigil development environment
 echo ========================================
 echo.
 
-cd /d F:\Vigil
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+set "PYTHON=python"
+if exist "%ROOT%\venv\Scripts\python.exe" set "PYTHON=%ROOT%\venv\Scripts\python.exe"
 
-echo [1/2] 启动 Brain (FastAPI)...
-start "Vigil Brain" cmd /k "venv\Scripts\python.exe brain\server_launch.py"
+if not exist "%ROOT%\brain\server_launch.py" (
+  echo [x] Brain launcher not found under "%ROOT%\brain".
+  exit /b 1
+)
+if not exist "%ROOT%\client\package.json" (
+  echo [x] Electron client not found under "%ROOT%\client".
+  exit /b 1
+)
+
+echo [1/2] Starting Brain...
+start "Vigil Brain" cmd /k ""%PYTHON%" "%ROOT%\brain\server_launch.py""
 
 timeout /t 3 /nobreak >nul
 
-echo [2/2] 启动 Client (Electron Dev)...
-cd client
-start "Vigil Client" cmd /k "npm run dev"
+echo [2/2] Starting Electron client...
+start "Vigil Client" cmd /k "cd /d ""%ROOT%\client"" && npm start"
 
 echo.
-echo ========================================
-echo   开发环境已启动！
-echo   Brain: http://127.0.0.1:8788
-echo ========================================
-pause
+echo Started Brain and Electron from "%ROOT%".
+echo Brain selects an available local port and reports it in its window.
