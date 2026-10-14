@@ -76,7 +76,12 @@ async function run(){
   await until(`document.querySelectorAll('#ac-agent-grid .ac-agent-card').length===3`);
   assert.equal(await ev(`document.querySelectorAll('#ac-agent-grid .ac-agent-card.is-live').length`),1);
   assert.equal(await ev(`document.querySelectorAll('#ac-agent-grid .ac-agent-card.is-pending').length`),2);
+  assert.equal(await ev(`document.querySelector('#ac-agent-grid .ac-agent-codex .ac-agent-status-online')!==null`),true);
+  assert.equal(await ev(`document.querySelectorAll('#ac-agent-grid .ac-agent-card .ac-agent-status').length`),3);
+  assert.equal(await ev(`document.querySelector('#ac-agent-count').textContent.includes('2 个待接入')`),true);
+  assert.match(await ev(`document.querySelector('#ac-agent-grid .ac-agent-codex .ac-agent-activity').textContent`),/最近活动\s*\d{4}-\d{2}-\d{2}/);
   assert.equal(await ev(`document.querySelector('#ac-agent-grid .ac-agent-deepseek-harness').textContent.includes('待接入')`),true);
+  assert.equal(await ev(`document.querySelector('#ac-agent-grid .ac-agent-work-buddy').textContent.includes('待接入')`),true);
   await shot('workspace-overview-light');
   result('workspace overview shows one live Codex and two honest pending adapters');
   await ev(`document.querySelector('[data-ac-agent-card="codex"]').click()`);
@@ -85,6 +90,7 @@ async function run(){
   assert.equal(win.webContents.getLastWebPreferences().sandbox,true);assert.equal(win.webContents.getLastWebPreferences().contextIsolation,true);
   result('actual page, production preload and initial historical replay without notification');
   await command('start');await until(`document.querySelector('#ac-detail').textContent.includes('运行中')`);
+  result('Codex card opens the existing detail page and its overview shows recent activity');
   await command('tool');await until(`document.querySelector('#ac-detail').textContent.includes('执行命令')`);
   result('automatic polling shows running and current tool type');
   await command('tool_failed');await poll();assert.match(await ev(`document.querySelector('#ac-detail').textContent`),/工具失败次数1/);
