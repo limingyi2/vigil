@@ -13,14 +13,27 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 用闭包变量存储流式事件处理函数，避免依赖 global 对象（sandbox 下可能受限）
 let _streamHandler = null;
 let _streamBound = false;
+let _settingsNavigateHandler = null;
+let _pendingSettingsNavigation = null;
+ipcRenderer.on('settings:navigate', (_e, target) => {
+  if (_settingsNavigateHandler) _settingsNavigateHandler(target || {});
+  else _pendingSettingsNavigation = target || {};
+});
 
 contextBridge.exposeInMainWorld('vigil', {
   appVersion: () => ipcRenderer.invoke('app:version'),
   // 所有网络请求走主进程：token 在那边加，渲染层拿不到凭据
-  api: (method, path, body, opts) => ipcRenderer.invoke('api', { method, path, body, base: (opts && opts.base) || null }),
+  api: (method, path, body, opts) => ipcRenderer.invoke('api', {
+    method, path, body,
+    base: (opts && opts.base) || null,
+    timeoutMs: opts && Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : null,
+  }),
 
   // 流式聊天：开始 SSE 请求 + 监听逐块事件
   apiStream: (path, body) => ipcRenderer.invoke('api:stream', { path, body }),
+  attachments: {
+    chunk: (bytes, headers) => ipcRenderer.invoke('attachment:chunk', { bytes, headers }),
+  },
   onStreamEvent: (fn) => {
     if (!_streamBound) {
       _streamBound = true;
@@ -90,6 +103,18 @@ contextBridge.exposeInMainWorld('vigil', {
     maximize: () => ipcRenderer.send('win:maximize'),
     close: () => ipcRenderer.send('win:close'),
     onState: (fn) => ipcRenderer.on('win:state', (_e, maximized) => fn(maximized)),
+  },
+
+  settings: {
+    open: (options) => ipcRenderer.invoke('settings:open', options || {}),
+    onNavigate: (fn) => {
+      _settingsNavigateHandler = fn;
+      if (_pendingSettingsNavigation) {
+        const target = _pendingSettingsNavigation;
+        _pendingSettingsNavigation = null;
+        fn(target);
+      }
+    },
   },
 
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),

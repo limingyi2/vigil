@@ -121,6 +121,27 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .localpop { left:50%; right:auto; transform:translateX(-50%); width:min(560px,calc(100% - 24px)); }
 body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accent); outline-offset:3px; }
 .chatwrap .cbox textarea:focus-visible { outline:none; }
+/* ── 创作模式：textarea 与按钮条之间的窄条 + cbar 里的开关 chip ── */
+.chatwrap .creatorbar { display:flex; align-items:center; gap:8px; margin-top:10px; padding:8px 10px; border-radius:8px; background:var(--chat-hover); }
+.chatwrap .creatorbar[hidden] { display:none; }
+.chatwrap .creatorbar .chip { height:24px; padding:0 10px; font-size:12px; }
+.chatwrap #creatorBtn { height:28px; padding:0 10px; flex:none; font-size:12.5px; }
+.chatwrap #creatorBtn.on { background:var(--chat-accent); border-color:var(--chat-accent); color:var(--chat-on-send, #fff); font-weight:500; }
+/* ── 模型快速切换：下拉贴在 composer 右上角（模型名那颗按钮正上方）── */
+.chatwrap .modelpop { left:auto; right:calc(var(--chat-gutter) + 10px); transform:none; width:min(420px,calc(100% - 24px)); }
+.chatwrap .modelpop .lph { gap:8px; }
+.chatwrap .modelpop .lph .muted { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chatwrap .modelpop .lpbody { padding:10px 14px 8px; }
+.chatwrap .modelpop #mqSearch { width:100%; height:30px; margin-bottom:4px; }
+.chatwrap .modelpop .mqrow { width:100%; background:none; border:0; border-bottom:1px solid var(--chat-line); color:var(--chat-text); cursor:pointer; text-align:left; border-radius:0; }
+.chatwrap .modelpop .mqrow:hover { background:var(--chat-hover); }
+.chatwrap .modelpop .mqrow:focus-visible { outline:2px solid var(--chat-accent); outline-offset:-2px; }
+.chatwrap .modelpop .mq-x { flex:none; width:20px; height:20px; line-height:18px; text-align:center; border-radius:5px; color:var(--chat-muted); font-size:14px; }
+.chatwrap .modelpop .mq-x:hover { background:var(--chat-line); color:var(--chat-text); }
+.chatwrap .modelpop .mqrow .lb b { display:block; font-size:13px; font-weight:600; color:var(--chat-text); }
+.chatwrap .modelpop .mqrow .lb span { display:block; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chatwrap .modelpop .mqfoot { display:flex; align-items:center; gap:8px; margin:0; padding:8px 14px; border-top:1px solid var(--chat-line); flex:none; }
+.chatwrap .modelpop .mqfoot .muted { flex:1; min-width:0; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @keyframes chat-spin { to { transform:rotate(360deg); } }
 @media(max-width:1120px) {
   .chatwrap .split { grid-template-columns:minmax(0,1fr); }

@@ -1,0 +1,7 @@
+{
+  "id": "skill-basic",
+  "name": "Vigil Skill Basic",
+  "version": "0.1.0",
+  "description": "A dependency-free, side-effect-free Skill template.",
+  "entry": "index.js"
+}

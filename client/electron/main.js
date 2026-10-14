@@ -26,11 +26,19 @@ if (process.platform === 'win32') app.setAppUserModelId('com.vigil.client');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
 const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App 直连换这个地址
+const PERF_START_AT = Date.now();
+function perfLog(stage, detail = '') {
+  const suffix = detail ? ' ' + detail : '';
+  console.log('[perf] ' + stage + ' +' + (Date.now() - PERF_START_AT) + 'ms' + suffix);
+}
 // 客户端自己的渠道：独立于手机 App / 微信，聊天、历史、记忆都落在 pc 分区。
 // 不是可选项 —— 这个客户端就是一台控制台，不顶替任何别的渠道。
 const CLIENT_SRC = 'pc';
 
 let win = null;
+let settingsWin = null;
+let settingsWinReady = false;
+let pendingSettingsTarget = null;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
@@ -335,7 +343,7 @@ async function setToken(token) {
 }
 
 // ── HTTP：一个入口，鉴权头在这里统一加 ──────────────────────────────
-function request(method, urlStr, body, token, timeoutMs) {
+function request(method, urlStr, body, token, timeoutMs, perfLabel = '') {
   return new Promise((resolve) => {
     let u;
     try {
@@ -343,6 +351,16 @@ function request(method, urlStr, body, token, timeoutMs) {
     } catch (e) {
       return resolve({ ok: false, status: 0, err: '地址不合法：' + urlStr });
     }
+    const route = u.pathname;
+    const startedAt = Date.now();
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (perfLabel) perfLog(perfLabel + ':end', 'route=' + route + ' status=' + (result.status || 0) + ' duration=' + (Date.now() - startedAt) + 'ms');
+      resolve(result);
+    };
+    if (perfLabel) perfLog(perfLabel + ':start', 'route=' + route);
     const mod = u.protocol === 'https:' ? https : http;
     const data = body === undefined || body === null ? null : Buffer.from(JSON.stringify(body), 'utf8');
     const headers = { Accept: 'application/json' };
@@ -373,16 +391,55 @@ function request(method, urlStr, body, token, timeoutMs) {
           } catch (e) {
             /* 非 JSON（比如 APK、图片）就把原文带回去 */
           }
-          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json, text });
+          finish({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json, text });
         });
       }
     );
+    req.on('socket', (socket) => {
+      if (!perfLabel) return;
+      socket.once('lookup', () => perfLog(perfLabel + ':dns'));
+      socket.once('connect', () => perfLog(perfLabel + ':tcp'));
+      socket.once('secureConnect', () => perfLog(perfLabel + ':tls'));
+    });
     req.on('timeout', () => {
       req.destroy(new Error('请求超时'));
     });
-    req.on('error', (e) => resolve({ ok: false, status: 0, err: e.message }));
+    req.on('error', (e) => finish({ ok: false, status: 0, err: e.message }));
     if (data) req.write(data);
     req.end();
+  });
+}
+
+// 二进制附件分块请求：与 JSON API 共用同一套目标限制和 token，
+// 但正文直接以 Buffer 发送，避免把视频/文档编码进聊天 JSON。
+function requestBinary(method, urlStr, bytes, token, headers, timeoutMs) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(urlStr); } catch (e) {
+      return resolve({ ok: false, status: 0, err: '地址不合法：' + urlStr });
+    }
+    const mod = u.protocol === 'https:' ? https : http;
+    const data = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+    const reqHeaders = { Accept: 'application/json', ...(headers || {}),
+      'Content-Length': data.length };
+    if (token) reqHeaders.Authorization = 'Bearer ' + token;
+    const req = mod.request({ method, hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), headers: reqHeaders,
+      timeout: timeoutMs || 120000 }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch (_) {}
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode, json, text });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('请求超时')));
+    req.on('error', (e) => resolve({ ok: false, status: 0, err: e.message }));
+    req.end(data);
   });
 }
 
@@ -444,6 +501,7 @@ function requestStream(method, urlStr, body, token, onEvent) {
 
 // ── 窗口 ─────────────────────────────────────────────────────────
 function createWindow() {
+  perfLog('window-create');
   win = new BrowserWindow({
     width: 1380,
     height: 880,
@@ -464,7 +522,28 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
+  // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。
+  win.webContents.on('context-menu', (_event, params) => {
+    if (!win || win.isDestroyed()) return;
+    const items = [];
+    if (params.isEditable) {
+      if (params.editFlags && params.editFlags.canUndo) items.push({ role: 'undo' });
+      if (params.editFlags && params.editFlags.canRedo) items.push({ role: 'redo' });
+      if (items.length) items.push({ type: 'separator' });
+      if (params.editFlags && params.editFlags.canCut) items.push({ role: 'cut' });
+      if (params.editFlags && params.editFlags.canCopy) items.push({ role: 'copy' });
+      if (params.editFlags && params.editFlags.canPaste) {
+        items.push({ label: '粘贴', click: () => win.webContents.paste() });
+      }
+      if (params.editFlags && params.editFlags.canSelectAll) items.push({ role: 'selectAll' });
+    } else if (String(params.selectionText || '').trim()) {
+      items.push({ role: 'copy' });
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
+  win.webContents.once('did-finish-load', () => perfLog('renderer-load-finished'));
+  win.once('ready-to-show', () => { perfLog('ready-to-show'); win.show(); perfLog('window-shown'); });
   // 2026-10-09 兜底：GPU 进程连环崩的机器上 renderer 可能永远不发
   // ready-to-show，show:false 的窗口就永远不出来 = "打不开"。
   // 3.5 秒还没显示就强制 show —— 白屏也总比没有窗口强，后续
@@ -473,6 +552,7 @@ function createWindow() {
     try {
       if (win && !win.isDestroyed() && !win.isVisible()) {
         console.log('[window] ready-to-show 超时，强制显示');
+        perfLog('window-shown-fallback');
         win.show();
       }
     } catch (e) { /* 窗口已销毁就算了 */ }
@@ -499,6 +579,67 @@ function createWindow() {
   win.on('closed', () => {
     win = null;
   });
+}
+
+function openSettingsWindow(options) {
+  const opts = options || {};
+  const section = String(opts.section || 'model');
+  const source = opts.source === 'cloud' ? 'cloud' : 'local';
+  const target = { section, source };
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    if (settingsWin.isMinimized()) settingsWin.restore();
+    settingsWin.show();
+    settingsWin.focus();
+    if (settingsWinReady) settingsWin.webContents.send('settings:navigate', target);
+    else pendingSettingsTarget = target;
+    return { ok: true, existing: true };
+  }
+  settingsWinReady = false;
+  pendingSettingsTarget = null;
+  settingsWin = new BrowserWindow({
+    width: 1120,
+    height: 790,
+    minWidth: 820,
+    minHeight: 600,
+    parent: win && !win.isDestroyed() ? win : undefined,
+    frame: false,
+    backgroundColor: '#faf7f2',
+    show: false,
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  const created = settingsWin;
+  created.loadFile(path.join(__dirname, '..', 'src', 'index.html'), {
+    query: { window: 'settings', section, source },
+  });
+  created.once('ready-to-show', () => { if (!created.isDestroyed()) created.show(); });
+  setTimeout(() => {
+    try { if (!created.isDestroyed() && !created.isVisible()) created.show(); }
+    catch (_) { /* window was closed before the fallback */ }
+  }, 3500);
+  created.webContents.once('did-finish-load', () => {
+    settingsWinReady = true;
+    if (pendingSettingsTarget && !created.isDestroyed()) {
+      created.webContents.send('settings:navigate', pendingSettingsTarget);
+      pendingSettingsTarget = null;
+    }
+  });
+  created.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  created.on('closed', () => {
+    if (settingsWin === created) settingsWin = null;
+    settingsWinReady = false;
+    pendingSettingsTarget = null;
+  });
+  return { ok: true, existing: false };
 }
 
 // ── 自动找大脑 + 自动注册设备 ─────────────────────────────────
@@ -537,7 +678,7 @@ async function registerThisDevice(base, brainToken) {
   if (cfg.token_kind === 'device' && cfg.device_id) {
     const old = await getToken();
     if (old) {
-      const chk = await request('GET', base + '/api/device/list', null, old);
+      const chk = await request('GET', base + '/api/device/list', null, old, 5000, 'connect.auth.check');
       // 复用条件：me 对得上，且这台设备仍是 admin 角色。
       // 服务端把角色收紧后（老设备没有 role 字段 = 受限 device），
       // 面板的管理操作会吃 403 —— 这里检测到就走下面的重新注册自愈。
@@ -558,7 +699,7 @@ async function registerThisDevice(base, brainToken) {
     role: 'admin',
     // 声明这台机器能干什么：服务端只会把能力对得上的活派过来
     capabilities: localtool.capabilities(cfg),
-  }, brainToken);
+  }, brainToken, 8000, 'connect.auth.register');
   if (r.ok && r.json && r.json.device_token) {
     await setToken(r.json.device_token);
     writeCfg({ device_id: r.json.device_id, token_kind: 'device' });
@@ -572,42 +713,57 @@ async function registerThisDevice(base, brainToken) {
 
 async function autoConnect() {
   const cfg = readCfg();
-  const cands = [];
-  // 本地大脑优先：exe 在、没被关掉，就等它就绪（最多 30s，首启要解包/下模型）
-  if (cfg.sidecar !== false) {
-    const st = sidecar.status();
-    if (st.exe) {
-      if (!st.enabled) sidecar.maybeStart(cfg);
-      const deadline = Date.now() + 30000;
-      while (!sidecar.ready() && Date.now() < deadline) {
-        const s = sidecar.status();
-        if (s.status === 'failed' || s.status === 'stopped') break;
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      if (sidecar.ready()) cands.push(sidecar.base());
-    }
-  }
-  if (cfg.base) cands.push(cfg.base);              // 你填过就先试它
-  PROBE.forEach((b) => { if (!cands.includes(b)) cands.push(b); });
   const tried = [];
-  for (const raw of cands) {
+  const check = async (raw, timeoutMs = 5000) => {
     const base = String(raw).replace(/\/+$/, '');
-    const r = await request('GET', base + '/api/panel/connect-config', null, '');
+    if (!base) return null;
+    const r = await request('GET', base + '/api/panel/connect-config', null, '', timeoutMs, 'connect.probe');
     if (r.status === 200 && r.json && r.json.ok && r.json.token) {
       const server = String(r.json.server || base).replace(/\/+$/, '');
       writeCfg({ base: server });
       const reg = await registerThisDevice(server, r.json.token);
-      return { ok: true, base: server, kind: reg.ok ? 'device' : 'brain',
+      return { result: { ok: true, base: server, kind: reg.ok ? 'device' : 'brain',
                device_id: reg.device_id || '', name: reg.name || '',
-               regErr: reg.ok ? '' : reg.err, tried };
+               regErr: reg.ok ? '' : reg.err, tried } };
     }
     if (r.status === 403) {
       // 地址是通的，只是它不认为请求来自本机 → 只能用设备 token，让用户补
       writeCfg({ base: base });
       tried.push(base + ' → 能连上，但服务端不认这是本机（403）');
-      return { ok: false, needToken: true, base: base, tried };
+      return { result: { ok: false, needToken: true, base: base, tried } };
     }
     tried.push(base + ' → ' + (r.err || ('HTTP ' + r.status)));
+    return null;
+  };
+
+  // A configured cloud endpoint is already the user's chosen target. Probe it
+  // before waiting for an optional local sidecar, which removes the old fixed
+  // 30 second startup penalty on machines with a slow/unused sidecar.
+  if (cfg.base) {
+    const loopbackConfig = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/?$/i.test(String(cfg.base));
+    const direct = await check(cfg.base, loopbackConfig ? 1500 : 5000);
+    if (direct) return direct.result;
+  }
+
+  const cands = [];
+  if (cfg.sidecar !== false) {
+    const st = sidecar.status();
+    if (st.exe) {
+      if (!st.enabled) sidecar.maybeStart(cfg);
+      const hasRemoteConfig = cfg.base && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/?$/i.test(String(cfg.base));
+      const deadline = Date.now() + (hasRemoteConfig ? 1500 : 3000);
+      while (!sidecar.ready() && Date.now() < deadline) {
+        const s = sidecar.status();
+        if (s.status === 'failed' || s.status === 'stopped') break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (sidecar.ready()) cands.push(sidecar.base());
+    }
+  }
+  PROBE.forEach((b) => { if (!cands.includes(b) && b !== cfg.base) cands.push(b); });
+  for (const raw of cands) {
+    const found = await check(raw, 1500);
+    if (found) return found.result;
   }
   return { ok: false, tried };
 }
@@ -885,7 +1041,7 @@ ipcMain.handle('local:reveal', (_e, p) => {
 // 渲染层只能给 'ask' 或默认 'status'——不会绕过弹窗直接下载。
 ipcMain.handle('updater:check', (_e, mode) => checkUpdate(mode === 'ask' ? 'ask' : 'status'));
 
-ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null }) => {
+ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null, timeoutMs = null }) => {
   if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };
   // 🔴 base 只认两种：缺省（配置的大脑/sidecar）和 'cloud' 别名。
   // 以前渲染层（含被注入的插件 JS）可以传任意 URL，主进程会把 token 带到
@@ -903,7 +1059,9 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
     if (!cb || !sync.cloud_token) {
       return { ok: false, status: 0, err: '还没配云端（设置 → 云端同步）' };
     }
-    return request(method, cb + p, body, sync.cloud_token);
+    const cloudTimeout = Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(30000, timeoutMs)) : undefined;
+    return request(method, cb + p, body, sync.cloud_token,
+      cloudTimeout, p === '/api/persona' ? 'connect.persona.cloud' : 'api.cloud');
   }
   // 本地大脑优先用 sidecar 动态发现的端口（cfg.base 可能是旧的/写死的）
   const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
@@ -918,9 +1076,25 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const withSrc = wantsSrc && !hasSrc ? p + sep + 'src=' + encodeURIComponent(src) : p;
   const token = await getToken();
   const centerTimeout = p.startsWith('/api/agent-center/') ? (method === 'GET' ? 5000 : 45000) : undefined;
-  const r = await request(method, b + withSrc, body, token, centerTimeout);
+  const requestedTimeout = Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(30000, timeoutMs)) : centerTimeout;
+  const perfLabel = p === '/api/persona' ? 'connect.persona' : '';
+  const r = await request(method, b + withSrc, body, token, requestedTimeout, perfLabel);
   if (!r.ok && r.status === 401) return { ...r, err: 'token 不对（设置 → 连接与设备）' };
   return r;
+});
+
+ipcMain.handle('attachment:chunk', async (_e, { bytes, headers = {} } = {}) => {
+  const cfg = readCfg();
+  const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
+  const b = (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE;
+  const safeHeaders = {};
+  for (const key of ['X-Attachment-Id', 'X-Attachment-Name', 'X-Attachment-Mime',
+    'X-Attachment-Total', 'X-Attachment-Offset', 'X-Attachment-Confirmed']) {
+    if (headers[key] != null) safeHeaders[key] = String(headers[key]);
+  }
+  const token = await getToken();
+  return requestBinary('POST', String(b).replace(/\/+$/, '') + '/api/attachments/upload',
+    bytes, token, safeHeaders, 120000);
 });
 
 // 流式聊天：主进程发 SSE 请求，逐块通过 webContents.send 推给渲染层。
@@ -1030,17 +1204,26 @@ ipcMain.handle('token:test', async () => {
   return { ok: r.ok, status: r.status, err: r.err || '', name: (r.json && r.json.name) || '' };
 });
 ipcMain.handle('shell:open', (_e, url) => shell.openExternal(String(url || '')));
+ipcMain.handle('settings:open', (_e, options) => openSettingsWindow(options));
 
 const send = (ch, ...a) => win && !win.isDestroyed() && win.webContents.send(ch, ...a);
-ipcMain.on('win:minimize', () => win && win.minimize());
-ipcMain.on('win:maximize', () => {
-  if (!win) return;
-  win.isMaximized() ? win.unmaximize() : win.maximize();
-  send('win:state', win.isMaximized());
+const senderWindow = (event) => BrowserWindow.fromWebContents(event.sender);
+ipcMain.on('win:minimize', (event) => {
+  const target = senderWindow(event);
+  if (target && !target.isDestroyed()) target.minimize();
+});
+ipcMain.on('win:maximize', (event) => {
+  const target = senderWindow(event);
+  if (!target || target.isDestroyed()) return;
+  target.isMaximized() ? target.unmaximize() : target.maximize();
+  target.webContents.send('win:state', target.isMaximized());
 });
 // 自绘标题栏的 ✕：走 win.close() → 被 close 拦截器接住 → 隐藏进托盘
 // （真退出在托盘右键菜单，见 createTray。2026-10-09 起"点关闭=隐藏"）
-ipcMain.on('win:close', () => win && win.close());
+ipcMain.on('win:close', (event) => {
+  const target = senderWindow(event);
+  if (target && !target.isDestroyed()) target.close();
+});
 
 // ── 生命周期 ──────────────────────────────────────────────────────
 // 单实例：两个客户端同时跑会互相覆盖配置、也会把聊天历史对账搞乱
@@ -1054,6 +1237,7 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
   app.whenReady().then(() => {
+    perfLog('electron-ready');
     Menu.setApplicationMenu(null);   // 自绘标题栏，不要系统菜单
     oplog.init(app.getPath('userData'));
     sidecar.maybeStart(readCfg());   // 本地大脑先跑起来，窗口同时开

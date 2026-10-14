@@ -1,0 +1,131 @@
+{
+  "note": "模型快速切换 Electron 界面联动（隔离 HOME / 两家本机假服务商 / 随机 Token）。截图不入库。",
+  "commit": "5678396",
+  "fatal": "",
+  "python": "python.exe",
+  "node": "v22.22.2",
+  "electron": "electron@28.3.3",
+  "brain_port": 50235,
+  "provider_probes": {
+    "A": 2,
+    "B": 2
+  },
+  "chat_calls": {
+    "A": 1,
+    "B": 3
+  },
+  "passed": 22,
+  "total": 22,
+  "results": [
+    {
+      "id": "D0 Brain 就绪；预置清单 3 条、当前 = sf-chat-model",
+      "ok": true,
+      "detail": "{\"n\":3,\"cur\":\"sf-chat-model\"}"
+    },
+    {
+      "id": "D1 Electron 连接隔离 Brain",
+      "ok": true,
+      "detail": "{\"device_id\":\"\",\"token_kind\":\"\",\"base\":\"http://127.0.0.1:50235\"}"
+    },
+    {
+      "id": "M1 composer 上显示当前模型名（与顶栏一致）",
+      "ok": true,
+      "detail": "{\"btn\":\"sf-chat-model ▾\",\"top\":\"sf-chat-model\"}"
+    },
+    {
+      "id": "M2 下拉列出已保存模型（3 条：两家服务商，同名/异名分得开）",
+      "ok": true,
+      "detail": "[\"sf-chat-model|硅基流动 · sf-chat-model\",\"sf-second-model|硅基流动 · sf-second-model\",\"xm-chat-model|小米 MiMo · xm-chat-model\"]"
+    },
+    {
+      "id": "M3 当前那条有选中标记，且与按钮上的名字一致",
+      "ok": true,
+      "detail": "{\"on\":[\"sf-chat-model\"],\"btn\":\"sf-chat-model ▾\"}"
+    },
+    {
+      "id": "M4 缺密钥的服务商那一行有明确标记（不装作可用）",
+      "ok": true,
+      "detail": "[\"sf-chat-model:当前\",\"sf-second-model:\",\"xm-chat-model:缺密钥\"]"
+    },
+    {
+      "id": "M5 底部有「添加或管理模型」入口",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "id": "M6 搜索只剩匹配项",
+      "ok": true,
+      "detail": "[\"sf-second-model\"]"
+    },
+    {
+      "id": "M7 缺密钥时明确报错且当前模型不变",
+      "ok": true,
+      "detail": "{\"msg\":\"「小米 MiMo」还没存过密钥：先加一次它的 key（点下面「添加或管理模型」）\",\"cur\":\"sf-chat-model\"}"
+    },
+    {
+      "id": "M8 设置页保存小米模型（带上密钥）成功",
+      "ok": true,
+      "detail": "[\"服务商 → 小米 MiMo\",\"接口地址 → http://127.0.0.1:50234/v1\",\"密钥已更新\",\"对话模型 → xm-chat-model\"]"
+    },
+    {
+      "id": "M8b 切回硅基",
+      "ok": true,
+      "detail": "[\"服务商 → 硅基流动\",\"接口地址 → http://127.0.0.1:50233/v1\",\"已换上硅基流动的密钥\",\"对话模型 → sf-chat-model\"]"
+    },
+    {
+      "id": "M9 点一下就切到小米（服务端 current + 按钮 + 顶栏三处一致）",
+      "ok": true,
+      "detail": "{\"cur\":\"xiaomi/xm-chat-model\",\"btn\":\"xm-chat-model ▾\",\"top\":\"xm-chat-model\",\"补key后那条的状态\":\"\",\"刷新后的提示\":\"\"}"
+    },
+    {
+      "id": "M10 这句话真的打在小米上、用的就是选中的模型",
+      "ok": true,
+      "detail": "{\"B\":[\"xm-chat-model\"],\"A\":[]}"
+    },
+    {
+      "id": "M11 切模型没有清空会话历史（消息流还在，且变多了）",
+      "ok": true,
+      "detail": "before=0"
+    },
+    {
+      "id": "M12 Creator 草稿用的是当前选中的小米模型（传输层 + 卡片两处一致）",
+      "ok": true,
+      "detail": "{\"B\":[\"xm-chat-model\"],\"A\":0,\"卡上模型\":\"xm-chat-model重新验证删除草稿需求：ZXFIX_DRAFT\"}"
+    },
+    {
+      "id": "M13 生成中：模型按钮禁用、下拉打不开（这一轮跑完之前界面不许切）",
+      "ok": true,
+      "detail": "{\"在飞的请求\":1,\"按钮禁用\":true,\"下拉打开\":false}"
+    },
+    {
+      "id": "M14 生成中从 API 切走：在飞那一轮仍然打在原来的家、原模型（没有中途串台）",
+      "ok": true,
+      "detail": "{\"切走成功\":true,\"切换后当前\":\"xm-chat-model\",\"onA\":[\"sf-chat-model\"],\"onB\":0}"
+    },
+    {
+      "id": "M15 移除后下拉与服务端清单同步少一条",
+      "ok": true,
+      "detail": "{\"ui\":[\"sf-chat-model\",\"xm-chat-model\"],\"api\":[\"sf-chat-model\",\"xm-chat-model\"]}"
+    },
+    {
+      "id": "M15b 移除当前这条：配置不变、界面标「未保存」、聊天照旧走它（不会偷偷换模型）",
+      "ok": true,
+      "detail": "{\"移除后的当前\":\"xm-chat-model\",\"下拉里那条\":\"xm-chat-model (未保存)\",\"聊天打到\":[\"xm-chat-model\"]}"
+    },
+    {
+      "id": "M16 页面与接口都没有出现任何 API Key",
+      "ok": true,
+      "detail": "secrets hidden"
+    },
+    {
+      "id": "M17 Electron 重启后：清单还在、当前选择恢复、按钮显示正确",
+      "ok": true,
+      "detail": "{\"rows\":[\"xm-chat-model (未保存)\",\"sf-chat-model\"],\"label\":\"xm-chat-model ▾\",\"cur\":\"xm-chat-model\"}"
+    },
+    {
+      "id": "M18 electron.log 无未捕获异常",
+      "ok": true,
+      "detail": "clean"
+    }
+  ]
+}

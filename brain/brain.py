@@ -9,6 +9,7 @@ import datetime
 import time
 import threading
 import httpx
+from html.parser import HTMLParser
 
 from persona_store import (
     load as load_persona, build_system_text, build_draft_rules,
@@ -213,31 +214,84 @@ def _extract_reasoning(msg, raw=""):
     return ""
 
 
-# XML 格式工具调用的兜底解析（小米 MiMo 等不支持结构化 tool_calls 的供应商）。
+# MiMo's legacy response uses tag names such as
+# ``<function=local_file_list><parameter=path>…``. It is not valid XML, so
+# use a small HTMLParser-based reader rather than regex-executing arbitrary
+# model text. The caller filters names against the tools schema and dispatches
+# only through tools.invoke_spec(), where existing permission and approval
+# gates remain in force.
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.S | re.I)
-_TOOL_FUNC_RE = re.compile(r"<function=([^>]+)>(.*?)</function>", re.S | re.I)
 
 
-_TOOL_PARAM_RE = re.compile(r"<parameter=([^>]+)>(.*?)</" + "parameter>", re.S | re.I)  # restored P1: XML tool-call parse NameError
+class _LegacyToolCallParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.current = None
+        self.active_param = None
+        self.out = []
+
+    @staticmethod
+    def _tag_value(tag, prefix):
+        low = str(tag or "").lower()
+        if low.startswith(prefix):
+            return str(tag)[len(prefix):].strip()
+        return ""
+
+    def handle_starttag(self, tag, attrs):
+        low = str(tag or "").lower()
+        if low == "tool_call":
+            self.current = {"name": "", "params": {}}
+            self.active_param = None
+            return
+        if self.current is None:
+            return
+        name = self._tag_value(tag, "function=")
+        if name:
+            self.current["name"] = name
+            self.active_param = None
+            return
+        name = self._tag_value(tag, "parameter=")
+        if name:
+            self.active_param = name
+            self.current["params"].setdefault(name, [])
+
+    def handle_data(self, data):
+        if self.current is not None and self.active_param:
+            self.current["params"][self.active_param].append(str(data))
+
+    def handle_endtag(self, tag):
+        low = str(tag or "").lower()
+        if low == "parameter":
+            self.active_param = None
+        elif low == "tool_call":
+            if self.current and self.current.get("name"):
+                self.out.append(self.current)
+            self.current = None
+            self.active_param = None
 
 
-def _parse_xml_tool_calls(text):
+def _parse_xml_tool_calls(text, allowed_names=None):
     if not text or "<tool_call" not in text.lower():
         return []
+    parser = _LegacyToolCallParser()
+    try:
+        parser.feed(str(text)[:32768])
+        parser.close()
+    except Exception:
+        return []
+    allowed = (None if allowed_names is None
+               else set(str(x) for x in (allowed_names or ())))
     out = []
-    for i, m in enumerate(_TOOL_CALL_RE.finditer(text)):
-        fm = _TOOL_FUNC_RE.search(m.group(1))
-        if not fm:
+    for i, item in enumerate(parser.out[:8]):
+        name = str(item.get("name") or "").strip()
+        if not name or (allowed is not None and name not in allowed):
             continue
-        name = fm.group(1).strip()
-        args = {}
-        for pm in _TOOL_PARAM_RE.finditer(fm.group(2)):
-            args[pm.group(1).strip()] = pm.group(2).strip()
-        if name:
-            out.append({"id": "xml_%d_%d" % (int(time.time()), i),
-                        "type": "function",
-                        "function": {"name": name,
-                                     "arguments": json.dumps(args, ensure_ascii=False)}})
+        args = {key: "".join(value).strip()
+                for key, value in (item.get("params") or {}).items()}
+        out.append({"id": "xml_%d_%d" % (time.time_ns(), i),
+                    "type": "function",
+                    "function": {"name": name,
+                                 "arguments": json.dumps(args, ensure_ascii=False)}})
     return out
 
 
@@ -420,26 +474,50 @@ class Brain:
         # 下一轮立即生效，不用重启大脑。
         self.last_provider_kind = ""
 
-    def _provider(self):
+    def _api_snapshot(self):
+        """本轮用的配置快照（浅拷贝）。
+
+        🔴 为什么必须有这一层：`CloudProvider` 在**构造时**就把 api_base /
+        api_key / model 抄进实例，而 payload 里的 `model` 是**发送时**才从
+        self.api 读的。用户在 `/api/models/quick-switch` 上切一下模型
+        （另一个 HTTP 线程，就地改 self.api 那个字典），正在跑的这一轮就会
+        变成"地址是老家的、模型名是新家的"—— 轻则 400，重则悄悄打到另一个
+        模型上，而界面显示的还是他选的那个。
+        每轮开头取一份快照，provider 和 payload 都读它，切换只影响下一轮。
+        """
+        try:
+            return dict(self.api or {})
+        except Exception:
+            return {}
+
+    def _provider(self, cfg=None):
         """这一轮该用哪个模型执行端。取不到一律退回 CloudProvider ——
-        新模块任何异常都不能让她彻底说不出话。"""
+        新模块任何异常都不能让她彻底说不出话。
+
+        cfg 传 None 时才回头读 self.api（老调用点行为不变）。
+        """
+        src = self.api if cfg is None else cfg
         try:
             from model_providers import get_provider
-            return get_provider(self.api)
+            return get_provider(src)
         except Exception as e:
             print("[大脑] model_providers 装载失败，退回云端直调：%s"
                   % str(e)[:100], flush=True)
             from model_providers.cloud import CloudProvider
-            return CloudProvider(self.api)
+            return CloudProvider(src)
 
-    def _provider_ready(self, mp):
-        """入口门：云端要 api_base+api_key；本地 Ollama 要地址+模型名（不要 key）。"""
+    def _provider_ready(self, mp, cfg=None):
+        """入口门：云端要 api_base+api_key；本地 Ollama 要地址+模型名（不要 key）。
+
+        cfg 给的是本轮快照；不传才读 self.api（老调用点行为不变）。
+        """
+        src = self.api if cfg is None else cfg
         try:
             if getattr(mp, "kind", "") == "ollama":
                 return bool(getattr(mp, "ready", lambda: False)())
         except Exception:
             pass
-        return bool(self.api.get("api_key"))
+        return bool(src.get("api_key"))
 
     # --- 渠道 ---
     @property
@@ -859,9 +937,12 @@ class Brain:
         场合用（plan 分支的收尾那一步就是）。不关掉的话，主模型会拿计划里
         刚查过的结果再查一遍 —— 同一条消息两次计费、两次执行。
         """
-        mp = self._provider()
+        # 本轮配置快照：provider 与 payload 的 model 必须来自同一份，
+        # 否则中途切模型会让两者错位（见 _api_snapshot 的说明）。
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
         self.last_provider_kind = getattr(mp, "kind", "cloud")
-        if not self._provider_ready(mp):
+        if not self._provider_ready(mp, _api0):
             return None
 
         # P1 确定性三路路由：只有 hybrid + 委派开关 + 路由开关全满足时才可能
@@ -988,7 +1069,7 @@ class Brain:
                     print("[大脑] %s" % self.last_err, flush=True)
                     break
                 _payload = {
-                    "model": self.api.get("model", "deepseek-chat"),
+                    "model": _api0.get("model") or "deepseek-chat",
                     "messages": msgs,
                     "temperature": 0.85,
                     # 详细回答模式给足空间；闲聊维持原值
@@ -1017,17 +1098,36 @@ class Brain:
                 msg = _j["choices"][0]["message"]
                 tcs = msg.get("tool_calls") or []
 
-                # XML 兜底：部分供应商（小米 MiMo 等）不支持结构化 tool_calls，
-                # 模型会在正文里输出 <tool_call><function=Bash>...</tool_call>。
-                # 解析出来走同一条执行链路，剥掉标签后的正文才是给用户看的。
+                # XML-like text is not a tool protocol unless the provider has
+                # explicitly opted in.  Executing arbitrary command-looking text
+                # from a normal content field would bypass the provider contract.
                 _raw_content = msg.get("content") or ""
                 _xml_mode = False
                 if not tcs and _raw_content:
-                    _xml_tcs = _parse_xml_tool_calls(_raw_content)
-                    if _xml_tcs:
+                    _xml_flag = _api0.get("allow_xml_tool_fallback", True)
+                    if isinstance(_xml_flag, str):
+                        _xml_flag = _xml_flag.strip().lower() not in ("0", "false", "no", "off")
+                    _xml_allowed = bool(_xml_flag) \
+                        and bool(tool_specs) \
+                        and bool(getattr(mp, "supports_xml_tools", False))
+                    if "<tool_call" in _raw_content.lower():
+                        if not _xml_allowed:
+                            self.last_err = "当前模型返回了不兼容的工具调用格式，请切换支持结构化工具调用的模型"
+                            self.last_tools_used = []
+                            return self.last_err
+                        _allowed_names = {
+                            str((item.get("function") or {}).get("name") or "")
+                            for item in (tool_specs or [])
+                        }
+                        _xml_tcs = _parse_xml_tool_calls(
+                            _raw_content, allowed_names=_allowed_names)
+                        if not _xml_tcs:
+                            self.last_err = "模型返回了无法识别的工具调用，请重试或切换支持 tools 的模型"
+                            self.last_tools_used = []
+                            return self.last_err
                         tcs = _xml_tcs
                         _xml_mode = True
-                        print("[大脑] 从正文解析到 %d 个 XML 工具调用: %s"
+                        print("[大脑] 供应商明确允许 XML 工具协议，解析到 %d 个调用: %s"
                               % (len(tcs), "、".join(
                                   (tc.get("function") or {}).get("name", "")
                                   for tc in tcs)), flush=True)
@@ -1146,6 +1246,13 @@ class Brain:
             self.last_err = "%s: %s" % (type(e).__name__, str(e)[:120])
             print("[大脑] 原生FC失败：%s" % self.last_err, flush=True)
             if tool_specs:
+                # A provider that rejects the native tools schema must be
+                # identified as a capability mismatch.  Do not silently retry
+                # as if the tool request had succeeded, and do not expose the
+                # provider's raw XML/content as an execution result.
+                if getattr(e, "status", None) in (400, 404, 422):
+                    self.last_tools_used = []
+                    return "当前模型或服务商不支持结构化工具调用，请切换支持 tools 的模型"
                 # 🔴 **降级：去掉工具表再来一次。**
                 #
                 # 上游不认 tools 的时候（换模型/换供应商、参数被静默拒绝、
@@ -1176,9 +1283,11 @@ class Brain:
         🔴 当前版本**不支持工具调用**：需要工具时模型会在正文里说明，
         客户端可降级到非流式 /api/chat。工具调用的流式支持后续再加。
         """
-        mp = self._provider()
+        # 同 draft_native：provider 与 payload 的 model 必须取自同一份快照
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
         self.last_provider_kind = getattr(mp, "kind", "cloud")
-        if not self._provider_ready(mp):
+        if not self._provider_ready(mp, _api0):
             yield {"type": "error", "msg": "模型没配好（云端 key 或本地模型）"}
             return
 
@@ -1206,7 +1315,7 @@ class Brain:
         _eff = "medium" if _know else "low"
 
         payload = {
-            "model": self.api.get("model", "deepseek-chat"),
+            "model": _api0.get("model") or "deepseek-chat",
             "messages": msgs,
             "temperature": 0.85,
             "max_tokens": _mt,
@@ -1470,7 +1579,7 @@ class Brain:
         return ans, self.last_mode
 
     # --- 聊天记录存档（跨重启） ---
-    def _log_turn(self, user_text, ans, img=None):
+    def _log_turn(self, user_text, ans, img=None, attachments=None):
         """把这一轮存进 chat_history.jsonl。写不进去也不能影响聊天。
 
         img 是可选的图片路径 —— 手机/App 靠它把图显示出来，只加在 user 那条上。
@@ -1484,6 +1593,13 @@ class Brain:
             u = {"t": t, "role": "user", "text": user_text}
             if img:
                 u["img"] = img
+            if isinstance(attachments, list) and attachments:
+                # 只记录服务端返回的脱敏元数据，绝不把文件内容或本地绝对路径写进历史。
+                u["attachments"] = [
+                    {k: item.get(k) for k in ("id", "name", "mime", "size", "kind")
+                     if item.get(k) is not None}
+                    for item in attachments if isinstance(item, dict) and item.get("id")
+                ]
             with open(self._log_for(self._cur_src), "a", encoding="utf-8") as f:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
                 # pc 渠道不拆分；微信等渠道按 split_messages 拆
@@ -1636,10 +1752,11 @@ class Brain:
             tail += "\n" + LIFE_RULES
         msgs.append({"role": "user", "content": tail})
 
-        mp = self._provider()
-        if self._provider_ready(mp):
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
+        if self._provider_ready(mp, _api0):
             try:
-                _j = mp.chat({"model": self.api.get("model", "deepseek-chat"),
+                _j = mp.chat({"model": _api0.get("model") or "deepseek-chat",
                               "messages": msgs,
                               "temperature": 0.9, "max_tokens": 120},
                              timeout=30)

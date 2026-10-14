@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """插件的安装 / 卸载 / 元数据 —— 管理面。运行时在 `plugin_host`。
 
-装完调 `plugin_host.load()` 重扫，这是两个模块唯一的交点。
+安装事务只负责静态校验和文件提交；提交成功返回 `restart_needed=true`，由受控重启完成动态加载。
+安装器不会为了校验而 import 新插件，避免在事务中触发 `start()`、网络或文件副作用。
 
 ## 包形状
 
@@ -25,6 +26,9 @@ import re
 import shutil
 import time
 import zipfile
+import tempfile
+import plugin_transaction as transaction
+import restart_state
 
 try:
     import paths
@@ -53,7 +57,8 @@ def _blank():
 def read_registry():
     """读元数据。读不出来就当空的 —— 宁可没信息，不能装不了插件。"""
     try:
-        d = json.load(open(REGISTRY, encoding="utf-8"))
+        with open(REGISTRY, encoding="utf-8") as fh:
+            d = json.load(fh)
         if not isinstance(d, dict) or not isinstance(d.get("plugins"), dict):
             return _blank()
         return d
@@ -63,9 +68,8 @@ def read_registry():
 
 def write_registry(reg):
     try:
-        os.makedirs(_PLUG_DIR, exist_ok=True)
-        with open(REGISTRY, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(reg, f, ensure_ascii=False, indent=2)
+        transaction.atomic_bytes(REGISTRY, json.dumps(
+            reg, ensure_ascii=False, indent=2).encode("utf-8"))
         return True
     except Exception:
         return False
@@ -275,6 +279,8 @@ def inspect_zip(path):
         # 就会把 zxplugin.json 当插件装成 zxplugin.py，语法检查照样通过
         # （JSON 本身就是合法 Python 字面量），用户看到"安装成功"，
         # 实际装进去一个不加载的空壳。**判据必须是语义（后缀），不是位置。**
+        if len({n.casefold() for n in names}) != len(names):
+            return False, [], "包里存在重复或仅大小写不同的文件名"
         names = pys + [n for n in names if n not in pys]
         return True, names, ""
 
@@ -295,82 +301,134 @@ def _find_manifest(names):
     return ""
 
 
+@transaction.serialized
 def install(zip_path, note=""):
-    """装一个插件。返回 (ok, 结果字典)。
-
-    顺序是刻意安排的 —— **先在临时目录里全部验完，最后才动plugins/**：
-    一个坏包不该让已有的插件跟着遭殃（zip 炸弹、超限、语法错都发生在落盘前）。
-    """
+    """Validate without import, commit files transactionally, defer activation."""
     ok, names, err = inspect_zip(zip_path)
     if not ok:
-        return False, {"err": err}
-    # inspect_zip 已保证 .py 排在第一个，但仍显式挑一次：
-    # 下一个靠 names[0] 的人不该重新踩一遍"顺序取决于打包工具"这个坑。
-    main_py = next((n for n in names if n.lower().endswith(".py")), "")
-    if not main_py:
-        return False, {"err": "包里没有 .py（这不是一个插件包）"}
-
+        return False, {"err": err, "static_validated": False}
     pname = _guess_plugin_name(names)
-    if not re_name_ok_safe(pname):
-        return False, {"err": "插件名不合法（只准英文/数字/下划线/短横线）：%s" % pname[:40]}
-
-    tmp = os.path.join(_PLUG_DIR, "_tmp_install_%d" % int(time.time()))
+    stage = None
+    keep = False
     try:
-        if os.path.isdir(tmp):
-            shutil.rmtree(tmp, ignore_errors=True)
-        os.makedirs(tmp)
+        transaction.reject_links(_PLUG_DIR)
+        os.makedirs(_PLUG_DIR, exist_ok=True)
+        stage = tempfile.mkdtemp(prefix="_tmp_install_", dir=_PLUG_DIR)
+        source = os.path.join(stage, pname)
+        os.mkdir(source)
         with zipfile.ZipFile(zip_path) as zf:
-            for n in names:
-                dest = os.path.join(tmp, *n.split("/"))
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                with zf.open(n) as src, open(dest, "wb") as out:
-                    shutil.copyfileobj(src, out)
-        # 语法检查在临时目录做：不通过就地丢掉，plugins/ 还没被碰过
-        bad = _syntax_check(tmp, names)
-        if bad:
-            return False, {"err": bad}
-        man = _read_manifest(tmp, names)
-        # 正式落盘。inspect_zip 已经保证只有单文件一种形状（目录包被拒了），
-        # 所以这里只处理单文件 —— 别留一条走不到的分支，
-        # 它会在"以后放开目录支持"时悄悄生效，而那时早就没人记得它写于何时。
-        dest = os.path.join(_PLUG_DIR, pname + ".py")
-        if os.path.isfile(dest):
-            os.remove(dest)
-        shutil.copy2(os.path.join(tmp, main_py), dest)
-        # 附属文件也落盘（zxplugin.json / 说明文档）。名字以 _ 开头 ——
-        # 加载器跳过下划线开头的文件，所以它永远不会被当成另一个插件。
-        extras = [n for n in names if not n.lower().endswith(".py")]
-        extra_dst = []
-        for n in extras:
-            src = os.path.join(tmp, *n.split("/"))
-            # 别写成 dst = "_" + os.path.basename(dst) —— 那样把绝对路径
-            # 换成了相对路径，文件会落到**当前工作目录**（云端是大脑根目录），
-            # 而这里 except: pass 会把它静默吞掉：安装报"成功"、文件却没了。
-            # 这种"看起来成功"的失败最难查，宁可多写一次 basename。
-            base = "_%s_%s" % (pname, os.path.basename(n))
-            dst = os.path.join(_PLUG_DIR, base)
-            try:
-                shutil.copy2(src, dst)
-                extra_dst.append(dst)
-            except Exception as e:
-                print("[插件] 附属文件 %s 没落盘：%s" % (base[:30], str(e)[:60]),
-                      flush=True)
-    except Exception as e:
-        return False, {"err": "装的时候出错：%s" % str(e)[:120]}
+            for name in names:
+                with zf.open(name) as src, open(os.path.join(source, name), "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        from plugin_structure import check_plugin_directory
+        report = check_plugin_directory(source)
+        if not report["ok"]:
+            return False, {"err": "; ".join(e["message"] for e in report["errors"]),
+                           "static_validated": False}
+        main = report["entry"]
+        replacements = {pname + ".py": os.path.join(source, main)}
+        for name in names:
+            if name != main:
+                replacements["_%s_%s" % (pname, name)] = os.path.join(source, name)
+        if os.path.lexists(os.path.join(_PLUG_DIR, pname)):
+            raise ValueError("同名目录插件已存在，拒绝跨布局覆盖")
+        old = [n for n in os.listdir(_PLUG_DIR)
+               if n == pname + ".py" or n.startswith("_" + pname + "_")]
+        ok, result = _commit_install(stage, pname, replacements, old,
+                                     report["manifest"], note)
+        keep = result.get("rollback") == "failed"
+        if ok:
+            result.update(files=[os.path.join(_PLUG_DIR, n) for n in replacements])
+        return ok, result
+    except Exception as exc:
+        return False, {"err": str(exc), "static_validated": False}
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if stage and not keep:
+            shutil.rmtree(stage, ignore_errors=True)
 
-    real = man.get("name") or ""
-    _set_meta(real or pname, {
-        "installed_at": time.strftime("%Y-%m-%d %H:%M"),
-        "author": str(man.get("author") or "")[:60],
-        "version": str(man.get("version") or "")[:20],
-        "desc": str(man.get("desc") or "")[:120],
-        "source": note or "zip 上传",
-        "package": pname,
-    })
-    return True, {"ok": True, "package": pname, "name": real or pname,
-                  "manifest": man, "files": [dest] + extra_dst}
+
+def _commit_install(stage, name, replacements, old, manifest, note):
+    # Read registry strictly: never silently replace a malformed user registry.
+    raw = transaction.snapshot(REGISTRY)
+    reg = json.loads(raw.decode("utf-8")) if raw is not None else _blank()
+    if not isinstance(reg, dict) or not isinstance(reg.get("plugins"), dict):
+        raise ValueError("注册表格式错误，拒绝覆盖")
+    meta = dict(reg["plugins"].get(name) or {})
+    meta.update({"installed_at": time.strftime("%Y-%m-%d %H:%M"),
+                 "author": manifest.get("author") or "",
+                 "version": manifest.get("version") or "",
+                 "desc": manifest.get("desc") or "",
+                 "source": note or "zip 上传", "package": name})
+    reg["plugins"][name] = meta
+    ok, result = transaction.commit(_PLUG_DIR, stage, replacements, old,
+                                    REGISTRY, reg, write_registry)
+    result.update(static_validated=True, files_installed=ok,
+                  dynamic_loaded=False, restart_needed=ok,
+                  activation="restart_required" if ok else "unchanged")
+    if ok:
+        result.update(ok=True, package=name, name=name, manifest=manifest)
+        # 落一个持久的"待重启"：安装只提交文件、不 import，所以磁盘状态和
+        # 运行状态从这一刻起就不一致，要一直提示到大脑重启为止。
+        try:
+            ver = str((manifest or {}).get("version") or "")
+            restart_state.note_change(
+                "plugin", _PLUG_DIR,
+                "安装插件 %s%s" % (name, (" v" + ver) if ver else ""))
+        except Exception:
+            pass
+    return ok, result
+
+
+@transaction.serialized
+def install_market_directory(repo, relative, name, note="market"):
+    """Static market validation plus the same filesystem transaction as zip."""
+    from plugin_structure import check_plugin_directory, _filename_issue
+    stage = None
+    keep = False
+    try:
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name)
+                or _filename_issue(name)):
+            raise ValueError("市场插件名称不合法或为 Windows 保留名称")
+        if (not isinstance(relative, str) or not relative or
+                relative.startswith(("/", "\\", "~")) or
+                ":" in relative or "\\" in relative or
+                any(p in ("", ".", "..") for p in relative.split("/"))):
+            raise ValueError("市场源路径必须是仓库内的相对目录，禁止路径穿越")
+        repo = os.path.abspath(repo)
+        src = os.path.abspath(os.path.join(repo, relative))
+        if os.path.commonpath([repo, src]) != repo or src == repo:
+            raise ValueError("市场源目录逃逸")
+        transaction.reject_links(repo)
+        transaction.reject_links(src)
+        transaction.reject_links(_PLUG_DIR)
+        if not os.path.isdir(src):
+            raise ValueError("插件源目录不存在")
+        report = check_plugin_directory(src)
+        if not report["ok"] or report["layout"] != "directory":
+            raise ValueError("市场目录结构无效：" + "; ".join(
+                e["message"] for e in report["errors"]))
+        os.makedirs(_PLUG_DIR, exist_ok=True)
+        stage = tempfile.mkdtemp(prefix="_tmp_install_", dir=_PLUG_DIR)
+        staged = os.path.join(stage, name)
+        shutil.copytree(src, staged, symlinks=True)
+        # Validate the immutable staging copy under its target identity too.
+        report = check_plugin_directory(staged)
+        if not report["ok"]:
+            raise ValueError("暂存目录结构无效：" + "; ".join(
+                e["message"] for e in report["errors"]))
+        if os.path.lexists(os.path.join(_PLUG_DIR, name + ".py")):
+            raise ValueError("同名单文件插件已存在，拒绝跨布局覆盖")
+        # Directory rename over a non-empty directory requires first moving
+        # the old directory. commit handles this with a protected backup.
+        ok, result = _commit_install(stage, name, {name: staged}, [name],
+                                     report["manifest"], note)
+        keep = result.get("rollback") == "failed"
+        return ok, result
+    except Exception as exc:
+        return False, {"err": str(exc), "static_validated": False}
+    finally:
+        if stage and not keep:
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 def re_name_ok_safe(n):
@@ -413,17 +471,81 @@ def _syntax_check(tmp_root, names):
 
 
 def _read_manifest(tmp_root, names):
-    """读 zxplugin.json（可选）。没有就返回空 dict。"""
+    """读 zxplugin.json（可选）。文件存在但格式错误时返回 None。"""
     p = _find_manifest(names)
     if not p:
         return {}
     try:
-        d = json.load(open(os.path.join(tmp_root, *p.split("/")), encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
+        with open(os.path.join(tmp_root, *p.split("/")), encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else None
     except Exception:
-        return {}
+        return None
 
 
+_MANIFEST_TEXT_LIMITS = {
+    "name": 64,
+    "author": 60,
+    "version": 32,
+    "desc": 120,
+    "license": 80,
+    "homepage": 240,
+    "repository": 240,
+}
+
+
+def validate_manifest(manifest, package_name=""):
+    """Validate optional ``zxplugin.json`` metadata without importing plugin code.
+
+    The manifest is descriptive metadata, not a permission declaration. Unknown
+    keys remain allowed for forward compatibility, while known fields get stable
+    scalar and length checks. A declared name must match the install package so
+    registry identity cannot silently diverge from the file being installed.
+    Returns a user-facing error string or an empty string when valid.
+    """
+    if manifest is None:
+        return "zxplugin.json 必须是 JSON 对象"
+    if not isinstance(manifest, dict):
+        return "zxplugin.json 必须是 JSON 对象"
+    for key, limit in _MANIFEST_TEXT_LIMITS.items():
+        if key not in manifest or manifest[key] is None:
+            continue
+        value = manifest[key]
+        if not isinstance(value, str):
+            return "zxplugin.json 的 %s 必须是字符串" % key
+        stripped = value.strip()
+        if key == "name" and value != stripped:
+            return "zxplugin.json 的 name 不能包含首尾空白"
+        value = stripped
+        if len(value) > limit:
+            return "zxplugin.json 的 %s 超过 %d 个字符" % (key, limit)
+        if key == "name" and value:
+            if not re_name_ok_safe(value):
+                return "zxplugin.json 的 name 只能用英文/数字/下划线/短横线"
+            if package_name and value != package_name:
+                return "zxplugin.json 的 name 必须与插件文件名一致：%s" % package_name
+    return ""
+
+
+def _has_start_hook(name):
+    """这个插件是不是声明了 `start` 钩子 —— 也就是装卸后要重启大脑才真正生效。
+
+    必须在文件被删掉**之前**问。`plugin_host` 的清单是从 plugins/ 现扫的，
+    文件一没它就再也问不出来；而"卸完了后台线程还在跑、要重启才停"这个
+    信息只有这一刻拿得到。错过这一刻，界面就永远只会说"已卸载"，
+    用户以为线程也跟着停了 —— 那是骗人。
+    """
+    try:
+        import plugin_host as _ph
+        p = (_ph.all_plugins() or {}).get(str(name))
+        return bool(p is not None and callable(p.hook("start")))
+    except Exception:
+        # 问不出来时按"需要重启"处理：多提示一次重启的代价，
+        # 远小于漏提示一次（用户以为停了，实际还在跑）。
+        return True
+
+
+@transaction.serialized
 def uninstall(name, purge_data=False):
     """卸一个插件。返回 (ok, 信息)。
 
@@ -438,7 +560,11 @@ def uninstall(name, purge_data=False):
     hit = ""
     f = os.path.join(_PLUG_DIR, name + ".py")
     d = os.path.join(_PLUG_DIR, name)
-        # 必须在删文件**之前**读出 FEATURE：文件一删就再也读不到，
+    # 删文件之前先记下它带不带后台线程（上面 _has_start_hook 的注释解释了
+    # 为什么必须赶在删除前）。卸载的返回里要带这个信息，否则前端
+    # 只会显示"已卸载"，而那个 start() 起的线程还在跑。
+    had_bg = _has_start_hook(name)
+    # 必须在删文件**之前**读出 FEATURE：文件一删就再也读不到，
     # 而渠道开关的键（features_by_src.<src>.<FEATURE>）得靠它才能摘掉。
     feat = _feature_of(f)
     if os.path.isfile(f):
@@ -486,7 +612,18 @@ def uninstall(name, purge_data=False):
                 extra = "，数据也清了"
         except Exception:
             pass
-    return True, {"ok": True, "removed": os.path.basename(hit), "msg": "已卸载" + extra}
+    # 持久记一笔"待重启"。卸载之后磁盘与运行态就不一致了：文件没了，
+    # 但已经 import 的那份（连同它 start() 起的线程）还在内存里。
+    # 这个不一致要一直提示到用户重启为止 —— 只靠 toast 说一次等于没说。
+    try:
+        restart_state.note_change(
+            "plugin", _PLUG_DIR,
+            "卸载插件 %s%s" % (name, "（带后台线程）" if had_bg else ""))
+    except Exception:
+        pass
+    return True, {"ok": True, "removed": os.path.basename(hit),
+                  "msg": "已卸载" + extra,
+                  "restart_needed": bool(had_bg)}
 
 
 # --- 给面板的完整视图 ---

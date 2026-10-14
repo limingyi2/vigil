@@ -72,8 +72,8 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 # model_mode：cloud（默认）/ local（本机 Ollama）/ hybrid（主模型云端+本地委派 P2）
 # ollama：本地模型连接段 {base, model, num_ctx, num_predict, think, request_timeout}
 API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
-                "persona_file", "provider", "api_keys",
-                "model_mode", "ollama")
+                "persona_file", "provider", "api_keys", "api_key_bases",
+                "model_mode", "ollama", "wechat_route", "wechat_enabled")
 
 
 def api_cfg_subset(src):

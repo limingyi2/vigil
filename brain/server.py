@@ -27,6 +27,20 @@ from runtime import (
 # （vision/voice/persona_file/uapi 已经栽过四回）。
 import runtime as _runtime
 
+
+def _refresh_api_cfg(src):
+    """Refresh the shared config without exposing an empty intermediate dict.
+
+    Brain request threads read the same API_CFG object.  clear()+update() made
+    a concurrent request observe a zero-key config and fail as if credentials
+    were missing.  Publish new values first, then remove keys that disappeared.
+    """
+    next_cfg = _runtime.api_cfg_subset(src)
+    API_CFG.update(next_cfg)
+    for key in list(API_CFG):
+        if key not in next_cfg:
+            API_CFG.pop(key, None)
+
 # 模型中枢 + 错误日志：App 在手机上换模型、导出日志都走这两个模块。
 # 异常钩子装上后，线程里静默死掉的异常也会留下记录
 import model_hub
@@ -169,11 +183,14 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/stickers",
     "/api/voice",
     "/api/img",
+    "/api/attachments/capabilities",
+    "/api/attachments/file",
     "/api/route",                       # 只读：当前路由状态
     "/api/persona",
     "/api/persona/full",
     "/api/voices",
     "/api/models",
+    "/api/models/saved",                # 主页快速切换下拉：只有名字和布尔状态，无密钥
     "/api/memory/stores",
     "/api/memory/list",
     "/api/device/list",
@@ -190,6 +207,8 @@ DEVICE_GET_PREFIX = ("/api/sync/",)
 DEVICE_POST_ALLOW = frozenset({
     "/api/chat",
     "/api/chat/stream",
+    "/api/attachments/upload",
+    "/api/attachments/frames",
     "/api/logs",                         # 客户端上报错误
     "/api/stickers/collect",
     "/api/sync/flush",                   # 客户端「立即同步」
@@ -632,6 +651,26 @@ def _wechat_route():
         return "cloud"
 
 
+def _wechat_enabled():
+    try:
+        return bool((API_CFG or {}).get("wechat_enabled", True))
+    except Exception:
+        return True
+
+
+def _set_wechat_enabled(v):
+    val = bool(v)
+    API_CFG["wechat_enabled"] = val
+    cfg = {}
+    try:
+        cfg = json.load(open(config_path(), encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    cfg["wechat_enabled"] = val
+    with open(config_path(), "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
 def _set_wechat_route(v):
     """热改 + 落盘。落盘照 /api/persona/apply 的写法：整份读出、改键、写回。"""
     if v not in ("cloud", "local"):
@@ -660,7 +699,7 @@ def _late_to_history(src, display, reply):
 
 
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
-                   dry_run=False):
+                   dry_run=False, attachments=None):
     """让她回一句话。
 
     img_b64：这一轮带的图片（base64），交给视觉模型让她"看见"。
@@ -771,7 +810,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             # 症状是"她答的是上一条测试句"（见 ask_with_retry 的说明）。
             if not dry_run:
                 try:
-                    _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None)
+                    _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None,
+                                               attachments=attachments)
                 except Exception as e:
                     print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
             return ans, mode, ""
@@ -873,9 +913,15 @@ def _cloud_history(limit=60, src="wechat"):
                 img = d.get("img") or ""
                 if img:
                     img = os.path.basename(img.replace("\\", "/"))
+                atts = d.get("attachments")
+                if not isinstance(atts, list):
+                    atts = []
+                atts = [{k: a.get(k) for k in ("id", "name", "mime", "size", "kind")
+                         if a.get(k) is not None}
+                        for a in atts if isinstance(a, dict) and a.get("id")]
                 items.append({"t": d.get("t") or "", "role": d.get("role") or "",
                               "text": d.get("text") or "",
-                              "img": img})
+                              "img": img, "attachments": atts})
     except OSError:
         return []
     # 🔴 入参必须夹紧。直接 int(limit) 的写法：
@@ -1140,6 +1186,36 @@ def start_remote_api(brain):
             self.end_headers()
             self.wfile.write(data)
 
+        def _attachment_upload(self):
+            """接收一个受限大小的二进制分块，不把文件放进聊天 JSON。"""
+            try:
+                import attachments as _att
+                from urllib.parse import unquote
+                if self.headers.get("X-Attachment-Confirmed") != "1":
+                    self._json(428, {"ok": False, "err": "上传附件前需要用户明确确认"})
+                    return
+                n = int(self.headers.get("Content-Length") or 0)
+                if n <= 0 or n > _att.MAX_CHUNK_SIZE:
+                    self._json(413 if n > _att.MAX_CHUNK_SIZE else 400,
+                               {"ok": False, "err": "附件分块为空或超过 2 MB"})
+                    return
+                aid = str(self.headers.get("X-Attachment-Id") or "")
+                name = unquote(str(self.headers.get("X-Attachment-Name") or ""))
+                mime = str(self.headers.get("X-Attachment-Mime") or "")
+                total = self.headers.get("X-Attachment-Total")
+                offset = self.headers.get("X-Attachment-Offset")
+                blob = self.rfile.read(n)
+                if len(blob) != n:
+                    self._json(400, {"ok": False, "err": "附件分块未完整到达"})
+                    return
+                out = _att.append_chunk(aid, name, mime, total, offset, blob)
+                self._json(200, {"ok": True, **out})
+            except ValueError as e:
+                self._json(400, {"ok": False, "err": str(e)[:160]})
+            except Exception as e:
+                print("[附件] 保存失败：%s: %s" % (type(e).__name__, str(e)[:120]), flush=True)
+                self._json(500, {"ok": False, "err": "附件保存失败"})
+
         def do_OPTIONS(self):
             """CORS 预检：浏览器发带 Authorization 的请求前会先问一声。"""
             self.send_response(200)
@@ -1189,12 +1265,16 @@ def start_remote_api(brain):
                 if path == "/api/plugins":
                     try:
                         import plugin_host as _ph
+                        import restart_state as _rs
                         self._json(200, {
                             "plugins": _ph.listing(),
                             "manage": {
                                 "channels": chans,
                                 "items": _po.overview(chans),
                             },
+                            # 持久的"待重启"判据（磁盘改动时刻 vs 本进程启动时刻）。
+                            # 界面刷新后靠它认出待重启态 —— 不是靠 toast 记忆。
+                            "pending_restart": _rs.snapshot("plugin", _po._PLUG_DIR),
                         })
                     except Exception as e:
                         self._json(200, {"plugins": [],
@@ -1236,10 +1316,9 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": "包是坏的（不是合法 zip）"})
                     return True
                 import tempfile
-                fp = os.path.join(tempfile.gettempdir(),
-                                  "zxplug_%d.zip" % int(time.time()))
+                fd, fp = tempfile.mkstemp(prefix="zxplug_", suffix=".zip")
                 try:
-                    with open(fp, "wb") as f:
+                    with os.fdopen(fd, "wb") as f:
                         f.write(blob)
                     ok, res = _po.install(fp, note=str(body.get("source") or "")[:40])
                 finally:
@@ -1250,9 +1329,11 @@ def start_remote_api(brain):
                 if not ok:
                     self._json(400, {"ok": False, "err": res.get("err") or "装不上"})
                     return True
-                n, need = self._plugin_reload_now()
+                # Installing files must not execute newly supplied code.
+                # Explicit restart performs activation outside the transaction.
+                import plugin_host as _ph
                 self._json(200, {"ok": True, "installed": res,
-                                 "count": n, "restart_needed": need,
+                                 "count": len(_ph.all_plugins()), "restart_needed": True,
                                  "manage": {"channels": chans,
                                             "items": _po.overview(chans)}})
                 return True
@@ -1264,6 +1345,14 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": res.get("err") or "卸不掉"})
                     return True
                 n, need = self._plugin_reload_now()
+                # restart_needed **只认刚卸掉的那个插件**（plugin_ops 在删
+                # 文件前查过它的 start 钩子，信息只有那一刻拿得到）。
+                # 曾经把重载返回的"剩下的插件里有带的"也 OR 进来，理由是
+                # "别漏报"—— 但重载刚把内存重拼到和磁盘一致，其余插件的
+                # 线程本来就是当前代码在跑，不需要为它们重启。真实 UI 验收
+                # （C2-4）实测：卸一个没有 start 钩子的插件，界面照样说
+                # "它注册的后台线程还在跑"—— 那句话是谎话。
+                need = bool(res.get("restart_needed"))
                 self._json(200, {"ok": True, "uninstalled": res,
                                  "count": n, "restart_needed": need,
                                  "manage": {"channels": chans,
@@ -1321,6 +1410,127 @@ def start_remote_api(brain):
                                  "plugins": listing})
                 return True
 
+            return False
+
+        def _creator_admin(self, method, path, body):
+            """Creator Mode 草稿面：生成 / 修改 / 验证 / 审批安装 / 查看 / 删除。
+
+            和插件管理面的分工：这里只产**可审核的草稿** —— 独立工作区
+            （``<DATA_DIR>/creator_drafts/``）+ 真实模型生成 + P4 静态检查器。
+            写操作（生成要花模型 token）只允许管理员；读操作任何已认证身份可看。
+            命中返回 True（已回包）。
+            """
+            if not path.startswith("/api/creator"):
+                return False
+            if method == "POST" and not self._is_admin():
+                self._json(403, {"ok": False,
+                                 "err": "创作草稿的生成/修改只允许管理员"})
+                return True
+            try:
+                import creator as _cr
+            except Exception as e:
+                self._json(500, {"ok": False,
+                                 "err": "创作模块不可用：%s" % str(e)[:80]})
+                return True
+            body = body or {}
+
+            def _identity():
+                who, who_id = getattr(self, "_who", ("", ""))
+                return {"is_admin": self._is_admin(),
+                        "token_kind": who, "device_id": who_id}
+
+            if method == "GET":
+                if path == "/api/creator/drafts":
+                    try:
+                        self._json(200, {"ok": True, "drafts": _cr.list_drafts()})
+                    except Exception as e:
+                        self._json(200, {"ok": False, "err": str(e)[:100]})
+                    return True
+                if path == "/api/creator/draft":
+                    try:
+                        from urllib.parse import urlparse, parse_qs
+                        q = parse_qs(urlparse(self.path).query)
+                        did = (q.get("id") or [""])[0]
+                    except Exception:
+                        did = ""
+                    meta, err = _cr.get_draft(did)
+                    if err:
+                        self._json(404, {"ok": False, "err": err})
+                    else:
+                        self._json(200, {"ok": True, "draft": meta})
+                    return True
+                if path == "/api/creator/approvals":
+                    try:
+                        from urllib.parse import urlparse, parse_qs
+                        q = parse_qs(urlparse(self.path).query)
+                        did = (q.get("draft_id") or [""])[0]
+                    except Exception:
+                        did = ""
+                    try:
+                        import creator_install as _ci
+                        self._json(200, {"ok": True,
+                                         "approvals": _ci.list_approvals(did)})
+                    except Exception as e:
+                        self._json(500, {"ok": False, "err": str(e)[:120]})
+                    return True
+                return False
+
+            if path == "/api/creator/draft":
+                meta, err = _cr.generate_draft(str(body.get("kind") or ""),
+                                               str(body.get("requirement") or ""),
+                                               API_CFG)
+                if err:
+                    self._json(400, {"ok": False, "err": err})
+                else:
+                    self._json(200, {"ok": True, "draft": meta})
+                return True
+            if path == "/api/creator/revise":
+                meta, err = _cr.revise_draft(str(body.get("id") or ""),
+                                             str(body.get("feedback") or ""),
+                                             API_CFG)
+                if err:
+                    self._json(400, {"ok": False, "err": err})
+                else:
+                    self._json(200, {"ok": True, "draft": meta})
+                return True
+            if path == "/api/creator/validate":
+                rep, err = _cr.validate_draft(str(body.get("id") or ""))
+                if err:
+                    self._json(404, {"ok": False, "err": err})
+                else:
+                    self._json(200, {"ok": True, "validation": rep})
+                return True
+            if path == "/api/creator/delete":
+                ok, err = _cr.delete_draft(str(body.get("id") or ""))
+                if not ok:
+                    self._json(400, {"ok": False, "err": err or "删不掉"})
+                else:
+                    self._json(200, {"ok": True})
+                return True
+            if path == "/api/creator/approve":
+                try:
+                    import creator_install as _ci
+                    approval = _ci.approve(str(body.get("id") or ""), _identity())
+                    self._json(200, {"ok": True, "approval": approval})
+                except PermissionError as e:
+                    self._json(403, {"ok": False, "err": str(e)})
+                except (ValueError, OSError) as e:
+                    self._json(400, {"ok": False, "err": str(e)[:180]})
+                except Exception as e:
+                    self._json(500, {"ok": False, "err": "审批失败：%s" % str(e)[:120]})
+                return True
+            if path == "/api/creator/install":
+                try:
+                    import creator_install as _ci
+                    result = _ci.install(str(body.get("approval_id") or ""), _identity())
+                    self._json(200 if result.get("ok") else 400, result)
+                except PermissionError as e:
+                    self._json(403, {"ok": False, "err": str(e)})
+                except (ValueError, OSError) as e:
+                    self._json(400, {"ok": False, "err": str(e)[:180]})
+                except Exception as e:
+                    self._json(500, {"ok": False, "err": "安装失败：%s" % str(e)[:120]})
+                return True
             return False
 
         def _plugin_route(self, method, path, body):
@@ -1405,6 +1615,14 @@ def start_remote_api(brain):
                 self._json(401, {"err": "bad token"})
                 return
             note_client_ip(self.client_address[0])
+            path = self.path.split("?")[0]
+            # 二进制附件必须在 JSON body 解析之前单独处理，否则大文件会被
+            # 当作 JSON 读入内存，也无法支持分块上传。
+            if self._deny_if_limited_device("POST", path):
+                return
+            if path == "/api/attachments/upload":
+                self._attachment_upload()
+                return
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except Exception:
@@ -1418,7 +1636,6 @@ def start_remote_api(brain):
                 body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception:
                 body = {}
-            path = self.path.split("?")[0]
             # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
             # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
             # 会全写进 app 覆盖 —— 渠道错乱。
@@ -1429,8 +1646,6 @@ def start_remote_api(brain):
                 qp = {}
             # 受限设备（role=device）的默认拒绝闸门：不在权限矩阵里的一律 403。
             # 管理类接口的管理员要求在各自分支里再判（双重保险）。
-            if self._deny_if_limited_device("POST", path):
-                return
             if path.startswith("/api/agent-center/"):
                 import codex_adapter as _codex_center
                 code, out = _codex_center.handle_http(
@@ -1461,6 +1676,22 @@ def start_remote_api(brain):
                              out.get("role", "device")), flush=True)
                     out["ok"] = True
                     self._json(200, out)
+                    return
+                if path == "/api/attachments/frames":
+                    # 原视频必须先完成上传；关键帧是可选分析步骤，使用本机
+                    # 已存在的 FFmpeg，不下载依赖，也不把原视频放进 JSON。
+                    try:
+                        import attachments as _att
+                        aid = str(body.get("id") or "")
+                        count = max(1, min(3, int(body.get("count") or 3)))
+                        out = _att.extract_frames(aid, count)
+                        self._json(200, {"ok": True, "attachments": out})
+                    except ValueError as e:
+                        self._json(422, {"ok": False, "err": str(e)[:180]})
+                    except Exception as e:
+                        print("[附件] 关键帧提取失败：%s: %s" %
+                              (type(e).__name__, str(e)[:120]), flush=True)
+                        self._json(500, {"ok": False, "err": "关键帧提取失败"})
                     return
                 if path == "/api/device/list":
                     import devices
@@ -1555,9 +1786,11 @@ def start_remote_api(brain):
                     return
                 if path == "/api/route":
                     # M3：一键切"微信消息谁答"。热改 + 落盘，秒生效不重启。
-                    _v = str(body.get("wechat_route") or "")
+                    _v = str(body.get("wechat_route") or body.get("route") or "")
                     try:
                         _set_wechat_route(_v)
+                        if "enabled" in body:
+                            _set_wechat_enabled(body.get("enabled"))
                     except Exception as e:
                         self._json(400, {"ok": False, "err": str(e)[:80]})
                         return
@@ -1565,7 +1798,85 @@ def start_remote_api(brain):
                     print("[路由] wechat_route -> %s（本地在线：%s）"
                           % (_v, _fwd.HUB.online()), flush=True)
                     self._json(200, {"ok": True, "wechat_route": _v,
+                                     "enabled": _wechat_enabled(),
                                      "forward": _fwd.HUB.stats()})
+                    return
+                if path == "/api/models/list":
+                    # Model discovery accepts a freshly entered key in the JSON
+                    # body.  Do not put credentials in a query string where a
+                    # proxy or access log could retain them.
+                    try:
+                        force = bool(body.get("force"))
+                        p_base = str(body.get("base") or "").strip()
+                        p_key = str(body.get("api_key") or "").strip()
+                        p_prov = str(body.get("provider") or "").strip()
+                        cur = model_hub.current(api_config)
+                        if p_base:
+                            if not p_key and p_prov in model_hub.PROVIDERS:
+                                p_key = model_hub.provider_key(api_config, p_prov,
+                                                               p_base)
+                            # An explicit Base URL never inherits the active
+                            # provider's key.  Empty means the endpoint is
+                            # intentionally probed without credentials.
+                            cur = dict(cur, api_base=p_base, api_key=p_key or "")
+                        lst = model_hub.list_models(cur["api_base"],
+                                                    cur["api_key"], force=force)
+                        self._json(200, {
+                            "ok": bool(lst.get("ok")), "current": model_hub.public_current(api_config),
+                            "providers": [{"key": k, "name": v["name"],
+                                           "base": v["base"]}
+                                          for k, v in model_hub.PROVIDERS.items()],
+                            "groups": lst["groups"], "source": lst["source"],
+                            "count": lst["count"], "err": lst["err"],
+                        })
+                    except Exception as e:
+                        errlog.log_exc("api/models/list", e)
+                        self._json(500, {"ok": False,
+                                         "err": "模型列表请求失败，请检查 Brain 版本和服务商配置"})
+                    return
+                if path == "/api/models/test":
+                    try:
+                        p = str(body.get("provider") or "").strip()
+                        base = str(body.get("base") or "").strip()
+                        key = str(body.get("api_key") or "").strip()
+                        if p in model_hub.PROVIDERS and not key:
+                            key = model_hub.provider_key(api_config, p, base)
+                        if not base and p in model_hub.PROVIDERS:
+                            base = model_hub.PROVIDERS[p].get("base") or ""
+                            if not key:
+                                key = model_hub.provider_key(api_config, p, base)
+                        state, detail = model_hub.probe_provider(base, key)
+                        self._json(200, {"ok": state == "ok", "state": state,
+                                         "provider": p, "detail": detail,
+                                         "err": detail if state != "ok" else ""})
+                    except Exception as e:
+                        errlog.log_exc("api/models/test", e)
+                        self._json(500, {"ok": False, "state": "error",
+                                         "err": "模型连接测试失败，请检查 Brain 版本和服务商配置"})
+                    return
+                if path == "/api/models/key/delete":
+                    try:
+                        p = str(body.get("provider") or "").strip()
+                        if p not in model_hub.PROVIDERS:
+                            self._json(400, {"ok": False, "err": "未知服务商"})
+                            return
+                        bag = dict(api_config.get("api_keys") or {})
+                        removed = bool(bag.pop(p, None))
+                        for slot in [k for k in bag if k.startswith(p + "|")]:
+                            removed = bool(bag.pop(slot, None)) or removed
+                        bases = dict(api_config.get("api_key_bases") or {})
+                        bases.pop(p, None)
+                        if str(api_config.get("provider") or "") == p:
+                            api_config["api_key"] = ""
+                        api_config["api_keys"] = bag
+                        api_config["api_key_bases"] = bases
+                        model_hub.save(api_config)
+                        _refresh_api_cfg(api_config)
+                        self._json(200, {"ok": True, "removed": removed,
+                                         "current": model_hub.public_current(api_config)})
+                    except Exception as e:
+                        errlog.log_exc("api/models/key/delete", e)
+                        self._json(500, {"ok": False, "err": "删除密钥失败"})
                     return
                 if path == "/api/stickers/collect":
                     # 表情包改版（2026-10-09）：桥接把聊天里**每张**图送进
@@ -1611,6 +1922,25 @@ def start_remote_api(brain):
                     # 缺省/认不出来的值归一到主渠道 wechat（app 已退役；
                     # 未知值同时也是防路径穿越，绝不能原样拼进存档文件名）。
                     _src = _norm_src(body.get("src"))
+                    _att_meta = body.get("attachments")
+                    if not isinstance(_att_meta, list):
+                        _att_meta = []
+                    if len(_att_meta) > 8:
+                        self._json(400, {"ok": False, "err": "一次最多发送 8 个附件"})
+                        return
+                    if _att_meta:
+                        try:
+                            import attachments as _att
+                            _att_text, _ = _att.context_for(_att_meta, API_CFG)
+                            if _att_text:
+                                _in_text += "\n[附件内容，仅供本轮参考]\n" + _att_text
+                        except ValueError as e:
+                            self._json(400, {"ok": False, "err": str(e)[:160]})
+                            return
+                        except Exception as e:
+                            self._json(500, {"ok": False,
+                                             "err": "附件分析失败：%s" % str(e)[:100]})
+                            return
                     # 把渠道记进 features：同一个功能在 App 和群聊里该有不同的
                     # 开合（群聊里她不该报天气、不该把别人的单号加进你的监控）。
                     # 全局那一份仍是基线，这里只查 features_by_src 的覆盖。
@@ -1634,6 +1964,12 @@ def start_remote_api(brain):
                     # 双重注入（快递单号注册两次、插件提醒说两遍）。
                     # 只有 wechat / wechat_group 参与路由；app 渠道的客户端
                     # 连的就是云端，永远直答。离线 → 落到下面正常直答。
+                    if _src in ("wechat", "wechat_group") and not _wechat_enabled():
+                        _msg = "微信聊天集成已停用，请在设置中重新启用"
+                        self._json(200, {"reply": _msg,
+                                         "messages": split_messages(_msg),
+                                         "mode": "微信已停用", "err": ""})
+                        return
                     if _src in ("wechat", "wechat_group") \
                             and _wechat_route() == "local":
                         import ws_forward as _fwd
@@ -1777,7 +2113,7 @@ def start_remote_api(brain):
                     _snap = {}
                     ans, mode, err = ask_with_retry(
                         _in_text, body.get("img") or None, display=_disp,
-                        trace_out=_snap, src=_src,
+                        trace_out=_snap, src=_src, attachments=_att_meta,
                         # 带 dry_run=true 的一轮**不写聊天存档**。
                         # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
                         # 她会开始答那些测试句（症状："她回复一点都不对"）。
@@ -1867,6 +2203,10 @@ def start_remote_api(brain):
                     # 🔴 流式聊天：SSE 实时推送思考过程和正文。
                     # 客户端用 EventSource 或 fetch + ReadableStream 接收。
                     # 事件格式：data: {"type":"think"/"text"/"done"/"error", ...}\n\n
+                    if body.get("attachments"):
+                        self._json(400, {"ok": False,
+                                         "err": "带附件的消息请走普通聊天接口，附件已单独分块上传"})
+                        return
                     _in_text = str(body.get("text") or "")
                     _src = _norm_src(body.get("src"))
                     try:
@@ -1884,9 +2224,25 @@ def start_remote_api(brain):
                     self.end_headers()
                     try:
                         with _chat_lock():
-                            for evt in _LOCAL["brain"].stream_chat(_in_text, src=_src):
-                                self.wfile.write(("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                            # The streaming provider path does not carry a tools
+                            # schema.  Route requests that may need tools through
+                            # the native non-streaming ReAct loop, so a provider
+                            # cannot leak XML-like tool text into the chat UI.
+                            # This only changes transport for tool-shaped prompts;
+                            # ordinary chat keeps the existing SSE path.
+                            import tools as _chat_tools
+                            if _chat_tools.schema_needed(_in_text):
+                                _ans, _mode = _LOCAL["brain"].chat(
+                                    _in_text, src=_src)
+                                _evt = {"type": "done", "text": _ans or "",
+                                        "mode": _mode or ""}
+                                self.wfile.write(("data: " + json.dumps(
+                                    _evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
                                 self.wfile.flush()
+                            else:
+                                for evt in _LOCAL["brain"].stream_chat(_in_text, src=_src):
+                                    self.wfile.write(("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                                    self.wfile.flush()
                     except _Busy:
                         self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "她正忙着，等会儿再说"}, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     except Exception as e:
@@ -2156,7 +2512,16 @@ def start_remote_api(brain):
                     # 写盘之后要 clear + update 内存那份（Brain 拿的是启动时
                     # load_config() 的字典），不然换了模型她还用旧的
                     try:
-                        new_cfg, changed = model_hub.apply_cfg(api_config, body)
+                        # 先记下"正在用的这一组"再改配置：改完 api_config 里
+                        # provider/model 已经换掉了，旧的那组就再也认不出来，
+                        # 于是它会从快速切换清单里消失。顺序反了不行。
+                        pre_cfg, _pre_added = model_hub.remember_current(api_config)
+                        new_cfg, changed = model_hub.apply_cfg(pre_cfg, body)
+                        # 记进主页快速切换清单：用户在设置页选过一次的模型，
+                        # 之后就该在聊天框旁边点得到 —— 不用再"添加"一遍。
+                        new_cfg, _added = model_hub.remember_current(new_cfg)
+                        if _added:
+                            changed.append("已加入主页快速切换清单")
                         if not changed:
                             self._json(200, {"ok": True, "changed": [],
                                              "msg": "没有改动"})
@@ -2165,18 +2530,7 @@ def start_remote_api(brain):
                             api_config.clear()
                             api_config.update(new_cfg)
                             try:
-                                API_CFG.clear()
-                                # 🔴 这里**不能重抄一份白名单**。
-                                # 比如漏掉 voice / uapi / persona_file ——
-                                # update 是**整体替换**，少一个键那个键就当場消失。
-                                # 后果：换一次模型，语音配置和 uapi 静默失效；
-                                # 最要命的是 persona_file —— Brain 只认 API_CFG 里的它，
-                                # 丢了之后 key_from_config 一律返回 "default"，
-                                # 于是**所有分区名都算成空**：换人设不换记忆、
-                                # 换渠道不换存档，看着分区建了，其实全写进同一份。
-                                # 白名单抄一次错一次（vision、voice、persona_file 已栽过三回），
-                                # 所以唯一真源只能是 runtime 那个列表本身。
-                                API_CFG.update(_runtime.api_cfg_subset(api_config))
+                                _refresh_api_cfg(api_config)
                             except Exception:
                                 pass
                             print("[模型] " + "；".join(changed), flush=True)
@@ -2185,6 +2539,98 @@ def start_remote_api(brain):
                                 "current": model_hub.public_current(api_config)})
                     except Exception as e:
                         errlog.log_exc("api/models/apply", e)
+                        self._json(200, {"ok": False, "err": str(e)[:120]})
+                elif path == "/api/models/save":
+                    # Save one named model for the client selector without
+                    # changing the currently active model. Secrets stay in
+                    # Brain config and only their mask is returned below.
+                    try:
+                        nc, added, err = model_hub.save_model(
+                            api_config, body.get("provider"), body.get("base"),
+                            body.get("model"), body.get("name"),
+                            body.get("api_key"))
+                        if err:
+                            self._json(400, {"ok": False, "err": err})
+                        elif nc != api_config:
+                            model_hub.save(nc)
+                            for _k in [k for k in list(api_config.keys())
+                                       if k not in nc]:
+                                api_config.pop(_k, None)
+                            api_config.update(nc)
+                            try:
+                                _refresh_api_cfg(api_config)
+                            except Exception:
+                                pass
+                            self._json(200, dict({"ok": True, "added": added},
+                                                 **model_hub.public_saved(api_config)))
+                        else:
+                            self._json(200, dict({"ok": True, "added": False},
+                                                 **model_hub.public_saved(api_config)))
+                    except Exception as e:
+                        errlog.log_exc("api/models/save", e)
+                        self._json(500, {"ok": False, "err": "保存模型失败"})
+                    return
+                elif path == "/api/models/quick-switch":
+                    # 主页聊天框旁边的下拉：切到清单里的某一条。
+                    #
+                    # 和 /api/models/apply 的关系：这一条是**薄封装**，最终还是
+                    # 走 apply_cfg + save + 刷内存那份配置，不另立一套配置通道。
+                    # 多出来的只有三道"别装作切成功"的检查（密钥在不在、
+                    # 切完是不是真生效、云端有没有可用 key），失败一律明说 ——
+                    # 静默换一个能用的模型，用户会拿着 B 的回复以为在用 A。
+                    try:
+                        nc, changed, err, warn = model_hub.quick_switch(
+                            api_config, body.get("provider"), body.get("model"),
+                            body.get("base"))
+                        if err:
+                            self._json(200, {"ok": False, "err": err,
+                                             "current": model_hub.public_current(api_config)})
+                        elif not changed:
+                            self._json(200, {"ok": True, "changed": [], "warn": warn,
+                                             "msg": "本来就是它",
+                                             "current": model_hub.public_current(api_config)})
+                        else:
+                            model_hub.save(nc)
+                            # 就地更新，不用 clear()+update()：clear() 会有一瞬
+                            # 整份配置是空的，另一个线程正在起步的那一轮会看到
+                            # "模型没配好"（并发切换时偶发）。先删多余的键再并，
+                            # 任何瞬间 api_key 这些必需键都在。
+                            for _k in [k for k in list(api_config.keys())
+                                       if k not in nc]:
+                                api_config.pop(_k, None)
+                            api_config.update(nc)
+                            try:
+                                _refresh_api_cfg(api_config)
+                            except Exception:
+                                pass
+                            print("[模型] 快速切换：" + "；".join(changed), flush=True)
+                            self._json(200, {"ok": True, "changed": changed,
+                                             "warn": warn,
+                                             "current": model_hub.public_current(api_config)})
+                    except Exception as e:
+                        errlog.log_exc("api/models/quick-switch", e)
+                        self._json(200, {"ok": False, "err": str(e)[:120]})
+                elif path == "/api/models/forget":
+                    # 从快速切换清单里移除一条（用户在设置里删掉模型 / 不想再看见它）。
+                    # 只动清单，不碰当前生效配置 —— 见 model_hub.forget_model。
+                    try:
+                        nc, removed = model_hub.forget_model(
+                            api_config, body.get("provider"), body.get("model"),
+                            body.get("base"))
+                        if not removed:
+                            self._json(200, {"ok": True, "removed": False,
+                                             "msg": "清单里本来就没有它"})
+                        else:
+                            model_hub.save(nc)
+                            # 同 quick-switch：就地更新，别留"整份配置是空的"那一瞬
+                            for _k in [k for k in list(api_config.keys())
+                                       if k not in nc]:
+                                api_config.pop(_k, None)
+                            api_config.update(nc)
+                            self._json(200, {"ok": True, "removed": True,
+                                             "current": model_hub.public_current(api_config)})
+                    except Exception as e:
+                        errlog.log_exc("api/models/forget", e)
                         self._json(200, {"ok": False, "err": str(e)[:120]})
                 elif path == "/api/logs":
                     # App 把手机上的报错报上来，跟云上的存一起（分开两个文件）
@@ -2271,6 +2717,11 @@ def start_remote_api(brain):
                 else:
                     # 插件管理面（装/卸/渠道开关）优先于插件自带路由：
                     # 前者只在 /api/plugins* 这一小片里，前缀不重叠。
+                    # Creator Mode 草稿面（/api/creator*）同理独立一片，
+                    # 只产草稿不安装，优先落在这里。
+                    if path.startswith("/api/creator"):
+                        if self._creator_admin("POST", path, body):
+                            return
                     if not self._plugin_admin("POST", path, body):
                         # 插件自己的接口（ROUTES）。放最后当兜底：核心路由都叫
                         # /api/xxx，插件要求自己的路径带 /api/plugin/ 前缀，
@@ -2364,6 +2815,37 @@ def start_remote_api(brain):
                     "GET", path, query=query, is_admin=self._is_admin(),
                     is_local=_is_loopback(self.client_address[0]))
                 self._json(code, out)
+                return
+            if path == "/api/attachments/capabilities":
+                try:
+                    import attachments as _att
+                    self._json(200, _att.capabilities(API_CFG))
+                except Exception as e:
+                    self._json(500, {"ok": False, "err": "附件能力检查失败：%s" % str(e)[:80]})
+                return
+            if path == "/api/attachments/file":
+                try:
+                    import attachments as _att
+                    aid = _query_param(self.path, "id")
+                    rec = _att.get(aid)
+                    if not rec:
+                        self._json(404, {"ok": False, "err": "附件不存在"})
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", rec["mime"])
+                    self.send_header("Content-Length", str(rec["size"]))
+                    self._cors()
+                    self.end_headers()
+                    with open(rec["file_path"], "rb") as f:
+                        while True:
+                            chunk = f.read(262144)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    self._json(404, {"ok": False, "err": "附件读取失败"})
                 return
             if path.startswith("/api/management/"):
                 # 全局基础设施信息：主人钥匙或 admin 角色设备（桌面管理端），
@@ -2566,30 +3048,32 @@ def start_remote_api(brain):
                 # 缓存在 model_hub 里按 base 分键，所以切地址本来就能拿到各自的列表，
                 # 缺的只是"用请求里的参数而不是配置里的参数"这一条路。
                 #
-                # 密钥留空时回落到当前那把：用户可能只想换个地址、key 沿用现有的。
+                # 密钥留空时只允许使用同一服务商、同一地址的已绑定密钥。
                 try:
                     force = str(_query_param(self.path, "force") or "") == "1"
                     p_base = str(_query_param(self.path, "base") or "").strip()
-                    p_key = str(_query_param(self.path, "key") or "").strip()
+                    # Legacy GET callers sometimes put a key in the query
+                    # string.  Ignore it: credentials in URLs are retained by
+                    # browser/proxy logs.  Use POST /api/models/list instead.
+                    p_key = ""
                     p_prov = str(_query_param(self.path, "provider") or "").strip()
                     cur = model_hub.current(api_config)
                     if p_base:
-                        # 预拉用哪把 key：显式传的 > 这家**自己存的** > 当前那把。
+                        # 预拉用哪把 key：显式传的 > 这家同一地址绑定的密钥。
                         # 中间这层是给"切回存过密钥的老家"用的 —— 没有它，明知道
                         # 用户切到了某家、那家的 key 也存着，却还拿当前家（别家）
                         # 的 key 去试拉，必然 401，客户端只能看到一份兜底清单
                         # 冒充这家的模型（"换了服务商模型列表不变"的元凶）。
                         k = p_key
-                        if not k and p_prov in model_hub.PROVIDERS \
-                                and model_hub.has_provider_key(api_config, p_prov):
-                            k = model_hub.provider_key(api_config, p_prov)
+                        if not k and p_prov in model_hub.PROVIDERS:
+                            k = model_hub.provider_key(api_config, p_prov, p_base)
                         cur = dict(cur, api_base=p_base,
-                                   api_key=k or cur.get("api_key") or "")
+                                   api_key=k or "")
                     lst = model_hub.list_models(cur["api_base"],
                                                 cur["api_key"], force=force)
                     # 回客户端用脱敏版：cur 里的真 key 只留在这一次调用里
                     self._json(200, {
-                        "ok": True, "current": model_hub.public_current(api_config),
+                        "ok": bool(lst.get("ok")), "current": model_hub.public_current(api_config),
                         "providers": [{"key": k, "name": v["name"],
                                        "base": v["base"]}
                                       for k, v in model_hub.PROVIDERS.items()],
@@ -2606,6 +3090,18 @@ def start_remote_api(brain):
                                       for k, v in model_hub.PROVIDERS.items()],
                         "groups": dict(model_hub.FALLBACK),
                         "source": "fallback", "count": 0})
+            elif path == "/api/models/saved":
+                # 主页聊天框旁的快速切换下拉：已保存的模型 + 当前生效的是哪条。
+                # 只读、不发网络请求（不像 /api/models 要在线拉清单），
+                # 所以打开聊天页马上就能用，断网也在。
+                # 响应里不含密钥原文，只带是否已配置和不可反推的掩码。
+                try:
+                    self._json(200, dict({"ok": True},
+                                         **model_hub.public_saved(api_config)))
+                except Exception as e:
+                    errlog.log_exc("api/models/saved", e)
+                    self._json(200, {"ok": False, "err": str(e)[:120],
+                                     "models": [], "current": {}})
             elif path == "/api/logs":
                 # App「错误日志」页：src=server(云上)/client(手机)，fmt=text 是要导出
                 try:
@@ -2680,6 +3176,11 @@ def start_remote_api(brain):
                          if (_q.get("src") or "").strip() else None)
                 self._json(200, {"levels": _ch.all_levels(),
                                  "level": _ch.level(_csrc)})
+            elif path.startswith("/api/creator"):
+                # Creator Mode 草稿查询（GET 只读：清单/详情）
+                if self._creator_admin("GET", path, None):
+                    return
+                self._json(404, {"err": "no such creator api"})
             elif path.startswith("/api/plugins"):
                 # 插件清单 + 管理视图（渠道视图）+ 前端注入资源。
                 # 微信桥接和 VM 启动器拿 /api/plugins 当"大脑还活着吗"
@@ -2803,7 +3304,15 @@ def start_remote_api(brain):
             elif path == "/api/route":
                 # M3：当前路由 + 转发通道状态（客户端设置页显示用）
                 import ws_forward as _fwd
+                _vis = (API_CFG or {}).get("vision")
+                _vis = _vis if isinstance(_vis, dict) else {}
                 self._json(200, {"wechat_route": _wechat_route(),
+                                 "enabled": _wechat_enabled(),
+                                 "model": str((API_CFG or {}).get("model") or ""),
+                                 "provider": str((API_CFG or {}).get("provider") or ""),
+                                 "models": {"chat": str((API_CFG or {}).get("model") or ""),
+                                            "vision": str(_vis.get("model") or ""),
+                                            "image": str((API_CFG or {}).get("image_model") or "")},
                                  "forward": _fwd.HUB.stats()})
             elif path.startswith("/api/sync/"):
                 # 同步拉取（权威源 → 本地）。只读接口，设备 token 也能用：
@@ -2846,11 +3355,26 @@ def start_remote_api(brain):
     srv = http.server.ThreadingHTTPServer((host, port), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"[大脑] 远程大脑 API 就绪：{host}:{port}", flush=True)
+    # 「待重启」判据的另一端：本进程的服务**真的起来了**才登记启动时刻。
+    # 🔴 必须放在绑定成功之后：端口被占（一次失败的重启）时 run_server 只是
+    # 打印"没起来"然后继续跑收尾循环，进程并不会退出 —— 要是在函数开头就
+    # 登记，started_at 会被这次失败的重启推新，"重启失败"反倒把用户真正
+    # 待重启的提示悄悄抹掉，界面看着像重启成功了。真实 UI 验收
+    # （harness-p4-c123-e2e.js C3-7b/c）实测复现过这个假象，故移到这里。
+    try:
+        import restart_state as _rs
+        import plugin_ops as _po0
+        _rs.note_start("plugin", _po0._PLUG_DIR)
+    except Exception as e:
+        print("[重启提示] 插件启动时刻登记跳过（不影响聊天）：%s" % str(e)[:80],
+              flush=True)
     return srv
 
 
 def run_server():
     base = None
+    # 注：插件 scope 的"启动时刻"登记在 start_remote_api 里绑定成功之后
+    # （见那边注释）—— 放这里会在"重启失败"时虚假清除待重启提示。
     # 🔴 把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。
     # 不做的话界面会把每一家都显示成"还没存密钥"，
     # 于是"点一下就切换"永远切不动 —— 而实际有一家正拿着它在用。

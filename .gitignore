@@ -19,6 +19,10 @@ brain/config/app_conn.json
 # 注意：不要写 brain/config/*.json 通配 + !例外 —— 父级一旦被整条排除，
 # 后面的 ! 规则不生效（git 不会进已排除的目录找例外）。
 # 需要新增配置文件时，在下面显式写一行 !brain/config/xxx.json 即可。
+# 管理 Agent 真实 Bearer Token 本地配置，禁止进入仓库。
+brain/config/management_agent_tokens.json
+# Tencent Cloud login cookies are generated locally and contain session credentials.
+tools/tencent_cookie.json
 !brain/config/config.example.json
 !brain/config/world.example.json
 # backup 里同样躺着完整的 key，必须挡
@@ -86,6 +90,7 @@ dist/
 # ===== Python =====
 venv/
 .venv/
+.local-dev/
 __pycache__/
 *.pyc
 *.pyo

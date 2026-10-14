@@ -22,11 +22,29 @@ JS 技能      skill_host/skills/*/   → Node 侧跑，大脑用 HTTP 调
 
 | 文件 | 干什么 |
 |---|---|
-| `brain/skill_host/server.js` | Node 宿主。垫出 QQ Agent 那套 `api`/`ctx` 契约，暴露三个路由 |
+| `brain/skill_host/server.js` | Node 宿主。垫出 QQ Agent 那套 `api`/`ctx` 契约，暴露 HTTP 接口 |
 | `brain/skill_host/skills/` | 装技能的地方。每个技能一个目录 |
 | `brain/plugins/skill.py` | 知夏侧插件。把技能工具接进模型，给模型两个入口 |
 
-### 三个路由（宿主侧，只监听 127.0.0.1）
+### 创作前的静态检查
+
+Skill 目录可以先用检查器验证，不会导入或执行 JavaScript：
+
+```bash
+python tools/check_skill_structure.py templates/skill-basic
+```
+
+`skill.json` 是可选的，缺失时保留历史 `index.js` Skill 的兼容性。存在时必须是
+JSON 对象；`id` 要与包目录名一致，`entry` 必须指向根目录内的入口文件。单层目录
+支持 `index.js`、`index.mjs` 和 `index.cjs`，后两者需要在 Manifest 中明确写出
+`entry`。当前 Host 只会对内层 `index.js` 自动下钻同名双层目录，因此双层的
+`index.mjs` / `index.cjs` 会被检查器拒绝。
+
+检查器还会拒绝路径越界、反斜杠、控制字符、Windows 保留名称、符号链接、特殊文件
+和大小写冲突路径。未知 Manifest 字段会保留，方便未来扩展。安装接口会在任何
+持久化目录写入前检查暂存目录；静态检查不执行 Skill 代码。
+
+### Host 接口（只监听回环且需要认证）
 
 | 路由 | 用途 |
 |---|---|
@@ -35,8 +53,17 @@ JS 技能      skill_host/skills/*/   → Node 侧跑，大脑用 HTTP 调
 | `POST /skills/call` | 调工具：`{tool, args, ctx}` |
 | `POST /reload` | 重载技能，**不用重启大脑** |
 
-🔴 **宿主只绑 127.0.0.1，端口别开公网。** 它没有任何鉴权：谁能连上就能调任意
-技能工具，还能通过技能的 `sendTextBatch` 让她发消息。要远程访问走 SSH 隧道。
+安装和更新分为静态检查、文件提交、Host reload、运行状态确认四步；文件写入成功
+不代表 Skill 已可调用。显式 reload 如有 Skill 无法加载，会返回失败状态并保留当前
+Host 注册表，Brain 会回滚文件和本次修改的渠道配置。回滚失败时返回恢复目录供人工处理。
+更新和卸载会标记 `restart_needed`，因为 `setup()` / `register()` 可能启动线程、网络请求
+或其他外部副作用，Host 没有通用 teardown 契约，文件回滚不能撤销这些行为。
+这些事务处理的是受控错误，不提供进程崩溃后的自动恢复或跨进程锁。
+
+🔴 **宿主只允许绑定 127.0.0.1 或 ::1，端口别开公网。** 所有路由都要求
+`Authorization: Bearer <ZX_SKILL_AUTH_TOKEN>`；缺少或长度不足的运行时凭据时宿主拒绝启动。
+认证只保护 Host HTTP 接口，不能替代 JavaScript 运行时隔离。要远程访问必须经过受控的
+SSH 隧道或其他已审核的私有通道。
 
 ### 给模型的两个入口
 
@@ -79,6 +106,15 @@ if (!Number.isFinite(tier)) return ''   // 宿主没给档位 → 不拦
 但**只在恰好只有一个子目录时**钻：多个子目录说明是在放多个技能，钻进去会装错。
 
 ### 4. `import()` 会缓存模块
+
+所有 Host 接口均要求 `Authorization: Bearer <ZX_SKILL_AUTH_TOKEN>`。
+Brain 与 Node Host 必须由服务管理器或操作系统凭据环境注入同一个至少 32 字符的随机值；
+不要将真实值写入 `config.json`、批处理文件或仓库。缺少凭据或配置公开监听地址时，
+Host 会拒绝启动。Windows `start_host.bat` 也会在缺少凭据时退出。
+
+`ctx` 中的 `src`、`tier` 等字段只是 Skill 兼容上下文，不是 Host 认证凭据。
+渠道过滤仍由 Python Bridge 执行；Host Bearer 认证保护本机 HTTP 接口，不能隔离已加载
+JavaScript。Skill 仍在当前 Node 进程用户权限下执行。
 
 `/reload` 不加时间戳 query 的话，重载只是把同一个旧模块对象再拿出来一次——
 表现为"重载了但改了代码没生效"。

@@ -95,8 +95,10 @@ def api_install(body, query):
     body: {"name": "插件名"}
     """
     name = str((body or {}).get("name") or "").strip()
-    if not name:
-        return {"ok": False, "err": "缺少插件名"}
+    import re
+    from plugin_structure import _filename_issue
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) or _filename_issue(name):
+        return {"ok": False, "err": "插件名不合法或为 Windows 保留名称"}
 
     # 在市场清单里找
     market = _read_market()
@@ -108,32 +110,15 @@ def api_install(body, query):
     if not meta:
         return {"ok": False, "err": "市场里找不到插件 %s" % name}
 
-    # 源目录
-    repo = _repo_path()
-    src = os.path.join(repo, meta.get("path", "plugins/" + name))
-    if not os.path.isdir(src):
-        return {"ok": False, "err": "插件源目录不存在：%s" % src}
-
-    # 目标目录
-    dst = os.path.join(_plugins_dir(), name)
-
-    # 如果已存在，先删（覆盖安装）
-    if os.path.exists(dst):
-        try:
-            shutil.rmtree(dst)
-        except Exception as e:
-            return {"ok": False, "err": "删除旧版本失败：%s" % str(e)[:80]}
-
-    # 复制
-    try:
-        shutil.copytree(src, dst)
-    except Exception as e:
-        return {"ok": False, "err": "复制失败：%s" % str(e)[:80]}
-
-    # 热重载：重新扫描插件目录，新插件立即生效（路由/工具/钩子全动态）
-    _reload_plugins()
-
-    return {"ok": True, "name": name, "msg": "安装成功，已热重载生效"}
+    import plugin_ops
+    # Shared validator/transaction. Never import a new plugin during install.
+    ok, result = plugin_ops.install_market_directory(
+        _repo_path(), meta.get("path", "plugins/" + name), name)
+    if ok:
+        result["msg"] = "文件安装成功，请重启大脑生效"
+    else:
+        result["ok"] = False
+    return result
 
 
 def api_uninstall(body, query):
@@ -142,11 +127,18 @@ def api_uninstall(body, query):
     body: {"name": "插件名"}
     """
     name = str((body or {}).get("name") or "").strip()
-    if not name:
-        return {"ok": False, "err": "缺少插件名"}
+    import re
+    from plugin_structure import _filename_issue
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) or _filename_issue(name):
+        return {"ok": False, "err": "插件名不合法或为 Windows 保留名称"}
 
     # 只允许卸载目录型插件（市场里的都是目录型）
     dst = os.path.join(_plugins_dir(), name)
+    import plugin_transaction
+    try:
+        plugin_transaction.reject_links(dst)
+    except ValueError as exc:
+        return {"ok": False, "err": str(exc)}
     if not os.path.isdir(dst):
         # 可能是单文件插件
         fpath = os.path.join(_plugins_dir(), name + ".py")
