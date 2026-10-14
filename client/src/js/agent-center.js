@@ -125,8 +125,7 @@
         <p class="ac-error" id="ac-error" role="alert" hidden></p><p class="ac-warning" id="ac-gap" role="status" hidden></p>
         <section class="ac-card"><h2>待处理事项 <span id="ac-pending-count"></span></h2><p class="ac-muted">仅处理 Vigil 创建的 owned 会话。逐条核对命令或文件变更；批准不会扩展到后续请求。</p><div id="ac-approvals"></div></section>
         <section class="ac-card"><div class="ac-heading"><h2>任务详情</h2><button class="btn" id="ac-interrupt" hidden>中断受管任务</button></div><div id="ac-detail"></div></section>
-        <details class="ac-card" id="ac-reasoning-summary" hidden><summary>思考摘要</summary><p class="ac-muted" id="ac-reasoning-note"></p><div id="ac-reasoning-parts"></div></details>
-        <section class="ac-card"><div class="ac-heading"><h2>事件历史</h2><span class="ac-muted" id="ac-cursor"></span></div><p class="ac-muted">历史回放不触发通知。仅保留最近 500 条可用事件；P1 服务缓冲区最多 2000 条。</p><ol id="ac-events" class="ac-events" aria-label="任务事件历史"></ol></section>
+        <section class="ac-card" id="ac-timeline"><div class="ac-heading"><h2>Agent Timeline</h2><span class="ac-muted" id="ac-cursor"></span></div><p id="ac-timeline-state" role="status" aria-live="polite"></p><p class="ac-muted">状态流转、工具开始/完成与思考摘要。历史回放不触发通知；事件窗口之外的记录可能缺失。</p><ol id="ac-events" class="ac-events ac-timeline" aria-label="Agent 活动时间线"></ol></section>
         <details class="ac-card"><summary>新建受管任务</summary><p class="ac-muted">独立工作目录 · 只读沙箱 · 网络禁用。启动会调用所选 Codex 模型，可能等待审批；此阶段不能答复。</p><form id="ac-create"><label>Codex 模型<select id="ac-model" class="input" required></select></label><label>任务描述<textarea id="ac-prompt" class="input" maxlength="16000" rows="3" required placeholder="描述要交给 Codex 的任务"></textarea></label><button class="btn fill" id="ac-start" type="submit">创建并启动</button><p id="ac-action-result" role="status"></p></form></details>
         <p class="ac-muted">仅限 loopback 上的管理员连接。独立桌面会话的实时状态不可确认，始终显示 unknown。</p></div>`;
     }
@@ -154,25 +153,49 @@
       const list = (rows, owned) => rows.map(t => { const id = owned ? t.id : t.thread_id, key = (owned?'owned:':'observed:')+id, status = owned && !s.stale ? t.status : 'unknown'; return `<button class="ac-task ${selected===key?'on':''}" data-task="${esc(key)}" aria-pressed="${selected===key}"><strong>${owned?'任务':'历史线程'} ${esc(id.slice(0,8))}</strong>${badge(status)}<span>${owned?esc(t.model || 'Codex'):'历史元数据 · 不代表实时状态'}</span></button>`; }).join('') || '<p class="ac-muted ac-empty">暂无记录</p>';
       write(q('ac-tasks'), list(s.owned,true)); write(q('ac-observed'), list(s.observed,false));
       const task = s.owned.find(t=>'owned:'+t.id===selected) || s.observed.find(t=>'observed:'+t.thread_id===selected), owned = task && task.ownership==='owned';
-      const summary = owned && task.reasoning_summary;
-      const parts = summary ? (summary.items || []).flatMap(item => (item.parts || []).filter(part => part.text)) : [];
-      if (summaryTaskKey !== selected) { q('ac-reasoning-summary').open = false; summaryTaskKey = selected; }
-      q('ac-reasoning-summary').hidden = !owned;
-      q('ac-reasoning-note').textContent = parts.length
-        ? ((connected && task.live && summary.turn_id === task.current_turn && summary.generation === s.status.generation && !['completed','failed','interrupted'].includes(task.status)) ? '当前轮次的思考摘要' : '已保存的最近轮次思考摘要') + (summary.truncated ? ' · 摘要较长，已截断' : '')
-        : '此任务暂无思考摘要';
-      write(q('ac-reasoning-parts'), parts.map((part, i) => `<section class="ac-reasoning-part"><h3>第 ${i + 1} 段</h3><div class="ac-reasoning-text">${esc(part.text)}</div></section>`).join(''));
       write(q('ac-detail'), task ? `<div class="ac-heading"><strong>${owned?'受管任务 · owned':'历史观察 · observed'}</strong>${badge(owned && !s.stale ? task.status : 'unknown')}</div><dl class="ac-metrics"><div><dt>最近活动</dt><dd>${esc(owned ? fmtTime(task.last_activity,'full') || '—' : '仅历史读取 '+fmtTime(task.history_read_at,'full'))}</dd></div><div><dt>证据来源</dt><dd>${s.stale ? '缓存 · 已过期' : task.live && task.source==='realtime' ? '实时事件' : '历史元数据 · 无实时进度'}</dd></div>${owned?`<div><dt>当前工具操作</dt><dd>${esc(connected && task.live && task.current_operation ? operations[task.current_operation.type] || '工具操作' : '—')}</dd></div><div><dt>工具失败次数</dt><dd>${Number(task.tool_failures)||0}</dd></div>`:''}<div><dt>历史轮次</dt><dd>${Object.keys(task.turns || {}).length}</dd></div></dl>${owned && task.last_error?`<p class="ac-error">${esc(task.last_error)}</p>`:''}` : '<p class="ac-muted ac-empty">从左侧选择任务；连接后可创建受管任务。</p>');
       const waiting = s.approvals.filter(a=>a.state==='pending'&&a.ownership==='owned'&&(a.connection_generation||a.generation)===s.status.generation);
       q('ac-pending-count').textContent = waiting.length ? `(${waiting.length})` : '';
       write(q('ac-approvals'), s.approvals.filter(a=>a.ownership==='owned'&&['pending','expired','responding','responded','resolved'].includes(a.state)).slice().reverse().map(a=>approvalCard(a,s,connected)).join('') || '<p class="ac-muted ac-empty">暂无待处理事项</p>');
       bindApprovalControls();
-      const events = selected && owned ? s.events.filter(e=>e.task===task.event_key) : selected ? [] : s.events;
-      write(q('ac-events'), events.slice().reverse().map(e=>`<li><time>${esc(fmtTime(e.at,'full'))}</time><div><strong>${esc(e.method)}</strong><span>${esc(e.state ? labels[e.state] || e.state : '')} ${esc(e.type ? operations[e.type] || e.type : '')}${e.exitCode!=null?' · exit '+esc(e.exitCode):''}</span></div><small>${e.source==='history'?'历史元数据':e.delivery==='history'?'历史回放 · 原始实时事件':'实时增量'}</small></li>`).join('') || '<li class="ac-muted">暂无可用事件；observed 仅提供历史元数据。</li>');
+      paintTimeline(s, task);
       q('ac-cursor').textContent = 'cursor '+s.cursor;
       q('ac-interrupt').hidden = !(owned && connected && task.live && ['starting','running','waiting_approval','waiting_input'].includes(task.status)); q('ac-interrupt').disabled = busy;
       ctx.view.querySelectorAll('[data-ac-action]').forEach(b=>b.disabled=busy||s.stale||(b.dataset.acAction==='disconnect'&&!connected)); q('ac-observe').disabled=busy||!connected;
       const model=q('ac-model'), value=model.value; write(model,(s.status.models||[]).map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')); if ([...model.options].some(o=>o.value===value)) model.value=value; else if(s.status.default_model) model.value=s.status.default_model; q('ac-start').disabled=busy||!connected||!model.options.length;
+    }
+    function timelineRow(row) {
+      let content = '';
+      if (row.kind === 'summary') {
+        const parts = row.parts.filter(part=>part.text);
+        content = `<details data-ac-timeline-summary="${esc(row.id)}"><summary>思考摘要${parts.length ? ' · '+parts.length+' 段' : ''}</summary>${row.truncated?'<p class="ac-muted">摘要较长，已截断</p>':''}<div class="ac-timeline-summary-parts">${parts.map((part,i)=>`<section class="ac-reasoning-part"><h3>第 ${i+1} 段</h3><div class="ac-reasoning-text">${esc(part.text)}</div></section>`).join('') || '<p class="ac-muted">摘要生成中…</p>'}</div></details>`;
+      } else if (row.kind === 'state') {
+        content = `<strong>Agent 状态</strong><span>${row.from?esc(labels[row.from]||'未知')+' → ':''}${badge(row.state)}</span>`;
+      } else if (row.kind === 'connection') {
+        content = `<strong>Codex 连接</strong><span>${row.state === 'connected'?'已连接':'已断开'}</span>`;
+      } else if (row.kind === 'tool') {
+        const status = {completed:'完成',failed:'失败',declined:'已拒绝',interrupted:'已中断'}[row.status] || '结束（状态未知）';
+        const info = [row.exitCode!=null?'退出码 '+row.exitCode:null,row.durationMs!=null?'耗时 '+(row.durationMs/1000).toFixed(2)+'s':null].filter(Boolean).join(' · ');
+        content = `<strong>${esc(operations[row.type]||row.type)} · ${row.phase === 'started'?'开始':status}</strong><span>${esc(info)}</span>${row.missingStart?'<small>未收到对应开始事件</small>':''}`;
+      }
+      return `<li class="ac-timeline-${row.kind}"><time>${row.at!=null?esc(fmtTime(row.at,'full')):'—'}</time><div>${content}</div><small>${row.source==='snapshot'?'摘要快照':row.source==='history'?'历史元数据':row.delivery==='history'?'历史回放':'实时事件'}</small></li>`;
+    }
+    function paintTimeline(s, task) {
+      const view = q('ac-events'), sameTask = summaryTaskKey === selected;
+      const open = new Set(sameTask ? [...view.querySelectorAll('details[data-ac-timeline-summary][open]')].map(x=>x.dataset.acTimelineSummary) : []);
+      const focused = sameTask && document.activeElement.closest && document.activeElement.closest('details[data-ac-timeline-summary]');
+      const focusKey = focused && focused.dataset.acTimelineSummary;
+      summaryTaskKey = selected;
+      const scroll = view.scrollTop;
+      const rows = AgentTimeline.build(s.events, task);
+      write(view, rows.map(timelineRow).join('') || '<li class="ac-muted">暂无可用活动；历史观察仅提供元数据。</li>');
+      view.querySelectorAll('details[data-ac-timeline-summary]').forEach(el=>{
+        el.open = open.has(el.dataset.acTimelineSummary);
+        if (focusKey === el.dataset.acTimelineSummary) el.querySelector('summary').focus({preventScroll:true});
+      });
+      view.scrollTop = scroll;
+      const connection = s.stale ? '状态已过期' : ({connected:'已连接',connecting:'连接中',disconnected:'已断开'}[s.status.connection_status] || '未知');
+      q('ac-timeline-state').innerHTML = `连接：${esc(connection)} · 任务：${badge(task && task.ownership==='owned' && !s.stale ? task.status : 'unknown')}${task && task.ownership==='owned' && !rows.some(row=>row.kind==='summary')?' · 暂无思考摘要':''}`;
     }
     function paint(s) { paintOverview(s); if (detailOpen) paintDetail(s); }
     async function action(fn) { if(busy||disposed)return; busy=true; paint(controller.state); try{const r=API.pick(await fn());if(!r.ok)throw new Error(overviewError(r._err||r.err)||'操作失败');}catch(e){if(!disposed){q('ac-action-result').textContent=e.message;toast(e.message);}}finally{busy=false;await controller.poll();} }

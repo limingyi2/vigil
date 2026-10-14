@@ -60,7 +60,7 @@ async function setup(){
     'token:get':()=> '已保存','local:caps':()=>[],'local:defaults':()=>({roots:[],commands:[]}),
     'wallpaper:request':(_,p)=>({ok:true,data:p.resource==='/settings'?{settings:{settingsVersion:7,glassAlpha:78,blur:10,id:''}}:{wallpapers:[]}}),'updater:check':()=>({})};
   for(const [channel,fn]of Object.entries(handlers))ipcMain.handle(channel,fn);
-  win=new BrowserWindow({show:true,width:1380,height:880,frame:false,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+  win=new BrowserWindow({show:process.env.VIGIL_TEST_SHOW_WINDOW==='1',width:1380,height:880,frame:false,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
   win.webContents.on('preload-error',(_,file,e)=>errors.push('preload '+e.message));
   win.webContents.on('console-message',(_,level,message)=>{if(level>=3)errors.push(message);});
   await win.loadFile(path.join(client,'src/index.html'));
@@ -68,6 +68,13 @@ async function setup(){
 const ev=s=>win.webContents.executeJavaScript(s,true);
 async function until(s,timeout=12000){const end=Date.now()+timeout;while(Date.now()<end){if(await ev('Boolean('+s+')'))return;await wait(80);}throw Error('renderer timeout '+s);}
 async function poll(){await ev('VigilAgentCenter.controller.poll()');}
+async function ensureDetail(){
+  if(!await ev(`document.querySelector('#ac-detail')!==null`)){
+    await until(`document.querySelector('[data-ac-agent-card="codex"]')`);
+    await ev(`document.querySelector('[data-ac-agent-card="codex"]').click()`);
+    await until(`document.querySelector('#ac-detail')`);
+  }
+}
 async function shot(name){await wait(150);fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());}
 async function run(){
   await setup();
@@ -90,28 +97,36 @@ async function run(){
   assert.equal(win.webContents.getLastWebPreferences().sandbox,true);assert.equal(win.webContents.getLastWebPreferences().contextIsolation,true);
   result('actual page, production preload and initial historical replay without notification');
   await command('start');await until(`document.querySelector('#ac-detail').textContent.includes('运行中')`);
+  assert.match(await ev(`document.querySelector('#ac-timeline-state').textContent`),/任务：运行中/);
+  assert.match(await ev(`document.querySelector('#ac-events').textContent`),/Agent 状态.*已完成.*→.*运行中/s);
   result('Codex card opens the existing detail page and its overview shows recent activity');
   await command('tool');await until(`document.querySelector('#ac-detail').textContent.includes('执行命令')`);
+  assert.match(await ev(`document.querySelector('#ac-events').textContent`),/执行命令 · 开始/);
   result('automatic polling shows running and current tool type');
   await command('tool_failed');await poll();assert.match(await ev(`document.querySelector('#ac-detail').textContent`),/工具失败次数1/);
+  assert.match(await ev(`document.querySelector('#ac-events').textContent`),/执行命令 · 失败.*退出码 7.*0.25s/);
   assert.equal(notifications.length,0);result('tool failure count without falsely failing task');
   await command('reasoning_summary');await poll();
-  assert.equal(await ev(`document.querySelector('#ac-reasoning-summary').hidden`),false);
-  assert.equal(await ev(`document.querySelector('#ac-reasoning-summary').open`),false);
-  assert.match(await ev(`document.querySelector('#ac-reasoning-parts').textContent`),/检查输入。/);
-  assert.match(await ev(`document.querySelector('#ac-reasoning-parts').textContent`),/确认结果。/);
-  assert.equal(await ev(`document.querySelector('#ac-reasoning-parts img')!==null`),false);
-  await ev(`document.querySelector('#ac-reasoning-summary').open=true`);
+  assert.equal(await ev(`document.querySelectorAll('#ac-events [data-ac-timeline-summary]').length`),1);
+  assert.equal(await ev(`document.querySelector('[data-ac-timeline-summary]').open`),false);
+  assert.match(await ev(`document.querySelector('.ac-timeline-summary-parts').textContent`),/检查输入。/);
+  assert.match(await ev(`document.querySelector('.ac-timeline-summary-parts').textContent`),/确认结果。/);
+  assert.equal(await ev(`document.querySelector('.ac-timeline-summary-parts img')!==null`),false);
+  await ev(`document.querySelector('[data-ac-timeline-summary]').open=true; document.querySelector('[data-ac-timeline-summary] summary').focus()`);
   await command('reasoning_summary',{more:true});await poll();
-  assert.equal(await ev(`document.querySelector('#ac-reasoning-summary').open`),true);
-  assert.match(await ev(`document.querySelector('#ac-reasoning-parts').textContent`),/继续检查。/);
+  assert.equal(await ev(`document.querySelector('[data-ac-timeline-summary]').open`),true);
+  assert.equal(await ev(`document.activeElement===document.querySelector('[data-ac-timeline-summary] summary')`),true);
+  assert.match(await ev(`document.querySelector('.ac-timeline-summary-parts').textContent`),/继续检查。/);
   assert.equal(await ev(`JSON.stringify(VigilAgentCenter.controller.state).includes('RAW-CHAIN-MARKER')`),false);
-  await ev(`document.querySelector('#ac-reasoning-summary').scrollIntoView({block:'center'})`);
+  await command('tool_complete');await poll();
+  assert.match(await ev(`document.querySelector('#ac-events').textContent`),/MCP 工具 · 开始.*MCP 工具 · 完成/s);
+  await ev(`document.querySelector('[data-ac-timeline-summary]').scrollIntoView({block:'center'})`);
   await shot('reasoning-summary-expanded');
-  await ev(`document.querySelector('#ac-reasoning-summary').open=false`);
+  await ev(`document.querySelector('[data-ac-timeline-summary]').open=false`);
   await ev(`document.querySelector('.ac-view').scrollTop=0`);
   result('published reasoning summary folds, updates without losing expansion, escapes HTML, excludes full chain');
   await command('waiting_status');await poll();await command('approval');await poll();
+  assert.match(await ev(`document.querySelector('#ac-events').textContent`),/运行中.*→.*等待审批/s);
   await until(`document.querySelector('#ac-approvals').textContent.includes('命令审批')`);
   const expected=Notification.isSupported()?1:0;assert.equal(notifications.length,expected);
   await command('approval',{duplicate:true});await poll();assert.equal(notifications.length,expected);
@@ -129,7 +144,7 @@ async function run(){
   assert.match(await ev(`document.querySelector('#ac-detail').textContent`),/历史元数据/);assert.equal(notifications.length,expected);
   result('disconnect and reconnect expire pending; recovered task unknown/history');
   await ev(`document.querySelector('#ac-observed .ac-task').click()`);
-  assert.equal(await ev(`document.querySelector('#ac-reasoning-summary').hidden`),true);
+  assert.equal(await ev(`document.querySelectorAll('#ac-events [data-ac-timeline-summary]').length`),0);
   assert.match(await ev(`document.querySelector('#ac-detail').textContent`),/observed.*未知/);
   assert.equal(await ev(`document.querySelector('#ac-interrupt').hidden`),true);
   assert.equal(await ev(`getComputedStyle(document.querySelector('#ac-interrupt')).display`),'none');
@@ -157,12 +172,14 @@ async function run(){
   token=ready.token;await poll();assert.equal(await ev('VigilAgentCenter.controller.state.stale'),false);
   result('401 remains visible and disables operations; authenticated recovery');
   await wait(5100);
+  await ensureDetail();
   for(const [width,height]of [[1380,880],[900,600]]){
     win.setSize(width,height);await wait(180);
     for(const theme of ['light','dark']){await ev(`document.documentElement.dataset.theme='${theme}'`);assert.equal(await ev('document.documentElement.scrollWidth>innerWidth'),false);await shot('page-'+theme+'-'+width);}
     result('light/dark layout '+width+'x'+height);
   }
   await ev(`document.body.classList.add('vwp-active')`);await shot('page-wallpaper-material');
+  await ensureDetail();
   assert.equal(await ev(`getComputedStyle(document.querySelector('.ac-card')).backdropFilter`),'none');
   result('Wallpaper reading material without layered backdrop blur');
   await ev(`document.body.classList.remove('vwp-active');document.querySelector('#ac-create').closest('details').open=true;document.querySelector('#ac-prompt').value='local fixture task';document.querySelector('#ac-create').requestSubmit()`);

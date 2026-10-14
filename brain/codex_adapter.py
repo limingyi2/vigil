@@ -261,6 +261,9 @@ class CodexAdapter:
                 task["last_known_status"] = task["status"]
                 task["status"], task["live"] = "unknown", False
                 task["current_operation"] = None
+                self._record("task/status/changed", task=task, turn=self._label(task.get("current_turn")),
+                             state="unknown", previous_state=task["last_known_status"],
+                             state_transition=task["last_known_status"] != "unknown", reason=reason)
             self._record("adapter/disconnected", reason=reason)
             self._save()
             self.cv.notify_all()
@@ -465,6 +468,7 @@ class CodexAdapter:
                 if len(self.seen) > 8192:
                     self.seen.popitem(last=False)
             now = time.time()
+            previous_state = task["status"]
             task["last_activity"] = now
             live_turn = task["turns"].get(task.get("current_turn"), {}).get("generation") == generation
             if method in ("turn/started", "turn/completed") or (method == "thread/status/changed" and live_turn):
@@ -522,7 +526,7 @@ class CodexAdapter:
                     self._expire_requests(task["id"], turn_id, "turn_ended")
             elif method == "thread/status/changed":
                 if not live_turn:
-                    self._record(method, task=task, state="unknown")
+                    self._record(method, task=task, state="unknown", state_transition=False)
                     return True
                 status = params.get("status") or {}
                 flags = status.get("activeFlags", [])
@@ -573,13 +577,20 @@ class CodexAdapter:
             item = params.get("item") or {}
             if method in ("item/started", "item/completed"):
                 metadata = {k: item[k] for k in ("type", "status", "exitCode") if k in item}
+                if item.get("id"):
+                    metadata["item_key"] = self._label(item["id"])
+                duration = item.get("durationMs")
+                if type(duration) is int and 0 <= duration <= 86400000:
+                    metadata["duration_ms"] = duration
             if method == "thread/tokenUsage/updated":
                 last = (params.get("tokenUsage") or {}).get("last") or {}
                 metadata["tokens"] = {k: v for k, v in last.items()
                                       if k in ("inputTokens", "outputTokens", "cachedInputTokens", "totalTokens")
                                       and type(v) is int}
             self._record(method, task=task, turn=self._label(event_turn),
-                         state=task["status"], server_request="id" in message, **metadata)
+                         state=task["status"], previous_state=previous_state,
+                         state_transition=previous_state != task["status"],
+                         server_request="id" in message, **metadata)
             if structural or is_summary:
                 self._save()
             return True

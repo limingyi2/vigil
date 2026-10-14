@@ -67,7 +67,10 @@ def main():
                 elif op == "tool":
                     send("item/started",turnId=task["current_turn"],item={"id":"p2-tool","type":"commandExecution","command":"PRIVATE-FIXTURE-COMMAND"})
                 elif op == "tool_failed":
-                    send("item/completed",turnId=task["current_turn"],item={"id":"p2-tool","type":"commandExecution","status":"failed","exitCode":7})
+                    send("item/completed",turnId=task["current_turn"],item={"id":"p2-tool","type":"commandExecution","status":"failed","exitCode":7,"durationMs":250})
+                elif op == "tool_complete":
+                    send("item/started",turnId=task["current_turn"],item={"id":"p2-second-tool","type":"mcpToolCall","arguments":{"secret":"PRIVATE-FIXTURE"}})
+                    send("item/completed",turnId=task["current_turn"],item={"id":"p2-second-tool","type":"mcpToolCall","status":"completed","durationMs":42})
                 elif op == "reasoning_summary":
                     send("item/reasoning/summaryPartAdded",turnId=task["current_turn"],itemId="p2-reasoning",summaryIndex=0)
                     send("item/reasoning/summaryTextDelta",turnId=task["current_turn"],itemId="p2-reasoning",summaryIndex=0,
