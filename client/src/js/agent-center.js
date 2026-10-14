@@ -109,7 +109,7 @@
     </div><div id="ac-agent-detail-shell" hidden></div>`;
     ctx.view.innerHTML = overviewHtml;
     ctx.panel.innerHTML = `<div class="ac-studio-nav"><div class="phead"><h2>Agent 工作室</h2><p>多 Agent 总览</p></div><button class="ac-nav-item on" id="ac-nav-overview" type="button">${icon('activity','sm')} <span>全部 Agent</span><b id="ac-nav-count">1</b></button><div class="ac-nav-hint">Codex 当前已接入<br>其他 Agent 等待 Adapter</div></div>`;
-    let selected = null, busy = false, disposed = false, detailOpen = false;
+    let selected = null, busy = false, disposed = false, detailOpen = false, summaryTaskKey = null;
     const q = id => ctx.view.querySelector('#' + id) || ctx.panel.querySelector('#' + id);
     function write(el, html) { if (el && el.innerHTML !== html) el.innerHTML = html; }
     function currentTask(s) { return (s.owned || []).find(t => ['starting','running','waiting_approval','waiting_input'].includes(t.status)); }
@@ -125,6 +125,7 @@
         <p class="ac-error" id="ac-error" role="alert" hidden></p><p class="ac-warning" id="ac-gap" role="status" hidden></p>
         <section class="ac-card"><h2>待处理事项 <span id="ac-pending-count"></span></h2><p class="ac-muted">仅处理 Vigil 创建的 owned 会话。逐条核对命令或文件变更；批准不会扩展到后续请求。</p><div id="ac-approvals"></div></section>
         <section class="ac-card"><div class="ac-heading"><h2>任务详情</h2><button class="btn" id="ac-interrupt" hidden>中断受管任务</button></div><div id="ac-detail"></div></section>
+        <details class="ac-card" id="ac-reasoning-summary" hidden><summary>思考摘要</summary><p class="ac-muted" id="ac-reasoning-note"></p><div id="ac-reasoning-parts"></div></details>
         <section class="ac-card"><div class="ac-heading"><h2>事件历史</h2><span class="ac-muted" id="ac-cursor"></span></div><p class="ac-muted">历史回放不触发通知。仅保留最近 500 条可用事件；P1 服务缓冲区最多 2000 条。</p><ol id="ac-events" class="ac-events" aria-label="任务事件历史"></ol></section>
         <details class="ac-card"><summary>新建受管任务</summary><p class="ac-muted">独立工作目录 · 只读沙箱 · 网络禁用。启动会调用所选 Codex 模型，可能等待审批；此阶段不能答复。</p><form id="ac-create"><label>Codex 模型<select id="ac-model" class="input" required></select></label><label>任务描述<textarea id="ac-prompt" class="input" maxlength="16000" rows="3" required placeholder="描述要交给 Codex 的任务"></textarea></label><button class="btn fill" id="ac-start" type="submit">创建并启动</button><p id="ac-action-result" role="status"></p></form></details>
         <p class="ac-muted">仅限 loopback 上的管理员连接。独立桌面会话的实时状态不可确认，始终显示 unknown。</p></div>`;
@@ -153,6 +154,14 @@
       const list = (rows, owned) => rows.map(t => { const id = owned ? t.id : t.thread_id, key = (owned?'owned:':'observed:')+id, status = owned && !s.stale ? t.status : 'unknown'; return `<button class="ac-task ${selected===key?'on':''}" data-task="${esc(key)}" aria-pressed="${selected===key}"><strong>${owned?'任务':'历史线程'} ${esc(id.slice(0,8))}</strong>${badge(status)}<span>${owned?esc(t.model || 'Codex'):'历史元数据 · 不代表实时状态'}</span></button>`; }).join('') || '<p class="ac-muted ac-empty">暂无记录</p>';
       write(q('ac-tasks'), list(s.owned,true)); write(q('ac-observed'), list(s.observed,false));
       const task = s.owned.find(t=>'owned:'+t.id===selected) || s.observed.find(t=>'observed:'+t.thread_id===selected), owned = task && task.ownership==='owned';
+      const summary = owned && task.reasoning_summary;
+      const parts = summary ? (summary.items || []).flatMap(item => (item.parts || []).filter(part => part.text)) : [];
+      if (summaryTaskKey !== selected) { q('ac-reasoning-summary').open = false; summaryTaskKey = selected; }
+      q('ac-reasoning-summary').hidden = !owned;
+      q('ac-reasoning-note').textContent = parts.length
+        ? ((connected && task.live && summary.turn_id === task.current_turn && summary.generation === s.status.generation && !['completed','failed','interrupted'].includes(task.status)) ? '当前轮次的思考摘要' : '已保存的最近轮次思考摘要') + (summary.truncated ? ' · 摘要较长，已截断' : '')
+        : '此任务暂无思考摘要';
+      write(q('ac-reasoning-parts'), parts.map((part, i) => `<section class="ac-reasoning-part"><h3>第 ${i + 1} 段</h3><div class="ac-reasoning-text">${esc(part.text)}</div></section>`).join(''));
       write(q('ac-detail'), task ? `<div class="ac-heading"><strong>${owned?'受管任务 · owned':'历史观察 · observed'}</strong>${badge(owned && !s.stale ? task.status : 'unknown')}</div><dl class="ac-metrics"><div><dt>最近活动</dt><dd>${esc(owned ? fmtTime(task.last_activity,'full') || '—' : '仅历史读取 '+fmtTime(task.history_read_at,'full'))}</dd></div><div><dt>证据来源</dt><dd>${s.stale ? '缓存 · 已过期' : task.live && task.source==='realtime' ? '实时事件' : '历史元数据 · 无实时进度'}</dd></div>${owned?`<div><dt>当前工具操作</dt><dd>${esc(connected && task.live && task.current_operation ? operations[task.current_operation.type] || '工具操作' : '—')}</dd></div><div><dt>工具失败次数</dt><dd>${Number(task.tool_failures)||0}</dd></div>`:''}<div><dt>历史轮次</dt><dd>${Object.keys(task.turns || {}).length}</dd></div></dl>${owned && task.last_error?`<p class="ac-error">${esc(task.last_error)}</p>`:''}` : '<p class="ac-muted ac-empty">从左侧选择任务；连接后可创建受管任务。</p>');
       const waiting = s.approvals.filter(a=>a.state==='pending'&&a.ownership==='owned'&&(a.connection_generation||a.generation)===s.status.generation);
       q('ac-pending-count').textContent = waiting.length ? `(${waiting.length})` : '';
