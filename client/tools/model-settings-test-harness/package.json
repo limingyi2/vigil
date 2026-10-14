@@ -1,0 +1,5 @@
+{
+  "name": "vigil-model-settings-test-harness",
+  "private": true,
+  "main": "../test-model-settings-electron.js"
+}

@@ -14,6 +14,9 @@
   'use strict';
   const { esc, icon, fmtNum, toast } = U;
   const { state, ping, get } = API;
+  const windowQuery = new URLSearchParams(location.search);
+  const settingsWindow = windowQuery.get('window') === 'settings';
+  if (settingsWindow) document.body.classList.add('settings-window');
 
   const gnavEl = document.getElementById('gnav');
   const panelEl = document.getElementById('panel');
@@ -24,11 +27,19 @@
   // ── 左侧主导航：图标栏，页名由原生 tooltip 和 aria-label 提供 ──
   function buildNav() {
     if (!gnavEl) return;
-    gnavEl.innerHTML = PAGES.map((p) =>
+    gnavEl.innerHTML = PAGES.filter((p) => p.id !== 'system').map((p) =>
       '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
-      U.icon(p.icon === 'image' ? 'img' : (p.icon || 'puzzle'), 'md') + '</button>').join('');
+      U.icon(p.icon === 'image' ? 'img' : (p.icon || 'puzzle'), 'md') + '</button>').join('') +
+      '<div class="nav-spacer" aria-hidden="true"></div>' +
+      '<button class="gbtn nav-settings" id="settingsBtn" data-tip="设置" title="设置" aria-label="打开设置窗口">' +
+      U.icon('set', 'md') + '</button>';
     gnavEl.querySelectorAll('.gbtn').forEach((b) =>
-      b.addEventListener('click', () => go(b.dataset.page)));
+      b.addEventListener('click', () => {
+        if (b.id === 'settingsBtn') {
+          if (window.vigil && window.vigil.settings) window.vigil.settings.open({ section: 'model', source: 'local' });
+          else { state.settingsSub = 'model'; state.mSrc = 'local'; go('system'); }
+        } else go(b.dataset.page);
+      }));
   }
 
   // ── 状态栏 ────────────────────────────────────────────────
@@ -201,6 +212,10 @@
     };
     perf('renderer-dom-ready');
     if (window.vigil?.appVersion) state.version = await window.vigil.appVersion();
+    if (settingsWindow) {
+      const badge = document.querySelector('.chanbadge');
+      if (badge) badge.textContent = '设置';
+    }
     let t = 'light';
     try { t = localStorage.getItem('vigil_theme') || 'light'; } catch (_) {}
     applyTheme(t);
@@ -241,7 +256,7 @@
 
     buildNav();
     perf('nav-built');
-    if (window.VigilAgentCenter) {
+    if (!settingsWindow && window.VigilAgentCenter) {
       window.VigilAgentCenter.start();
       window.vigil && window.vigil.agentCenter && window.vigil.agentCenter.onOpen(() => go('agent-center'));
     }
@@ -252,6 +267,14 @@
     if (tb) tb.addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark'));
     const rb = document.getElementById('reloadBtn');
     if (rb) rb.addEventListener('click', () => go(state.page));
+
+    if (settingsWindow && window.vigil && window.vigil.settings) {
+      window.vigil.settings.onNavigate((target) => {
+        state.settingsSub = target.section || 'model';
+        state.mSrc = target.source || 'local';
+        go('system');
+      });
+    }
 
     // 窗口控制：只在 Electron 里存在（harness 没有 window.vigil，点了也没事）
     const q = (id, fn) => {
@@ -269,9 +292,15 @@
     });
 
     // 首屏先使用本地 shell；壁纸、插件和云端连接都异步进行。
-    void go(state.page).then(() => perf('first-usable'));
-    if (window.VigilWallpaper) setTimeout(() => window.VigilWallpaper.init(), 0);
-    void loadPluginFrontends();
+    if (settingsWindow) {
+      state.settingsSub = windowQuery.get('section') || 'model';
+      state.mSrc = windowQuery.get('source') || 'local';
+      void go('system').then(() => perf('first-usable-settings'));
+    } else {
+      void go(state.page).then(() => perf('first-usable'));
+    }
+    if (!settingsWindow && window.VigilWallpaper) setTimeout(() => window.VigilWallpaper.init(), 0);
+    if (!settingsWindow) void loadPluginFrontends();
 
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
     // 没有这段：换过地址（隧道 ↔ 本机）后会一直停在"未连接"，
@@ -292,7 +321,7 @@
       refreshStats();
       perf('cloud-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
       if (state.page === 'chat') void go('chat');
-      maybeWizard();
+      if (!settingsWindow) maybeWizard();
     });
 
     // 心跳：30 秒一轮 ping + 状态读数刷新
@@ -307,8 +336,8 @@
       try {
         const r = await get('/api/plugins/frontend');
         if (r && r.ok && r.json && r.json.version) {
-          if (lastPluginVersion === 0) await loadPluginFrontends();
-          else if (Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) location.reload();
+          if (!settingsWindow && lastPluginVersion === 0) await loadPluginFrontends();
+          else if (!settingsWindow && Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) location.reload();
         }
       } catch (_) { /* 静默 */ }
     }, 10000);
@@ -328,10 +357,13 @@
       if (!sc || sc.status !== 'ready' || !sc.port) return;
       const r = await get('/api/models');
       if (r && r.ok && r.json && r.json.current && !r.json.current.api_key_set) {
-        // 顶级页是分组（04 连接与系统 = 'system'），具体表单在组内的
-        // 「模型与服务商」子页 —— settingsSub 让 renderSettings 直接切过去
-        state.settingsSub = 'model';
-        go('system');
+        if (window.vigil.settings) {
+          window.vigil.settings.open({ section: 'model', source: 'local' });
+        } else {
+          state.settingsSub = 'model';
+          state.mSrc = 'local';
+          go('system');
+        }
         toast('填好模型 API key 就能聊了');
       } else {
         window.vigil.cfg.set({ wizard_done: true });

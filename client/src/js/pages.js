@@ -161,7 +161,7 @@
       say('正在移除…');
       try {
         const r = pick(await post('/api/models/forget',
-          { provider: m.provider, model: m.model }));
+          { provider: m.provider, base: m.base, model: m.model }));
         if (!r || !r.ok) { say('移除失败：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
         await load();
         say(r.removed ? '已从清单移除' : '清单里本来就没有它');
@@ -198,7 +198,7 @@
       say('正在切到 ' + m.model + '…');
       try {
         const r = pick(await post('/api/models/quick-switch',
-          { provider: m.provider, model: m.model }));
+          { provider: m.provider, base: m.base, model: m.model }));
         if (!r || !r.ok) { say('切换失败：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
         await load();
         if (r.warn) say(r.warn, true);
@@ -227,8 +227,13 @@
     view.querySelector('#mqManage').addEventListener('click', (e) => {
       e.stopPropagation();
       closePop();
-      state.settingsSub = 'model';
-      ctx.navigate && ctx.navigate('system');
+      if (global.vigil && global.vigil.settings) {
+        global.vigil.settings.open({ section: 'model', source: 'local' });
+      } else {
+        state.settingsSub = 'model';
+        state.mSrc = 'local';
+        ctx.navigate && ctx.navigate('system');
+      }
     });
     searchEl.addEventListener('input', draw);
     searchEl.addEventListener('keydown', (e) => {
@@ -2524,7 +2529,7 @@
     // 本地操控不再是设置里的一页：确认走聊天气泡，权限/目录/工具开关
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：云端 brain 没有 /api/device/*（点了就是 no such api）。
-    const subs = [['conn', '连接与设备'], ['model', '模型与服务商'], ['wechat', '微信聊天集成'], ['sync', '云端同步'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '连接与设备'], ['model', '模型管理'], ['wechat', '微信聊天集成'], ['sync', '云端同步'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
       subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'wechat' ? 'chat' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
@@ -2636,7 +2641,7 @@
     async function model(pv) {
       // pv（可选）{base, provider}：「重新拉取」后带着表单值重画 —— 不带的话
       // 重画又按**已保存**的配置拉一遍，刚拉到的新家清单当场弹回旧家（实锤过）。
-      ctx.topbar.querySelector('h1').textContent = '模型与服务商';
+      ctx.topbar.querySelector('h1').textContent = '模型管理';
       // 模型配置跟真身走：微信 / App 的她在云端，默认改云端的账；本机这份
       // 只管 PC 控制台聊天那个大脑。跟数据页同一个套路（没配云端就只有本机）。
       const live = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
@@ -2646,9 +2651,14 @@
       const mb = () => (hasCloud && state.mSrc === 'cloud') ? 'cloud' : null;
       const mget = (p) => get(p, { base: mb() });
       const mpost = (p, b) => post(p, b, { base: mb() });
-      const r = pick(await mpost('/api/models/list', {
-        base: (pv && pv.base) || '', provider: (pv && pv.provider) || ''
-      }));
+      const [modelReply, savedReply] = await Promise.all([
+        mpost('/api/models/list', {
+          base: (pv && pv.base) || '', provider: (pv && pv.provider) || ''
+        }),
+        mget('/api/models/saved'),
+      ]);
+      const r = pick(modelReply);
+      const savedData = pick(savedReply);
       if (!r.current && !r.providers) {
         const st = Number(r._status || 0);
         const msg = st === 404 ? '当前 Brain 没有模型列表接口，请升级 Brain 或检查客户端版本' :
@@ -2659,6 +2669,7 @@
       const cur = r.current || {};
       const provs = r.providers || [];
       const groups = r.groups || {};
+      let savedModels = savedData.ok ? (savedData.models || []).filter((m) => !m.unsaved) : [];
       const hasKey = (p) => !!(cur.keys_by_provider && cur.keys_by_provider[p]);
       const provName = (p) => (provs.find((x) => x.key === p) || {}).name || p;
       // 可输入的组合框：候选来自服务商的模型清单，但本地部署的 Qwen 之类
@@ -2731,10 +2742,45 @@
         '<div id="dlList" class="muted" style="font-size:11.5px">加载中…</div></div>' +
         '</div></div>') : '';
 
+      const savedRowsHtml = () => savedModels.length
+        ? '<div class="model-table-wrap"><table class="model-table"><thead><tr>' +
+          '<th>模型名称</th><th>Provider</th><th>Base URL</th><th>Model ID</th><th>API Key</th><th></th>' +
+          '</tr></thead><tbody>' + savedModels.map((m, i) =>
+            '<tr><td><strong>' + esc(m.name || m.model) + '</strong>' +
+              (m.active ? ' <span class="tag ok">当前</span>' : '') + '</td>' +
+              '<td>' + esc(m.provider_name || m.provider || '—') + '</td>' +
+              '<td class="mono model-url" title="' + esc(m.base || '') + '">' + esc(m.base || '—') + '</td>' +
+              '<td class="mono model-id" title="' + esc(m.model || '') + '">' + esc(m.model || '—') + '</td>' +
+              '<td>' + (m.has_key
+                ? '<span class="tag ok">已配置</span><span class="mono model-key-mask">' + esc(m.key_mask || '********') + '</span>'
+                : '<span class="tag warn">未配置</span>') + '</td>' +
+              '<td><button class="btn ghost sm" type="button" data-model-remove="' + i + '">移除</button></td></tr>'
+          ).join('') + '</tbody></table></div>'
+        : '<div class="model-empty">还没有添加模型。添加后可直接从聊天模型菜单切换。</div>';
+      const modelManager =
+        '<section class="card hd model-manager" aria-labelledby="modelManagerTitle">' +
+        '<div class="h"><div><h3 id="modelManagerTitle">已添加模型</h3>' +
+        '<div class="muted model-manager-note">本机清单供此客户端聊天切换；云端清单供 App / 微信。配置会写入 Brain 并在重启后保留。</div></div>' +
+        '<button class="btn fill md" type="button" id="mAddToggle">添加模型</button></div>' +
+        '<div id="mSavedRows">' + savedRowsHtml() + '</div>' +
+        '<div class="model-add-form" id="mAddForm" hidden>' +
+        '<div class="model-form-title"><strong>添加聊天模型</strong><span class="muted">密钥留空时沿用该 Provider 和 Base URL 已保存的密钥</span></div>' +
+        '<div class="grid g2">' +
+        '<div class="field"><label for="mAddName">模型名称</label><input class="input" id="mAddName" maxlength="120" placeholder="例如：工作模型"></div>' +
+        '<div class="field"><label for="mAddProvider">Provider</label><select class="input" id="mAddProvider">' +
+        provs.map((p) => '<option value="' + esc(p.key) + '"' + (p.key === cur.provider ? ' selected' : '') + '>' + esc(p.name || p.key) + '</option>').join('') +
+        '</select></div>' +
+        '<div class="field"><label for="mAddBase">Base URL</label><input class="input mono" id="mAddBase" value="' + esc(cur.api_base || '') + '" placeholder="https://api.example.com/v1"></div>' +
+        '<div class="field"><label for="mAddModel">Model ID</label><input class="input mono" id="mAddModel" maxlength="240" placeholder="例如：vendor/model-name" required></div>' +
+        '<div class="field model-key-field"><label for="mAddKey">API Key</label><input class="input" id="mAddKey" type="password" autocomplete="new-password" placeholder="输入新密钥；留空沿用已有密钥"></div>' +
+        '</div><div class="model-form-actions"><button class="btn fill md" type="button" id="mAddSave">保存模型</button>' +
+        '<button class="btn oline md" type="button" id="mAddCancel">取消</button><span class="muted" id="mAddResult" role="status" aria-live="polite"></span></div></div></section>';
+
       v.innerHTML =
         (hasCloud ? '<div class="seg" id="mSrc" style="margin-bottom:12px">' +
           '<button data-ms="cloud"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>云端（微信 / App 的她）</button>' +
           '<button data-ms="local"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑的她）</button></div>' : '') +
+        modelManager +
         localCard +
         '<div class="card" style="margin-bottom:14px">' +
         '<div class="field"><label>服务商</label><select class="input" id="mProv">' +
@@ -2768,6 +2814,71 @@
       const keyHint = v.querySelector('#mKeyHint');
       const mRes = v.querySelector('#mRes');
       const mKeyState = v.querySelector('#mKeyState');
+      const savedHost = v.querySelector('#mSavedRows');
+      const addForm = v.querySelector('#mAddForm');
+      const drawSavedModels = () => {
+        savedHost.innerHTML = savedRowsHtml();
+        savedHost.querySelectorAll('[data-model-remove]').forEach((b) => b.addEventListener('click', async () => {
+          const model = savedModels[Number(b.dataset.modelRemove)];
+          if (!model) return;
+          if (!confirm('从已添加模型中移除「' + (model.name || model.model) + '」？')) return;
+          b.disabled = true;
+          const rr = pick(await mpost('/api/models/forget', {
+            provider: model.provider, base: model.base, model: model.model,
+          }));
+          if (!rr.ok) { toast('移除失败：' + (rr._err || rr.err || '未知错误')); b.disabled = false; return; }
+          const fresh = pick(await mget('/api/models/saved'));
+          savedModels = fresh.ok ? (fresh.models || []).filter((m) => !m.unsaved) : [];
+          drawSavedModels();
+          toast('已从模型清单移除');
+        }));
+      };
+      const addToggle = v.querySelector('#mAddToggle');
+      const addProvider = v.querySelector('#mAddProvider');
+      const addBase = v.querySelector('#mAddBase');
+      const addModel = v.querySelector('#mAddModel');
+      const addKey = v.querySelector('#mAddKey');
+      const addResult = v.querySelector('#mAddResult');
+      addToggle.addEventListener('click', () => {
+        addForm.hidden = !addForm.hidden;
+        if (!addForm.hidden) addModel.focus();
+      });
+      v.querySelector('#mAddCancel').addEventListener('click', () => {
+        addForm.hidden = true;
+        addResult.textContent = '';
+      });
+      addProvider.addEventListener('change', () => {
+        const selectedProvider = provs.find((p) => p.key === addProvider.value);
+        if (selectedProvider && selectedProvider.key !== 'custom' && selectedProvider.base)
+          addBase.value = selectedProvider.base;
+      });
+      v.querySelector('#mAddSave').addEventListener('click', async (e) => {
+        const saveButton = e.currentTarget;
+        const modelId = addModel.value.trim();
+        const base = addBase.value.trim();
+        if (!modelId) { addResult.textContent = '请填写 Model ID'; addModel.focus(); return; }
+        if (!base) { addResult.textContent = '请填写 Base URL'; addBase.focus(); return; }
+        saveButton.disabled = true;
+        addResult.textContent = '保存中…';
+        const payload = {
+          name: v.querySelector('#mAddName').value.trim(),
+          provider: addProvider.value,
+          base,
+          model: modelId,
+        };
+        if (addKey.value.trim()) payload.api_key = addKey.value.trim();
+        const rr = pick(await mpost('/api/models/save', payload));
+        saveButton.disabled = false;
+        if (!rr.ok) { addResult.textContent = '保存失败：' + (rr._err || rr.err || '未知错误'); return; }
+        savedModels = (rr.models || []).filter((m) => !m.unsaved);
+        drawSavedModels();
+        addKey.value = '';
+        addModel.value = '';
+        v.querySelector('#mAddName').value = '';
+        addResult.textContent = '已保存；聊天窗口重新打开模型菜单即可读取。';
+        toast('模型配置已保存');
+      });
+      drawSavedModels();
       // 清单就地换血：只刷四个下拉的候选和来源行，不整页重画 —— 整页重画
       // 会把用户刚输到一半的密钥洗掉。
       const applyList = (rr) => {
@@ -3018,6 +3129,9 @@
             keyInp.value = '';
           }
           keyHint.innerHTML = keyHintText(cur);
+          const fresh = pick(await mget('/api/models/saved'));
+          savedModels = fresh.ok ? (fresh.models || []).filter((m) => !m.unsaved) : [];
+          drawSavedModels();
         }
       });
     }

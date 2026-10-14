@@ -1861,7 +1861,9 @@ def start_remote_api(brain):
                             self._json(400, {"ok": False, "err": "未知服务商"})
                             return
                         bag = dict(api_config.get("api_keys") or {})
-                        removed = bool(str(bag.pop(p, "") or "").strip())
+                        removed = bool(bag.pop(p, None))
+                        for slot in [k for k in bag if k.startswith(p + "|")]:
+                            removed = bool(bag.pop(slot, None)) or removed
                         bases = dict(api_config.get("api_key_bases") or {})
                         bases.pop(p, None)
                         if str(api_config.get("provider") or "") == p:
@@ -2538,6 +2540,36 @@ def start_remote_api(brain):
                     except Exception as e:
                         errlog.log_exc("api/models/apply", e)
                         self._json(200, {"ok": False, "err": str(e)[:120]})
+                elif path == "/api/models/save":
+                    # Save one named model for the client selector without
+                    # changing the currently active model. Secrets stay in
+                    # Brain config and only their mask is returned below.
+                    try:
+                        nc, added, err = model_hub.save_model(
+                            api_config, body.get("provider"), body.get("base"),
+                            body.get("model"), body.get("name"),
+                            body.get("api_key"))
+                        if err:
+                            self._json(400, {"ok": False, "err": err})
+                        elif nc != api_config:
+                            model_hub.save(nc)
+                            for _k in [k for k in list(api_config.keys())
+                                       if k not in nc]:
+                                api_config.pop(_k, None)
+                            api_config.update(nc)
+                            try:
+                                _refresh_api_cfg(api_config)
+                            except Exception:
+                                pass
+                            self._json(200, dict({"ok": True, "added": added},
+                                                 **model_hub.public_saved(api_config)))
+                        else:
+                            self._json(200, dict({"ok": True, "added": False},
+                                                 **model_hub.public_saved(api_config)))
+                    except Exception as e:
+                        errlog.log_exc("api/models/save", e)
+                        self._json(500, {"ok": False, "err": "保存模型失败"})
+                    return
                 elif path == "/api/models/quick-switch":
                     # 主页聊天框旁边的下拉：切到清单里的某一条。
                     #
@@ -2548,7 +2580,8 @@ def start_remote_api(brain):
                     # 静默换一个能用的模型，用户会拿着 B 的回复以为在用 A。
                     try:
                         nc, changed, err, warn = model_hub.quick_switch(
-                            api_config, body.get("provider"), body.get("model"))
+                            api_config, body.get("provider"), body.get("model"),
+                            body.get("base"))
                         if err:
                             self._json(200, {"ok": False, "err": err,
                                              "current": model_hub.public_current(api_config)})
@@ -2582,7 +2615,8 @@ def start_remote_api(brain):
                     # 只动清单，不碰当前生效配置 —— 见 model_hub.forget_model。
                     try:
                         nc, removed = model_hub.forget_model(
-                            api_config, body.get("provider"), body.get("model"))
+                            api_config, body.get("provider"), body.get("model"),
+                            body.get("base"))
                         if not removed:
                             self._json(200, {"ok": True, "removed": False,
                                              "msg": "清单里本来就没有它"})
@@ -3060,7 +3094,7 @@ def start_remote_api(brain):
                 # 主页聊天框旁的快速切换下拉：已保存的模型 + 当前生效的是哪条。
                 # 只读、不发网络请求（不像 /api/models 要在线拉清单），
                 # 所以打开聊天页马上就能用，断网也在。
-                # 响应里**没有任何密钥**，连接状态只给 has_key 布尔值。
+                # 响应里不含密钥原文，只带是否已配置和不可反推的掩码。
                 try:
                     self._json(200, dict({"ok": True},
                                          **model_hub.public_saved(api_config)))
