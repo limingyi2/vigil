@@ -204,6 +204,27 @@ class ModelHubUnitTests(unittest.TestCase):
         # 同名但地址不同 → 键不同，判重不会把两家合成一条
         self.assertNotEqual(model_hub._entry_key(rows[0]), model_hub._entry_key(rows[1]))
 
+    def test_custom_models_keep_keys_separate_by_base_url(self):
+        cfg, added, err = model_hub.save_model(
+            self._cfg(), "custom", self.A.base, "shared-model", "模型 A", self.A.secret)
+        self.assertTrue(added)
+        self.assertEqual(err, "")
+        cfg, added, err = model_hub.save_model(
+            cfg, "custom", self.B.base, "shared-model", "模型 B", self.B.secret)
+        self.assertTrue(added)
+        self.assertEqual(err, "")
+        rows = [r for r in model_hub.public_saved(cfg)["models"]
+                if r["provider"] == "custom"]
+        self.assertEqual({r["base"] for r in rows}, {self.A.base, self.B.base})
+        self.assertEqual({r["key_mask"] for r in rows},
+                         {model_hub.mask_key(self.A.secret), model_hub.mask_key(self.B.secret)})
+        self.assertNotIn(self.A.secret, json.dumps(rows))
+        new, _changed, err, _warn = model_hub.quick_switch(
+            cfg, "custom", "shared-model", self.B.base)
+        self.assertEqual(err, "")
+        self.assertEqual(model_hub.current(new)["api_base"], self.B.base)
+        self.assertEqual(model_hub.current(new)["api_key"], self.B.secret)
+
     def test_saved_list_is_capped(self):
         cfg = self._cfg()
         for i in range(model_hub.SAVED_MAX + 12):
@@ -219,7 +240,7 @@ class ModelHubUnitTests(unittest.TestCase):
         self.assertNotIn(self.A.secret, blob)
         self.assertNotIn(self.B.secret, blob)
         self.assertNotIn("api_key", blob)          # 连字段名都不出现
-        self.assertNotIn(self.A.secret[:6], blob)  # 打码前后缀也不给
+        self.assertIn(model_hub.mask_key(self.A.secret), blob)
 
     def test_public_saved_fronts_unsaved_current(self):
         cfg = self._cfg()                          # 清单是空的，当前这把没存过
@@ -246,6 +267,20 @@ class ModelHubUnitTests(unittest.TestCase):
         self.assertTrue(err)
         self.assertIn("密钥", err)
         self.assertEqual(new, slim)
+
+    def test_legacy_active_key_does_not_carry_to_another_provider(self):
+        cfg = {
+            "provider": "siliconflow", "api_base": self.A.base,
+            "api_key": self.A.secret, "model": "shared-model",
+            "model_mode": "cloud",
+        }
+        cfg, _ = model_hub.remember_current(cfg)
+        cfg, _ = model_hub.remember_model(
+            cfg, "xiaomi", self.B.base, "shared-model")
+        new, _changed, err, _warn = model_hub.quick_switch(
+            cfg, "xiaomi", "shared-model", self.B.base)
+        self.assertIn("密钥", err)
+        self.assertEqual(new, cfg)
 
     def test_quick_switch_refuses_when_provider_rejects_key(self):
         cfg, _ = model_hub.remember_current(self._cfg())
@@ -426,9 +461,12 @@ class QuickSwitchHttpTests(unittest.TestCase):
             self.assertTrue(str(r.get("base") or "").startswith("http://127.0.0.1:"),
                             "清单里出现了非本机地址：%s" % r)
 
-    def switch(self, provider, model, expect_ok=True):
+    def switch(self, provider, model, expect_ok=True, base=None):
+        body = {"provider": provider, "model": model}
+        if base:
+            body["base"] = base
         code, obj = self.h.post("/api/models/quick-switch",
-                                {"provider": provider, "model": model})
+                                body)
         self.assertEqual(code, 200, obj)
         if expect_ok:
             self.assertTrue(obj.get("ok"), obj)
@@ -578,6 +616,41 @@ class QuickSwitchHttpTests(unittest.TestCase):
                   encoding="utf-8") as fh:
             disk = json.load(fh)
         self.assertEqual(obj["current"]["model"], disk["model"])
+
+    def test_12_named_model_config_survives_restart_and_switches(self):
+        secret = self.A.secret
+        code, obj = self.h.post("/api/models/save", {
+            "name": "设置页回归模型", "provider": "custom", "base": self.A.base,
+            "model": "a-only", "api_key": secret,
+        })
+        self.assertEqual(code, 200, obj)
+        self.assertTrue(obj.get("ok"), obj)
+        row = next(r for r in obj["models"] if r["model"] == "a-only"
+                   and r["provider"] == "custom")
+        self.assertEqual(row["name"], "设置页回归模型")
+        self.assertEqual(row["key_mask"], model_hub.mask_key(secret))
+        self.assertNotIn(secret, json.dumps(obj, ensure_ascii=False))
+
+        self.h.restart()
+        rows = self.rows()
+        row = next(r for r in rows if r["model"] == "a-only"
+                   and r["provider"] == "custom")
+        self.assertEqual(row["name"], "设置页回归模型")
+        self.assertTrue(row["has_key"])
+        self.assertEqual(row["key_mask"], model_hub.mask_key(secret))
+
+        obj = self.switch("custom", "a-only", base=self.A.base)
+        self.assertEqual(obj["current"]["provider"], "custom")
+        self.assertEqual(obj["current"]["chat"], "a-only")
+        self.assertEqual(obj["current"]["api_base"], self.A.base)
+        code, res = self.h.post("/api/chat", {
+            "text": "ZXFIX_MODEL_SETTINGS_PERSIST", "src": "probe", "dry_run": True,
+        }, timeout=60)
+        self.assertEqual(code, 200, res)
+        hit = [c for c in self.A.chats if "ZXFIX_MODEL_SETTINGS_PERSIST" in c["text"]]
+        self.assertEqual(len(hit), 1, self.A.chats)
+        self.assertEqual(hit[0]["model"], "a-only")
+        self.assertTrue(hit[0]["auth"])
 
 
 class QuickSwitchEdgeHttpTests(unittest.TestCase):

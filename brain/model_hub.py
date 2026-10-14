@@ -423,9 +423,38 @@ def public_current(cfg):
 
 
 def mask_key(k):
-    """给界面看的密钥样子。短于 12 位的一律全盖 —— 那个长度露头露尾没有意义。"""
+    """给界面看的密钥样子。短于 12 位的一律全盖。"""
     k = k or ""
-    return ("%s…%s" % (k[:6], k[-4:])) if len(k) > 12 else ("*" * len(k))
+    return ("%s****%s" % (k[:6], k[-3:])) if len(k) > 12 else ("*" * len(k))
+
+
+def _key_slot(prov, base):
+    """稳定地定位某个服务商和 Base URL 对应的密钥。"""
+    return "%s|%s" % (str(prov or "").strip(), _norm_base(base))
+
+
+def remember_provider_key(cfg, prov, base, key):
+    """按服务商和 Base URL 保存密钥，同时保留旧版按服务商读取的记录。"""
+    prov = str(prov or "").strip()
+    base = str(base or "").strip().rstrip("/")
+    key = str(key or "").strip()
+    if not prov or not key or is_masked(key):
+        return cfg
+    dst = dict(cfg or {})
+    bag = dict(dst.get("api_keys") or {})
+    record = {"key": key, "base": _norm_base(base)}
+    bag[_key_slot(prov, base)] = record
+    # Current installations expect api_keys[provider]; retain that shape while
+    # the exact Base URL slot keeps alternate/custom endpoints independent.
+    bag[prov] = record
+    dst["api_keys"] = bag
+    bases = dict(dst.get("api_key_bases") or {})
+    bases[prov] = _norm_base(base)
+    dst["api_key_bases"] = bases
+    if (str(dst.get("provider") or "") == prov
+            and _norm_base(dst.get("api_base")) == _norm_base(base)):
+        dst["api_key"] = key
+    return dst
 
 
 def provider_key(cfg, prov, base=None):
@@ -440,6 +469,12 @@ def provider_key(cfg, prov, base=None):
     requested = _norm_base(base) if base is not None else None
     bases = cfg.get("api_key_bases") if isinstance(cfg.get("api_key_bases"), dict) else {}
     if isinstance(bag, dict):
+        if requested is not None:
+            exact = bag.get(_key_slot(prov, base))
+            if isinstance(exact, dict):
+                k = str(exact.get("key") or "").strip()
+                if k and _norm_base(exact.get("base")) == requested:
+                    return k
         entry = bag.get(prov)
         if isinstance(entry, dict):
             k = str(entry.get("key") or "").strip()
@@ -539,7 +574,7 @@ def is_masked(k):
     k = str(k or "")
     if not k:
         return False
-    if "…" in k or "..." in k:
+    if "…" in k or "..." in k or "****" in k:
         return True
     # 全是星号也算：短密钥被打码后就是这个形状
     return bool(k) and set(k) == {"*"}
@@ -652,10 +687,11 @@ def remember_current(cfg):
 
 
 def public_saved(cfg):
-    """给客户端的下拉数据：清单 + 生效状态。**不含任何密钥**（连打码的都不给）。
+    """给客户端的模型清单：不含密钥原文，只给状态和可显示的掩码。
 
     连接状态只用布尔表达：
       has_key —— 这家自己有存过密钥（切过去能直接调）
+      key_mask —— 前后少量字符，中间用星号遮住
       active  —— 就是眼下生效的这一条
       unsaved —— 当前生效的组合还不在清单里（老配置 / 手改过 config）
     """
@@ -664,15 +700,19 @@ def public_saved(cfg):
                          str(cur.get("chat") or ""))
     out = []
     hit = False
+    current_name = _short_name(model)
     for e in saved_models(cfg):
         act = (e["provider"] == prov and e["model"] == model
                and (not e["base"] or not base or e["base"].rstrip("/") == base.rstrip("/")))
         if act:
             hit = True
+            current_name = e["name"] or current_name
+        key = provider_key(cfg, e["provider"], e["base"])
         out.append(dict(e,
                         provider_name=PROVIDERS.get(e["provider"], {}).get("name")
                         or e["provider"],
-                        has_key=has_provider_key(cfg, e["provider"]),
+                        has_key=bool(key),
+                        key_mask=mask_key(key),
                         active=act,
                         unsaved=False))
     if model and not hit:
@@ -681,20 +721,21 @@ def public_saved(cfg):
         out.insert(0, {
             "provider": prov, "provider_name": PROVIDERS.get(prov, {}).get("name") or prov,
             "base": base, "model": model, "name": _short_name(model),
-            "added_at": "", "has_key": has_provider_key(cfg, prov),
+            "added_at": "", "has_key": has_provider_key(cfg, prov, base),
+            "key_mask": mask_key(provider_key(cfg, prov, base)),
             "active": True, "unsaved": True,
         })
     return {
         "models": out,
         "current": {"provider": prov,
                     "provider_name": PROVIDERS.get(prov, {}).get("name") or prov,
-                    "base": base, "model": model, "name": _short_name(model),
-                    "has_key": has_provider_key(cfg, prov),
-                    "key_belongs_to": (prov if has_provider_key(cfg, prov) else "")},
+                    "base": base, "model": model, "name": current_name,
+                    "has_key": has_provider_key(cfg, prov, base),
+                    "key_belongs_to": (prov if has_provider_key(cfg, prov, base) else "")},
     }
 
 
-def quick_switch(cfg, provider, model):
+def quick_switch(cfg, provider, model, base=None):
     """按清单切到某一条。返回 (新配置, 改动说明, 错误, 警告)。
 
     失败一律**明说**，绝不"悄悄换一个能用的"：静默兜底会让人以为在用 A，
@@ -704,6 +745,7 @@ def quick_switch(cfg, provider, model):
     """
     prov = str(provider or "").strip()
     mid = str(model or "").strip()
+    requested_base = str(base or "").strip().rstrip("/")
     if not mid:
         return cfg, [], "没指定模型", ""
     # 🔴 切走之前先把"正在用的这一组"记进清单。
@@ -715,7 +757,9 @@ def quick_switch(cfg, provider, model):
         prov = str((cfg or {}).get("provider") or "").strip()
     ent = None
     for e in saved_models(cfg):
-        if e["model"] == mid and (not prov or e["provider"] == prov):
+        if (e["model"] == mid and (not prov or e["provider"] == prov)
+                and (not requested_base
+                     or _norm_base(e["base"]) == _norm_base(requested_base))):
             ent = e
             break
     if not ent:
@@ -725,7 +769,9 @@ def quick_switch(cfg, provider, model):
     want_base = ent["base"] or PROVIDERS.get(ent["provider"], {}).get("base") or ""
     has_key = has_provider_key(cfg, ent["provider"], want_base)
     key = provider_key(cfg, ent["provider"], want_base) if has_key else ""
-    if not has_key and not _any_provider_key(cfg) and cfg.get("api_key"):
+    if (not has_key and not _any_provider_key(cfg) and cfg.get("api_key")
+            and cur["provider"] == ent["provider"]
+            and _norm_base(cur["api_base"]) == _norm_base(want_base)):
         # 老配置（只有一把 api_key、api_keys 还没建立起来）里那把就是当前这家的，
         # 不能因为"没登记"就把老用户锁在门外。注意判据是**一把都没登记过**：
         # 一旦 api_keys 里有别家的 key，手上这把就属于别家，这家就是真没配。
@@ -748,9 +794,15 @@ def quick_switch(cfg, provider, model):
             # 不阻断（可能是本机部署、也可能是临时断网），但绝不装作验证过了
             warn = "没能连上服务商验证（%s）：已按你的选择切换，下一句若报错就是它" % detail
 
-    new_cfg, changed = apply_cfg(cfg, {"provider": ent["provider"],
-                                       "api_base": want_base,
-                                       "chat": ent["model"]})
+    apply_patch = {"provider": ent["provider"], "api_base": want_base,
+                   "chat": ent["model"]}
+    if key:
+        apply_patch["api_key"] = key
+    new_cfg, changed = apply_cfg(cfg, apply_patch)
+    if not key:
+        # Never leave a previous provider's credentials on an unauthenticated
+        # custom endpoint after switching models.
+        new_cfg["api_key"] = ""
     after = current(new_cfg)
     if after["provider"] != ent["provider"] or str(after.get("chat")) != ent["model"]:
         # 理论上到不了这里；真到了也绝不装作切成功
@@ -768,7 +820,7 @@ def quick_switch(cfg, provider, model):
     return new_cfg, changed, "", warn
 
 
-def forget_model(cfg, provider, model):
+def forget_model(cfg, provider, model, base=None):
     """从清单里去掉一条。返回 (新配置, 是不是真去掉了)。
 
     🔴 只动清单，**不动当前生效的配置**：用户可能正用着它，把 api_base/model
@@ -777,10 +829,14 @@ def forget_model(cfg, provider, model):
     """
     prov = str(provider or "").strip()
     mid = str(model or "").strip()
+    requested_base = str(base or "").strip().rstrip("/")
     dst = dict(cfg or {})
     keep, hit = [], False
     for e in saved_models(dst):
-        if e["model"] == mid and (not prov or e["provider"] == prov) and not hit:
+        if (e["model"] == mid and (not prov or e["provider"] == prov)
+                and (not requested_base
+                     or _norm_base(e["base"]) == _norm_base(requested_base))
+                and not hit):
             hit = True
             continue
         keep.append(e)
@@ -788,6 +844,47 @@ def forget_model(cfg, provider, model):
         return cfg, False
     dst["saved_models"] = keep
     return dst, True
+
+
+def save_model(cfg, provider, base, model, name="", api_key=""):
+    """Persist one reusable chat model and its optional endpoint-specific key."""
+    prov = str(provider or "").strip()
+    if prov not in PROVIDERS:
+        return cfg, False, "未知服务商"
+    mid = str(model or "").strip()
+    if not mid:
+        return cfg, False, "请填写 Model ID"
+    if len(mid) > 240:
+        return cfg, False, "Model ID 太长"
+    endpoint = str(base or "").strip().rstrip("/")
+    if not endpoint:
+        endpoint = str(PROVIDERS.get(prov, {}).get("base") or "").strip().rstrip("/")
+    if not endpoint:
+        return cfg, False, "请填写 Base URL"
+    if len(endpoint) > 1000:
+        return cfg, False, "Base URL 太长"
+    display_name = str(name or "").strip()
+    if len(display_name) > 120:
+        return cfg, False, "模型名称太长"
+    try:
+        parsed = urlsplit(endpoint)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            return cfg, False, "Base URL 必须是没有账号信息、查询参数或片段的 http/https 地址"
+    except Exception:
+        return cfg, False, "Base URL 格式无效"
+    dst, added = remember_model(cfg, prov, endpoint, mid, display_name)
+    key = str(api_key or "").strip()
+    if key and not is_masked(key):
+        dst = remember_provider_key(dst, prov, endpoint, key)
+    # Updating credentials for the active tuple must also update the live API
+    # configuration; adding another tuple leaves the active model untouched.
+    active = current(dst)
+    if (key and not is_masked(key) and active["provider"] == prov
+            and _norm_base(active["api_base"]) == _norm_base(endpoint)
+            and active["chat"] == mid):
+        dst["api_key"] = key
+    return dst, added, ""
 
 
 def apply_cfg(cfg, p):
@@ -837,14 +934,8 @@ def apply_cfg(cfg, p):
     # 切回去时 provider_key 只能回退到 api_key（那时已是别家的）。
     # 先把"换走的是哪家、它眼下用哪把"记进 api_keys，再谈换密钥 ——
     # 顺序反了的话 want_key 会取到还没登记时的回退值。
-    if switched and prev_key0 and prev_prov in PROVIDERS \
-            and not has_provider_key(cfg, prev_prov):
-        bag = dict(cfg.get("api_keys") or {})
-        bag[prev_prov] = prev_key0
-        cfg["api_keys"] = bag
-        bases = dict(cfg.get("api_key_bases") or {})
-        bases[prev_prov] = _norm_base(prev_base)
-        cfg["api_key_bases"] = bases
+    if switched and prev_key0 and prev_prov in PROVIDERS:
+        cfg = remember_provider_key(cfg, prev_prov, prev_base, prev_key0)
     want_base = (p_base if user_base else
                  (PROVIDERS.get(prov, {}).get("base") if switched else prev_base))
     want_key = provider_key(cfg, prov, want_base) if switched else ""
@@ -856,12 +947,7 @@ def apply_cfg(cfg, p):
         changed.append("密钥已更新")
         # 同时记进按家那份，否则下次切走再切回来还得重填一遍
         if prov in PROVIDERS:
-            bag = dict(cfg.get("api_keys") or {})
-            bag[prov] = key
-            cfg["api_keys"] = bag
-            bases = dict(cfg.get("api_key_bases") or {})
-            bases[prov] = _norm_base(cfg.get("api_base"))
-            cfg["api_key_bases"] = bases
+            cfg = remember_provider_key(cfg, prov, cfg.get("api_base"), key)
     elif is_masked(key):
         changed.append("密钥没改（填的是打码后的样子，服务器上那把没动）")
 

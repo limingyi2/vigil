@@ -36,6 +36,9 @@ function perfLog(stage, detail = '') {
 const CLIENT_SRC = 'pc';
 
 let win = null;
+let settingsWin = null;
+let settingsWinReady = false;
+let pendingSettingsTarget = null;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
@@ -576,6 +579,67 @@ function createWindow() {
   win.on('closed', () => {
     win = null;
   });
+}
+
+function openSettingsWindow(options) {
+  const opts = options || {};
+  const section = String(opts.section || 'model');
+  const source = opts.source === 'cloud' ? 'cloud' : 'local';
+  const target = { section, source };
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    if (settingsWin.isMinimized()) settingsWin.restore();
+    settingsWin.show();
+    settingsWin.focus();
+    if (settingsWinReady) settingsWin.webContents.send('settings:navigate', target);
+    else pendingSettingsTarget = target;
+    return { ok: true, existing: true };
+  }
+  settingsWinReady = false;
+  pendingSettingsTarget = null;
+  settingsWin = new BrowserWindow({
+    width: 1120,
+    height: 790,
+    minWidth: 820,
+    minHeight: 600,
+    parent: win && !win.isDestroyed() ? win : undefined,
+    frame: false,
+    backgroundColor: '#faf7f2',
+    show: false,
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  const created = settingsWin;
+  created.loadFile(path.join(__dirname, '..', 'src', 'index.html'), {
+    query: { window: 'settings', section, source },
+  });
+  created.once('ready-to-show', () => { if (!created.isDestroyed()) created.show(); });
+  setTimeout(() => {
+    try { if (!created.isDestroyed() && !created.isVisible()) created.show(); }
+    catch (_) { /* window was closed before the fallback */ }
+  }, 3500);
+  created.webContents.once('did-finish-load', () => {
+    settingsWinReady = true;
+    if (pendingSettingsTarget && !created.isDestroyed()) {
+      created.webContents.send('settings:navigate', pendingSettingsTarget);
+      pendingSettingsTarget = null;
+    }
+  });
+  created.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  created.on('closed', () => {
+    if (settingsWin === created) settingsWin = null;
+    settingsWinReady = false;
+    pendingSettingsTarget = null;
+  });
+  return { ok: true, existing: false };
 }
 
 // ── 自动找大脑 + 自动注册设备 ─────────────────────────────────
@@ -1140,17 +1204,26 @@ ipcMain.handle('token:test', async () => {
   return { ok: r.ok, status: r.status, err: r.err || '', name: (r.json && r.json.name) || '' };
 });
 ipcMain.handle('shell:open', (_e, url) => shell.openExternal(String(url || '')));
+ipcMain.handle('settings:open', (_e, options) => openSettingsWindow(options));
 
 const send = (ch, ...a) => win && !win.isDestroyed() && win.webContents.send(ch, ...a);
-ipcMain.on('win:minimize', () => win && win.minimize());
-ipcMain.on('win:maximize', () => {
-  if (!win) return;
-  win.isMaximized() ? win.unmaximize() : win.maximize();
-  send('win:state', win.isMaximized());
+const senderWindow = (event) => BrowserWindow.fromWebContents(event.sender);
+ipcMain.on('win:minimize', (event) => {
+  const target = senderWindow(event);
+  if (target && !target.isDestroyed()) target.minimize();
+});
+ipcMain.on('win:maximize', (event) => {
+  const target = senderWindow(event);
+  if (!target || target.isDestroyed()) return;
+  target.isMaximized() ? target.unmaximize() : target.maximize();
+  target.webContents.send('win:state', target.isMaximized());
 });
 // 自绘标题栏的 ✕：走 win.close() → 被 close 拦截器接住 → 隐藏进托盘
 // （真退出在托盘右键菜单，见 createTray。2026-10-09 起"点关闭=隐藏"）
-ipcMain.on('win:close', () => win && win.close());
+ipcMain.on('win:close', (event) => {
+  const target = senderWindow(event);
+  if (target && !target.isDestroyed()) target.close();
+});
 
 // ── 生命周期 ──────────────────────────────────────────────────────
 // 单实例：两个客户端同时跑会互相覆盖配置、也会把聊天历史对账搞乱

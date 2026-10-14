@@ -12,8 +12,8 @@ from brain import Brain
 def test_key_masking_never_exposes_short_or_middle_contents():
     assert model_hub.mask_key("short") == "*****"
     masked = model_hub.mask_key("0123456789abcdef")
-    assert masked == "012345…cdef"
-    assert "789" not in masked
+    assert masked == "012345****def"
+    assert "6789" not in masked
 
 
 def test_apply_cfg_blank_preserves_key_and_masked_value_is_not_saved():
