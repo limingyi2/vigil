@@ -7,6 +7,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-dev-ui-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 const client = path.resolve(__dirname, '..');
 const calls = [], chunks = [];
+let failNextUpload = false;
 let win;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ev = script => win.webContents.executeJavaScript(script, true);
@@ -33,6 +34,10 @@ function fixture(method, raw, body) {
 async function run() {
   ipcMain.handle('api', (_, {method, path:p, body}) => fixture(method, p, body));
   ipcMain.handle('attachment:chunk', (_, {bytes, headers}) => {
+    if (failNextUpload) {
+      failNextUpload = false;
+      return {ok:false, status:413, err:'fixture upload failed'};
+    }
     chunks.push({bytes:Buffer.from(bytes), headers});
     return {ok:true, status:200, json:{ok:true}};
   });
@@ -68,14 +73,50 @@ async function run() {
   assert.ok(calls.some(c => c.path === '/api/creator/draft'));
   console.log('PASS Creator retains separate draft route');
   await ev("document.querySelector('#creatorBtn').click(); document.querySelector('#creatorBtn').click()");
-  // Paste a deliberately undecodable video. Upload must finish before metadata failure.
-  await ev(`(() => { const data=new DataTransfer(); data.items.add(new File(['undecodable safe fixture'],'safe.mp4',{type:'video/mp4'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true})); document.querySelector('#sendBtn').click(); })()`);
+  const pngBase64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9ZsAAAAASUVORK5CYII=';
+  await ev(`(() => { window.confirm=()=>true; const raw=atob('${pngBase64}'); const bytes=Uint8Array.from(raw,c=>c.charCodeAt(0)); const transfer=new DataTransfer(); transfer.items.add(new File([bytes],'small.png',{type:'image/png'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true})); })()`);
+  await until("document.querySelector('.attachment-status')?.textContent==='图片已就绪'");
+  assert.ok(await ev("document.querySelector('#attach').textContent.includes('small.png') && document.querySelector('#attach').textContent.includes('B')"));
+  await ev("document.querySelector('#ta').value='检查这张图片';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()");
   await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
-  const attachmentCall = calls.find(c => c.path === '/api/chat' && c.body.attachments?.length);
+  const imageCall = calls.filter(c => c.path === '/api/chat/stream').at(-1);
+  assert.ok(imageCall && imageCall.body.img === pngBase64);
+  console.log('PASS small image shows file details and follows the existing vision chat path');
+  // A code file uses the same confirmed, chunked upload path as documents.
+  await ev(`(() => { const transfer=new DataTransfer(); transfer.items.add(new File(['print(1)'],'sample.py',{type:'text/x-python'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true})); document.querySelector('#sendBtn').click(); })()`);
+  await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
+  const codeCall = calls.find(c => c.path === '/api/chat' && c.body.attachments?.some(a => a.name === 'sample.py'));
+  assert.ok(codeCall);
+  assert.equal(chunks.at(-1).bytes.toString(), 'print(1)');
+  assert.equal(codeCall.body.attachments[0].kind, 'file');
+  console.log('PASS source code files upload as text attachments');
+  // Oversized files remain visible as failed and cannot create a chat request.
+  const beforeLarge = calls.length;
+  await ev(`(() => { const file=new File(['x'],'large.py',{type:'text/x-python'}); Object.defineProperty(file,'size',{value:256*1024*1024+1}); const transfer=new DataTransfer(); transfer.items.add(file); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true})); })()`);
+  await until("document.querySelector('.attachment-status.failed')?.textContent.includes('256 MB')");
+  assert.equal(await ev("document.querySelector('#sendBtn').disabled"),true);
+  await ev("document.querySelector('#sendBtn').click()");
+  assert.equal(calls.length, beforeLarge);
+  assert.ok(await ev("document.querySelector('#toast').textContent.includes('256 MB')"));
+  await ev("document.querySelector('#atClr').click()");
+  console.log('PASS oversized file shows a clear failure and cannot enter chat analysis');
+  // A rejected chunk also must stop before /api/chat.
+  const beforeFailedUpload = calls.filter(c => c.path === '/api/chat' || c.path === '/api/chat/stream').length;
+  failNextUpload = true;
+  await ev(`(() => { const transfer=new DataTransfer(); transfer.items.add(new File(['safe code'],'retry.py',{type:'text/x-python'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true})); document.querySelector('#sendBtn').click(); })()`);
+  await until("document.querySelector('.attachment-status.failed')?.textContent.includes('fixture upload failed')");
+  assert.equal(calls.filter(c => c.path === '/api/chat' || c.path === '/api/chat/stream').length, beforeFailedUpload);
+  assert.equal(await ev("document.querySelector('#sendBtn').disabled"),true);
+  await ev("document.querySelector('#atClr').click()");
+  console.log('PASS failed chunk upload cannot enter chat analysis');
+  // Paste a deliberately undecodable video. Upload must finish before metadata failure.
+  await ev(`(() => { window.__framePromptSeen=false; window.confirm=(message)=>{if(String(message).includes('关键帧'))window.__framePromptSeen=true;return true}; const data=new DataTransfer(); data.items.add(new File(['undecodable safe fixture'],'safe.mp4',{type:'video/mp4'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true})); document.querySelector('#sendBtn').click(); })()`);
+  await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
+  const attachmentCall = calls.find(c => c.path === '/api/chat' && c.body.attachments?.some(a => a.name === 'safe.mp4'));
   assert.ok(attachmentCall);
-  assert.equal(chunks.length, 1);
-  assert.equal(chunks[0].bytes.toString(), 'undecodable safe fixture');
-  assert.equal(chunks[0].headers['X-Attachment-Confirmed'], '1');
+  assert.equal(chunks.at(-1).bytes.toString(), 'undecodable safe fixture');
+  assert.equal(chunks.at(-1).headers['X-Attachment-Confirmed'], '1');
+  assert.equal(await ev('window.__framePromptSeen'), true);
   assert.equal(attachmentCall.body.attachments[0].kind, 'video');
   assert.ok(!('img' in attachmentCall.body));
   console.log('PASS pasted undecodable video uploads and sends metadata despite frame failure');

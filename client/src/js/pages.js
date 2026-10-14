@@ -580,8 +580,9 @@
     let imgB64 = '';
     let attachment = null;
     const ATTACH_MAX = 256 * 1024 * 1024;
-    const ATTACH_ACCEPT = 'image/*,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.csv,.json';
-    const ATTACH_EXT = /\.(jpe?g|png|gif|webp|mp4|mov|webm|pdf|txt|md|csv|json)$/i;
+    const ATTACH_IMAGE_MAX = 8 * 1024 * 1024;
+    const ATTACH_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.csv,.json,.py,.pyw,.js,.mjs,.cjs,.jsx,.ts,.tsx,.html,.htm,.css,.scss,.xml,.yaml,.yml,.toml,.ini,.conf,.sql,.sh,.bash,.zsh,.bat,.cmd,.ps1,.c,.h,.cc,.cpp,.cxx,.hpp,.java,.go,.rs,.rb,.php,.vue,.svelte,.ipynb';
+    const ATTACH_EXT = /\.(jpe?g|png|gif|webp|mp4|mov|webm|pdf|txt|md|csv|json|pyw?|mjs|cjs|jsx|tsx?|html?|css|scss|xml|ya?ml|toml|ini|conf|sql|sh|bash|zsh|bat|cmd|ps1|c|h|cc|cpp|cxx|hpp|java|go|rs|rb|php|vue|svelte|ipynb)$/i;
 
     function clearAttachment() {
       if (attachment && attachment.previewUrl && global.URL) {
@@ -607,28 +608,54 @@
         '<div class="attachment-info"><b class="aname" title="' + esc(f.name) + '">' + esc(f.name) + '</b>' +
         '<span class="muted">' + esc(bytes(f.size)) + ' · ' + esc(f.type || '未知类型') + '</span>' +
         '<progress class="aupload" max="100" value="' + pct + '"></progress>' +
-        '<span class="muted attachment-status">' + esc(attachment.status || '待发送') + '</span></div>' +
+        '<span class="muted attachment-status' + (attachment.failed ? ' failed' : '') + '" role="status">' + esc(attachment.status || '待发送') + '</span></div>' +
         '<button class="ibtn" id="atClr" title="移除附件" aria-label="移除附件">' + icon('x', 'sm') + '</button></div>';
       attachBox.querySelector('#atClr').addEventListener('click', clearAttachment);
     }
 
     function chooseFile(file) {
       if (!file) return;
-      if (file.size <= 0 || file.size > ATTACH_MAX) {
-        toast('附件必须大于 0 且不超过 256 MB'); return;
-      }
-      if (!ATTACH_EXT.test(file.name)) {
-        toast('不支持此附件类型：请选择图片、MP4/MOV/WebM、PDF、TXT 等'); return;
-      }
       clearAttachment();
       const kind = /^video\//i.test(file.type) || /\.(mp4|mov|webm)$/i.test(file.name)
         ? 'video' : /^image\//i.test(file.type) || /\.(jpe?g|png|gif|webp)$/i.test(file.name)
           ? 'image' : 'file';
       attachment = { file, kind, progress: 0, status: '待发送', previewUrl: '' };
+      let validationError = '';
+      if (file.size <= 0) validationError = '附件不能为空';
+      else if (file.size > ATTACH_MAX) validationError = '附件超过 256 MB 上限';
+      else if (kind === 'image' && file.size > ATTACH_IMAGE_MAX) validationError = '图片超过 8 MB 聊天上传上限';
+      else if (!ATTACH_EXT.test(file.name)) validationError = '不支持此类型；请选择图片、视频、PDF、TXT 或常见代码文件';
+      if (validationError) {
+        attachment.failed = true;
+        attachment.status = '上传失败：' + validationError;
+        renderAttachment();
+        toast(validationError);
+        updateComposer();
+        return;
+      }
       if (kind === 'image') {
         const fr = new FileReader();
-        fr.onload = () => { attachment.preview = String(fr.result || ''); imgB64 = attachment.preview.split(',', 2)[1] || ''; renderAttachment(); updateComposer(); };
-        fr.onerror = () => toast('图片预览失败');
+        const selected = attachment;
+        fr.onload = () => {
+          if (attachment !== selected) return;
+          attachment.preview = String(fr.result || '');
+          imgB64 = attachment.preview.split(',', 2)[1] || '';
+          if (!imgB64) {
+            attachment.failed = true;
+            attachment.status = '读取失败：无法生成图片数据';
+            toast('图片读取失败，请移除后重试');
+          } else attachment.status = '图片已就绪';
+          renderAttachment();
+          updateComposer();
+        };
+        fr.onerror = () => {
+          if (attachment !== selected) return;
+          attachment.failed = true;
+          attachment.status = '读取失败：图片无法读取';
+          renderAttachment();
+          updateComposer();
+          toast('图片读取失败，请移除后重试');
+        };
         fr.readAsDataURL(file);
       } else {
         attachment.previewUrl = URL.createObjectURL(file);
@@ -751,7 +778,7 @@
       view.querySelector('#ccount').textContent = ta.value.length + ' 字';
       const button = view.querySelector('#sendBtn');
       button.disabled = !global.vigil || busy || (!ta.value.trim() && !imgB64 && !attachment) ||
-        !!(attachment && attachment.kind === 'image' && !imgB64);
+        !!(attachment && (attachment.failed || (attachment.kind === 'image' && !imgB64)));
       button.classList.toggle('is-sending', busy);
       button.setAttribute('aria-label', busy ? '正在发送' : '发送消息');
       button.setAttribute('aria-busy', String(busy));
@@ -867,6 +894,12 @@
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
       if (!global.vigil || (!text && !imgB64 && !attachment) || busy) return;
+      if (attachment && attachment.failed) return;
+      if (attachment && attachment.kind === 'image' && !imgB64) {
+        attachment.status = '图片尚未读取完成';
+        renderAttachment();
+        return;
+      }
       // 创作模式：同一条输入框，发给 creator 而不是聊天历史
       if (creatorMode !== 'off' && text) { creatorSend(text); return; }
       const pending = attachment;
@@ -901,10 +934,16 @@
                   }
                   for (const frame of frameFiles) {
                     const frameAtt = { file: frame, kind: 'image', progress: 0, status: '上传中' };
-                    uploadedAttachments.push(await uploadAttachment(frameAtt, true));
+                    try {
+                      uploadedAttachments.push(await uploadAttachment(frameAtt, true));
+                    } catch (frameUploadError) {
+                      frameUploadError.attachmentUploadFailed = true;
+                      throw frameUploadError;
+                    }
                   }
                   pending.status = '已上传，关键帧已准备';
                 } catch (frameError) {
+                  if (frameError.attachmentUploadFailed) throw frameError;
                   pending.status = '已上传；关键帧提取失败';
                   renderAttachment();
                   toast('原视频已保存，但关键帧提取失败：' + String(frameError.message || frameError).slice(0, 100));
@@ -913,6 +952,7 @@
             }
           }
         } catch (e) {
+          pending.failed = true;
           pending.status = '上传失败：' + String(e.message || e).slice(0, 80);
           renderAttachment();
           busy = false;

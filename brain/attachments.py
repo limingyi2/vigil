@@ -2,7 +2,7 @@
 """安全的聊天附件存储与读取。
 
 附件不进入聊天 JSON。客户端按固定大小分块上传，服务端只允许受支持的
-媒体/文档类型，并把最终文件和脱敏元数据放在 data/upload/attachments 下。
+媒体/文档/源码文本类型，并把最终文件和脱敏元数据放在 data/upload/attachments 下。
 """
 import json
 import mimetypes
@@ -31,6 +31,20 @@ ALLOWED_EXTENSIONS = {
     ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
     ".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown",
     ".csv": "text/csv", ".json": "application/json",
+    # 常见源码和配置文件只按文本读取，不执行、不解包，也不扩大可上传类型。
+    ".py": "text/plain", ".pyw": "text/plain", ".js": "text/plain",
+    ".mjs": "text/plain", ".cjs": "text/plain", ".jsx": "text/plain",
+    ".ts": "text/plain", ".tsx": "text/plain", ".html": "text/plain",
+    ".htm": "text/plain", ".css": "text/plain", ".scss": "text/plain",
+    ".xml": "text/plain", ".yaml": "text/plain", ".yml": "text/plain",
+    ".toml": "text/plain", ".ini": "text/plain", ".conf": "text/plain",
+    ".sql": "text/plain", ".sh": "text/plain", ".bash": "text/plain",
+    ".zsh": "text/plain", ".bat": "text/plain", ".cmd": "text/plain",
+    ".ps1": "text/plain", ".c": "text/plain", ".h": "text/plain",
+    ".cc": "text/plain", ".cpp": "text/plain", ".cxx": "text/plain",
+    ".hpp": "text/plain", ".java": "text/plain", ".go": "text/plain",
+    ".rs": "text/plain", ".rb": "text/plain", ".php": "text/plain",
+    ".vue": "text/plain", ".svelte": "text/plain", ".ipynb": "text/plain",
 }
 
 
@@ -58,7 +72,7 @@ def validate_upload(name, mime, total, offset, chunk_size):
     ext = Path(name).suffix.lower()
     expected = ALLOWED_EXTENSIONS.get(ext)
     if not expected:
-        raise ValueError("不支持的附件类型（仅支持图片、MP4/MOV/WebM、PDF、TXT 等）")
+        raise ValueError("不支持的附件类型（仅支持图片、视频、PDF、文本和常见代码文件）")
     try:
         total = int(total)
         offset = int(offset)
@@ -75,7 +89,12 @@ def validate_upload(name, mime, total, offset, chunk_size):
     mime = str(mime or "").split(";", 1)[0].strip().lower()
     if mime and mime != "application/octet-stream" and mime != expected:
         # text/* 的细分 MIME 允许按扩展名收口，不允许把视频伪装成文档。
-        if not (expected.startswith("text/") and mime.startswith("text/")):
+        code_text_types = ("application/javascript", "application/x-javascript",
+                           "application/x-python", "application/sql",
+                           "application/xml", "application/x-sh",
+                           "application/json")
+        if not (expected.startswith("text/") and
+                (mime.startswith("text/") or mime in code_text_types)):
             raise ValueError("附件类型与文件扩展名不匹配")
     return name, expected, total, offset, chunk_size, ext
 
