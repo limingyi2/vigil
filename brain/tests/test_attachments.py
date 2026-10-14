@@ -43,6 +43,38 @@ class AttachmentStoreTest(unittest.TestCase):
             attachments.append_chunk("att_bad_offset_1234", "a.txt", "text/plain",
                                      4, 1, b"abc")
 
+    def test_image_and_common_code_files_are_saved_as_safe_text_or_media(self):
+        cases = [
+            ("fixture.png", "image/png", b"\x89PNG\r\n", "image/png", "image"),
+            ("fixture.py", "text/x-python", b"print('safe')", "text/plain", "file"),
+            ("fixture.js", "application/javascript", b"const safe = true;", "text/plain", "file"),
+            ("fixture.ts", "text/plain", b"const safe: boolean = true;", "text/plain", "file"),
+            ("fixture.html", "text/html", b"<p>safe</p>", "text/plain", "file"),
+            ("fixture.sql", "application/sql", b"SELECT 1;", "text/plain", "file"),
+            ("fixture.ipynb", "application/json", b"{\"cells\":[]}", "text/plain", "file"),
+        ]
+        for index, (name, mime, payload, expected_mime, kind) in enumerate(cases):
+            with self.subTest(name=name):
+                saved = attachments.append_chunk(
+                    "att_code_fixture_%d" % index, name, mime,
+                    len(payload), 0, payload)
+                self.assertTrue(saved["complete"])
+                self.assertEqual(saved["mime"], expected_mime)
+                self.assertEqual(saved["kind"], kind)
+                record = attachments.get(saved["id"])
+                self.assertIsNotNone(record)
+                self.assertEqual(Path(record["file_path"]).read_bytes(), payload)
+                if kind == "file":
+                    context, _ = attachments.context_for([saved], {})
+                    self.assertIn(payload.decode("utf-8"), context)
+
+    def test_large_file_is_rejected_before_storage_or_analysis_metadata(self):
+        with self.assertRaisesRegex(ValueError, "256 MB"):
+            attachments.append_chunk(
+                "att_oversized_fixture", "large.py", "text/x-python",
+                attachments.MAX_ATTACHMENT_SIZE + 1, 0, b"x")
+        self.assertFalse((Path(self.tmp.name) / "attachments").exists())
+
     @unittest.skipUnless(shutil.which("ffmpeg"), "本机没有 FFmpeg，跳过兼容抽帧验证")
     def test_existing_ffmpeg_extracts_nonempty_keyframe(self):
         source = Path(self.tmp.name) / "safe-video.mp4"
