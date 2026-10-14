@@ -1579,7 +1579,7 @@ class Brain:
         return ans, self.last_mode
 
     # --- 聊天记录存档（跨重启） ---
-    def _log_turn(self, user_text, ans, img=None):
+    def _log_turn(self, user_text, ans, img=None, attachments=None):
         """把这一轮存进 chat_history.jsonl。写不进去也不能影响聊天。
 
         img 是可选的图片路径 —— 手机/App 靠它把图显示出来，只加在 user 那条上。
@@ -1593,6 +1593,13 @@ class Brain:
             u = {"t": t, "role": "user", "text": user_text}
             if img:
                 u["img"] = img
+            if isinstance(attachments, list) and attachments:
+                # 只记录服务端返回的脱敏元数据，绝不把文件内容或本地绝对路径写进历史。
+                u["attachments"] = [
+                    {k: item.get(k) for k in ("id", "name", "mime", "size", "kind")
+                     if item.get(k) is not None}
+                    for item in attachments if isinstance(item, dict) and item.get("id")
+                ]
             with open(self._log_for(self._cur_src), "a", encoding="utf-8") as f:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
                 # pc 渠道不拆分；微信等渠道按 split_messages 拆

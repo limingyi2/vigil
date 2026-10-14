@@ -88,6 +88,7 @@ dist/
 # ===== Python =====
 venv/
 .venv/
+.local-dev/
 __pycache__/
 *.pyc
 *.pyo

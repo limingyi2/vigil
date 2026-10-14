@@ -183,6 +183,8 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/stickers",
     "/api/voice",
     "/api/img",
+    "/api/attachments/capabilities",
+    "/api/attachments/file",
     "/api/route",                       # 只读：当前路由状态
     "/api/persona",
     "/api/persona/full",
@@ -205,6 +207,8 @@ DEVICE_GET_PREFIX = ("/api/sync/",)
 DEVICE_POST_ALLOW = frozenset({
     "/api/chat",
     "/api/chat/stream",
+    "/api/attachments/upload",
+    "/api/attachments/frames",
     "/api/logs",                         # 客户端上报错误
     "/api/stickers/collect",
     "/api/sync/flush",                   # 客户端「立即同步」
@@ -695,7 +699,7 @@ def _late_to_history(src, display, reply):
 
 
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
-                   dry_run=False):
+                   dry_run=False, attachments=None):
     """让她回一句话。
 
     img_b64：这一轮带的图片（base64），交给视觉模型让她"看见"。
@@ -806,7 +810,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             # 症状是"她答的是上一条测试句"（见 ask_with_retry 的说明）。
             if not dry_run:
                 try:
-                    _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None)
+                    _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None,
+                                               attachments=attachments)
                 except Exception as e:
                     print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
             return ans, mode, ""
@@ -908,9 +913,15 @@ def _cloud_history(limit=60, src="wechat"):
                 img = d.get("img") or ""
                 if img:
                     img = os.path.basename(img.replace("\\", "/"))
+                atts = d.get("attachments")
+                if not isinstance(atts, list):
+                    atts = []
+                atts = [{k: a.get(k) for k in ("id", "name", "mime", "size", "kind")
+                         if a.get(k) is not None}
+                        for a in atts if isinstance(a, dict) and a.get("id")]
                 items.append({"t": d.get("t") or "", "role": d.get("role") or "",
                               "text": d.get("text") or "",
-                              "img": img})
+                              "img": img, "attachments": atts})
     except OSError:
         return []
     # 🔴 入参必须夹紧。直接 int(limit) 的写法：
@@ -1174,6 +1185,36 @@ def start_remote_api(brain):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _attachment_upload(self):
+            """接收一个受限大小的二进制分块，不把文件放进聊天 JSON。"""
+            try:
+                import attachments as _att
+                from urllib.parse import unquote
+                if self.headers.get("X-Attachment-Confirmed") != "1":
+                    self._json(428, {"ok": False, "err": "上传附件前需要用户明确确认"})
+                    return
+                n = int(self.headers.get("Content-Length") or 0)
+                if n <= 0 or n > _att.MAX_CHUNK_SIZE:
+                    self._json(413 if n > _att.MAX_CHUNK_SIZE else 400,
+                               {"ok": False, "err": "附件分块为空或超过 2 MB"})
+                    return
+                aid = str(self.headers.get("X-Attachment-Id") or "")
+                name = unquote(str(self.headers.get("X-Attachment-Name") or ""))
+                mime = str(self.headers.get("X-Attachment-Mime") or "")
+                total = self.headers.get("X-Attachment-Total")
+                offset = self.headers.get("X-Attachment-Offset")
+                blob = self.rfile.read(n)
+                if len(blob) != n:
+                    self._json(400, {"ok": False, "err": "附件分块未完整到达"})
+                    return
+                out = _att.append_chunk(aid, name, mime, total, offset, blob)
+                self._json(200, {"ok": True, **out})
+            except ValueError as e:
+                self._json(400, {"ok": False, "err": str(e)[:160]})
+            except Exception as e:
+                print("[附件] 保存失败：%s: %s" % (type(e).__name__, str(e)[:120]), flush=True)
+                self._json(500, {"ok": False, "err": "附件保存失败"})
 
         def do_OPTIONS(self):
             """CORS 预检：浏览器发带 Authorization 的请求前会先问一声。"""
@@ -1574,6 +1615,14 @@ def start_remote_api(brain):
                 self._json(401, {"err": "bad token"})
                 return
             note_client_ip(self.client_address[0])
+            path = self.path.split("?")[0]
+            # 二进制附件必须在 JSON body 解析之前单独处理，否则大文件会被
+            # 当作 JSON 读入内存，也无法支持分块上传。
+            if self._deny_if_limited_device("POST", path):
+                return
+            if path == "/api/attachments/upload":
+                self._attachment_upload()
+                return
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except Exception:
@@ -1587,7 +1636,6 @@ def start_remote_api(brain):
                 body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception:
                 body = {}
-            path = self.path.split("?")[0]
             # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
             # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
             # 会全写进 app 覆盖 —— 渠道错乱。
@@ -1598,8 +1646,6 @@ def start_remote_api(brain):
                 qp = {}
             # 受限设备（role=device）的默认拒绝闸门：不在权限矩阵里的一律 403。
             # 管理类接口的管理员要求在各自分支里再判（双重保险）。
-            if self._deny_if_limited_device("POST", path):
-                return
             if path.startswith("/api/agent-center/"):
                 import codex_adapter as _codex_center
                 code, out = _codex_center.handle_http(
@@ -1630,6 +1676,22 @@ def start_remote_api(brain):
                              out.get("role", "device")), flush=True)
                     out["ok"] = True
                     self._json(200, out)
+                    return
+                if path == "/api/attachments/frames":
+                    # 原视频必须先完成上传；关键帧是可选分析步骤，使用本机
+                    # 已存在的 FFmpeg，不下载依赖，也不把原视频放进 JSON。
+                    try:
+                        import attachments as _att
+                        aid = str(body.get("id") or "")
+                        count = max(1, min(3, int(body.get("count") or 3)))
+                        out = _att.extract_frames(aid, count)
+                        self._json(200, {"ok": True, "attachments": out})
+                    except ValueError as e:
+                        self._json(422, {"ok": False, "err": str(e)[:180]})
+                    except Exception as e:
+                        print("[附件] 关键帧提取失败：%s: %s" %
+                              (type(e).__name__, str(e)[:120]), flush=True)
+                        self._json(500, {"ok": False, "err": "关键帧提取失败"})
                     return
                 if path == "/api/device/list":
                     import devices
@@ -1858,6 +1920,25 @@ def start_remote_api(brain):
                     # 缺省/认不出来的值归一到主渠道 wechat（app 已退役；
                     # 未知值同时也是防路径穿越，绝不能原样拼进存档文件名）。
                     _src = _norm_src(body.get("src"))
+                    _att_meta = body.get("attachments")
+                    if not isinstance(_att_meta, list):
+                        _att_meta = []
+                    if len(_att_meta) > 8:
+                        self._json(400, {"ok": False, "err": "一次最多发送 8 个附件"})
+                        return
+                    if _att_meta:
+                        try:
+                            import attachments as _att
+                            _att_text, _ = _att.context_for(_att_meta, API_CFG)
+                            if _att_text:
+                                _in_text += "\n[附件内容，仅供本轮参考]\n" + _att_text
+                        except ValueError as e:
+                            self._json(400, {"ok": False, "err": str(e)[:160]})
+                            return
+                        except Exception as e:
+                            self._json(500, {"ok": False,
+                                             "err": "附件分析失败：%s" % str(e)[:100]})
+                            return
                     # 把渠道记进 features：同一个功能在 App 和群聊里该有不同的
                     # 开合（群聊里她不该报天气、不该把别人的单号加进你的监控）。
                     # 全局那一份仍是基线，这里只查 features_by_src 的覆盖。
@@ -2030,7 +2111,7 @@ def start_remote_api(brain):
                     _snap = {}
                     ans, mode, err = ask_with_retry(
                         _in_text, body.get("img") or None, display=_disp,
-                        trace_out=_snap, src=_src,
+                        trace_out=_snap, src=_src, attachments=_att_meta,
                         # 带 dry_run=true 的一轮**不写聊天存档**。
                         # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
                         # 她会开始答那些测试句（症状："她回复一点都不对"）。
@@ -2120,6 +2201,10 @@ def start_remote_api(brain):
                     # 🔴 流式聊天：SSE 实时推送思考过程和正文。
                     # 客户端用 EventSource 或 fetch + ReadableStream 接收。
                     # 事件格式：data: {"type":"think"/"text"/"done"/"error", ...}\n\n
+                    if body.get("attachments"):
+                        self._json(400, {"ok": False,
+                                         "err": "带附件的消息请走普通聊天接口，附件已单独分块上传"})
+                        return
                     _in_text = str(body.get("text") or "")
                     _src = _norm_src(body.get("src"))
                     try:
@@ -2696,6 +2781,37 @@ def start_remote_api(brain):
                     "GET", path, query=query, is_admin=self._is_admin(),
                     is_local=_is_loopback(self.client_address[0]))
                 self._json(code, out)
+                return
+            if path == "/api/attachments/capabilities":
+                try:
+                    import attachments as _att
+                    self._json(200, _att.capabilities(API_CFG))
+                except Exception as e:
+                    self._json(500, {"ok": False, "err": "附件能力检查失败：%s" % str(e)[:80]})
+                return
+            if path == "/api/attachments/file":
+                try:
+                    import attachments as _att
+                    aid = _query_param(self.path, "id")
+                    rec = _att.get(aid)
+                    if not rec:
+                        self._json(404, {"ok": False, "err": "附件不存在"})
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", rec["mime"])
+                    self.send_header("Content-Length", str(rec["size"]))
+                    self._cors()
+                    self.end_headers()
+                    with open(rec["file_path"], "rb") as f:
+                        while True:
+                            chunk = f.read(262144)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    self._json(404, {"ok": False, "err": "附件读取失败"})
                 return
             if path.startswith("/api/management/"):
                 # 全局基础设施信息：主人钥匙或 admin 角色设备（桌面管理端），
