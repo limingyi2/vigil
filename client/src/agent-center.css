@@ -46,16 +46,19 @@ body.vwp-active[data-vigil-page="agent-center"] { --ok:#67d79e;--warn:#edbe72;--
 .ac-agent-status i { width:6px; height:6px; border-radius:50%; background:currentColor; }
 .ac-agent-status-online { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 45%,var(--line)); }
 .ac-agent-status-connecting { color:var(--warn); }
-.ac-agent-status-stale,.ac-agent-status-unknown { color:var(--text-3); }
+.ac-agent-status-stale,.ac-agent-status-unknown,.ac-agent-status-disconnected { color:var(--text-3); }
 .ac-agent-status-error,.ac-agent-status-unsupported { color:var(--err); }
 .ac-agent-status-pending { color:var(--text-3); }
 .ac-agent-current { display:grid; gap:4px; min-height:58px; padding:12px; border-radius:8px; background:var(--bg-sunken); }
 .ac-agent-current span { color:var(--text-3); font-size:11px; }
 .ac-agent-current strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:600; }
 .ac-agent-current small { color:var(--warn); overflow-wrap:anywhere; font-size:11px; }
-.ac-agent-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; color:var(--text-3); font:11px var(--mono); }
+.ac-agent-meta { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; color:var(--text-3); font:11px var(--mono); }
 .ac-agent-meta span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ac-agent-meta b { display:block; color:var(--text); font-size:15px; font-weight:650; }
+.ac-agent-activity { display:grid; gap:4px; min-width:0; padding-top:2px; }
+.ac-agent-activity span { color:var(--text-3); font-size:11px; }
+.ac-agent-activity strong { overflow:hidden; color:var(--text-2); font-size:12px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .ac-agent-chips { display:flex; gap:5px; flex-wrap:wrap; min-height:24px; }
 .ac-agent-chips span { padding:3px 7px; border:1px solid var(--line-soft); border-radius:999px; color:var(--text-3); font-size:11px; }
 .ac-agent-card footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; padding-top:12px; border-top:1px solid var(--line-soft); }

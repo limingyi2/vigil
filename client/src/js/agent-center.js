@@ -70,6 +70,7 @@
       s.error ? 'error' : s.stale ? (s.ready ? 'stale' : 'unknown') :
       ({connected:'online',connecting:'connecting',disconnected:'disconnected'}[s.status.connection_status] || 'unknown');
     const active = (s.owned || []).find(t => ['starting','running','waiting_approval','waiting_input'].includes(t.status));
+    const latestActivity = (s.owned || []).slice().sort((a,b) => Number(b.last_activity || 0) - Number(a.last_activity || 0))[0];
     const pending = (s.approvals || []).filter(a => a.ownership === 'owned' && a.state === 'pending' &&
       (a.connection_generation || a.generation) === s.status.generation).length;
     const capabilities = ['受管任务', 'owned / observed'];
@@ -79,7 +80,7 @@
       status, statusText:overviewLabels[status], current_task:active ? (active.current_operation ?
         (operations[active.current_operation.type] || '执行中') : (labels[active.status] || '执行中')) : '暂无运行中的任务',
       taskCount:(s.owned || []).length, pending, capabilities,
-      last_seen:s.updatedAt ? fmtTime(s.updatedAt, 'full') : '尚未同步',
+      recent_activity:latestActivity ? fmtTime(latestActivity.last_activity || latestActivity.created_at, 'full') || '暂无活动记录' : '暂无活动记录',
       connection_source:'本机 Brain · Codex App Server', error:overviewError(s.error || s.status.last_error),
       connected:status === 'online' };
   }
@@ -90,7 +91,8 @@
     return `<article class="ac-agent-card ac-agent-${esc(a.id)} ${a.id === 'codex' ? 'is-live' : 'is-pending'}" data-ac-agent-card="${esc(a.id)}" tabindex="0" role="button" aria-label="${esc(a.name)}：${esc(a.statusText)}">
       <header class="ac-agent-card-head"><span class="ac-agent-mark">${icon(a.id === 'codex' ? 'activity' : 'plug','sm')}</span><div><h3>${esc(a.name)}</h3><p>${esc(a.type)} · ${esc(a.purpose)}</p></div><span class="ac-agent-status ${statusClass}"><i></i>${esc(a.statusText)}</span></header>
       <div class="ac-agent-current"><span>当前任务</span><strong>${esc(a.current_task || '—')}</strong>${a.error ? `<small>${esc(a.error)}</small>` : ''}</div>
-      <div class="ac-agent-meta"><span><b>${esc(a.taskCount == null ? '—' : a.taskCount)}</b> 个任务</span><span><b>${esc(a.pending || 0)}</b> 待处理</span><span>${esc(a.last_seen || '—')}</span></div>
+      <div class="ac-agent-meta"><span><b>${esc(a.taskCount == null ? '—' : a.taskCount)}</b> 个任务</span><span><b>${esc(a.pending || 0)}</b> 待处理</span></div>
+      <div class="ac-agent-activity"><span>最近活动</span><strong>${esc(a.recent_activity || '暂无活动记录')}</strong></div>
       <div class="ac-agent-chips">${(a.capabilities || []).map(x => `<span>${esc(x)}</span>`).join('')}</div>
       <footer><span class="ac-agent-source">${esc(a.connection_source)}</span><button class="btn ${ready ? 'fill' : ''}" type="button" data-ac-agent-action="${esc(a.id)}">${action}</button></footer>
     </article>`;
@@ -129,11 +131,13 @@
     }
     function paintOverview(s) {
       const live = codexOverview(s);
-      const agents = [live, ...pendingAgents.map(x => ({...x,status:'pending',statusText:'待接入',current_task:'尚无真实连接',taskCount:null,pending:0,last_seen:'—',capabilities:['无控制能力']}))];
+      const agents = [live, ...pendingAgents.map(x => ({...x,status:'pending',statusText:'待接入',current_task:'尚无真实连接',taskCount:null,pending:0,recent_activity:'尚无活动记录',capabilities:['无控制能力']}))];
       write(q('ac-agent-grid'), agents.map(agentCard).join(''));
-      const activeCount = live.status === 'online' ? 1 : 0;
-      q('ac-agent-count').textContent = `${activeCount} 个已接入 · ${pendingAgents.length} 个待接入`;
-      q('ac-nav-count') && (q('ac-nav-count').textContent = '1');
+      const connectedCount = live.status === 'online' ? 1 : 0;
+      const offlineCount = live.status === 'disconnected' ? 1 : 0;
+      const unknownCount = connectedCount || offlineCount ? 0 : 1;
+      q('ac-agent-count').textContent = `${connectedCount} 个在线 · ${offlineCount} 个离线 · ${unknownCount} 个状态待确认 · ${pendingAgents.length} 个待接入`;
+      q('ac-nav-count') && (q('ac-nav-count').textContent = String(1 + pendingAgents.length));
       q('ac-overview-updated').textContent = s.updatedAt ? '同步于 ' + fmtTime(s.updatedAt, 'full') : '等待同步…';
       const error = overviewError(s.error || (s.stale && s.ready ? '状态已过期' : ''));
       q('ac-overview-error').hidden = !error; q('ac-overview-error').textContent = error;
