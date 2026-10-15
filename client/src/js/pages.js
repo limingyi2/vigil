@@ -15,6 +15,105 @@
   const { get, post, pick, state } = API;
 
   // ── 通用零件 ────────────────────────────────────────────────
+  const UI_RECORD_LIMITS = { count: 100, chars: 16384, days: 30 };
+  function recordKey() {
+    const cfg = state.cfg || {};
+    return 'vigil.display.v1:' + JSON.stringify([state.base || cfg.base || '', cfg.device_id || '',
+      cfg.token_kind || '', state.src || 'pc', 'main']);
+  }
+  async function loadRecordScope() {
+    try { await API.loadCfg(); return true; }
+    catch (_) { toast('无法读取当前连接身份，暂不加载或提交会话记录'); return false; }
+  }
+  function localRecords(key = recordKey()) {
+    try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; }
+    catch (_) { return []; }
+  }
+  function rememberTurn(rid, patch, scope = recordKey()) {
+    if (!rid) return;
+    try {
+      if (JSON.parse(localStorage.getItem(scope + ':cleared') || '[]').includes(rid)) return;
+      const records = localRecords(scope);
+      let item = records.find(r => r.request_id === rid);
+      if (!item) { item = {request_id:rid,created_at:Date.now()/1000,status:'pending',content:''}; records.push(item); }
+      // Explicit whitelist: no thought deltas, tokens, provider bodies or config.
+      for (const k of ['input','kind','job_id','status','content','error']) if (patch[k] !== undefined) item[k] = patch[k];
+      item.content = String(item.content || '').slice(-UI_RECORD_LIMITS.chars);
+      localStorage.setItem(scope, JSON.stringify(records.filter(r=>r.created_at > Date.now()/1000-UI_RECORD_LIMITS.days*86400).slice(-UI_RECORD_LIMITS.count)));
+    } catch (_) { toast('当前记录未能保存到本机，请先复制内容'); }
+  }
+  function streamBodyHtml(thinkId, textId) {
+    return '<div class="think-block streaming"><button class="think-toggle">' +
+      icon('brain', 'sm') + '思考 <span class="think-caret">▴</span></button>' +
+      '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div></div></div>' +
+      '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
+      '<div class="foot"><span class="stream-status">正在生成…</span></div>';
+  }
+
+  async function watchCreatorJob(root, initial, scope = recordKey()) {
+    const jid = initial.job_id;
+    const thinkId = 'creatorThink_' + jid;
+    root.innerHTML = '<div class="bdy">' + streamBodyHtml(thinkId, 'creatorText_' + jid) +
+      '<button class="btn oline creator-cancel">取消生成</button></div>';
+    const text = root.querySelector('.streaming-text');
+    const thinking = root.querySelector('.think-text');
+    const block = root.querySelector('.think-block');
+    const status = root.querySelector('.stream-status');
+    const cancel = root.querySelector('.creator-cancel');
+    root.querySelector('.think-toggle').onclick = () => {
+      const content = root.querySelector('.think-content'); content.hidden = !content.hidden;
+    };
+    let current = initial, cursor = 0, finished = false;
+    text.textContent = initial.content || '';
+    block.hidden = true;
+    cancel.onclick = async () => {
+      const r = pick(await post('/api/creator/jobs/' + jid + '/cancel', {}));
+      if (r.ok) { current = r; applySnapshot(r); }
+    };
+    function applySnapshot(item) {
+      current = item;
+      cursor = Math.max(cursor, item.event_cursor || 0);
+      text.textContent = item.content || '';
+      rememberTurn(item.request_id, {input:item.feedback || item.requirement,kind:item.kind,job_id:jid,
+        status:item.status,content:item.content || '',error:item.error}, scope);
+      status.textContent = item.error ? item.error.message : item.stage || item.status;
+      finished = ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(item.status);
+      if (finished) {
+        cancel.hidden = true;
+        if (item.status !== 'succeeded') status.textContent += '（结果不完整）';
+      }
+    }
+    const off = global.vigil && global.vigil.onCreatorEvent ? global.vigil.onCreatorEvent(evt => {
+      if (evt.job_id !== jid || finished || !root.isConnected || recordKey() !== scope) return;
+      if (evt.type === 'snapshot') { applySnapshot(evt.payload); return; }
+      if (evt.seq <= cursor) return;
+      cursor = evt.seq;
+      const p = evt.payload || {};
+      if (evt.type === 'text_delta') {
+        text.textContent += p.text || '';
+        rememberTurn(initial.request_id, {content:text.textContent}, scope);
+      }
+      if (evt.type === 'think_delta') { block.hidden = false; thinking.textContent += p.text || ''; }
+      if (evt.type === 'stage') status.textContent = p.stage;
+    }) : null;
+    applySnapshot(initial);
+    try {
+      while (!finished && root.isConnected && recordKey() === scope) {
+        if (global.vigil && global.vigil.apiStream && global.vigil.onCreatorEvent) {
+          await global.vigil.apiStream('/api/creator/jobs/' + jid + '/events?after=' + cursor, null);
+        } else await new Promise(resolve => setTimeout(resolve, 500));
+        if (!root.isConnected || recordKey() !== scope) break;
+        const r = pick(await get('/api/creator/jobs/' + jid));
+        if (!r.ok) { status.textContent = '连接中断，记录已保留，请刷新查询'; break; }
+        applySnapshot(r);
+      }
+      if (current.status === 'succeeded' && current.draft_id && root.isConnected) {
+        const r = pick(await get('/api/creator/draft?id=' + encodeURIComponent(current.draft_id)));
+        if (r.ok && r.draft) { root.innerHTML = draftCardHtml(r.draft); bindDraftCard(root, r.draft); }
+      }
+      return current;
+    } finally { if (off) off(); }
+  }
   const tag = (cls, text) => '<span class="tag ' + cls + '">' + esc(text) + '</span>';
   /** 时间戳归一成毫秒：秒 / 毫秒 / 字符串都能吃（与 ui.js fmtTime 同一套规则） */
   const toMs = (t) => {
@@ -835,10 +934,12 @@
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
+      if (!await loadRecordScope()) return;
       const r = pick(await get('/api/history?limit=300'));
+      const creatorHistory = pick(await get('/api/creator/jobs'));
       if (!msgs.isConnected || busy) return;
       const loadState = view.querySelector('#chatLoadState');
-      if (!r.ok) {
+      if (!r.ok && !localRecords().length && !(creatorHistory.items || []).length) {
         if (force || lastCount < 0) {
           heroEl.hidden = true;
           chat.classList.remove('is-empty');
@@ -849,9 +950,32 @@
         return;
       }
       loadState.hidden = true;
-      const items = r.items || [];
-      if (!force && items.length === lastCount) return;
-      lastCount = items.length;
+      const items = (r.items || []).slice();
+      const records = new Map(localRecords().map(item=>[item.request_id,item]));
+      for (const item of r.display_turns || []) records.set(item.request_id, {...item,kind:'chat'});
+      for (const job of creatorHistory.items || []) records.set(job.request_id, {...job,input:job.feedback || job.requirement});
+      const jobsToWatch = [];
+      for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
+        const input = item.input || item.requirement || '';
+        const status = item.status || 'pending';
+        // Successful legacy chat already has its own durable pair. Reuse it.
+        if (item.kind === 'chat' && status === 'succeeded' && items.some((m,i)=>m.role==='user'&&m.text===input&&items[i+1]?.text===item.content)) {
+          try { localStorage.setItem(recordKey(), JSON.stringify(localRecords().filter(r=>r.request_id!==item.request_id))); }
+          catch (_) { toast('本地记录合并未能保存'); }
+          continue;
+        }
+        const t = item.created_at * 1000;
+        items.push({role:'user',text:input,t,request_id:item.request_id});
+        const message = item.error?.message || ({pending:'请求尚未确认送达，未自动重发',running:'原请求执行中，未自动重发',
+          failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:'草稿已生成'})[status] || status;
+        items.push({role:'assistant',text:(item.content || '') + '\n\n' + message,t,
+          request_id:item.request_id,partial:status!=='succeeded',job:item.job_id ? item : null});
+        if (item.job_id && !['failed','cancelled','interrupted'].includes(status)) jobsToWatch.push(item);
+      }
+      items.sort((a,b)=>toMs(a.t)-toMs(b.t));
+      const renderKey = JSON.stringify(items);
+      if (!force && renderKey === lastCount) return;
+      lastCount = renderKey;
       if (!items.length) {
         // Empty history: centered welcome and the existing quick questions.
         heroEl.hidden = false;
@@ -875,18 +999,22 @@
       msgs.innerHTML = items.map((m) => {
         const mine = ['me', 'user', 'self'].includes(String(m.role || '').toLowerCase());
         // 用户消息纯文本（esc），AI 消息用 Markdown 渲染
-        const t = mine ? esc(m.text || '') : U.md(m.text || '', { codeActions: true });
+        const t = mine || m.partial ? esc(m.text || '').replace(/\n/g,'<br>') : U.md(m.text || '', { codeActions: true });
         const atts = mine && Array.isArray(m.attachments) ? m.attachments.map((a) =>
           '<div class="msg-attachment">' + icon(a.kind === 'image' ? 'img' : 'clip', 'sm') + ' ' +
           esc(a.name || '附件') + (a.size ? ' · ' + esc(bytes(a.size)) : '') + '</div>').join('') : '';
         // 不画头像、不写名字：这是工具界面，不是"跟谁对话"。
         // 她说的在左、你说的在右，不用再靠头像区分。
         if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + atts + '</div></div></div>';
-        return '<div class="turn"><div class="bdy">' +
+        return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
           '<div class="txt md">' + t + '</div>' +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span></div></div></div>';
       }).join('');
       draftCards.forEach((n) => msgs.appendChild(n));
+      for (const job of jobsToWatch) {
+        const root = msgs.querySelector('[data-job="' + job.job_id + '"]');
+        if (root) void watchCreatorJob(root, job);
+      }
       msgs.scrollTop = msgs.scrollHeight;
     }
 
@@ -894,6 +1022,7 @@
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
       if (!global.vigil || (!text && !imgB64 && !attachment) || busy) return;
+      if (!await loadRecordScope() || busy) return;
       if (attachment && attachment.failed) return;
       if (attachment && attachment.kind === 'image' && !imgB64) {
         attachment.status = '图片尚未读取完成';
@@ -961,6 +1090,10 @@
         }
       }
       const sendingImg = imgB64;
+      const requestId = 'req_' + crypto.randomUUID();
+      const turnScope = recordKey();
+      const remember = patch => rememberTurn(requestId, patch, turnScope);
+      remember({input:text,kind:'chat',status:'pending'});
       const sendingAttachments = uploadedAttachments;
       if (attachment && attachment.previewUrl && global.URL) {
         try { URL.revokeObjectURL(attachment.previewUrl); } catch (_) {}
@@ -991,15 +1124,7 @@
       const textId = 'text_' + turnId;
       msgs.insertAdjacentHTML('beforeend',
         '<div class="turn" id="' + turnId + '"><div class="bdy">' +
-        // 思考过程区域（默认展开）
-        '<div class="think-block streaming">' +
-        '<button class="think-toggle" data-target="' + thinkId + '">' +
-        icon('brain', 'sm') + '思考中 <span class="think-caret">▴</span></button>' +
-        '<div class="think-content" id="' + thinkId + '">' +
-        '<div class="think-text" id="' + thinkId + '_inner"></div></div></div>' +
-        // 正文区域（纯文本实时追加，完成后渲染 Markdown）
-        '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
-        '<div class="foot"><span class="stream-status">正在生成…</span></div>' +
+        streamBodyHtml(thinkId, textId) +
         '</div></div>');
       msgs.scrollTop = msgs.scrollHeight;
 
@@ -1042,6 +1167,8 @@
 
       // 监听流式事件
       const onEvent = (evt) => {
+        if (evt.job_id) return;
+        if (turnScope !== recordKey()) return;
         if (streamDone) return;
         console.log('[stream]', evt.type, evt.text ? evt.text.slice(0, 30) : '');
         if (evt.type === 'think' && evt.text) {
@@ -1050,10 +1177,12 @@
           scheduleRender();
         } else if (evt.type === 'text' && evt.text) {
           textBuf += evt.text;
+          remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'done') {
           streamDone = true;
+          remember({content:textBuf || evt.text || '',status:'succeeded',error:null});
           // 强制刷新最后一帧
           if (thinkDirty) { thinkInner.textContent = thinkBuf; thinkDirty = false; }
           if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
@@ -1072,7 +1201,9 @@
           updateComposer();
         } else if (evt.type === 'error') {
           streamDone = true;
-          textEl.innerHTML = '<span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '</span>';
+          remember({content:textBuf || evt.text || '',status:'failed',
+            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
+          textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
           statusEl.textContent = '失败';
           busy = false;
           updateComposer();
@@ -1087,7 +1218,7 @@
       }
 
       try {
-        const chatPayload = { text: text, src: 'pc' };
+        const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId };
         if (sendingImg) chatPayload.img = sendingImg;
         if (sendingAttachments.length) chatPayload.attachments = sendingAttachments;
         // 附件走普通 JSON 元数据请求；二进制已经在此前分块上传，
@@ -1097,6 +1228,7 @@
           if (!r.ok) throw new Error(r._err || '附件消息发送失败');
           streamDone = true;
           textBuf = r.reply || '';
+          remember({content:textBuf,status:r.err?'failed':'succeeded',error:r.err?{message:'请求未完成'}:null});
           textEl.innerHTML = U.md(textBuf, { codeActions: true });
           const tb = msgs.querySelector('#' + turnId + ' .think-block');
           if (tb) tb.remove();
@@ -1131,6 +1263,7 @@
           const r = pick(await post('/api/chat', chatPayload));
           if (!r.ok) throw new Error(r._err || '发送失败');
           textBuf = r.reply || '';
+          remember({content:textBuf,status:r.err?'failed':'succeeded',error:r.err?{message:'请求未完成'}:null});
           textEl.innerHTML = U.md(textBuf, { codeActions: true });
           statusEl.textContent = fmtTime(Date.now(), 'time');
           busy = false;
@@ -1138,6 +1271,7 @@
         }
       } catch (e) {
         console.error('[stream] error:', e);
+        remember({content:textBuf,status:'interrupted',error:{message:'连接中断，结果不完整；未自动重发'}});
         streamDone = true;
         textEl.innerHTML = '<span style="color:var(--err)">出错了：' + esc(String(e.message || e)) + '</span>';
         statusEl.textContent = '失败';
@@ -1159,6 +1293,7 @@
     // 文件 + 静态验证结果。模型失败时明说，不假装生成了东西。
     async function creatorSend(text) {
       if (busy) return;
+      if (!await loadRecordScope() || busy) return;
       busy = true;
       updateComposer();
       taEl.value = '';
@@ -1168,6 +1303,9 @@
       msgs.insertAdjacentHTML('beforeend',
         '<div class="turn me"><div class="bdy"><div class="txt">' + esc(text) + '</div></div></div>');
       const turnId = 'crturn_' + Date.now();
+      const requestId = 'req_' + crypto.randomUUID();
+      const turnScope = recordKey();
+      rememberTurn(requestId, {input:text,kind:creatorMode,status:'pending'}, turnScope);
       msgs.insertAdjacentHTML('beforeend',
         '<div class="turn" id="' + turnId + '"><div class="bdy"><div class="txt md" style="color:var(--text-3)">' +
         '正在调用模型生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿，可能要几十秒…</div></div></div>');
@@ -1177,13 +1315,19 @@
         // 🔴 必须 pick() 拆包：API.post 返回的是 {ok,status,json}，
         // draft 在 r.json 里。直接读 r.draft 会永远拿到失败+未知错误
         // （2026-10-12 实测：HTTP 200 也被显示成"生成失败：未知错误"）。
-        r = pick(await API.post('/api/creator/draft',
-          { kind: creatorMode, requirement: text }));
+        r = pick(await API.post('/api/creator/jobs',
+          { kind: creatorMode, requirement: text, request_id: requestId }));
+        if (r.ok && r.job_id) {
+          await watchCreatorJob(document.getElementById(turnId), r, turnScope);
+          busy = false; updateComposer(); loadRpDrafts();
+          return;
+        }
       } catch (e) {
         r = { ok: false, err: String((e && e.message) || e) };
       }
       const el = document.getElementById(turnId);
       if (!r || !r.ok || !r.draft) {
+        rememberTurn(requestId, {status:'pending',error:{message:'请求未确认完成，未自动重发；请检查连接'}}, turnScope);
         if (el) el.querySelector('.txt').innerHTML =
           '<span style="color:var(--err)">生成失败：' + esc((r && r.err) || '未知错误') + '</span>';
       } else {
@@ -1213,7 +1357,17 @@
     });
     ctx.topbar.querySelector('#clearBtn').addEventListener('click', () => {
       if (confirm('清空当前渠道的聊天历史？不可恢复。')) {
-        post('/api/history/clear', { src: state.src }).then(() => loadMsgs(true));
+        post('/api/history/clear', { src: state.src }).then(r => {
+          if (r.ok) {
+            const scope = recordKey();
+            const cleared = JSON.parse(localStorage.getItem(scope + ':cleared') || '[]');
+            localStorage.setItem(scope + ':cleared', JSON.stringify([...new Set([...cleared,...localRecords().map(x=>x.request_id)])].slice(-200)));
+            localStorage.removeItem(scope);
+            msgs.innerHTML = '';
+          }
+          else toast('清除失败，记录仍保留');
+          return loadMsgs(true);
+        });
       }
     });
 
@@ -3785,7 +3939,11 @@
       if (e.target.closest('#crRev')) {
         const fb = (root.querySelector('#crFb').value || '').trim();
         if (!fb) { toast('先写修改意见'); return; }
-        const r = pick(await API.post('/api/creator/revise', { id: d.id, feedback: fb }));
+        const requestId = 'req_' + crypto.randomUUID();
+        rememberTurn(requestId, {input:fb,kind:d.kind || 'plugin',status:'pending'});
+        const r = pick(await API.post('/api/creator/jobs', { kind: d.kind || 'plugin',
+          draft_id: d.id, feedback: fb, request_id: requestId }));
+        if (r.ok && r.job_id) { await watchCreatorJob(root, r); return; }
         if (!r || !r.ok || !r.draft) { toast('修改失败：' + ((r && r.err) || '未知错误')); return; }
         redrawCard(root, r.draft);
         toast('已生成新版本 v' + r.draft.version);

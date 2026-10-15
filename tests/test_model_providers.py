@@ -151,7 +151,7 @@ class TestOllamaPayload(unittest.TestCase):
 class TestOllamaChatErrors(unittest.TestCase):
     def _patch_httpx(self, fn):
         import model_providers.ollama as mod
-        old = mod.httpx
+        old = mod.httpx.post
         mod.httpx.post = fn
         self.addCleanup(setattr, mod.httpx, "post", old)
 

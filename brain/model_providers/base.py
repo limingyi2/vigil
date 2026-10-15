@@ -76,7 +76,7 @@ class ModelProvider(object):
         return False, {"err": "not_implemented"}
 
     def capabilities(self):
-        return {
+        out = {
             "kind": self.kind,
             "tools": self.supports_tools,
             "native_tool_calls": self.supports_tools,
@@ -84,3 +84,6 @@ class ModelProvider(object):
             "stream": self.supports_stream,
             "vision": self.supports_vision,
         }
+        from .execution import capabilities
+        out['model'] = capabilities(getattr(self, '_cap_cfg', {}))
+        return out

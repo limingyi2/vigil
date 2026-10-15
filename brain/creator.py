@@ -237,10 +237,13 @@ def _call_model(api_cfg, system, user):
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "temperature": 0.2,
-        "max_tokens": 4096,
     }
     try:
-        j = mp.chat(payload, timeout=180)
+        from model_providers.execution import prepare, normalize, ERROR_MESSAGES
+        j = mp.chat(prepare(payload, cfg), timeout=180)
+        result = normalize(j)
+        if not result['complete']:
+            return None, ERROR_MESSAGES.get(result['reason'], '模型响应不完整')
     except ProviderUnavailable as e:
         return None, "模型调用失败（连不上/超时）：%s" % str(e)[:140]
     except ProviderHTTPError as e:
