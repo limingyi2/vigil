@@ -1439,6 +1439,64 @@ def start_remote_api(brain):
                 return {"is_admin": self._is_admin(),
                         "token_kind": who, "device_id": who_id}
 
+            if path == '/api/creator/jobs' or path.startswith('/api/creator/jobs/'):
+                import creator_jobs as jobs
+                from urllib.parse import parse_qs, urlparse
+                import hashlib
+                query = parse_qs(urlparse(self.path).query)
+                src = str(body.get('src') or (query.get('src') or ['pc'])[0])
+                session = str(body.get('session_id') or (query.get('session_id') or ['main'])[0])[:128]
+                owner = hashlib.sha256(json.dumps([getattr(self, '_who', ('', '')), src, session]).encode()).hexdigest()
+                parts = path.strip('/').split('/')
+                try:
+                    if method == 'POST' and path == '/api/creator/jobs':
+                        item = jobs.create(body, API_CFG, owner)
+                        self._json(200, {'ok': True, **item})
+                    elif method == 'GET' and path == '/api/creator/jobs':
+                        self._json(200, {'ok': True, 'items': jobs.listing(owner)})
+                    elif len(parts) >= 4:
+                        jid = parts[3]
+                        item = jobs.snapshot(jid, owner)
+                        if not item:
+                            self._json(404, {'ok': False, 'err': '作业不存在'})
+                        elif method == 'GET' and len(parts) == 4:
+                            self._json(200, {'ok': True, **item})
+                        elif method == 'POST' and parts[4:] == ['cancel']:
+                            self._json(200, {'ok': True, **jobs.cancel(jid, owner)})
+                        elif method == 'GET' and parts[4:] == ['events']:
+                            cursor = max(0, int((query.get('after') or ['0'])[0]))
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                            self.send_header('Cache-Control', 'no-cache')
+                            self.send_header('Connection', 'close')
+                            self.end_headers()
+                            self.close_connection = True
+                            # Bounded subscription; reconnect is explicitly read-only.
+                            until = time.monotonic() + 25
+                            while time.monotonic() < until:
+                                page = jobs.events(jid, owner, cursor)
+                                outgoing = page['events']
+                                if page['gap'] or page['snapshot']['status'] in jobs.TERMINAL:
+                                    outgoing = [{'job_id': jid, 'type': 'snapshot', 'payload': page['snapshot']}]
+                                for event in outgoing:
+                                    self.wfile.write(('data: ' + json.dumps(event, ensure_ascii=False) + '\n\n').encode())
+                                    self.wfile.flush()
+                                    cursor = max(cursor, event.get('seq', cursor))
+                                if page['snapshot']['status'] in jobs.TERMINAL:
+                                    break
+                                if page['gap']:
+                                    cursor = page['snapshot']['event_cursor']
+                                time.sleep(0.1)
+                        else:
+                            self._json(405, {'ok': False, 'err': '此操作在 P1 不支持'})
+                    else:
+                        self._json(404, {'ok': False, 'err': '接口不存在'})
+                except ValueError:
+                    self._json(400, {'ok': False, 'err': '请求参数无效或 request_id 冲突'})
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
+                return True
+
             if method == "GET":
                 if path == "/api/creator/drafts":
                     try:
@@ -1476,18 +1534,24 @@ def start_remote_api(brain):
                 return False
 
             if path == "/api/creator/draft":
-                meta, err = _cr.generate_draft(str(body.get("kind") or ""),
-                                               str(body.get("requirement") or ""),
-                                               API_CFG)
+                import creator_jobs
+                owner = 'legacy:' + str(getattr(self, '_who', ('', '')))
+                try:
+                    meta, err = creator_jobs.legacy(body, API_CFG, owner)
+                except ValueError as exc:
+                    meta, err = None, str(exc)
                 if err:
                     self._json(400, {"ok": False, "err": err})
                 else:
                     self._json(200, {"ok": True, "draft": meta})
                 return True
             if path == "/api/creator/revise":
-                meta, err = _cr.revise_draft(str(body.get("id") or ""),
-                                             str(body.get("feedback") or ""),
-                                             API_CFG)
+                import creator_jobs
+                owner = 'legacy:' + str(getattr(self, '_who', ('', '')))
+                try:
+                    meta, err = creator_jobs.legacy(dict(body, draft_id=body.get('id')), API_CFG, owner)
+                except ValueError as exc:
+                    meta, err = None, str(exc)
                 if err:
                     self._json(400, {"ok": False, "err": err})
                 else:

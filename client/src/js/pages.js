@@ -15,6 +15,73 @@
   const { get, post, pick, state } = API;
 
   // ── 通用零件 ────────────────────────────────────────────────
+  function streamBodyHtml(thinkId, textId) {
+    return '<div class="think-block streaming"><button class="think-toggle">' +
+      icon('brain', 'sm') + '思考 <span class="think-caret">▴</span></button>' +
+      '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div></div></div>' +
+      '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
+      '<div class="foot"><span class="stream-status">正在生成…</span></div>';
+  }
+
+  async function watchCreatorJob(root, initial) {
+    const jid = initial.job_id;
+    const thinkId = 'creatorThink_' + jid;
+    root.innerHTML = '<div class="bdy">' + streamBodyHtml(thinkId, 'creatorText_' + jid) +
+      '<button class="btn oline creator-cancel">取消生成</button></div>';
+    const text = root.querySelector('.streaming-text');
+    const thinking = root.querySelector('.think-text');
+    const block = root.querySelector('.think-block');
+    const status = root.querySelector('.stream-status');
+    const cancel = root.querySelector('.creator-cancel');
+    root.querySelector('.think-toggle').onclick = () => {
+      const content = root.querySelector('.think-content'); content.hidden = !content.hidden;
+    };
+    let current = initial, cursor = 0, finished = false;
+    text.textContent = initial.content || '';
+    block.hidden = true;
+    cancel.onclick = async () => {
+      const r = pick(await post('/api/creator/jobs/' + jid + '/cancel', {}));
+      if (r.ok) { current = r; applySnapshot(r); }
+    };
+    function applySnapshot(item) {
+      current = item;
+      cursor = Math.max(cursor, item.event_cursor || 0);
+      text.textContent = item.content || '';
+      status.textContent = item.error ? item.error.message : item.stage || item.status;
+      finished = ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(item.status);
+      if (finished) {
+        cancel.hidden = true;
+        if (item.status !== 'succeeded') status.textContent += '（结果不完整）';
+      }
+    }
+    const off = global.vigil && global.vigil.onCreatorEvent ? global.vigil.onCreatorEvent(evt => {
+      if (evt.job_id !== jid || finished || !root.isConnected) return;
+      if (evt.type === 'snapshot') { applySnapshot(evt.payload); return; }
+      if (evt.seq <= cursor) return;
+      cursor = evt.seq;
+      const p = evt.payload || {};
+      if (evt.type === 'text_delta') text.textContent += p.text || '';
+      if (evt.type === 'think_delta') { block.hidden = false; thinking.textContent += p.text || ''; }
+      if (evt.type === 'stage') status.textContent = p.stage;
+    }) : null;
+    applySnapshot(initial);
+    try {
+      while (!finished && root.isConnected) {
+        if (global.vigil && global.vigil.apiStream && global.vigil.onCreatorEvent) {
+          await global.vigil.apiStream('/api/creator/jobs/' + jid + '/events?after=' + cursor, null);
+        } else await new Promise(resolve => setTimeout(resolve, 500));
+        if (!root.isConnected) break;
+        const r = pick(await get('/api/creator/jobs/' + jid));
+        if (!r.ok) { status.textContent = '连接中断，记录已保留，请刷新查询'; break; }
+        applySnapshot(r);
+      }
+      if (current.status === 'succeeded' && current.draft_id && root.isConnected) {
+        const r = pick(await get('/api/creator/draft?id=' + encodeURIComponent(current.draft_id)));
+        if (r.ok && r.draft) { root.innerHTML = draftCardHtml(r.draft); bindDraftCard(root, r.draft); }
+      }
+      return current;
+    } finally { if (off) off(); }
+  }
   const tag = (cls, text) => '<span class="tag ' + cls + '">' + esc(text) + '</span>';
   /** 时间戳归一成毫秒：秒 / 毫秒 / 字符串都能吃（与 ui.js fmtTime 同一套规则） */
   const toMs = (t) => {
@@ -991,15 +1058,7 @@
       const textId = 'text_' + turnId;
       msgs.insertAdjacentHTML('beforeend',
         '<div class="turn" id="' + turnId + '"><div class="bdy">' +
-        // 思考过程区域（默认展开）
-        '<div class="think-block streaming">' +
-        '<button class="think-toggle" data-target="' + thinkId + '">' +
-        icon('brain', 'sm') + '思考中 <span class="think-caret">▴</span></button>' +
-        '<div class="think-content" id="' + thinkId + '">' +
-        '<div class="think-text" id="' + thinkId + '_inner"></div></div></div>' +
-        // 正文区域（纯文本实时追加，完成后渲染 Markdown）
-        '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
-        '<div class="foot"><span class="stream-status">正在生成…</span></div>' +
+        streamBodyHtml(thinkId, textId) +
         '</div></div>');
       msgs.scrollTop = msgs.scrollHeight;
 
@@ -1042,6 +1101,7 @@
 
       // 监听流式事件
       const onEvent = (evt) => {
+        if (evt.job_id) return;
         if (streamDone) return;
         console.log('[stream]', evt.type, evt.text ? evt.text.slice(0, 30) : '');
         if (evt.type === 'think' && evt.text) {
@@ -1177,8 +1237,13 @@
         // 🔴 必须 pick() 拆包：API.post 返回的是 {ok,status,json}，
         // draft 在 r.json 里。直接读 r.draft 会永远拿到失败+未知错误
         // （2026-10-12 实测：HTTP 200 也被显示成"生成失败：未知错误"）。
-        r = pick(await API.post('/api/creator/draft',
-          { kind: creatorMode, requirement: text }));
+        r = pick(await API.post('/api/creator/jobs',
+          { kind: creatorMode, requirement: text, request_id: 'req_' + crypto.randomUUID() }));
+        if (r.ok && r.job_id) {
+          await watchCreatorJob(document.getElementById(turnId), r);
+          busy = false; updateComposer(); loadRpDrafts();
+          return;
+        }
       } catch (e) {
         r = { ok: false, err: String((e && e.message) || e) };
       }
@@ -3785,7 +3850,9 @@
       if (e.target.closest('#crRev')) {
         const fb = (root.querySelector('#crFb').value || '').trim();
         if (!fb) { toast('先写修改意见'); return; }
-        const r = pick(await API.post('/api/creator/revise', { id: d.id, feedback: fb }));
+        const r = pick(await API.post('/api/creator/jobs', { kind: d.kind || 'plugin',
+          draft_id: d.id, feedback: fb, request_id: 'req_' + crypto.randomUUID() }));
+        if (r.ok && r.job_id) { await watchCreatorJob(root, r); return; }
         if (!r || !r.ok || !r.draft) { toast('修改失败：' + ((r && r.err) || '未知错误')); return; }
         redrawCard(root, r.draft);
         toast('已生成新版本 v' + r.draft.version);

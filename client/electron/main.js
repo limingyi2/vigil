@@ -471,6 +471,12 @@ function requestStream(method, urlStr, body, token, onEvent) {
         timeout: 300000,  // 流式对话可能跑几分钟
       },
       (res) => {
+        res.setEncoding('utf8');
+        if (res.statusCode !== 200) {
+          res.resume();
+          onEvent({ type: 'error', msg: '请求失败（HTTP ' + res.statusCode + '）' });
+          return resolve({ ok: false, status: res.statusCode });
+        }
         let buf = '';
         res.on('data', (chunk) => {
           buf += chunk.toString('utf8');
@@ -1118,8 +1124,10 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
   const withSrc = !hasSrc ? p + sep + 'src=' + encodeURIComponent(src) : p;
   const token = await getToken();
   const wc = e.sender;
-  return requestStream('POST', b + withSrc, body, token, (evt) => {
-    wc.send('api:stream:event', evt);
+  const subscription = /^\/api\/creator\/jobs\/[A-Za-z0-9_-]+\/events(?:\?|$)/.test(p);
+  return requestStream(subscription ? 'GET' : 'POST', b + withSrc, subscription ? null : body, token, (evt) => {
+    if (subscription && !evt.job_id) evt = { ...evt, job_id: p.split('/')[4] };
+    if (!wc.isDestroyed()) wc.send('api:stream:event', evt);
   });
 });
 

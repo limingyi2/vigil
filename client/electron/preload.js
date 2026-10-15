@@ -13,6 +13,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 用闭包变量存储流式事件处理函数，避免依赖 global 对象（sandbox 下可能受限）
 let _streamHandler = null;
 let _streamBound = false;
+const _creatorHandlers = new Set();
+function bindStream() {
+  if (_streamBound) return;
+  _streamBound = true;
+  ipcRenderer.on('api:stream:event', (_e, evt) => {
+    if (evt && evt.job_id) _creatorHandlers.forEach(fn => fn(evt));
+    else if (typeof _streamHandler === 'function') _streamHandler(evt);
+  });
+}
 let _settingsNavigateHandler = null;
 let _pendingSettingsNavigation = null;
 ipcRenderer.on('settings:navigate', (_e, target) => {
@@ -35,15 +44,13 @@ contextBridge.exposeInMainWorld('vigil', {
     chunk: (bytes, headers) => ipcRenderer.invoke('attachment:chunk', { bytes, headers }),
   },
   onStreamEvent: (fn) => {
-    if (!_streamBound) {
-      _streamBound = true;
-      ipcRenderer.on('api:stream:event', (_e, evt) => {
-        if (typeof _streamHandler === 'function') {
-          _streamHandler(evt);
-        }
-      });
-    }
+    bindStream();
     _streamHandler = fn;
+  },
+  onCreatorEvent: (fn) => {
+    bindStream();
+    _creatorHandlers.add(fn);
+    return () => _creatorHandlers.delete(fn);
   },
 
   cfg: {
