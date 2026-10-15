@@ -881,13 +881,17 @@ async function pollBrain(base, token, device, caps) {
 async function pollOnce() {
   if (pollBusy || asking) return;
   const cfg = readCfg();
-  if (!cfg.base) return;
+  // 与 api IPC 保持一致：本地 Brain 启动后会选择动态端口，cfg.base 可能还是
+  // 上次运行留下的旧端口。若轮询仍只用 cfg.base，聊天可以正常工作，但 Brain
+  // 看不到 PC 客户端的 local_file_* 轮询，并会误报“本地客户端没连上”。
+  const sidecarBase = sidecar.ready && sidecar.ready() && sidecar.base();
+  const base = String(sidecarBase || cfg.base || '').replace(/\/+$/, '');
+  if (!base) return;
   const caps = localtool.capabilities(cfg);
   if (!caps.length) return;                       // 全关了就别浪费请求
   pollBusy = true;
   try {
     const token = await getToken();
-    const base = String(cfg.base).replace(/\/+$/, '');
     await pollBrain(base, token, cfg.device_id, caps);
     // 云端大脑：配了 sync 凭据才轮（微信那边的活从这来）。
     // 云端不可达时歇 30 秒再试 —— 别让它把 1.5s 的轮询节奏拖垮。
