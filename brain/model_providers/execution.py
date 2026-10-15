@@ -69,6 +69,8 @@ def capabilities(cfg, provider=None):
 
 
 def prepare(payload, cfg, *, step_tokens=None, remaining_tokens=None):
+    if remaining_tokens is not None and (not _positive(remaining_tokens)):
+        raise ProviderResponseError('剩余输出预算不足')
     out = dict(payload)
     for param in PARAMETERS:
         out.pop(param, None)
@@ -92,7 +94,7 @@ def prepare(payload, cfg, *, step_tokens=None, remaining_tokens=None):
 
 
 def normalize(data):
-    result = dict(content='', reasoning='', tool_calls=[], usage=None,
+    result = dict(content='', reasoning='', tool_calls=[], usage=None, finish_reason=None,
                   reason='invalid_structure', complete=False)
     if not isinstance(data, dict):
         return result
@@ -106,9 +108,13 @@ def normalize(data):
         calls = message.get('tool_calls') or []
         if not isinstance(content, str) or not isinstance(reasoning, str) or not isinstance(calls, list):
             return result
+        usage = data.get('usage')
+        safe_usage = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
+            if k in ('prompt_tokens', 'completion_tokens', 'total_tokens') and isinstance(v, int) and not isinstance(v, bool) and v >= 0}
         result.update(content=content, reasoning=reasoning, tool_calls=calls,
-                      usage=data.get('usage'))
+                      usage=safe_usage or None)
         finish = choice.get('finish_reason')
+        result['finish_reason'] = finish if isinstance(finish, str) else None
         if finish in ('length', 'max_tokens'):
             result['reason'] = 'length'
         elif finish in ('content_filter', 'refusal') or message.get('refusal'):
@@ -123,12 +129,15 @@ def normalize(data):
             result.update(reason='normal', complete=True)
         elif reasoning.strip():
             result['reason'] = 'thinking_only'
+        else:
+            result['reason'] = 'empty_content'
         return result
     except (KeyError, TypeError, IndexError):
         return result
 
 
 ERROR_MESSAGES = {'length': '模型输出被截断，未生成完整结果',
+    'empty_content': '模型未返回正文',
     'thinking_only': '模型仅返回思考，未得到正文',
     'invalid_structure': '模型返回结构错误', 'refusal': '模型拒绝生成',
     'connection_lost': '模型连接中断或超时', 'service_error': '模型服务请求失败'}

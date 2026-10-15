@@ -133,7 +133,7 @@ class ModelFixture:
                     self.end_headers()
                     chunks = [
                         {'choices': [{'delta': {'reasoning_content': 'fixture reasoning'}}]},
-                        {'choices': [{'delta': {'content': content}, 'finish_reason': 'length' if 'ZXFIX_LENGTH' in blob else 'stop'}]},
+                        {'choices': [{'delta': {'content': content}, 'finish_reason': getattr(owner, 'finish_override', None) or ('length' if 'ZXFIX_LENGTH' in blob else 'stop')}]},
                     ]
                     for chunk in chunks:
                         self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
@@ -413,6 +413,25 @@ class CreatorHttpTests(unittest.TestCase):
         self.assertEqual(current['error']['class'], 'length')
         self.assertNotIn('draft_id', current)
 
+    def test_p1_chat_failure_display_does_not_pollute_history(self):
+        self.fx.finish_override = 'length'
+        before = self.fx.requests
+        body = {'request_id': 'p1_chat_failure', 'text': '你好', 'src': 'pc'}
+        try:
+            for _ in range(2):
+                req = urllib.request.Request(self.base + '/api/chat/stream',
+                    data=json.dumps(body).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + self.token})
+                with urllib.request.urlopen(req, timeout=10) as stream:
+                    self.assertIn('error', stream.read().decode())
+        finally:
+            self.fx.finish_override = None
+        self.assertEqual(self.fx.requests, before + 1)
+        _, history = _http('GET', self.base + '/api/history?src=pc', token=self.token)
+        record = next(item for item in history['display_turns'] if item['request_id'] == body['request_id'])
+        self.assertEqual(record['status'], 'failed')
+        self.assertTrue(record['content'])
+        self.assertFalse(any(item.get('text') == '你好' for item in history['items']))
+
     def test_01_generate_plugin_draft_end_to_end(self):
         code, r = _http("POST", self.base + "/api/creator/draft",
                         {"kind": "plugin", "requirement": "每小时整点提醒我喝水"},
@@ -455,7 +474,8 @@ class CreatorHttpTests(unittest.TestCase):
                         token=self.token)
         self.assertEqual(code, 400, r)
         self.assertFalse(r.get("ok"))
-        self.assertIn("模型调用失败", r.get("err", ""))
+        _, diagnostics = _http('GET', self.base + '/api/creator/jobs', token=self.token)
+        self.assertIn("模型调用失败", r.get("err", ""), [item.get('error') for item in diagnostics.get('items', []) if 'ZXFIX_FAILURE' in item.get('requirement', '')])
         _, after = _http("GET", self.base + "/api/creator/drafts",
                          token=self.token)
         self.assertEqual(len(after["drafts"]), len(before["drafts"]))

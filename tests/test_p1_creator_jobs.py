@@ -94,6 +94,19 @@ class JobTests(unittest.TestCase):
         self.assertEqual(jobs.snapshot(item['job_id'], 'owner')['status'], 'interrupted')
         self.assertEqual(self.new()['job_id'], item['job_id'])
 
+    def test_compaction_keeps_request_tombstone(self):
+        import display_turns
+        first = self.new()
+        jobs.cancel(first['job_id'], 'owner')
+        second = jobs.create(dict(self.body, request_id='request_67890'), {}, 'owner', start=False)
+        jobs.cancel(second['job_id'], 'owner')
+        with patch.dict(display_turns.LIMITS, max_records=1):
+            visible = jobs.listing('owner')
+        self.assertEqual(len(visible), 1)
+        original = self.new()
+        self.assertEqual(original['job_id'], first['job_id'])
+        self.assertTrue(original['expired'])
+
 
 if __name__ == '__main__':
     unittest.main()

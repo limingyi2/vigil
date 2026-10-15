@@ -61,13 +61,35 @@ def snapshot(jid, owner):
 
 def listing(owner):
     with LOCK, _db() as db:
-        return [json.loads(row[0]) for row in db.execute('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))]
+        from display_turns import LIMITS
+        # Compact old terminal snapshots, preserving idempotency fingerprints
+        # and draft associations rather than turning old IDs into fresh jobs.
+        db.execute('''UPDATE jobs SET data=json_set(data, '$.hidden', json('true'),
+            '$.expired', json('true'), '$.content', '', '$.requirement', '', '$.feedback', '')
+            WHERE owner=? AND json_extract(data,'$.status') IN ('succeeded','failed','cancelled','interrupted')
+            AND (json_extract(data,'$.created_at')<? OR rowid IN
+                (SELECT rowid FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT -1 OFFSET ?))''',
+            (owner, time.time()-LIMITS['retention_days']*86400, owner, LIMITS['max_records']))
+        return [item for row in db.execute('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))
+                if not (item := json.loads(row[0])).get('hidden')]
+
+
+def hide(owner):
+    # Hiding display entries must not destroy request-deduplication tombstones
+    # or delete draft files / stop running generators.
+    with LOCK, _db() as db:
+        for data, in db.execute('SELECT data FROM jobs WHERE owner=?', (owner,)).fetchall():
+            item = json.loads(data)
+            item['hidden'] = True
+            _save(db, item)
 
 
 def _event(item, kind, payload):
     item['event_cursor'] += 1
     event = dict(job_id=item['job_id'], run_id=item['job_id'], seq=item['event_cursor'],
                  type=kind, ts=time.time(), payload=payload)
+    if item['job_id'] not in EVENTS and len(EVENTS) >= 200:
+        EVENTS.pop(next(iter(EVENTS)))
     EVENTS.setdefault(item['job_id'], deque(maxlen=256)).append(event)
 
 
@@ -153,6 +175,7 @@ def _run(jid, owner, cfg):
                     return
                 if event['type'] == 'completion':
                     result = event['result']
+                    item['provider_finish_reason'] = result.get('finish_reason')
                     if result['usage']:
                         item['usage'] = result['usage']
                         _event(item, 'usage', result['usage'])
@@ -182,11 +205,11 @@ def _run(jid, owner, cfg):
             draft, err = creator._persist(item['kind'], item['requirement'], ''.join(text), cfg,
                 prev_meta=previous, feedback=item['feedback'])
             if err:
-                _fail(jid, owner, 'invalid_structure')
+                _fail(jid, owner, 'invalid_structure', 'invalid_format' if 'JSON' in err else 'validation_failed')
                 return
             item.update(status='succeeded', stage='assembling', draft_id=draft['id'])
             if draft.get('validation', {}).get('ok') is False:
-                item.update(status='failed', error={'class': 'invalid_structure', 'message': '草稿未通过静态检查，请审核问题'})
+                item.update(status='failed', error={'class': 'invalid_structure', 'code': 'validation_failed', 'message': '草稿未通过静态检查，请审核问题'})
                 _event(item, 'error', item['error'])
             else:
                 _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
@@ -194,16 +217,21 @@ def _run(jid, owner, cfg):
     except Exception as exc:
         reason = 'invalid_structure' if isinstance(exc, (ValueError, ProviderResponseError)) else (
             'service_error' if isinstance(exc, ProviderHTTPError) else 'connection_lost')
-        _fail(jid, owner, reason)
+        _fail(jid, owner, reason, exception_type=type(exc).__name__)
 
 
-def _fail(jid, owner, reason):
+def _fail(jid, owner, reason, code=None, exception_type=None):
     with LOCK, _db() as db:
         item = snapshot(jid, owner)
         if item['status'] in TERMINAL:
             return
-        item.update(status='failed', error={'class': reason,
+        code = code or {'length': 'output_truncated', 'thinking_only': 'empty_content',
+            'invalid_structure': 'invalid_format', 'service_error': 'provider_error',
+            'connection_lost': 'provider_error'}.get(reason, reason)
+        item.update(status='failed', error={'class': reason, 'code': code,
             'message': ERROR_MESSAGES.get(reason, '生成失败，请检查输入或配置')})
+        if exception_type:
+            item['error']['exception_type'] = exception_type
         if reason == 'invalid_structure':
             item['error']['message'] = '模型没按契约返回 JSON，或生成文件未通过检查'
         elif reason == 'service_error':
@@ -225,6 +253,10 @@ def legacy(body, cfg, owner):
         if item['status'] in TERMINAL:
             if item.get('draft_id'):
                 return creator.get_draft(item['draft_id'])
-            return None, (item.get('error') or {}).get('message') or '生成已取消或中断'
+            error = item.get('error') or {}
+            message = error.get('message') or '生成已取消或中断'
+            if error.get('class') in ('service_error', 'connection_lost') and '模型调用失败' not in message:
+                message = '模型调用失败：' + message
+            return None, message
         time.sleep(0.05)
     return None, '生成超时，作业已保留，请查询原请求，未重新生成'

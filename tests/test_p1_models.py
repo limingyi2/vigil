@@ -27,6 +27,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(prepare(p, cfg, step_tokens=12000, remaining_tokens=8000)
                          ['max_completion_tokens'], 8000)
         self.assertNotIn('max_tokens', prepare(p, {}))
+        with self.assertRaises(ProviderResponseError):
+            prepare(p, {}, remaining_tokens=0)
         self.assertEqual(prepare(p, {'model_capabilities': {'requires_output_limit': True,
             'compat_output_tokens': 8192}})['max_tokens'], 8192)
 
@@ -42,6 +44,9 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(normalize(response('partial', finish='length'))['reason'], 'length')
         self.assertEqual(normalize(response(reasoning='thinking'))['reason'], 'thinking_only')
         self.assertEqual(normalize({})['reason'], 'invalid_structure')
+        data = response('ok')
+        data['usage'] = {'prompt_tokens': 7, 'secret': 'NEVER_STORE'}
+        self.assertEqual(normalize(data)['usage'], {'prompt_tokens': 7})
 
     def test_stream_and_disconnect(self):
         class Fake:

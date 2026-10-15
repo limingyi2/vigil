@@ -1056,8 +1056,7 @@ class Brain:
             # 配合人设规则里的"正经问题不拆短句"例外 —— 不然同一个模型，
             # 官网能给完整长文，这边只有三五个字的名词气泡，差距肉眼可见。
             _know = _is_knowledge_q(user_text)
-            # 4096 而不是 2048：思考 token 和正文共享这个上限，
-            # 思考长了的话 2048 会把正文截断 —— 又回到"答一半"
+            # Output limits are resolved per endpoint/model, never by question class.
             from model_providers.execution import prepare, normalize, ERROR_MESSAGES
             _eff = "medium" if _know else "low"
             # XML 模式下，工具结果已经拼到用户消息里了，下一轮不挂工具表，
@@ -1263,15 +1262,6 @@ class Brain:
                 if getattr(e, "status", None) in (400, 404, 422):
                     self.last_tools_used = []
                     return "当前模型或服务商不支持结构化工具调用，请切换支持 tools 的模型"
-                # 🔴 **降级：去掉工具表再来一次。**
-                #
-                # 上游不认 tools 的时候（换模型/换供应商、参数被静默拒绝、
-                # 或者某次 schema 校验不过）整轮会走到这里。直接 return None
-                # 的话 chat() 判成"API失败"→ 她一句都说不出来 —— 而
-                # "还能说话、只是这次没查"要好得多，这也是 router 模式唯一
-                # 真正比 native 强的地方，搬过来。
-                #
-                # 递归调用带 no_tools=True，所以最多降级一次，不会打转。
                 # Unknown completion / network errors must never replay a task.
                 return '模型请求失败，未自动重试；请核对已完成操作'
             return None
@@ -1466,10 +1456,12 @@ class Brain:
         else:
             ans = "……我脑子有点转不动，等会儿再聊？"
             self.last_mode = "API失败"
+        if getattr(self, 'last_err', ''):
+            self.last_mode = 'API失败'
         # 失败时的兜底话不能当"她说过的话"存。欠费那阵主动搭话每 40 分钟失败
         # 一次，攒了 97 条一模一样的记录，重启灌回上下文后历史里全是同一句。
         # 风控拒答同理：那句英文拒答语更不能进历史（它压根不是她说的）
-        _failed = (self.last_mode == "API失败") or _refused
+        _failed = (self.last_mode == "API失败") or _refused or bool(getattr(self, 'last_err', ''))
 
         # 记忆抽取挪到后台：提取 API 一旦慢（25s 超时）也不能拖住回复
         # 主动搭话的输入是「说/无」决策提示词，要抽记忆得先剥掉那个前缀，
