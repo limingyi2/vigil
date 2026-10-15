@@ -60,11 +60,12 @@ def _classify_http(status, body):
 class OllamaProvider(ModelProvider):
     kind = "ollama"
     supports_tools = True            # /v1 兼容层支持 tools（A0x 已实证）
-    supports_stream = True           # /v1 兼容层支持 SSE
+    supports_stream = False          # Native NDJSON is not exposed as SSE yet.
     supports_vision = False          # 首版接的是纯文本高效思考模型
 
     def __init__(self, ollama_cfg=None):
         cfg = ollama_cfg or {}
+        self._cap_cfg = {'model_mode': 'local', 'ollama': cfg}
         # 存"裸"地址：允许用户带不带 /v1，统一剥掉后自己拼，避免 /v1/v1。
         base = str(cfg.get("base") or DEFAULT_BASE).strip().rstrip("/")
         if base.endswith("/v1"):
@@ -214,7 +215,8 @@ class OllamaProvider(ModelProvider):
                 "reasoning_content": msg.get("thinking") or ""}
         if tcs_out:
             omsg["tool_calls"] = tcs_out
-        return {"choices": [{"message": omsg}],
+        finish = 'length' if data.get('done_reason') == 'length' else ('tool_calls' if tcs_out else 'stop')
+        return {"choices": [{"message": omsg, "finish_reason": finish}],
                 "usage": {"prompt_tokens": data.get("prompt_eval_count") or 0,
                           "completion_tokens": data.get("eval_count") or 0}}
 
@@ -244,7 +246,8 @@ class OllamaProvider(ModelProvider):
             raise ProviderResponseError("Ollama 响应不是合法 JSON：%s" % e)
         out = self._adapt_response(data)
         if not out["choices"][0]["message"].get("content") \
-                and not out["choices"][0]["message"].get("tool_calls"):
+                and not out["choices"][0]["message"].get("tool_calls") \
+                and not out["choices"][0]["message"].get("reasoning_content"):
             raise ProviderResponseError("Ollama 响应里没有正文也没有工具调用：%s"
                                         % str(data)[:200])
         return out

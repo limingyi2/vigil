@@ -38,6 +38,8 @@ class CloudProvider(ModelProvider):
 
     def __init__(self, cfg=None):
         cfg = cfg or {}
+        self._cap_cfg = cfg
+        self.supports_stream = cfg.get('model_stream', True) is not False
         self.api_base = str(cfg.get("api_base") or "").rstrip("/")
         self.api_key = str(cfg.get("api_key") or "")
         self.model = str(cfg.get("model") or "")

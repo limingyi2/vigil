@@ -231,9 +231,8 @@ class TestNativeFunctionCalling(unittest.TestCase):
         B.httpx = type("H", (), {"post": staticmethod(_post)})
         br = self._brain()
         ans = br.draft_native("帮我查天气", "")
-        self.assertEqual(len(seen), 2, "应该在失败后重试一次")
+        self.assertEqual(len(seen), 1, "未知错误不得重发模型请求")
         self.assertIn("tools", seen[0])
-        self.assertNotIn("tools", seen[1], "重试那次不该再带工具表")
         self.assertTrue(ans, "降级之后她还是说不了话")
 
     def test_retry_does_not_loop_forever(self):
@@ -247,8 +246,8 @@ class TestNativeFunctionCalling(unittest.TestCase):
 
         B.httpx = type("H", (), {"post": staticmethod(_post)})
         ans = self._brain().draft_native("帮我查天气", "")
-        self.assertIsNone(ans)
-        self.assertEqual(len(seen), 2, "最多两次：带工具的 + 降级的")
+        self.assertIn('未自动重试', ans)
+        self.assertEqual(len(seen), 1, "异常后不得盲目重试")
 
     # --- 7. 寒暄不挂工具表（省 ~1100 token）---
     def test_smalltalk_does_not_attach_schema(self):

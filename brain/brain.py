@@ -1058,7 +1058,7 @@ class Brain:
             _know = _is_knowledge_q(user_text)
             # 4096 而不是 2048：思考 token 和正文共享这个上限，
             # 思考长了的话 2048 会把正文截断 —— 又回到"答一半"
-            _mt = 4096 if _know else 600
+            from model_providers.execution import prepare, normalize, ERROR_MESSAGES
             _eff = "medium" if _know else "low"
             # XML 模式下，工具结果已经拼到用户消息里了，下一轮不挂工具表，
             # 避免模型继续调用工具陷入死循环。
@@ -1073,7 +1073,6 @@ class Brain:
                     "messages": msgs,
                     "temperature": 0.85,
                     # 详细回答模式给足空间；闲聊维持原值
-                    "max_tokens": _mt,
                     "reasoning_effort": _eff,
                 }
                 if tool_specs and not _next_no_tools:
@@ -1081,7 +1080,7 @@ class Brain:
                     _payload["tool_choice"] = "auto"
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
-                _j = mp.chat(_payload, timeout=90)
+                _j = mp.chat(prepare(_payload, _api0), timeout=90)
                 self.last_cloud_seconds = round(
                     self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
@@ -1095,6 +1094,10 @@ class Brain:
                 except Exception:
                     pass
 
+                normalized = normalize(_j)
+                if normalized['reason'] not in ('normal', 'tool_calls'):
+                    self.last_err = ERROR_MESSAGES.get(normalized['reason'], '模型响应不完整')
+                    return self.last_err
                 msg = _j["choices"][0]["message"]
                 tcs = msg.get("tool_calls") or []
 
@@ -1156,7 +1159,11 @@ class Brain:
                     try:
                         _args = json.loads(_fn.get("arguments") or "{}")
                     except Exception:
-                        _args = {}
+                        self.last_err = '工具参数结构错误，未执行工具'
+                        return self.last_err
+                    if not isinstance(_args, dict):
+                        self.last_err = '工具参数必须为对象，未执行工具'
+                        return self.last_err
                     _result = _tools.invoke_spec(
                         _fn.get("name") or "", _args, ctx)
                     _tool_results.append((_fn.get("name") or "", _result))
@@ -1203,7 +1210,7 @@ class Brain:
             try:
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
-                _j = mp.chat({
+                _j = mp.chat(prepare({
                     "model": self.api.get("model", "deepseek-chat"),
                     "messages": msgs + [{
                         "role": "user",
@@ -1211,9 +1218,8 @@ class Brain:
                                    "你自己的话回答他，不要再调用任何工具。）",
                     }],
                     "temperature": 0.85,
-                    "max_tokens": _mt,
                     "reasoning_effort": _eff,
-                }, timeout=60)
+                }, _api0), timeout=60)
                 self.last_cloud_seconds = round(
                     self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
@@ -1224,6 +1230,10 @@ class Brain:
                     _uout += int(_u.get("completion_tokens") or 0)
                 except Exception:
                     pass
+                normalized = normalize(_j)
+                if not normalized['complete']:
+                    self.last_err = ERROR_MESSAGES.get(normalized['reason'], '模型响应不完整')
+                    return self.last_err
                 _msg = _j["choices"][0]["message"]
                 raw = _msg.get("content") or ""
                 self.last_ms = int((time.time() - _t0) * 1000)
@@ -1262,9 +1272,8 @@ class Brain:
                 # 真正比 native 强的地方，搬过来。
                 #
                 # 递归调用带 no_tools=True，所以最多降级一次，不会打转。
-                print("[大脑] 去掉工具表重试一次", flush=True)
-                return self.draft_native(user_text, memory_block,
-                                         no_tools=True, ctx_src=ctx_src)
+                # Unknown completion / network errors must never replay a task.
+                return '模型请求失败，未自动重试；请核对已完成操作'
             return None
 
     # --- 前置判断（router）：便宜模型先决策并调工具，主模型只组织回答 ---
@@ -1311,14 +1320,12 @@ class Brain:
         msgs.append({"role": "user", "content": self._user_msg_with_rules(user_text)})
 
         _know = _is_knowledge_q(user_text)
-        _mt = 4096 if _know else 600
         _eff = "medium" if _know else "low"
 
         payload = {
             "model": _api0.get("model") or "deepseek-chat",
             "messages": msgs,
             "temperature": 0.85,
-            "max_tokens": _mt,
             "reasoning_effort": _eff,
             "stream": True,
             # 流式响应默认不返回 usage；加了才会在最后一条 SSE 消息里
@@ -1332,40 +1339,27 @@ class Brain:
         _uin = _uout = 0
 
         try:
-            with mp.stream(payload, timeout=120) as r:
-                r.raise_for_status()
-                for line in r.iter_lines():
-                    if not line:
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(data)
-                    except Exception:
-                        continue
-                    try:
-                        _u = obj.get("usage") or {}
-                        _uin += int(_u.get("prompt_tokens") or 0)
-                        _uout += int(_u.get("completion_tokens") or 0)
-                    except Exception:
-                        pass
-                    choices = obj.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    rc = delta.get("reasoning_content", "")
-                    c = delta.get("content", "")
-                    if rc:
-                        think_buf.append(rc)
-                        yield {"type": "think", "text": rc}
-                    if c:
-                        text_buf.append(c)
-                        yield {"type": "text", "text": c}
+            from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
+            for event in completion_events(mp, prepare(payload, _api0), timeout=120):
+                if event['type'] == 'think_delta':
+                    think_buf.append(event['text'])
+                    yield {'type': 'think', 'text': event['text']}
+                elif event['type'] == 'text_delta':
+                    text_buf.append(event['text'])
+                    yield {'type': 'text', 'text': event['text']}
+                elif event['type'] == 'completion':
+                    result = event['result']
+                    usage = result['usage'] or {}
+                    _uin = usage.get('prompt_tokens') or 0
+                    _uout = usage.get('completion_tokens') or 0
+                    if not result['complete']:
+                        yield {'type': 'error', 'class': result['reason'],
+                               'msg': ERROR_MESSAGES.get(result['reason'], '模型响应不完整')}
+                        return
         except Exception as e:
-            yield {"type": "error", "msg": "%s: %s" % (type(e).__name__, str(e)[:120])}
+            from model_providers.base import ProviderResponseError
+            reason = 'invalid_structure' if isinstance(e, ProviderResponseError) else 'connection_lost'
+            yield {'type': 'error', 'class': reason, 'msg': ERROR_MESSAGES[reason]}
             return
 
         full_text = "".join(text_buf)
