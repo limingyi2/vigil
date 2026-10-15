@@ -1,11 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {create} = require('../src/js/agent-center-state');
-function fixture() {
+const {create,connectionErrors} = require('../src/js/agent-center-state');
+function fixture(options = {}) {
   const f = {status:{ok:true,connection_id:'c1',generation:'g1',connection_status:'connected'},
     tasks:{ok:true,owned:[{id:'task',event_key:'hash',turn_key:'turn',ownership:'owned',source:'realtime',live:true,connection_generation:'g1'}],observed:[]},
     items:[],cursor:0,gap:false,failed:false,notices:[],paths:[]};
-  f.controller=create({notify:e=>f.notices.push(e),request:async path=>{
+  f.controller=create({...options,notify:e=>f.notices.push(e),request:async path=>{
     f.paths.push(path);if(f.failed)return{ok:false,err:'unavailable'};
     if(path.endsWith('/status'))return structuredClone(f.status);
     if(path.endsWith('/tasks'))return structuredClone(f.tasks);
@@ -36,4 +36,36 @@ test('missing Agent Center route is reported as a Brain version mismatch',async(
   await c.poll();
   assert.equal(c.state.error,'当前 Brain 版本不支持 Agent Center，请检查版本');
   assert.equal(c.state.stale,true);
+});
+
+test('startup connects once after Brain becomes reachable and respects later disconnect',async()=>{
+  let calls=0;
+  const f=fixture({connect:async()=>{calls++;f.status.connection_status='connected';return{ok:true};}});
+  f.status.connection_status='disconnected';f.failed=true;
+  await f.controller.poll();assert.equal(calls,0);
+  f.failed=false;
+  const a=f.controller.poll(),b=f.controller.poll();assert.equal(a,b);await a;
+  assert.equal(calls,1);assert.equal(f.controller.state.status.connection_status,'connected');
+  assert.equal(f.controller.state.stale,false);
+  f.status.connection_status='disconnected';await f.controller.poll();await f.controller.poll();
+  assert.equal(calls,1);assert.equal(f.controller.state.status.connection_status,'disconnected');
+});
+
+test('startup leaves existing connected and connecting sessions alone',async()=>{
+  for(const status of ['connected','connecting']){
+    let calls=0;const f=fixture({connect:async()=>{calls++;return{ok:true};}});
+    f.status.connection_status=status;await f.controller.poll();
+    f.status.connection_status='disconnected';await f.controller.poll();assert.equal(calls,0);
+  }
+});
+
+test('automatic connection errors remain visible without stopping status polling or retrying',async()=>{
+  for(const throws of [false,true]){
+    let calls=0;
+    const f=fixture({connect:async()=>{calls++;if(throws)throw Error('codex_cli_missing');return{ok:false,err:'codex_cli_missing'};}});
+    f.status.connection_status='disconnected';await f.controller.poll();
+    assert.equal(f.controller.state.ready,true);assert.equal(f.controller.state.stale,false);
+    assert.equal(f.controller.state.error,connectionErrors.codex_cli_missing);
+    await f.controller.poll();assert.equal(calls,1);
+  }
 });

@@ -12,13 +12,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 import time
 import uuid
 
 from codex_process import attach_job, close_job
+from codex_runtime import CodexRuntime
 
 
 class AdapterError(Exception):
@@ -45,7 +45,8 @@ class CodexAdapter:
         self.root.mkdir(parents=True, exist_ok=True)
         self.workspaces = self.root / "workspaces"
         self.workspaces.mkdir(exist_ok=True)
-        self.cli = cli or shutil.which("codex")
+        self.runtime = CodexRuntime(cli, home, environment)
+        self.cli = cli
         self.home, self.launch_args = home, list(launch_args)
         self.environment = dict(environment or {})  # trusted constructor only
         self.auto_reconnect, self.request_timeout = auto_reconnect, request_timeout
@@ -77,6 +78,9 @@ class CodexAdapter:
         self.default_model = None
         self.thread_config = {}
         self.reconnect_worker = None
+        self.reconnect_epoch = 0
+        self.reconnect_attempts = 0
+        self.login_process = None
         self._load_registry()
 
     def _load_registry(self):
@@ -140,10 +144,7 @@ class CodexAdapter:
     def _spawn(self):
         if not self.cli:
             raise AdapterError("codex_cli_missing", 503)
-        env = os.environ.copy()
-        env.update(self.environment)
-        if self.home:
-            env["CODEX_HOME"] = str(self.home)
+        env = self.runtime.env()
         flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         proc = subprocess.Popen(
             [self.cli, "app-server", "--listen", "stdio://", "-c", "analytics.enabled=false",
@@ -158,12 +159,21 @@ class CodexAdapter:
             raise
         return proc
 
-    def connect(self):
+    def connect(self, *, _reconnect_epoch=None):
         with self.connect_lock:
             with self.lock:
                 if self.closed:
                     raise AdapterError("adapter_closed", 503)
-                self.enabled = True
+                if self.login_process and self.login_process.poll() is None:
+                    return self.status()
+                if _reconnect_epoch is not None:
+                    if not self.enabled or _reconnect_epoch != self.reconnect_epoch:
+                        raise AdapterError("connection_cancelled")
+                else:
+                    self.enabled = True
+                    self.reconnect_epoch += 1
+                    self.reconnect_attempts = 0
+                epoch = self.reconnect_epoch
                 if self.connection_status == "connected":
                     return self.status()
                 self.connection_status = "connecting"
@@ -171,6 +181,13 @@ class CodexAdapter:
                 generation = self.generation
                 self.responses.clear()
             try:
+                detected = self.runtime.inspect()
+                self.cli = self.runtime.cli
+                if detected["error"]:
+                    raise AdapterError(detected["error"], 503)
+                with self.lock:
+                    if not self.enabled or epoch != self.reconnect_epoch:
+                        raise AdapterError("connection_cancelled")
                 proc = self._spawn()
                 with self.lock:
                     self.process = proc
@@ -192,6 +209,8 @@ class CodexAdapter:
                 self.models = {m["model"] for m in models}
                 self.default_model = next((m["model"] for m in models if m.get("isDefault")), None)
                 with self.lock:
+                    if not self.enabled or epoch != self.reconnect_epoch:
+                        raise AdapterError("connection_cancelled")
                     self.connection_status = "connected"
                     self.last_error = None
                     self._record("adapter/connected", protocol_agent=initialized.get("userAgent", "")[:240])
@@ -199,9 +218,13 @@ class CodexAdapter:
                     self._resume(task_id)
                 return self.status()
             except Exception as exc:
-                self._disconnect_generation(generation, "connect_failed")
+                code = getattr(exc, "code", "connect_failed")
+                self._disconnect_generation(generation, code)
                 self._terminate_current(generation)
-                raise AdapterError(getattr(exc, "code", "connect_failed"), 503) from None
+                with self.lock:
+                    if epoch == self.reconnect_epoch:
+                        self.last_error = code
+                raise AdapterError(code, 503) from None
 
     @staticmethod
     def _drain_stderr(proc):
@@ -244,6 +267,7 @@ class CodexAdapter:
         with self.cv:
             if generation != self.generation or self.connection_status == "disconnected":
                 return
+            was_connected = self.connection_status == "connected"
             self.connection_status = "disconnected"
             self.last_error = reason
             for request in self.pending.values():
@@ -258,24 +282,28 @@ class CodexAdapter:
             self._record("adapter/disconnected", reason=reason)
             self._save()
             self.cv.notify_all()
-            if self.enabled and not self.closed and self.auto_reconnect:
+            if was_connected and self.enabled and not self.closed and self.auto_reconnect:
                 if not self.reconnect_worker or not self.reconnect_worker.is_alive():
-                    self.reconnect_worker = threading.Thread(target=self._reconnect, daemon=True)
+                    self.reconnect_attempts = 0
+                    self.reconnect_worker = threading.Thread(target=self._reconnect, args=(self.reconnect_epoch,), daemon=True)
                     self.reconnect_worker.start()
 
-    def _reconnect(self):
+    def _reconnect(self, epoch):
         for delay in (1, 2, 4):
             time.sleep(delay)
             with self.lock:
-                if not self.enabled or self.closed or self.connection_status == "connected":
+                if not self.enabled or self.closed or epoch != self.reconnect_epoch or self.connection_status == "connected":
                     return
+                self.reconnect_attempts += 1
             try:
-                self.connect()
+                self.connect(_reconnect_epoch=epoch)
                 return
-            except AdapterError:
+            except AdapterError as exc:
+                if exc.code in {"codex_cli_missing", "codex_login_required", "connection_cancelled"}:
+                    return
                 continue
         with self.lock:
-            if self.closed or not self.enabled:
+            if self.closed or not self.enabled or epoch != self.reconnect_epoch:
                 return
             self.last_error = "reconnect_exhausted"
             self._record("adapter/reconnect_exhausted")
@@ -814,6 +842,8 @@ class CodexAdapter:
                     "generation": self.generation, "last_error": self.last_error,
                     "models": sorted(self.models), "default_model": self.default_model,
                     "approval_response_enabled": True,
+                    "runtime": dict(self.runtime.info),
+                    "reconnect_attempts": self.reconnect_attempts, "reconnect_limit": 3,
                     "transport_counts": dict(self.transport_counts)}
 
     def event_log(self, after=0):
@@ -842,10 +872,77 @@ class CodexAdapter:
     def disconnect(self):
         with self.lock:
             self.enabled = False
+            self.reconnect_epoch += 1
             generation = self.generation
+            if self.connection_status == "disconnected":
+                self.last_error = "explicit_disconnect"
         self._disconnect_generation(generation, "explicit_disconnect")
         self._terminate_current(generation)
+        proc = self.login_process
+        if proc and proc.poll() is None:
+            close_job(proc)
+            proc.terminate(); proc.wait(timeout=4)
+            self.runtime.info = {**self.runtime.info, "auth_status": "unknown"}
         return self.status()
+
+    def login(self):
+        """Only an explicit local-admin action may start the CLI-owned browser flow."""
+        with self.connect_lock:
+            if self.closed:
+                raise AdapterError("adapter_closed", 503)
+            if self.connection_status == "connected":
+                return self.status()
+            if self.login_process and self.login_process.poll() is None:
+                return self.status()
+            info = self.runtime.inspect()
+            self.cli = self.runtime.cli
+            if not info["installed"] or not info["version"]:
+                raise AdapterError(info["error"] or "codex_cli_unavailable", 503)
+            flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+            try:
+                proc = subprocess.Popen([self.cli, "login"], stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        env=self.runtime.env(), cwd=str(self.root), **flags)
+            except OSError:
+                self.last_error = "codex_login_failed"
+                raise AdapterError("codex_login_failed", 503) from None
+            try:
+                attach_job(proc)
+            except OSError:
+                proc.terminate(); proc.wait(timeout=4)
+                raise AdapterError("codex_login_failed", 503) from None
+            with self.lock:
+                self.login_process = proc
+                self.enabled = True
+                self.reconnect_epoch += 1
+                epoch = self.reconnect_epoch
+                self.runtime.info = {**info, "auth_status": "logging_in", "error": None}
+                self.last_error = None
+            threading.Thread(target=self._finish_login, args=(proc, epoch), daemon=True).start()
+            return self.status()
+
+    def _finish_login(self, proc, epoch):
+        error = None
+        try:
+            if proc.wait(timeout=300):
+                error = "codex_login_failed"
+        except subprocess.TimeoutExpired:
+            error = "codex_login_timeout"
+        finally:
+            close_job(proc)
+            if proc.poll() is None:
+                proc.terminate(); proc.wait(timeout=4)
+        with self.lock:
+            if self.closed or not self.enabled or epoch != self.reconnect_epoch:
+                return
+            if error:
+                self.last_error = error
+                self.runtime.info = {**self.runtime.info, "auth_status": "unknown", "error": error}
+                return
+        try:
+            self.connect(_reconnect_epoch=epoch)
+        except AdapterError:
+            pass  # connect publishes only a safe error category in status.
 
     def reconnect(self):
         self.disconnect()
@@ -911,7 +1008,7 @@ def handle_http(method, path, body=None, query=None, *, is_admin=False, is_local
             out = center.event_log(max(0, int(query.get("after", 0))))
         elif method == "GET" and route == "observed":
             out = center.observe(query.get("thread_id"))
-        elif method == "POST" and route in ("connect", "disconnect", "reconnect"):
+        elif method == "POST" and route in ("connect", "disconnect", "reconnect", "login"):
             out = getattr(center, route)()
         elif method == "POST" and route == "tasks":
             out = center.create_task(body.get("model"))

@@ -6,19 +6,19 @@ const fs=require('fs'),path=require('path'),os=require('os'),vm=require('vm');
 const http=require('http'),https=require('https'),assert=require('assert/strict');
 for(const stream of [process.stdout,process.stderr]) stream.on('error',e=>{if(e.code!=='EPIPE')throw e;});
 const root=path.resolve(__dirname,'../..'),client=path.join(root,'client');
-const output=path.join(root,'docs/agent-center-codex-p2-evidence');fs.mkdirSync(output,{recursive:true});
+const output=process.env.VIGIL_TEST_EVIDENCE_DIR || path.join(root,'docs/agent-center-codex-p2-evidence');fs.mkdirSync(output,{recursive:true});
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'vigil-p2-electron-'));
 app.setPath('userData',path.join(tmp,'electron'));app.setAppUserModelId('Vigil.AgentCenter.P2.Test');
 let win,fixture,ready,token,requestSeq=0;
 const commands=new Map(),requests=[],results=[],errors=[],notifications=[],notificationOutcomes=[];
-const trace=[],traceSeen=new Set();
+const trace=[],traceSeen=new Set(),externalLinks=[];
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 function result(name,detail){results.push({name,status:'passed',detail});}
 function command(op,extra={}){return new Promise((resolve,reject)=>{const id=++requestSeq;const timeout=setTimeout(()=>{commands.delete(id);reject(Error('fixture timeout '+op));},20000);commands.set(id,v=>{clearTimeout(timeout);
   for(const e of v.events || []){const key=e.connection+':'+e.seq;if(e.method!=='fixture/rollover' && !traceSeen.has(key)){trace.push(e);traceSeen.add(key);}}
   resolve(v);});fixture.stdin.write(JSON.stringify({id,op,...extra})+'\n');});}
 async function startFixture(){
-  fixture=spawn(process.env.VIGIL_TEST_PYTHON || 'python',[path.join(root,'tools/agent_center_p2_fixture.py')],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  fixture=spawn(process.env.VIGIL_TEST_PYTHON || 'python',[path.join(root,'tools/agent_center_p2_fixture.py')],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe'],env:{...process.env,VIGIL_HOME:path.join(tmp,'brain'),VIGIL_TEST_START_DISCONNECTED:'1'}});
   const connection=new Promise((resolve,reject)=>{
     let buf='';fixture.stdout.on('data',chunk=>{buf+=chunk;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;
       try{const v=JSON.parse(line);if(v.ready)resolve(v);else if(commands.has(v.id)){commands.get(v.id)(v);commands.delete(v.id);}}catch(e){reject(Error('fixture invalid output'));}}});
@@ -56,6 +56,7 @@ async function setup(){
   }
   require('../electron/agent-center-notifications').register({ipcMain,Notification:RecordedNotification,getWindow:()=>win,indexPath:path.join(client,'src/index.html')});
   const handlers={'cfg:get':()=>({wizard_done:true,roots:[]}), 'cfg:set':()=>({}), 'app:version':()=> 'P2 local fixture',
+    'shell:open':(_,url)=>{externalLinks.push(url);return{ok:true};},
     'plugins:load':()=>({ok:true}),'auto:connect':()=>({ok:false}), 'sidecar:status':()=>({status:'stopped'}),
     'token:get':()=> '已保存','local:caps':()=>[],'local:defaults':()=>({roots:[],commands:[]}),
     'wallpaper:request':(_,p)=>({ok:true,data:p.resource==='/settings'?{settings:{settingsVersion:7,glassAlpha:78,blur:10,id:''}}:{wallpapers:[]}}),'updater:check':()=>({})};
@@ -72,6 +73,10 @@ async function shot(name){await wait(150);fs.writeFileSync(path.join(output,name
 async function run(){
   await setup();
   await until(`document.querySelector('#gnav [data-page="agent-center"]') && VigilAgentCenter.controller.state.ready`);
+  assert.equal(await ev('VigilAgentCenter.controller.state.status.connection_status'),'connected');
+  assert.equal(requests.filter(r=>r.method==='POST' && r.path==='/api/agent-center/connect').length,1);
+  assert.equal(requests.some(r=>r.method==='POST' && r.path==='/api/agent-center/tasks'),false);
+  result('startup automatically connects once before opening Agent Center without starting a task');
   await ev(`document.querySelector('#gnav [data-page="agent-center"]').click()`);
   await until(`document.querySelectorAll('#ac-agent-grid .ac-agent-card').length===3`);
   assert.equal(await ev(`document.querySelectorAll('#ac-agent-grid .ac-agent-card.is-live').length`),1);
@@ -84,6 +89,39 @@ async function run(){
   assert.equal(await ev(`document.querySelector('#ac-agent-grid .ac-agent-work-buddy').textContent.includes('待接入')`),true);
   await shot('workspace-overview-light');
   result('workspace overview shows one live Codex and two honest pending adapters');
+  for(const back of ['ac-back','ac-back-panel','ac-back','ac-back-panel']){
+    await ev(`document.querySelector('[data-ac-agent-card="codex"]').click()`);
+    assert.equal(await ev(`getComputedStyle(document.querySelector('#ac-overview')).display`),'none');
+    await ev(`document.querySelector('#${back}').click()`);
+    await poll();
+    assert.equal(await ev(`document.querySelector('#ac-overview').hidden`),false);
+    assert.notEqual(await ev(`getComputedStyle(document.querySelector('#ac-overview')).display`),'none');
+    assert.equal(await ev(`document.querySelector('#ac-agent-detail-shell').hidden`),true);
+    assert.equal(await ev(`document.querySelectorAll('#ac-agent-detail-shell > *').length`),0);
+    assert.equal(await ev(`[...document.querySelectorAll('#ac-agent-grid .ac-agent-card')].filter(el=>el.getClientRects().length>0).length`),3);
+    assert.equal(await ev(`document.querySelector('#topbar h1')?.textContent || document.querySelector('.ac-topbar h1').textContent`),'Agent 工作室');
+  }
+  result('both return buttons restore three visible cards across repeated detail navigation and polling');
+  for(const entry of [
+    {error:'codex_cli_missing',installed:false,version:null,auth_status:'unknown',text:'未安装或未找到'},
+    {error:'codex_login_required',auth_status:'logged_out',text:'尚未登录'},
+    {error:'reconnect_exhausted',auth_status:'logged_in',text:'3 次上限'},
+  ]){
+    await command('runtime',entry);await poll();
+    assert.equal(await ev(`document.querySelector('#ac-overview-connection').textContent.includes(${JSON.stringify(entry.text)})`),true);
+    assert.equal(await ev(`document.querySelector('#ac-overview-connection [data-ac-help="login"]').disabled`),entry.installed===false);
+    if(entry.auth_status==='logged_out'){
+      await ev(`document.querySelector('#ac-overview-connection [data-ac-help="login"]').click()`);
+      await until(`document.querySelector('#ac-overview-connection').textContent.includes('等待官方浏览器登录')`);
+      assert.equal(requests.filter(r=>r.method==='POST' && r.path==='/api/agent-center/login').length,1);
+      assert.equal(await ev(`document.querySelector('#ac-overview-connection [data-ac-help="connect"]').disabled`),true);
+    }
+  }
+  await ev(`document.querySelector('#ac-overview-connection [data-ac-help="install"]').click();document.querySelector('#ac-overview-connection [data-ac-help="auth"]').click()`);
+  await until(`document.querySelector('#ac-overview-connection')`);
+  assert.deepEqual(externalLinks,['https://developers.openai.com/codex/cli','https://developers.openai.com/codex/auth']);
+  await command('reconnect');await poll();
+  result('missing CLI, signed-out and exhausted retry causes plus official install/login links are visible');
   await ev(`document.querySelector('[data-ac-agent-card="codex"]').click()`);
   await until(`document.querySelector('#ac-detail') && document.querySelector('#ac-tasks .ac-task')`);
   assert.equal(notifications.length,0);assert.equal(await ev('API.runtime.kind'),'electron');
@@ -105,6 +143,8 @@ async function run(){
   assert.equal(requests.some(r=>r.method==='POST' && r.path.includes('/approvals')),false);
   await shot('approval-light');result('waiting approval, duplicate event and IPC dedup; no response controls',{nativeSupported:Notification.isSupported()});
   await command('disconnect');await poll();assert.match(await ev(`document.querySelector('#ac-connection').textContent`),/已断开/);
+  await poll();assert.equal(requests.filter(r=>r.method==='POST' && r.path==='/api/agent-center/connect').length,1);
+  result('explicit disconnect remains disconnected on later polls');
   assert.match(await ev(`document.querySelector('#ac-detail').textContent`),/未知/);
   assert.equal(await ev(`document.querySelector('#ac-interrupt').hidden`),true);
   assert.equal(await ev(`getComputedStyle(document.querySelector('#ac-interrupt')).display`),'none');

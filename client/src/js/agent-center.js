@@ -9,8 +9,9 @@
   let started = false, timer;
   const controller = AgentCenterState.create({
     request:async path => API.pick(await API.get(path)),
+    connect:async () => API.pick(await API.post('/api/agent-center/connect',{})),
     notify:async event => {
-      toast(event.kind === 'approval' ? 'Codex 等待审批 · 答复尚未开放' : event.kind === 'input' ? 'Codex 需要补充输入' : 'Codex 任务失败，请查看 Agent Center',5000);
+      toast(event.kind === 'approval' ? 'Codex 等待审批，请查看 Agent Center' : event.kind === 'input' ? 'Codex 需要补充输入' : 'Codex 任务失败，请查看 Agent Center',5000);
       const bridge = global.vigil && global.vigil.agentCenter;
       if (bridge) {
         const r = await bridge.notify(event);
@@ -57,6 +58,8 @@
     stale:'状态已过期', unsupported:'版本不支持', error:'连接错误', unknown:'未知', pending:'待接入' };
   function overviewError(raw) {
     const text = String(raw || '');
+    if (AgentCenterState.connectionErrors[text]) return AgentCenterState.connectionErrors[text];
+    if (Object.values(AgentCenterState.connectionErrors).includes(text)) return text;
     if (/当前 Brain 版本不支持|agent_center_route_missing|no such api|not found/i.test(text))
       return '当前 Brain 版本不支持 Agent Center，请检查版本';
     if (/Token|权限|bad token|forbidden|admin/i.test(text))
@@ -64,6 +67,12 @@
     if (/App Server|unavailable|不可用|未启动/i.test(text))
       return 'Codex App Server 未启动或当前不可用';
     return text || '';
+  }
+  function connectionHelp(s, busy) {
+    const runtime=s.status.runtime || {}, code=s.status.last_error || runtime.error;
+    const auth={unchecked:'等待检测',unknown:'未知',logged_in:'已登录（官方 CLI 本地状态）',logged_out:'未登录',logging_in:'等待官方浏览器登录'}[runtime.auth_status] || '等待检测';
+    const blocked=busy || s.stale || runtime.auth_status==='logging_in' || s.status.connection_status==='connecting';
+    return `<h3>本机 Codex 连接</h3><p>CLI：${esc(runtime.version || (runtime.installed===false?'未找到':'等待检测'))} · 登录：${esc(auth)}</p>${code?`<p role="status">${esc(overviewError(code))}</p>`:''}<p class="ac-muted">Vigil 启动独立的受管 App Server；已有 Codex 桌面会话仅可读取历史，无法确认或控制其实时状态。</p><div class="ac-actions"><button class="btn" data-ac-help="install">官方安装说明</button><button class="btn" data-ac-help="auth">官方登录说明</button><button class="btn" data-ac-help="login" ${blocked||runtime.installed===false||s.status.connection_status==='connected'?'disabled':''}>通过官方 CLI 登录</button><button class="btn" data-ac-help="connect" ${blocked?'disabled':''}>重新检测并连接</button></div><p class="ac-muted">终端安装：<code>npm install -g @openai/codex</code> · 终端登录：<code>codex login</code>。账号认证由 Codex 管理。</p>${s.status.reconnect_attempts?`<p>本轮自动重连：${Number(s.status.reconnect_attempts)} / ${Number(s.status.reconnect_limit)||3}</p>`:''}`;
   }
   function codexOverview(s) {
     const status = s.error && /版本不支持/.test(s.error) ? 'unsupported' :
@@ -104,6 +113,7 @@
       <section class="ac-workspace-hero"><div><p class="ac-eyebrow">AGENT WORKSPACE</p><h2>你的 Agent 团队</h2><p class="ac-muted">把不同来源的 Agent 放在同一张工作台上。只有接入真实 Adapter 的 Agent 才会显示在线和任务控制。</p></div><div class="ac-hero-actions"><span class="ac-sync-note" id="ac-overview-updated">等待同步…</span><button class="btn" id="ac-add-agent" type="button">${icon('plus','xs')} 添加 Agent</button><button class="btn" id="ac-overview-refresh" type="button">${icon('refresh','xs')} 刷新</button></div></section>
       <p class="ac-error" id="ac-overview-error" role="alert" hidden></p>
       <div class="ac-section-heading"><div><h2>Agent 总览</h2><p class="ac-muted" id="ac-agent-count">正在读取连接状态…</p></div><span class="ac-muted">桌面控制台 · 本机工作区</span></div>
+      <section class="ac-card" id="ac-overview-connection"></section>
       <section class="ac-agent-grid" id="ac-agent-grid" aria-label="Agent 总览"></section>
       <section class="ac-recent-strip"><div class="ac-section-heading"><div><h2>最近任务</h2><p class="ac-muted">只显示已接入 Agent 的轻量摘要</p></div></div><div id="ac-recent-tasks" class="ac-recent-list"></div></section>
     </div><div id="ac-agent-detail-shell" hidden></div>`;
@@ -122,6 +132,7 @@
     function detailTemplate() {
       return `<div class="ac-detail-page"><header class="ac-detail-header"><div><button class="btn ac-back-inline" id="ac-back" type="button">${icon('arrow-up','xs')} Agent 总览</button><p class="ac-eyebrow">CONNECTED AGENT · CODEX</p><h2>Codex 管理台</h2><p class="ac-muted">这里显示真实 App Server 状态、owned / observed 身份和受保护的原生审批。</p></div><div class="ac-actions"><button class="btn" data-ac-action="connect">连接</button><button class="btn" data-ac-action="reconnect">重新连接</button><button class="btn" data-ac-action="disconnect">断开</button><button class="btn" id="ac-refresh">刷新</button></div></header>
         <section class="ac-card ac-connection"><div><h2>Codex App Server</h2><p id="ac-connection" role="status">正在读取连接状态…</p></div></section>
+        <section class="ac-card" id="ac-setup"></section>
         <p class="ac-error" id="ac-error" role="alert" hidden></p><p class="ac-warning" id="ac-gap" role="status" hidden></p>
         <section class="ac-card"><h2>待处理事项 <span id="ac-pending-count"></span></h2><p class="ac-muted">仅处理 Vigil 创建的 owned 会话。逐条核对命令或文件变更；批准不会扩展到后续请求。</p><div id="ac-approvals"></div></section>
         <section class="ac-card"><div class="ac-heading"><h2>任务详情</h2><button class="btn" id="ac-interrupt" hidden>中断受管任务</button></div><div id="ac-detail"></div></section>
@@ -130,6 +141,7 @@
         <p class="ac-muted">仅限 loopback 上的管理员连接。独立桌面会话的实时状态不可确认，始终显示 unknown。</p></div>`;
     }
     function paintOverview(s) {
+      write(q('ac-overview-connection'), connectionHelp(s,busy));
       const live = codexOverview(s);
       const agents = [live, ...pendingAgents.map(x => ({...x,status:'pending',statusText:'待接入',current_task:'尚无真实连接',taskCount:null,pending:0,recent_activity:'尚无活动记录',capabilities:['无控制能力']}))];
       write(q('ac-agent-grid'), agents.map(agentCard).join(''));
@@ -145,6 +157,7 @@
       write(q('ac-recent-tasks'), recent.map(t => `<div class="ac-recent-item"><span class="ac-state ac-${esc(t.status)}">${esc(labels[t.status] || '未知')}</span><strong>${esc(t.model || 'Codex')}</strong><span>${esc(t.last_error || (t.current_operation ? operations[t.current_operation.type] || '执行中' : '受管任务'))}</span><time>${esc(fmtTime(t.last_activity,'full') || '—')}</time></div>`).join('') || '<p class="ac-muted ac-empty">暂无已创建任务</p>');
     }
     function paintDetail(s) {
+      write(q('ac-setup'), connectionHelp(s,busy));
       const connected = !s.stale && s.status.connection_status === 'connected';
       q('ac-connection').textContent = `${s.stale ? '服务不可用 · 状态已过期' : ({connected:'已连接',connecting:'连接中',disconnected:'已断开'}[s.status.connection_status] || '未知')} · ${s.updatedAt ? '最近同步 '+fmtTime(s.updatedAt,'full') : '尚未同步'}`;
       q('ac-error').hidden = !s.error && !s.status.last_error; q('ac-error').textContent = overviewError(s.error || s.status.last_error || '');
@@ -162,20 +175,21 @@
       write(q('ac-events'), events.slice().reverse().map(e=>`<li><time>${esc(fmtTime(e.at,'full'))}</time><div><strong>${esc(e.method)}</strong><span>${esc(e.state ? labels[e.state] || e.state : '')} ${esc(e.type ? operations[e.type] || e.type : '')}${e.exitCode!=null?' · exit '+esc(e.exitCode):''}</span></div><small>${e.source==='history'?'历史元数据':e.delivery==='history'?'历史回放 · 原始实时事件':'实时增量'}</small></li>`).join('') || '<li class="ac-muted">暂无可用事件；observed 仅提供历史元数据。</li>');
       q('ac-cursor').textContent = 'cursor '+s.cursor;
       q('ac-interrupt').hidden = !(owned && connected && task.live && ['starting','running','waiting_approval','waiting_input'].includes(task.status)); q('ac-interrupt').disabled = busy;
-      ctx.view.querySelectorAll('[data-ac-action]').forEach(b=>b.disabled=busy||s.stale||(b.dataset.acAction==='disconnect'&&!connected)); q('ac-observe').disabled=busy||!connected;
+      const loggingIn=s.status.runtime?.auth_status==='logging_in';
+      ctx.view.querySelectorAll('[data-ac-action]').forEach(b=>b.disabled=busy||s.stale||(loggingIn&&b.dataset.acAction!=='disconnect')||(b.dataset.acAction==='disconnect'&&!connected&&!loggingIn)); q('ac-observe').disabled=busy||!connected;
       const model=q('ac-model'), value=model.value; write(model,(s.status.models||[]).map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')); if ([...model.options].some(o=>o.value===value)) model.value=value; else if(s.status.default_model) model.value=s.status.default_model; q('ac-start').disabled=busy||!connected||!model.options.length;
     }
     function paint(s) { paintOverview(s); if (detailOpen) paintDetail(s); }
-    async function action(fn) { if(busy||disposed)return; busy=true; paint(controller.state); try{const r=API.pick(await fn());if(!r.ok)throw new Error(overviewError(r._err||r.err)||'操作失败');}catch(e){if(!disposed){q('ac-action-result').textContent=e.message;toast(e.message);}}finally{busy=false;await controller.poll();} }
+    async function action(fn) { if(busy||disposed)return; busy=true; paint(controller.state); try{const r=API.pick(await fn());if(!r.ok)throw new Error(overviewError(r._err||r.err)||'操作失败');}catch(e){if(!disposed){const result=q('ac-action-result');if(result)result.textContent=e.message;toast(e.message);}}finally{busy=false;await controller.poll();} }
     function bindApprovalControls() {
       ctx.view.querySelectorAll('[data-ac-respond]').forEach(button=>button.onclick=()=>{const a=controller.state.approvals.find(x=>x.id===button.dataset.approval);if(!a)return;const identity={connection:a.connection,connection_generation:a.connection_generation||a.generation,thread_id:a.thread_id,turn_id:a.turn_id,request_id:a.request_id,item_id:a.item_id};action(()=>API.post('/api/agent-center/approvals/'+encodeURIComponent(a.id)+'/respond',{...identity,action:button.dataset.acRespond}));});
       ctx.view.querySelectorAll('[data-ac-answer]').forEach(form=>form.onsubmit=e=>{e.preventDefault();const a=controller.state.approvals.find(x=>x.id===form.dataset.acAnswer);if(!a)return;const answers={};for(const question of(a.risk?.questions||[])){const chosen=[...form.querySelectorAll(`[name="answer-${CSS.escape(question.id)}"]:checked`)].map(x=>x.value);const other=form.querySelector(`[name="other-${CSS.escape(question.id)}"]`);if(other&&other.value.trim())chosen.push(other.value.trim());answers[question.id]=chosen;}const identity={connection:a.connection,connection_generation:a.connection_generation||a.generation,thread_id:a.thread_id,turn_id:a.turn_id,request_id:a.request_id,item_id:a.item_id};action(()=>API.post('/api/agent-center/approvals/'+encodeURIComponent(a.id)+'/respond',{...identity,action:'answer',answers}));});
     }
     const selectTask=e=>{const b=e.target.closest('[data-task]');if(b){selected=b.dataset.task;paint(controller.state);}};
-    const onViewClick=e=>{const card=e.target.closest('[data-ac-agent-card]');if(card){if(card.dataset.acAgentCard==='codex')openCodex();else toast('该 Agent 尚未接入可信 Adapter，当前没有在线状态、任务或控制能力。',4500);}};
+    const onViewClick=e=>{const help=e.target.closest('[data-ac-help]');if(help){const kind=help.dataset.acHelp;if(help.disabled)return;if(kind==='install'||kind==='auth'){global.vigil.openExternal(kind==='install'?'https://developers.openai.com/codex/cli':'https://developers.openai.com/codex/auth').catch(()=>toast('无法打开浏览器，请检查系统默认浏览器。'));}else action(()=>API.post('/api/agent-center/'+kind,{}));return;}const card=e.target.closest('[data-ac-agent-card]');if(card){if(card.dataset.acAgentCard==='codex')openCodex();else toast('该 Agent 尚未接入可信 Adapter，当前没有在线状态、任务或控制能力。',4500);}};
     const onViewKey=e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-ac-agent-card]')){e.preventDefault();e.target.closest('[data-ac-agent-card]').click();}};
     function openCodex(){if(detailOpen)return;detailOpen=true;q('ac-overview').hidden=true;const shell=q('ac-agent-detail-shell');shell.hidden=false;shell.innerHTML=detailTemplate();renderPanelDetail();ctx.topbar.querySelector('h1').textContent='Codex 管理台';bindDetail();paint(controller.state);}
-    function closeDetail(){if(!detailOpen)return;detailOpen=false;q('ac-agent-detail-shell').hidden=true;q('ac-agent-detail-shell').innerHTML='';renderPanelOverview();ctx.topbar.querySelector('h1').textContent='Agent 工作室';paint(controller.state);}
+    function closeDetail(){if(!detailOpen)return;detailOpen=false;q('ac-agent-detail-shell').hidden=true;q('ac-agent-detail-shell').innerHTML='';q('ac-overview').hidden=false;renderPanelOverview();ctx.topbar.querySelector('h1').textContent='Agent 工作室';paint(controller.state);}
     function bindDetail(){q('ac-back').onclick=closeDetail;q('ac-back-panel').onclick=closeDetail;ctx.view.querySelectorAll('[data-ac-action]').forEach(b=>b.onclick=()=>action(()=>API.post('/api/agent-center/'+b.dataset.acAction,{})));q('ac-refresh').onclick=()=>controller.poll();q('ac-observe').onclick=()=>action(()=>API.get('/api/agent-center/observed'));q('ac-interrupt').onclick=()=>action(()=>API.post('/api/agent-center/tasks/'+encodeURIComponent(selected.slice(6))+'/interrupt',{}));q('ac-create').onsubmit=e=>{e.preventDefault();const text=q('ac-prompt').value.trim(),model=q('ac-model').value;if(!text||!model)return;action(async()=>{const created=API.pick(await API.post('/api/agent-center/tasks',{model}));if(!created.ok)return{ok:false,json:created};selected='owned:'+created.id;const r=await API.post('/api/agent-center/tasks/'+encodeURIComponent(created.id)+'/turns',{text});if(r.ok&&!disposed){q('ac-prompt').value='';q('ac-action-result').textContent='受管任务已启动';}return r;});};}
     q('ac-overview-refresh').onclick=()=>controller.poll();q('ac-add-agent').onclick=()=>toast('通用 Agent Adapter 尚未开放；请先接入可信的状态、任务和权限接口。',4500);ctx.view.addEventListener('click',onViewClick);ctx.view.addEventListener('keydown',onViewKey);ctx.panel.addEventListener('click',selectTask);listeners.add(paint);ctx.onDispose(()=>{disposed=true;listeners.delete(paint);ctx.view.removeEventListener('click',onViewClick);ctx.view.removeEventListener('keydown',onViewKey);ctx.panel.removeEventListener('click',selectTask);});paint(controller.state);start();
     if(!global.vigil){q('ac-overview-error').hidden=false;q('ac-overview-error').textContent=API.runtime.preview?'浏览器预览：Agent Center 需要 Electron preload 和本机管理员连接。':'Electron preload 未加载，Agent Center IPC 不可用。';}

@@ -3,10 +3,12 @@
 Zero hosted-model requests. Skip only when the Codex executable is absent.
 """
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -85,6 +87,14 @@ class ModelFixture:
         root = Path(root)
         home = root / "codex-home"
         home.mkdir(exist_ok=True)
+        # Auth preflight uses only this synthetic loopback fixture key and isolated home.
+        # No production login or account credentials participate in native regressions.
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(home)
+        flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+        subprocess.run([shutil.which("codex"), "login", "--with-api-key"],
+                       input=self.secret.encode(), stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, env=env, timeout=10, check=True, **flags)
         args = ["-c", 'model_provider="p1_fixture"',
                 "-c", 'model_providers.p1_fixture.name="P1 fixture"',
                 "-c", 'model_providers.p1_fixture.base_url="http://127.0.0.1:%d/v1"' % self.server.server_port,
