@@ -1,0 +1,45 @@
+{
+  "release": "1.0.1",
+  "date": "2026-10-15",
+  "source_commit": "8a401b292d48141d1d04ed6cef7e660ac5c3855b",
+  "python_tests": 96,
+  "node_tests": 30,
+  "agent_electron_checks": 25,
+  "model_electron_checks": 4,
+  "attachment_electron_checks": 9,
+  "packaged_attachment_checks": [
+    "PNG upload/readback",
+    "MP4 upload/readback",
+    "PDF upload/readback",
+    "TXT upload/readback",
+    "Python source upload/readback",
+    "FFmpeg frame extraction",
+    "oversized rejection before storage",
+    "confirmation required"
+  ],
+  "cloud_tool_counters_at_acceptance": {
+    "calls": 1,
+    "ok": 1,
+    "errors": 0,
+    "timeout": 0
+  },
+  "production_codex_task": {
+    "id": "f2401180488f48a2b60fff258fe88d2d",
+    "completed_before_restart": true,
+    "retained_after_restart": true
+  },
+  "native_approval_probe": {
+    "method": "item/commandExecution/requestApproval",
+    "response_enabled": false,
+    "approval_response_sent": false
+  },
+  "artifact_sha256": {
+    "Vigil Setup 1.0.1.exe": "ce4a11a67905bca7ea1b2c4846b58842e47cdf98ca623d67157be5d238178cf3",
+    "Vigil 1.0.1.exe": "e89ce9f04a9e758e48397d96c55c714e06fd2a1b4a51a516741dc94d4c59fe9c"
+  },
+  "limitations": [
+    "External Codex sessions are history-only",
+    "Incomplete or expanded-permission native approval requests remain display-only",
+    "Live model output quality and all provider combinations are not certified"
+  ]
+}

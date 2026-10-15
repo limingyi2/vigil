@@ -3,7 +3,8 @@
 Only registered owned threads may be resumed, controlled or receive a manually
 submitted response. Observed desktop sessions remain read-only. The native
 login stays in Codex; raw prompts, outputs, commands and credentials are not
-persisted in the adapter journal. Polling uses a sequence cursor.
+persisted in the adapter journal. Only explicitly published reasoning summaries
+are retained as bounded summary text. Polling uses a sequence cursor.
 """
 import atexit
 import collections
@@ -12,13 +13,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 import time
 import uuid
 
 from codex_process import attach_job, close_job
+from codex_runtime import CodexRuntime
 
 
 class AdapterError(Exception):
@@ -28,6 +29,10 @@ class AdapterError(Exception):
 
 
 TERMINAL = {"completed", "failed", "interrupted"}
+SUMMARY_METHODS = {"item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded"}
+SUMMARY_MAX_CHARS = 65536
+SUMMARY_MAX_ITEMS = 16
+SUMMARY_MAX_PARTS = 32
 APPROVAL_METHODS = {
     "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
     "item/permissions/requestApproval", "execCommandApproval", "applyPatchApproval",
@@ -45,7 +50,8 @@ class CodexAdapter:
         self.root.mkdir(parents=True, exist_ok=True)
         self.workspaces = self.root / "workspaces"
         self.workspaces.mkdir(exist_ok=True)
-        self.cli = cli or shutil.which("codex")
+        self.runtime = CodexRuntime(cli, home, environment)
+        self.cli = cli
         self.home, self.launch_args = home, list(launch_args)
         self.environment = dict(environment or {})  # trusted constructor only
         self.auto_reconnect, self.request_timeout = auto_reconnect, request_timeout
@@ -77,6 +83,9 @@ class CodexAdapter:
         self.default_model = None
         self.thread_config = {}
         self.reconnect_worker = None
+        self.reconnect_epoch = 0
+        self.reconnect_attempts = 0
+        self.login_process = None
         self._load_registry()
 
     def _load_registry(self):
@@ -111,7 +120,8 @@ class CodexAdapter:
         return path
 
     def _save(self):
-        # Approvals, observed records, prompt/answer text and tool arguments are absent.
+        # Persist owned metadata and the latest turn's reasoning_summary only.
+        # Approvals, raw reasoning, prompt/answer text and tool arguments are absent.
         tmp = self.root / "owned.json.tmp"
         tmp.write_text(json.dumps({"version": 1, "tasks": list(self.tasks.values())},
                                   ensure_ascii=False), encoding="utf-8")
@@ -130,7 +140,7 @@ class CodexAdapter:
             event["task"] = self._label(task["id"])
             event["thread"] = self._label(task["thread_id"])
         self.events.append(event)
-        # A bounded rotating journal of whitelisted metadata, never raw payloads.
+        # Bounded whitelisted metadata and published summary deltas, never raw payloads.
         path = self.root / "events.jsonl"
         if path.exists() and path.stat().st_size > 4 * 1024 * 1024:
             path.replace(self.root / "events.previous.jsonl")
@@ -140,10 +150,7 @@ class CodexAdapter:
     def _spawn(self):
         if not self.cli:
             raise AdapterError("codex_cli_missing", 503)
-        env = os.environ.copy()
-        env.update(self.environment)
-        if self.home:
-            env["CODEX_HOME"] = str(self.home)
+        env = self.runtime.env()
         flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         proc = subprocess.Popen(
             [self.cli, "app-server", "--listen", "stdio://", "-c", "analytics.enabled=false",
@@ -158,12 +165,21 @@ class CodexAdapter:
             raise
         return proc
 
-    def connect(self):
+    def connect(self, *, _reconnect_epoch=None):
         with self.connect_lock:
             with self.lock:
                 if self.closed:
                     raise AdapterError("adapter_closed", 503)
-                self.enabled = True
+                if self.login_process and self.login_process.poll() is None:
+                    return self.status()
+                if _reconnect_epoch is not None:
+                    if not self.enabled or _reconnect_epoch != self.reconnect_epoch:
+                        raise AdapterError("connection_cancelled")
+                else:
+                    self.enabled = True
+                    self.reconnect_epoch += 1
+                    self.reconnect_attempts = 0
+                epoch = self.reconnect_epoch
                 if self.connection_status == "connected":
                     return self.status()
                 self.connection_status = "connecting"
@@ -171,6 +187,13 @@ class CodexAdapter:
                 generation = self.generation
                 self.responses.clear()
             try:
+                detected = self.runtime.inspect()
+                self.cli = self.runtime.cli
+                if detected["error"]:
+                    raise AdapterError(detected["error"], 503)
+                with self.lock:
+                    if not self.enabled or epoch != self.reconnect_epoch:
+                        raise AdapterError("connection_cancelled")
                 proc = self._spawn()
                 with self.lock:
                     self.process = proc
@@ -192,6 +215,8 @@ class CodexAdapter:
                 self.models = {m["model"] for m in models}
                 self.default_model = next((m["model"] for m in models if m.get("isDefault")), None)
                 with self.lock:
+                    if not self.enabled or epoch != self.reconnect_epoch:
+                        raise AdapterError("connection_cancelled")
                     self.connection_status = "connected"
                     self.last_error = None
                     self._record("adapter/connected", protocol_agent=initialized.get("userAgent", "")[:240])
@@ -199,9 +224,13 @@ class CodexAdapter:
                     self._resume(task_id)
                 return self.status()
             except Exception as exc:
-                self._disconnect_generation(generation, "connect_failed")
+                code = getattr(exc, "code", "connect_failed")
+                self._disconnect_generation(generation, code)
                 self._terminate_current(generation)
-                raise AdapterError(getattr(exc, "code", "connect_failed"), 503) from None
+                with self.lock:
+                    if epoch == self.reconnect_epoch:
+                        self.last_error = code
+                raise AdapterError(code, 503) from None
 
     @staticmethod
     def _drain_stderr(proc):
@@ -244,6 +273,7 @@ class CodexAdapter:
         with self.cv:
             if generation != self.generation or self.connection_status == "disconnected":
                 return
+            was_connected = self.connection_status == "connected"
             self.connection_status = "disconnected"
             self.last_error = reason
             for request in self.pending.values():
@@ -255,27 +285,34 @@ class CodexAdapter:
                 task["last_known_status"] = task["status"]
                 task["status"], task["live"] = "unknown", False
                 task["current_operation"] = None
+                self._record("task/status/changed", task=task, turn=self._label(task.get("current_turn")),
+                             state="unknown", previous_state=task["last_known_status"],
+                             state_transition=task["last_known_status"] != "unknown", reason=reason)
             self._record("adapter/disconnected", reason=reason)
             self._save()
             self.cv.notify_all()
-            if self.enabled and not self.closed and self.auto_reconnect:
+            if was_connected and self.enabled and not self.closed and self.auto_reconnect:
                 if not self.reconnect_worker or not self.reconnect_worker.is_alive():
-                    self.reconnect_worker = threading.Thread(target=self._reconnect, daemon=True)
+                    self.reconnect_attempts = 0
+                    self.reconnect_worker = threading.Thread(target=self._reconnect, args=(self.reconnect_epoch,), daemon=True)
                     self.reconnect_worker.start()
 
-    def _reconnect(self):
+    def _reconnect(self, epoch):
         for delay in (1, 2, 4):
             time.sleep(delay)
             with self.lock:
-                if not self.enabled or self.closed or self.connection_status == "connected":
+                if not self.enabled or self.closed or epoch != self.reconnect_epoch or self.connection_status == "connected":
                     return
+                self.reconnect_attempts += 1
             try:
-                self.connect()
+                self.connect(_reconnect_epoch=epoch)
                 return
-            except AdapterError:
+            except AdapterError as exc:
+                if exc.code in {"codex_cli_missing", "codex_login_required", "connection_cancelled"}:
+                    return
                 continue
         with self.lock:
-            if self.closed or not self.enabled:
+            if self.closed or not self.enabled or epoch != self.reconnect_epoch:
                 return
             self.last_error = "reconnect_exhausted"
             self._record("adapter/reconnect_exhausted")
@@ -401,6 +438,7 @@ class CodexAdapter:
         try:
             turn = self._rpc("turn/start", {"threadId": thread_id,
                              "input": [{"type": "text", "text": text}], "effort": "low",
+                             "summary": "auto",
                              "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
                              "approvalPolicy": "on-request", "approvalsReviewer": "user"})["turn"]
             with self.lock:
@@ -431,11 +469,17 @@ class CodexAdapter:
             if generation != self.generation:
                 return False
             method = message.get("method", "")
+            # Full reasoning is neither a summary nor displayable event content.
+            if method == "item/reasoning/textDelta":
+                return False
             params = message.get("params") or {}
             thread_id = params.get("threadId") or (params.get("thread") or {}).get("id")
             task = next((t for t in self.tasks.values() if t["thread_id"] == thread_id), None)
             # Unowned events may never establish ownership, approval eligibility or control.
             if not task or task.get("connection_generation") != generation:
+                return False
+            is_summary = method in SUMMARY_METHODS
+            if is_summary and not self._valid_summary_event(task, params, generation, method):
                 return False
             event_turn = params.get("turnId") or (params.get("turn") or {}).get("id") or task.get("current_turn")
             if method == "turn/started" and task.get("turn_request_generation") != generation:
@@ -452,6 +496,7 @@ class CodexAdapter:
                 if len(self.seen) > 8192:
                     self.seen.popitem(last=False)
             now = time.time()
+            previous_state = task["status"]
             task["last_activity"] = now
             live_turn = task["turns"].get(task.get("current_turn"), {}).get("generation") == generation
             if method in ("turn/started", "turn/completed") or (method == "thread/status/changed" and live_turn):
@@ -499,6 +544,9 @@ class CodexAdapter:
                 task["current_turn"] = turn_id
                 task["turns"][turn_id] = {"id": turn_id, "status": turn.get("status", "inProgress"), "source": "realtime", "at": now, "generation": generation}
                 if method == "turn/started":
+                    previous_summary = task.get("reasoning_summary") or {}
+                    if previous_summary.get("turn_id") != turn_id or previous_summary.get("generation") != generation:
+                        task.pop("reasoning_summary", None)
                     task["status"] = "running"
                 else:
                     task["status"] = turn.get("status") if turn.get("status") in TERMINAL else "unknown"
@@ -506,7 +554,7 @@ class CodexAdapter:
                     self._expire_requests(task["id"], turn_id, "turn_ended")
             elif method == "thread/status/changed":
                 if not live_turn:
-                    self._record(method, task=task, state="unknown")
+                    self._record(method, task=task, state="unknown", state_transition=False)
                     return True
                 status = params.get("status") or {}
                 flags = status.get("activeFlags", [])
@@ -552,19 +600,67 @@ class CodexAdapter:
                 task["current_operation"] = None
             # Only controlled metadata is logged; never persist params wholesale.
             metadata = {}
+            if is_summary:
+                metadata = self._retain_reasoning_summary(task, params, method)
             item = params.get("item") or {}
             if method in ("item/started", "item/completed"):
                 metadata = {k: item[k] for k in ("type", "status", "exitCode") if k in item}
+                if item.get("id"):
+                    metadata["item_key"] = self._label(item["id"])
+                duration = item.get("durationMs")
+                if type(duration) is int and 0 <= duration <= 86400000:
+                    metadata["duration_ms"] = duration
             if method == "thread/tokenUsage/updated":
                 last = (params.get("tokenUsage") or {}).get("last") or {}
                 metadata["tokens"] = {k: v for k, v in last.items()
                                       if k in ("inputTokens", "outputTokens", "cachedInputTokens", "totalTokens")
                                       and type(v) is int}
             self._record(method, task=task, turn=self._label(event_turn),
-                         state=task["status"], server_request="id" in message, **metadata)
-            if structural:
+                         state=task["status"], previous_state=previous_state,
+                         state_transition=previous_state != task["status"],
+                         server_request="id" in message, **metadata)
+            if structural or is_summary:
                 self._save()
             return True
+
+    def _valid_summary_event(self, task, params, generation, method):
+        turn_id, item_id, index = params.get("turnId"), params.get("itemId"), params.get("summaryIndex")
+        return (self.connection_status == "connected"
+                and turn_id == task.get("current_turn") and bool(turn_id)
+                and task.get("status") in ("starting", "running", "waiting_approval", "waiting_input")
+                and task.get("turns", {}).get(turn_id, {}).get("generation") == generation
+                and isinstance(item_id, str) and 0 < len(item_id) <= 256
+                and type(index) is int and 0 <= index < SUMMARY_MAX_PARTS
+                and (method != "item/reasoning/summaryTextDelta" or isinstance(params.get("delta"), str)))
+
+    def _retain_reasoning_summary(self, task, params, method):
+        """Retain only published summary fields, never reasoning content/textDelta."""
+        turn_id, index = params["turnId"], params["summaryIndex"]
+        item_key = self._label(params["itemId"])
+        summary = task.get("reasoning_summary")
+        if not summary or summary["turn_id"] != turn_id or summary["generation"] != self.generation:
+            summary = {"turn_id": turn_id, "generation": self.generation, "items": [], "truncated": False}
+            task["reasoning_summary"] = summary
+        metadata = {"item_key": item_key, "summary_index": index}
+        item = next((x for x in summary["items"] if x["item_key"] == item_key), None)
+        if item is None:
+            if len(summary["items"]) >= SUMMARY_MAX_ITEMS:
+                summary["truncated"] = True
+                return {**metadata, "summary_truncated": True}
+            item = {"item_key": item_key, "parts": []}
+            summary["items"].append(item)
+        part = next((x for x in item["parts"] if x["summary_index"] == index), None)
+        if part is None:
+            part = {"summary_index": index, "text": ""}
+            item["parts"].append(part)
+            item["parts"].sort(key=lambda x: x["summary_index"])
+        if method == "item/reasoning/summaryTextDelta":
+            used = sum(len(p["text"]) for x in summary["items"] for p in x["parts"])
+            delta = params["delta"][:max(0, SUMMARY_MAX_CHARS - used)]
+            part["text"] += delta
+            summary["truncated"] |= len(delta) < len(params["delta"])
+            metadata["summary_delta"] = delta
+        return {**metadata, "summary_truncated": summary["truncated"]}
 
     def _expire_requests(self, task_id, turn_id, reason):
         for request in self.pending.values():
@@ -814,6 +910,8 @@ class CodexAdapter:
                     "generation": self.generation, "last_error": self.last_error,
                     "models": sorted(self.models), "default_model": self.default_model,
                     "approval_response_enabled": True,
+                    "runtime": dict(self.runtime.info),
+                    "reconnect_attempts": self.reconnect_attempts, "reconnect_limit": 3,
                     "transport_counts": dict(self.transport_counts)}
 
     def event_log(self, after=0):
@@ -842,10 +940,77 @@ class CodexAdapter:
     def disconnect(self):
         with self.lock:
             self.enabled = False
+            self.reconnect_epoch += 1
             generation = self.generation
+            if self.connection_status == "disconnected":
+                self.last_error = "explicit_disconnect"
         self._disconnect_generation(generation, "explicit_disconnect")
         self._terminate_current(generation)
+        proc = self.login_process
+        if proc and proc.poll() is None:
+            close_job(proc)
+            proc.terminate(); proc.wait(timeout=4)
+            self.runtime.info = {**self.runtime.info, "auth_status": "unknown"}
         return self.status()
+
+    def login(self):
+        """Only an explicit local-admin action may start the CLI-owned browser flow."""
+        with self.connect_lock:
+            if self.closed:
+                raise AdapterError("adapter_closed", 503)
+            if self.connection_status == "connected":
+                return self.status()
+            if self.login_process and self.login_process.poll() is None:
+                return self.status()
+            info = self.runtime.inspect()
+            self.cli = self.runtime.cli
+            if not info["installed"] or not info["version"]:
+                raise AdapterError(info["error"] or "codex_cli_unavailable", 503)
+            flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+            try:
+                proc = subprocess.Popen([self.cli, "login"], stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        env=self.runtime.env(), cwd=str(self.root), **flags)
+            except OSError:
+                self.last_error = "codex_login_failed"
+                raise AdapterError("codex_login_failed", 503) from None
+            try:
+                attach_job(proc)
+            except OSError:
+                proc.terminate(); proc.wait(timeout=4)
+                raise AdapterError("codex_login_failed", 503) from None
+            with self.lock:
+                self.login_process = proc
+                self.enabled = True
+                self.reconnect_epoch += 1
+                epoch = self.reconnect_epoch
+                self.runtime.info = {**info, "auth_status": "logging_in", "error": None}
+                self.last_error = None
+            threading.Thread(target=self._finish_login, args=(proc, epoch), daemon=True).start()
+            return self.status()
+
+    def _finish_login(self, proc, epoch):
+        error = None
+        try:
+            if proc.wait(timeout=300):
+                error = "codex_login_failed"
+        except subprocess.TimeoutExpired:
+            error = "codex_login_timeout"
+        finally:
+            close_job(proc)
+            if proc.poll() is None:
+                proc.terminate(); proc.wait(timeout=4)
+        with self.lock:
+            if self.closed or not self.enabled or epoch != self.reconnect_epoch:
+                return
+            if error:
+                self.last_error = error
+                self.runtime.info = {**self.runtime.info, "auth_status": "unknown", "error": error}
+                return
+        try:
+            self.connect(_reconnect_epoch=epoch)
+        except AdapterError:
+            pass  # connect publishes only a safe error category in status.
 
     def reconnect(self):
         self.disconnect()
@@ -911,7 +1076,7 @@ def handle_http(method, path, body=None, query=None, *, is_admin=False, is_local
             out = center.event_log(max(0, int(query.get("after", 0))))
         elif method == "GET" and route == "observed":
             out = center.observe(query.get("thread_id"))
-        elif method == "POST" and route in ("connect", "disconnect", "reconnect"):
+        elif method == "POST" and route in ("connect", "disconnect", "reconnect", "login"):
             out = getattr(center, route)()
         elif method == "POST" and route == "tasks":
             out = center.create_task(body.get("model"))
