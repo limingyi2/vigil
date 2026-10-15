@@ -24,6 +24,7 @@ class ModelFixture:
         self.secret = secrets.token_urlsafe(32)
         self.command_emitted = False
         self.command_output = ""
+        self.requested_summary = None
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -34,6 +35,7 @@ class ModelFixture:
                 if self.headers.get("Authorization") != "Bearer " + owner.secret:
                     self.send_response(401); self.end_headers(); return
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                owner.requested_summary = (body.get("reasoning") or {}).get("summary")
                 for entry in body.get("input", []):
                     if isinstance(entry, dict) and entry.get("type") == "function_call_output":
                         owner.command_output = str(entry.get("output", ""))
@@ -70,9 +72,26 @@ class ModelFixture:
                         {"type": "response.content_part.done", "item_id": "msg_p1", "output_index": 0, "content_index": 0, "part": content},
                         {"type": "response.output_item.done", "output_index": 0, "item": item},
                     ]
+                output = [item]
+                if mode == "summary":
+                    summary_text = "Inspect input. Confirm result."
+                    summary_part = {"type": "summary_text", "text": summary_text}
+                    reasoning = {"type": "reasoning", "id": "rs_summary", "summary": [summary_part]}
+                    for event in middle:
+                        event["output_index"] = 1
+                    middle = [
+                        {"type": "response.output_item.added", "output_index": 0, "item": {**reasoning, "summary": []}},
+                        {"type": "response.reasoning_summary_part.added", "item_id": "rs_summary", "output_index": 0, "summary_index": 0, "part": {**summary_part, "text": ""}},
+                        {"type": "response.reasoning_summary_text.delta", "item_id": "rs_summary", "output_index": 0, "summary_index": 0, "delta": summary_text},
+                        {"type": "response.reasoning_summary_text.done", "item_id": "rs_summary", "output_index": 0, "summary_index": 0, "text": summary_text},
+                        {"type": "response.reasoning_summary_part.done", "item_id": "rs_summary", "output_index": 0, "summary_index": 0, "part": summary_part},
+                        {"type": "response.output_item.done", "output_index": 0, "item": reasoning},
+                        *middle,
+                    ]
+                    output = [reasoning, item]
                 response = {"id": response_id, "object": "response", "created_at": int(time.time()), "status": "in_progress", "output": []}
                 events = [{"type": "response.created", "response": response}, *middle,
-                          {"type": "response.completed", "response": {**response, "status": "completed", "output": [item], "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}}]
+                          {"type": "response.completed", "response": {**response, "status": "completed", "output": output, "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}}]
                 self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
                 try:
                     for event in events:
@@ -146,6 +165,18 @@ class NativeAdapterTests(unittest.TestCase):
         wait_for(lambda: self.center.get_task(failed)["status"] == "failed")
         self.assertTrue(any(e["method"] == "error" for e in self.center.event_log()["items"]))
         self.assertEqual(self.fixture.requests, 2)
+
+    def test_native_reasoning_summary_stream_is_retained(self):
+        task_id = self.run_task("summary")
+        wait_for(lambda: self.center.get_task(task_id)["status"] == "completed")
+        summary = self.center.get_task(task_id)["reasoning_summary"]
+        text = "".join(part["text"] for item in summary["items"] for part in item["parts"])
+        self.assertEqual(text, "Inspect input. Confirm result.")
+        self.assertEqual(self.fixture.requested_summary, "auto")
+        events = self.center.event_log()["items"]
+        self.assertTrue(any(e["method"] == "item/reasoning/summaryPartAdded" for e in events))
+        self.assertTrue(any(e.get("summary_delta") == text for e in events))
+        self.assertEqual(self.fixture.requests, 1)
 
     def test_native_command_never_bypasses_required_approval(self):
         task_id = self.run_task("command")

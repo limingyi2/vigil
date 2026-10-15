@@ -3,7 +3,8 @@
 Only registered owned threads may be resumed, controlled or receive a manually
 submitted response. Observed desktop sessions remain read-only. The native
 login stays in Codex; raw prompts, outputs, commands and credentials are not
-persisted in the adapter journal. Polling uses a sequence cursor.
+persisted in the adapter journal. Only explicitly published reasoning summaries
+are retained as bounded summary text. Polling uses a sequence cursor.
 """
 import atexit
 import collections
@@ -28,6 +29,10 @@ class AdapterError(Exception):
 
 
 TERMINAL = {"completed", "failed", "interrupted"}
+SUMMARY_METHODS = {"item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded"}
+SUMMARY_MAX_CHARS = 65536
+SUMMARY_MAX_ITEMS = 16
+SUMMARY_MAX_PARTS = 32
 APPROVAL_METHODS = {
     "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
     "item/permissions/requestApproval", "execCommandApproval", "applyPatchApproval",
@@ -115,7 +120,8 @@ class CodexAdapter:
         return path
 
     def _save(self):
-        # Approvals, observed records, prompt/answer text and tool arguments are absent.
+        # Persist owned metadata and the latest turn's reasoning_summary only.
+        # Approvals, raw reasoning, prompt/answer text and tool arguments are absent.
         tmp = self.root / "owned.json.tmp"
         tmp.write_text(json.dumps({"version": 1, "tasks": list(self.tasks.values())},
                                   ensure_ascii=False), encoding="utf-8")
@@ -134,7 +140,7 @@ class CodexAdapter:
             event["task"] = self._label(task["id"])
             event["thread"] = self._label(task["thread_id"])
         self.events.append(event)
-        # A bounded rotating journal of whitelisted metadata, never raw payloads.
+        # Bounded whitelisted metadata and published summary deltas, never raw payloads.
         path = self.root / "events.jsonl"
         if path.exists() and path.stat().st_size > 4 * 1024 * 1024:
             path.replace(self.root / "events.previous.jsonl")
@@ -279,6 +285,9 @@ class CodexAdapter:
                 task["last_known_status"] = task["status"]
                 task["status"], task["live"] = "unknown", False
                 task["current_operation"] = None
+                self._record("task/status/changed", task=task, turn=self._label(task.get("current_turn")),
+                             state="unknown", previous_state=task["last_known_status"],
+                             state_transition=task["last_known_status"] != "unknown", reason=reason)
             self._record("adapter/disconnected", reason=reason)
             self._save()
             self.cv.notify_all()
@@ -429,6 +438,7 @@ class CodexAdapter:
         try:
             turn = self._rpc("turn/start", {"threadId": thread_id,
                              "input": [{"type": "text", "text": text}], "effort": "low",
+                             "summary": "auto",
                              "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
                              "approvalPolicy": "on-request", "approvalsReviewer": "user"})["turn"]
             with self.lock:
@@ -459,11 +469,17 @@ class CodexAdapter:
             if generation != self.generation:
                 return False
             method = message.get("method", "")
+            # Full reasoning is neither a summary nor displayable event content.
+            if method == "item/reasoning/textDelta":
+                return False
             params = message.get("params") or {}
             thread_id = params.get("threadId") or (params.get("thread") or {}).get("id")
             task = next((t for t in self.tasks.values() if t["thread_id"] == thread_id), None)
             # Unowned events may never establish ownership, approval eligibility or control.
             if not task or task.get("connection_generation") != generation:
+                return False
+            is_summary = method in SUMMARY_METHODS
+            if is_summary and not self._valid_summary_event(task, params, generation, method):
                 return False
             event_turn = params.get("turnId") or (params.get("turn") or {}).get("id") or task.get("current_turn")
             if method == "turn/started" and task.get("turn_request_generation") != generation:
@@ -480,6 +496,7 @@ class CodexAdapter:
                 if len(self.seen) > 8192:
                     self.seen.popitem(last=False)
             now = time.time()
+            previous_state = task["status"]
             task["last_activity"] = now
             live_turn = task["turns"].get(task.get("current_turn"), {}).get("generation") == generation
             if method in ("turn/started", "turn/completed") or (method == "thread/status/changed" and live_turn):
@@ -527,6 +544,9 @@ class CodexAdapter:
                 task["current_turn"] = turn_id
                 task["turns"][turn_id] = {"id": turn_id, "status": turn.get("status", "inProgress"), "source": "realtime", "at": now, "generation": generation}
                 if method == "turn/started":
+                    previous_summary = task.get("reasoning_summary") or {}
+                    if previous_summary.get("turn_id") != turn_id or previous_summary.get("generation") != generation:
+                        task.pop("reasoning_summary", None)
                     task["status"] = "running"
                 else:
                     task["status"] = turn.get("status") if turn.get("status") in TERMINAL else "unknown"
@@ -534,7 +554,7 @@ class CodexAdapter:
                     self._expire_requests(task["id"], turn_id, "turn_ended")
             elif method == "thread/status/changed":
                 if not live_turn:
-                    self._record(method, task=task, state="unknown")
+                    self._record(method, task=task, state="unknown", state_transition=False)
                     return True
                 status = params.get("status") or {}
                 flags = status.get("activeFlags", [])
@@ -580,19 +600,67 @@ class CodexAdapter:
                 task["current_operation"] = None
             # Only controlled metadata is logged; never persist params wholesale.
             metadata = {}
+            if is_summary:
+                metadata = self._retain_reasoning_summary(task, params, method)
             item = params.get("item") or {}
             if method in ("item/started", "item/completed"):
                 metadata = {k: item[k] for k in ("type", "status", "exitCode") if k in item}
+                if item.get("id"):
+                    metadata["item_key"] = self._label(item["id"])
+                duration = item.get("durationMs")
+                if type(duration) is int and 0 <= duration <= 86400000:
+                    metadata["duration_ms"] = duration
             if method == "thread/tokenUsage/updated":
                 last = (params.get("tokenUsage") or {}).get("last") or {}
                 metadata["tokens"] = {k: v for k, v in last.items()
                                       if k in ("inputTokens", "outputTokens", "cachedInputTokens", "totalTokens")
                                       and type(v) is int}
             self._record(method, task=task, turn=self._label(event_turn),
-                         state=task["status"], server_request="id" in message, **metadata)
-            if structural:
+                         state=task["status"], previous_state=previous_state,
+                         state_transition=previous_state != task["status"],
+                         server_request="id" in message, **metadata)
+            if structural or is_summary:
                 self._save()
             return True
+
+    def _valid_summary_event(self, task, params, generation, method):
+        turn_id, item_id, index = params.get("turnId"), params.get("itemId"), params.get("summaryIndex")
+        return (self.connection_status == "connected"
+                and turn_id == task.get("current_turn") and bool(turn_id)
+                and task.get("status") in ("starting", "running", "waiting_approval", "waiting_input")
+                and task.get("turns", {}).get(turn_id, {}).get("generation") == generation
+                and isinstance(item_id, str) and 0 < len(item_id) <= 256
+                and type(index) is int and 0 <= index < SUMMARY_MAX_PARTS
+                and (method != "item/reasoning/summaryTextDelta" or isinstance(params.get("delta"), str)))
+
+    def _retain_reasoning_summary(self, task, params, method):
+        """Retain only published summary fields, never reasoning content/textDelta."""
+        turn_id, index = params["turnId"], params["summaryIndex"]
+        item_key = self._label(params["itemId"])
+        summary = task.get("reasoning_summary")
+        if not summary or summary["turn_id"] != turn_id or summary["generation"] != self.generation:
+            summary = {"turn_id": turn_id, "generation": self.generation, "items": [], "truncated": False}
+            task["reasoning_summary"] = summary
+        metadata = {"item_key": item_key, "summary_index": index}
+        item = next((x for x in summary["items"] if x["item_key"] == item_key), None)
+        if item is None:
+            if len(summary["items"]) >= SUMMARY_MAX_ITEMS:
+                summary["truncated"] = True
+                return {**metadata, "summary_truncated": True}
+            item = {"item_key": item_key, "parts": []}
+            summary["items"].append(item)
+        part = next((x for x in item["parts"] if x["summary_index"] == index), None)
+        if part is None:
+            part = {"summary_index": index, "text": ""}
+            item["parts"].append(part)
+            item["parts"].sort(key=lambda x: x["summary_index"])
+        if method == "item/reasoning/summaryTextDelta":
+            used = sum(len(p["text"]) for x in summary["items"] for p in x["parts"])
+            delta = params["delta"][:max(0, SUMMARY_MAX_CHARS - used)]
+            part["text"] += delta
+            summary["truncated"] |= len(delta) < len(params["delta"])
+            metadata["summary_delta"] = delta
+        return {**metadata, "summary_truncated": summary["truncated"]}
 
     def _expire_requests(self, task_id, turn_id, reason):
         for request in self.pending.values():

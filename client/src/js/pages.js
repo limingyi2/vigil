@@ -2316,8 +2316,8 @@
     const sync = (live && live.sync) || {};
     const hasCloud = !!(sync.cloud_url && sync.cloud_token);
     if (!state.dataSrc) state.dataSrc = hasCloud ? 'cloud' : 'local';
-    const dget = (p) => get(p, { base: state.dataSrc === 'cloud' ? 'cloud' : null });
-    const dpost = (p, b) => post(p, b, { base: state.dataSrc === 'cloud' ? 'cloud' : null });
+    const dget = (p) => get(p, { base: state.dataSrc === 'cloud' ? 'cloud' : null, timeoutMs: 8000 });
+    const dpost = (p, b) => post(p, b, { base: state.dataSrc === 'cloud' ? 'cloud' : null, timeoutMs: 8000 });
     const srcSeg = () => !hasCloud ? '' :
       '<div class="seg" id="dSrc"><button data-ds="cloud"' + (state.dataSrc === 'cloud' ? ' class="on"' : '') + '>云端</button>' +
       '<button data-ds="local"' + (state.dataSrc === 'local' ? ' class="on"' : '') + '>本机</button></div>';
@@ -2333,9 +2333,14 @@
     const v = ctx.view.querySelector('#dView');
     const cur = () => ctx.topbar.querySelector('h1').textContent;
 
+    let dataRenderId = 0;
     async function ov() {
+      const renderId = ++dataRenderId;
+      const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = '概览';
+      v.innerHTML = '<div class="muted" role="status" aria-live="polite" style="padding:20px 0">正在读取数据…</div>';
       const s = pick(await dget('/api/stats'));
+      if (!isCurrent()) return;
       if (fail(s)) return;
       const tIn = Number(s.tok_in) || 0, tOut = Number(s.tok_out) || 0;
       v.innerHTML = '<div class="grid g4" style="margin-bottom:14px">' +
@@ -2362,9 +2367,12 @@
     // 口径说清楚：「今日」来自服务端账本 /api/stats（按自然日）；
     // 「窗口」是 /api/trace 逐轮 tok_in/tok_out 的精确求和 —— 两者不该混着说。
     async function tok() {
+      const renderId = ++dataRenderId;
+      const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = 'Token 分析';
       v.innerHTML = '<div class="wrap"><div class="muted" style="padding:20px 0">加载中…</div></div>';
       const [s, r] = await Promise.all([dget('/api/stats'), dget('/api/trace?last=500')]);
+      if (!isCurrent()) return;
       const st = pick(s);
       if (fail(st)) return;
       const items = (pick(r).items || []).slice()
@@ -2460,8 +2468,12 @@
     }
 
     async function tr() {
+      const renderId = ++dataRenderId;
+      const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = '对话 Trace';
+      v.innerHTML = '<div class="muted" role="status" aria-live="polite" style="padding:20px 0">正在读取 Trace…</div>';
       const r = pick(await dget('/api/trace?last=60'));
+      if (!isCurrent()) return;
       if (fail(r)) return;
       const items = r.items || [];
       if (!items.length) { v.innerHTML = empty('还没有 Trace', '聊几句就有了'); return; }
@@ -2494,6 +2506,8 @@
     }
 
     async function hi() {
+      const renderId = ++dataRenderId;
+      const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = '聊天历史';
       // 控制台视角：本机是自己的会话，App / 微信的往来在这儿只读查看
       // （云端视角下微信群聊的账在 wechat_group 分区，也得能看）
@@ -2503,8 +2517,12 @@
         '</div><div id="hcList"></div>';
       const box = v.querySelector('#hcList');
       let curHC = 'pc';
+      let historyRequestId = 0;
       const load = async () => {
+        const requestId = ++historyRequestId;
+        box.innerHTML = '<div class="muted" role="status" aria-live="polite" style="padding:12px 0">正在读取聊天历史…</div>';
         const r = pick(await dget('/api/history?limit=200&src=' + curHC));
+        if (!isCurrent() || requestId !== historyRequestId) return;
         if (fail(r)) return;
         const items = r.items || [];
         box.innerHTML = items.length ? '<div class="card" style="padding:14px">' +
@@ -2525,8 +2543,12 @@
     }
 
     async function lg() {
+      const renderId = ++dataRenderId;
+      const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = '日志';
+      v.innerHTML = '<div class="muted" role="status" aria-live="polite" style="padding:20px 0">正在读取日志…</div>';
       const r = pick(await dget('/api/logs?src=server&n=200'));
+      if (!isCurrent()) return;
       if (fail(r)) return;
       const items = r.items || [];
       v.innerHTML = '<div class="card hd"><div class="h"><h3>服务端日志</h3><div class="sp"></div>' +
@@ -2566,6 +2588,7 @@
   // ═══ 8. 设置 ═══════════════════════════════════════════════
   async function renderSettings(ctx) {
     ctx.topbar.className = 'topbar';
+    let modelRenderId = 0;
     // 本地操控不再是设置里的一页：确认走聊天气泡，权限/目录/工具开关
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：云端 brain 没有 /api/device/*（点了就是 no such api）。
@@ -2679,24 +2702,44 @@
     }
 
     async function model(pv) {
+      const renderId = ++modelRenderId;
+      const isCurrent = () => renderId === modelRenderId && v.isConnected;
       // pv（可选）{base, provider}：「重新拉取」后带着表单值重画 —— 不带的话
       // 重画又按**已保存**的配置拉一遍，刚拉到的新家清单当场弹回旧家（实锤过）。
       ctx.topbar.querySelector('h1').textContent = '模型管理';
+      v.innerHTML = '<div class="card" role="status" aria-live="polite">正在读取模型配置…</div>';
       // 模型配置跟真身走：微信 / App 的她在云端，默认改云端的账；本机这份
       // 只管 PC 控制台聊天那个大脑。跟数据页同一个套路（没配云端就只有本机）。
       const live = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
+      if (!isCurrent()) return;
       const sync = (live && live.sync) || {};
       const hasCloud = !!(sync.cloud_url && sync.cloud_token);
       if (!state.mSrc) state.mSrc = hasCloud ? 'cloud' : 'local';
       const mb = () => (hasCloud && state.mSrc === 'cloud') ? 'cloud' : null;
-      const mget = (p) => get(p, { base: mb() });
-      const mpost = (p, b) => post(p, b, { base: mb() });
+      const mget = (p, timeoutMs) => get(p, { base: mb(), timeoutMs });
+      const mpost = (p, b, timeoutMs) => post(p, b, { base: mb(), timeoutMs });
+      const sourceSwitch = () => hasCloud
+        ? '<div class="seg" id="mSrc" role="group" aria-label="模型配置来源" style="margin-bottom:12px">' +
+          '<button type="button" data-ms="cloud" aria-pressed="' + (state.mSrc === 'cloud') + '"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>云端（微信 / App 的她）</button>' +
+          '<button type="button" data-ms="local" aria-pressed="' + (state.mSrc === 'local') + '"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑的她）</button></div>'
+        : '';
+      const bindSourceSwitch = () => {
+        v.querySelectorAll('#mSrc button[data-ms]').forEach((b) => b.addEventListener('click', () => {
+          if (state.mSrc === b.dataset.ms) return;
+          state.mSrc = b.dataset.ms;
+          void model();
+        }));
+      };
+      v.innerHTML = sourceSwitch() + '<div class="card" role="status" aria-live="polite">正在读取' +
+        (state.mSrc === 'cloud' ? '云端' : '本机') + '模型配置…</div>';
+      bindSourceSwitch();
       const [modelReply, savedReply] = await Promise.all([
         mpost('/api/models/list', {
           base: (pv && pv.base) || '', provider: (pv && pv.provider) || ''
-        }),
-        mget('/api/models/saved'),
+        }, 8000),
+        mget('/api/models/saved', 8000),
       ]);
+      if (!isCurrent()) return;
       const r = pick(modelReply);
       const savedData = pick(savedReply);
       if (!r.current && !r.providers) {
@@ -2704,7 +2747,11 @@
         const msg = st === 404 ? '当前 Brain 没有模型列表接口，请升级 Brain 或检查客户端版本' :
           (st === 401 || st === 403 ? 'Brain 拒绝了请求，请检查 Token 或设备权限' :
             (r._err || '先在「连接与设备」里把地址和 token 填对'));
-        v.innerHTML = errBox('读不到模型配置', msg); return;
+        v.innerHTML = sourceSwitch() + errBox('读不到模型配置', msg) +
+          '<div style="margin-top:10px"><button class="btn oline md" type="button" id="mRetry">重试</button></div>';
+        bindSourceSwitch();
+        v.querySelector('#mRetry').addEventListener('click', () => { void model(pv); });
+        return;
       }
       const cur = r.current || {};
       const provs = r.providers || [];
@@ -2817,10 +2864,7 @@
         '<button class="btn oline md" type="button" id="mAddCancel">取消</button><span class="muted" id="mAddResult" role="status" aria-live="polite"></span></div></div></section>';
 
       v.innerHTML =
-        (hasCloud ? '<div class="seg" id="mSrc" style="margin-bottom:12px">' +
-          '<button data-ms="cloud"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>云端（微信 / App 的她）</button>' +
-          '<button data-ms="local"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑的她）</button></div>' : '') +
-        modelManager +
+        sourceSwitch() + modelManager +
         localCard +
         '<div class="card" style="margin-bottom:14px">' +
         '<div class="field"><label>服务商</label><select class="input" id="mProv">' +
@@ -2934,11 +2978,7 @@
           (rr.err ? ' · ' + esc(String(rr.err).slice(0, 60)) : '')) : ('✗ ' + esc(modelErr(rr)));
       };
       // 云端/本机切换：两边是两份独立配置，整页重画
-      if (hasCloud) v.querySelectorAll('#mSrc button').forEach((b) => b.addEventListener('click', () => {
-        if (state.mSrc === b.dataset.ms) return;
-        state.mSrc = b.dataset.ms;
-        model();
-      }));
+      bindSourceSwitch();
       // 运行方式：切云端时折叠 Ollama/委派设置（值不清，保存时仍会带上所选模式）
       const olBox = v.querySelector('#olBox');
       const dlBox = v.querySelector('#dlBox');
@@ -3380,6 +3420,7 @@
 
     const draw = { conn, model, wechat, sync, danger, about };
     bindLi(ctx.panel, (k, n) => {
+      modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[k] && draw[k]();
     });
@@ -3388,10 +3429,12 @@
     const want = state.settingsSub;
     state.settingsSub = '';
     if (want && draw[want]) {
+      modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x.dataset.k === want));
       draw[want]();
       return;
     }
+    modelRenderId++;
     conn();
   }
 
@@ -3478,14 +3521,13 @@
     ctx.panel.innerHTML = '<div class="phead"><h2>统一管理</h2></div>' +
       '<div class="plist">' +
       li({ icon: 'mon', title: '节点概览', sub: '所有服务器与本地实例', on: true, attrs: ' data-k="ov"' }) +
-      li({ icon: 'activity', title: 'Agent 列表', sub: '各节点运行的 Agent', attrs: ' data-k="ag"' }) +
       li({ icon: 'book', title: '配置说明', sub: '如何接入新节点', attrs: ' data-k="doc"' }) +
       '</div>';
     ctx.topbar.innerHTML = topbar('节点概览', '',
       '<button class="btn oline" id="mgRe">' + icon('refresh', 'sm') + '刷新</button>');
     ctx.view.innerHTML = '<div class="wrap" id="mgView"><div class="muted" style="padding:20px 0">加载中…</div></div>';
     const v = ctx.view.querySelector('#mgView');
-    const CB = { base: 'cloud' };   // 统一管理数据在云端大脑（复用 Electron 已有云端连接）
+    const CB = { base: 'cloud', timeoutMs: 8000 };   // 统一管理数据在云端大脑；失败时尽快转为明确错误状态
 
     const statusColor = (s) => s === 'online' ? 'ok' : s === 'delayed' ? 'warn' : 'err';
     const statusText = (s) => s === 'online' ? '在线' : s === 'delayed' ? '延迟' : '离线';
@@ -3542,22 +3584,6 @@
           '</div>');
     }
 
-    async function ag() {
-      ctx.topbar.querySelector('h1').textContent = 'Agent 列表';
-      v.innerHTML = '<div class="muted" style="padding:20px 0">加载中…</div>';
-      const r = pick(await get('/api/management/agents', CB));
-      if (!r || !r.ok) { v.innerHTML = '<div class="wrap">' + empty('管理接口不可达') + '</div>'; return; }
-      const agents = r.items || [];
-      v.innerHTML = agents.length ?
-        '<div class="card"><table class="tbl"><thead><tr><th>Agent</th><th>所属节点</th><th>状态</th><th>详情</th></tr></thead><tbody>' +
-        agents.map(a => '<tr><td><b>' + esc(a.name || a.id) + '</b><div class="muted" style="font-size:11px">' + esc(a.id) + '</div></td>' +
-          '<td>' + esc(a.node_name || a.node_id) + '</td>' +
-          '<td>' + tag(a.status === 'online' ? 'ok' : a.status === 'error' ? 'err' : 'warn', a.status) + '</td>' +
-          '<td class="muted" style="font-size:12px">' + esc(a.details || '—') + '</td></tr>').join('') +
-        '</tbody></table></div>' :
-        '<div class="card" style="padding:24px;text-align:center"><div style="font-size:13.5px">暂无 Agent 上报</div></div>';
-    }
-
     function doc() {
       ctx.topbar.querySelector('h1').textContent = '配置说明';
       v.innerHTML = '<div class="card" style="padding:18px 20px">' +
@@ -3567,13 +3593,13 @@
         '<div class="mono" style="background:var(--bg2);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px">set VIGIL_MANAGEMENT_AGENT_TOKENS={"server-b":"随机长令牌","local-pc":"另一个令牌"}<br>set VIGIL_MANAGEMENT_AGENT_NAMES={"server-b":"云端服务器 B","local-pc":"本地电脑"}</div>' +
         '<div><b>2. 被管理节点运行 Agent</b></div>' +
         '<div class="mono" style="background:var(--bg2);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px">set VIGIL_MANAGEMENT_URL=http://管理中心地址:8788<br>set VIGIL_MANAGEMENT_NODE_ID=server-b<br>set VIGIL_MANAGEMENT_TOKEN=随机长令牌<br>python brain/management_agent.py</div>' +
-        '<div><b>3. 回到本页查看状态</b>（每 15 秒自动刷新）</div>' +
+        '<div><b>3. 回到节点概览查看节点状态</b>（每 15 秒自动刷新）；Agent 状态与任务统一在「Agent 工作室」查看。</div>' +
         '</div>' +
         '<div class="muted" style="font-size:12px;margin-top:14px">心跳间隔 15 秒 · 45 秒内在线 · 90 秒内延迟 · 超过离线</div>' +
         '</div>';
     }
 
-    const draw = (k) => { if (k === 'ov') ov(); else if (k === 'ag') ag(); else doc(); };
+    const draw = (k) => { if (k === 'ov') ov(); else doc(); };
     ctx.panel.querySelectorAll('.li[data-k]').forEach(n =>
       n.addEventListener('click', () => {
         ctx.panel.querySelectorAll('.li').forEach(x => x.classList.remove('on'));
