@@ -276,9 +276,17 @@ def _run(jid, owner, cfg):
             reason, stage = 'invalid_structure', 'codegen'
         else:
             reason, stage = 'connection_lost', 'network'
-        status = getattr(exc, 'status', None) or getattr(exc, 'status_code', None)
+        status = (getattr(exc, 'status', None)
+                  or getattr(exc, 'status_code', None)
+                  or getattr(getattr(exc, 'response', None), 'status_code', None))
         if status in (401, 403):
             reason, stage = 'auth', 'auth'
+        elif status is not None:
+            # Streaming providers (including httpx) raise a raw HTTP status
+            # exception from response.raise_for_status(), unlike chat() which
+            # wraps it as ProviderHTTPError. Preserve the same safe HTTP
+            # diagnosis rather than misreporting a 5xx as a network outage.
+            reason, stage = 'service_error', 'model_request'
         _fail(jid, owner, reason, exception_type=type(exc).__name__,
               stage=stage, http_status=status)
 

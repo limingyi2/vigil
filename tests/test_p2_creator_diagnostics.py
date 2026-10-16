@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import httpx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'brain'))
 import creator
@@ -73,6 +74,19 @@ class CreatorDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('SUPER_SECRET', json.dumps(e)+self.log())
         self.assertNotIn('PRIVATE_RESPONSE', self.log())
         self.assertNotIn('raw model response', self.log())
+
+    def test_stream_http_status_error_retains_safe_service_diagnostic(self):
+        response = httpx.Response(503)
+        error = httpx.HTTPStatusError('private provider body',
+            request=httpx.Request('POST', 'https://fixture.invalid/chat/completions'),
+            response=response)
+        item = self.run_job(error=error)
+        diagnostic = item['error']
+        self.assertEqual((diagnostic['stage'], diagnostic['http_status']),
+                         ('model_request', 503))
+        self.assertTrue(diagnostic['hint'])
+        self.assertEqual(diagnostic['log_id'], item['job_id'])
+        self.assertNotIn('private provider body', json.dumps(diagnostic)+self.log())
 
     def test_arbitrary_diagnostic_text_is_not_recorded(self):
         jobs._log_detail(self.item['job_id'], 'api_key=SECRET Token SECRET original model text')
