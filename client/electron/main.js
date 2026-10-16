@@ -19,13 +19,14 @@ const https = require('https');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+if (process.env.VIGIL_USER_DATA) app.setPath('userData', path.resolve(process.env.VIGIL_USER_DATA));
 if (process.platform === 'win32') app.setAppUserModelId('com.vigil.client');
 
 // Keep Chromium's hardware acceleration enabled so WebGL wallpapers and glass
 // surfaces use the selected GPU. SwiftShader remains available as a fallback.
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
-const DEFAULT_BASE = 'http://127.0.0.1:18787';   // 桌宠走 SSH 隧道；App 直连换这个地址
+const DEFAULT_BASE = '';   // 桌宠走 SSH 隧道；App 直连换这个地址
 const PERF_START_AT = Date.now();
 function perfLog(stage, detail = '') {
   const suffix = detail ? ' ' + detail : '';
@@ -136,10 +137,14 @@ function downloadFile(urlStr, token, dest, onProgress) {
         }
         const total = Number(res.headers['content-length']) || 0;
         let got = 0;
-        const out = fs.createWriteStream(dest);
+        const out = fs.createWriteStream(dest + '.part');
+        res.on('aborted',()=>{out.destroy();resolve({ok:false,err:'更新下载中断'});});
         res.on('data', (c) => { got += c.length; onProgress && onProgress(got, total); });
         res.pipe(out);
-        out.on('finish', () => out.close(() => resolve({ ok: true, size: got })));
+        out.on('finish', () => out.close(() => {
+          if(total && got!==total)return resolve({ok:false,err:'更新文件不完整'});
+          try{fs.renameSync(dest+'.part',dest);resolve({ok:true,size:got});}catch(_){resolve({ok:false,err:'更新文件无法保存'});}
+        }));
         out.on('error', (e) => resolve({ ok: false, status: res.statusCode, err: e.message }));
       });
     req.on('timeout', () => req.destroy(new Error('下载超时')));
@@ -158,11 +163,11 @@ async function checkUpdate(mode) {
   const cfg = readCfg();
   const sync = cfg.sync || {};
   const cb = String(sync.cloud_url || '').replace(/\/+$/, '');
-  if (!cb || !sync.cloud_token) {
-    return Object.assign(base, { ok: false, update: false, err: '还没配云端（设置 → 云端同步）' });
-  }
   if (updBusy) return Object.assign(base, { ok: true, update: false, busy: true });
-  const v = await request('GET', cb + '/api/client/version', null, sync.cloud_token, 15000);
+  const useCloud=cfg.update_source==='cloud' || (!cfg.update_source && cb && sync.cloud_token);
+  const v = useCloud
+    ? await request('GET', cb + '/api/client/version', null, sync.cloud_token, 15000)
+    : await require('./public-updates').latest();
   const j = (v && v.json) || {};
   if (!v.ok || !j.code) {
     return Object.assign(base, { ok: false, update: false, err: (j && j.err) || (v ? v.err || ('HTTP ' + v.status) : '无响应') });
@@ -191,17 +196,21 @@ async function checkUpdate(mode) {
     }
     // 已下载过且校验通过的就不重下（sha 一致 = 就是这个版本）
     const wantSha = String(j.sha256 || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(wantSha) || !Number.isSafeInteger(j.size) || j.size <= 0) {
+      return {...base,ok:false,err:'更新清单缺少有效的 SHA-256 或文件大小，已拒绝安装'};
+    }
     let dl = { ok: false };
     if (fs.existsSync(UPD_DL) && wantSha && (await sha256File(UPD_DL)) === wantSha) {
       dl = { ok: true, cached: true };
     } else {
-      dl = await downloadFile(cb + '/api/client/setup', sync.cloud_token, UPD_DL,
-        (got, total) => {
+      const progress = (got, total) => {
           // 进度写进窗口标题（没有专门的进度页，title 不打扰界面）
           if (win && !win.isDestroyed() && total) {
             win.setTitle('正在下载更新 ' + Math.round((got / total) * 100) + '%');
           }
-        });
+        };
+      dl = j.public_download ? await require('./public-updates').download(j.setup_url,UPD_DL,progress)
+        : await downloadFile(cb + '/api/client/setup', sync.cloud_token, UPD_DL,progress);
       if (win && !win.isDestroyed()) win.setTitle('');
     }
     if (!dl.ok) {
@@ -210,7 +219,7 @@ async function checkUpdate(mode) {
     }
     if (wantSha) {
       const sha = await sha256File(UPD_DL);
-      if (sha && sha !== wantSha) {
+      if (sha !== wantSha || fs.statSync(UPD_DL).size !== j.size) {
         fs.unlinkSync(UPD_DL);
         dialog.showErrorBox('更新失败', '安装包校验不一致，已删除重试下次。');
         return Object.assign(base, { ok: false, update: true, latest, err: 'sha256 不匹配' });
@@ -281,6 +290,7 @@ const tokenFile = () => path.join(app.getPath('userData'), 'token.json');
 
 async function getToken() {
   const cfg = readCfg();
+  if (cfg.connection_mode !== 'remote') return sidecar.ready() ? sidecar.token() : '';
   // 设备模式：用设备 token（不用 keytar 里可能还是主人钥匙的旧槽位）。
   // 读取顺序必须和 setToken 的写入顺序**对称**（都是钥匙串优先）：
   // 曾经这边文件优先，结果 setToken 更新了钥匙串、token.json 停在上一把
@@ -666,7 +676,7 @@ const wallpaperHost = require('./wallpaper-host').createWallpaperHost({
 const pluginMedia = require('./plugin-media').createPluginMedia({
   getBase: () => {
     const cfg = readCfg();
-    return (sidecar.ready() ? sidecar.base() : cfg.base || DEFAULT_BASE).replace(/\/+$/, '');
+    return connectionBase(cfg);
   },
   getToken,
 });
@@ -717,61 +727,35 @@ async function registerThisDevice(base, brainToken) {
   return { ok: false, err: (r.json && r.json.err) || r.err || ('HTTP ' + r.status) };
 }
 
+function connectionBase(cfg = readCfg()) {
+  if (cfg.connection_mode !== 'remote') return sidecar.base();
+  try {
+    const u = new URL(cfg.remote_base || cfg.base || '');
+    if (!['http:','https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash || u.pathname !== '/') return '';
+    return u.origin;
+  } catch (_) { return ''; }
+}
 async function autoConnect() {
   const cfg = readCfg();
-  const tried = [];
-  const check = async (raw, timeoutMs = 5000) => {
-    const base = String(raw).replace(/\/+$/, '');
-    if (!base) return null;
-    const r = await request('GET', base + '/api/panel/connect-config', null, '', timeoutMs, 'connect.probe');
-    if (r.status === 200 && r.json && r.json.ok && r.json.token) {
-      const server = String(r.json.server || base).replace(/\/+$/, '');
-      writeCfg({ base: server });
-      const reg = await registerThisDevice(server, r.json.token);
-      return { result: { ok: true, base: server, kind: reg.ok ? 'device' : 'brain',
-               device_id: reg.device_id || '', name: reg.name || '',
-               regErr: reg.ok ? '' : reg.err, tried } };
-    }
-    if (r.status === 403) {
-      // 地址是通的，只是它不认为请求来自本机 → 只能用设备 token，让用户补
-      writeCfg({ base: base });
-      tried.push(base + ' → 能连上，但服务端不认这是本机（403）');
-      return { result: { ok: false, needToken: true, base: base, tried } };
-    }
-    tried.push(base + ' → ' + (r.err || ('HTTP ' + r.status)));
-    return null;
-  };
-
-  // A configured cloud endpoint is already the user's chosen target. Probe it
-  // before waiting for an optional local sidecar, which removes the old fixed
-  // 30 second startup penalty on machines with a slow/unused sidecar.
-  if (cfg.base) {
-    const loopbackConfig = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/?$/i.test(String(cfg.base));
-    const direct = await check(cfg.base, loopbackConfig ? 1500 : 5000);
-    if (direct) return direct.result;
+  if (cfg.connection_mode === 'remote') {
+    const base = connectionBase(cfg);
+    if (!base) return {ok:false,err:'请填写明确的远程 Brain 地址',tried:[]};
+    const r = await request('GET', base + '/api/runtime', null, await getToken(), 5000);
+    const j = r.json || {};
+    const needed = require('./build-contract').REQUIRED;
+    if (!r.ok || j.protocol !== 1 || needed.some(c=>!(j.capabilities || []).includes(c)))
+      return {ok:false,base,err:'远程 Brain 认证或关键接口不兼容',tried:[],needToken:r.status===401};
+    return {ok:true,base,kind:'remote'};
   }
-
-  const cands = [];
-  if (cfg.sidecar !== false) {
-    const st = sidecar.status();
-    if (st.exe) {
-      if (!st.enabled) sidecar.maybeStart(cfg);
-      const hasRemoteConfig = cfg.base && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/?$/i.test(String(cfg.base));
-      const deadline = Date.now() + (hasRemoteConfig ? 1500 : 3000);
-      while (!sidecar.ready() && Date.now() < deadline) {
-        const s = sidecar.status();
-        if (s.status === 'failed' || s.status === 'stopped') break;
-        await new Promise((r) => setTimeout(r, 250));
-      }
-      if (sidecar.ready()) cands.push(sidecar.base());
-    }
+  sidecar.maybeStart(cfg);
+  const until = Date.now() + 120000;
+  while (!sidecar.ready() && Date.now() < until) {
+    const s = sidecar.status();
+    if (s.status === 'failed' || s.status === 'stopped') return {ok:false,err:s.lastErr || '本地 Brain 未就绪',tried:[]};
+    await new Promise(r=>setTimeout(r,250));
   }
-  PROBE.forEach((b) => { if (!cands.includes(b) && b !== cfg.base) cands.push(b); });
-  for (const raw of cands) {
-    const found = await check(raw, 1500);
-    if (found) return found.result;
-  }
-  return { ok: false, tried };
+  return sidecar.ready() ? {ok:true,base:sidecar.base(),kind:'local'}
+    : {ok:false,err:'本地 Brain 启动超时，未连接其他地址',tried:[]};
 }
 
 // ── 本地操控：轮询 → 执行 → 送回结果 ───────────────────────────
@@ -891,7 +875,7 @@ async function pollOnce() {
   // 上次运行留下的旧端口。若轮询仍只用 cfg.base，聊天可以正常工作，但 Brain
   // 看不到 PC 客户端的 local_file_* 轮询，并会误报“本地客户端没连上”。
   const sidecarBase = sidecar.ready && sidecar.ready() && sidecar.base();
-  const base = String(sidecarBase || cfg.base || '').replace(/\/+$/, '');
+  const base = connectionBase(cfg);
   if (!base) return;
   const caps = localtool.capabilities(cfg);
   if (!caps.length) return;                       // 全关了就别浪费请求
@@ -936,7 +920,8 @@ ipcMain.handle('plugins:load', async () => {
     if (!win || win.isDestroyed()) return { ok: false, loaded: 0, err: '窗口没准备好' };
     const cfg0 = readCfg();
     const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
-    const b = (sidecarOk ? sidecar.base() : cfg0.base || DEFAULT_BASE).replace(/\/+$/, '');
+    const b = connectionBase(cfg0);
+    if (!b) return {ok:false,status:0,err:sidecar.status().lastErr || '本地 Brain 未就绪'};
     const token = await getToken();
     const r = await request('GET', b + '/api/plugins/frontend', null, token, 8000);
     if (!r.ok || !r.json) return { ok: false, loaded: 0, err: '拉取插件资源失败' };
@@ -1075,7 +1060,8 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   }
   // 本地大脑优先用 sidecar 动态发现的端口（cfg.base 可能是旧的/写死的）
   const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
-  const b = (base || (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE).replace(/\/+$/, '');
+  const b = connectionBase(cfg);
+  if (!b) return {ok:false,status:0,err:sidecar.status().lastErr || '本地 Brain 未就绪，未连接旧地址'};
   const src = cfg.src || CLIENT_SRC;
   // 渠道用 query 带上：服务端按 src 分区（features / history / persona 都吃这个）。
   // URL 里已经写了 src 的（数据页看别的渠道历史）尊重写死的那个。
@@ -1098,7 +1084,8 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
 ipcMain.handle('attachment:chunk', async (_e, { bytes, headers = {} } = {}) => {
   const cfg = readCfg();
   const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
-  const b = (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE;
+  const b = connectionBase(cfg);
+  if (!b) return {ok:false,status:0,err:'本地 Brain 未就绪'};
   const safeHeaders = {};
   for (const key of ['X-Attachment-Id', 'X-Attachment-Name', 'X-Attachment-Mime',
     'X-Attachment-Total', 'X-Attachment-Offset', 'X-Attachment-Confirmed']) {
@@ -1119,7 +1106,8 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
   }
   const cfg = readCfg();
   const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
-  const b = (base || (sidecarOk ? sidecar.base() : cfg.base) || DEFAULT_BASE).replace(/\/+$/, '');
+  const b = connectionBase(cfg);
+  if (!b) return {ok:false,status:0,err:sidecar.status().lastErr || '本地 Brain 未就绪，未连接旧地址'};
   const src = cfg.src || CLIENT_SRC;
   const sep = p.includes('?') ? '&' : '?';
   const hasSrc = /(?:\?|&)src=/.test(p);
@@ -1133,8 +1121,8 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
   });
 });
 
-ipcMain.handle('cfg:get', () => readCfg());
-ipcMain.handle('cfg:set', (_e, patch) => writeCfg(patch));
+ipcMain.handle('cfg:get', () => { const c=readCfg();return {...c,connection_mode:c.connection_mode || 'local',remote_base:c.remote_base || c.base || '',base:connectionBase(c)}; });
+ipcMain.handle('cfg:set', (_e, patch) => {const old=readCfg();const c=writeCfg(patch);if(old.connection_mode!==c.connection_mode){sidecar.stop();if(c.connection_mode!=='remote')sidecar.restart(c);}return {...c,base:connectionBase(c)};});
 
 // ── 本地大脑（sidecar）────────────────────────────────────────────
 ipcMain.handle('sidecar:status', () => sidecar.status());
@@ -1156,7 +1144,7 @@ async function maybeStartForward() {
     return;
   }
   let cloud = String(cfg.cloud_base || '').trim();
-  if (!cloud && cfg.base && !LOOPBACK_RE.test(cfg.base)) cloud = cfg.base;
+  // Cloud forwarding is opt-in through sync.cloud_url; never infer it from an old base.
   if (!cloud) return;                       // 没有云地址，无从转发
   const tok = await getToken();
   forward.start({
@@ -1193,7 +1181,8 @@ ipcMain.handle('sidecar:providers', async () => {
 async function deviceCall(method, path, body) {
   const cfg = readCfg();
   if (!cfg.base) return { ok: false, status: 0, err: '还没连上大脑' };
-  return request(method, String(cfg.base).replace(/\/+$/, '') + path, body, await getToken());
+  const b=connectionBase(cfg);if(!b)return {ok:false,status:0,err:'Brain 未就绪'};
+  return request(method, b + path, body, await getToken());
 }
 ipcMain.handle('device:list', () => deviceCall('GET', '/api/device/list'));
 ipcMain.handle('device:revoke', (_e, id) => deviceCall('POST', '/api/device/revoke', { device_id: id }));
@@ -1214,7 +1203,8 @@ ipcMain.handle('token:get', async () => ((await getToken()) ? '已保存' : ''))
 ipcMain.handle('token:set', (_e, t) => setToken(t));
 ipcMain.handle('token:test', async () => {
   const cfg = readCfg();
-  const r = await request('GET', cfg.base.replace(/\/+$/, '') + '/api/persona', null, await getToken());
+  const b=connectionBase(cfg);if(!b)return {ok:false,status:0,err:'Brain 未就绪'};
+  const r = await request('GET', b + '/api/persona', null, await getToken());
   return { ok: r.ok, status: r.status, err: r.err || '', name: (r.json && r.json.name) || '' };
 });
 ipcMain.handle('shell:open', (_e, url) => shell.openExternal(String(url || '')));
@@ -1254,8 +1244,19 @@ if (!app.requestSingleInstanceLock()) {
     perfLog('electron-ready');
     Menu.setApplicationMenu(null);   // 自绘标题栏，不要系统菜单
     oplog.init(app.getPath('userData'));
-    sidecar.maybeStart(readCfg());   // 本地大脑先跑起来，窗口同时开
-    sidecar.onState((s) => send('sidecar:state', s));
+    const updates=require('./update-transaction');
+    let recoveryShown=false;
+    sidecar.onState(async s=>{
+      send('sidecar:state',s);
+      if(s.status==='ready') updates.markHealthy(app.getPath('userData'),s.build);
+      if(s.status==='failed' && !recoveryShown && updates.pending(app.getPath('userData'))){
+        recoveryShown=true;
+        const choice=await dialog.showMessageBox({type:'error',title:'Vigil 更新未就绪',message:s.lastErr,
+          detail:'未连接旧 Brain。可恢复备份中的 Electron 与 Brain 整套程序；用户数据保留。',buttons:['保留现场','恢复上一版'],defaultId:0,cancelId:0});
+        if(choice.response===1){updates.launchRollback(app.getPath('userData'));quitting=true;app.quit();}
+      }
+    });
+    sidecar.maybeStart(readCfg());
     createWindow();
     createTray();                    // 常驻托盘：点关闭只是隐藏（2026-10-09）
     startPolling();                  // 本地操控的活从这儿进来

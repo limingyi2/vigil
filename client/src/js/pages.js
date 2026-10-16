@@ -2863,18 +2863,20 @@
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
         '<button class="btn fill" id="sAuto">自动探测</button>' +
         '<span class="muted" id="sAutoRes" style="font-size:12px">' +
-        '按顺序试 127.0.0.1:18787（SSH 隧道）与 127.0.0.1:8788（本机 brain）</span>' +
+        '本地模式只连接随包 Brain；远程模式只连接你明确选择的地址</span>' +
         '</div></div>' +
 
-        '<div class="sec">手动配置（只有直连公网时才需要）</div>' +
+        '<div class="field"><label for="sMode">Brain 运行模式</label>' +
+        '<select class="input" id="sMode" aria-describedby="sModeHelp"><option value="local"' + (state.cfg.connection_mode !== 'remote' ? ' selected' : '') + '>本地随包（推荐）</option><option value="remote"' + (state.cfg.connection_mode === 'remote' ? ' selected' : '') + '>远程（明确指定）</option></select>' +
+        '<p class="muted" id="sModeHelp">本地自动启动并认证，不需要 IP、端口或 EXE。云端同步和微信桥可独立保留。</p></div>' +
         '<div class="card" style="margin-bottom:14px">' +
-        '<div class="field"><label>Brain 地址</label>' +
-        '<input class="input mono" id="sBase" value="' + esc(state.cfg.base || '') + '" placeholder="http://127.0.0.1:18787">' +
-        '<div class="muted" style="font-size:11.5px">本机隧道 127.0.0.1:18787 · 本机直接跑 127.0.0.1:8788 · 直连云机 http://<地址>:8788</div></div>' +
+        '<div id="sRemoteFields"' + (state.cfg.connection_mode === 'remote' ? '' : ' hidden') + '><div class="field"><label for="sBase">远程 Brain 地址</label>' +
+        '<input class="input mono" id="sBase" value="' + esc(state.cfg.remote_base || '') + '" placeholder="https://brain.example.com">' +
+        '<div class="muted" style="font-size:11.5px">仅在远程模式使用，不会在本地启动失败时自动回退</div></div>' +
         '<div class="field"><label>Brain Token</label>' +
         '<input class="input" id="sToken" type="password" placeholder="' + (has ? '已保存（留空 = 不改）' : '还没配') + '">' +
         '<div class="muted" style="font-size:11.5px">存在系统钥匙串（keytar），渲染层拿不到它</div></div>' +
-        '<div style="display:flex;gap:8px;align-items:center">' +
+        '</div><div style="display:flex;gap:8px;align-items:center">' +
         '<button class="btn fill" id="sSave">保存并重连</button>' +
         '<button class="btn oline" id="sTest">测试连接</button>' +
         '<span class="muted" id="sRes" style="font-size:12px"></span></div></div>' +
@@ -2889,6 +2891,7 @@
 
       const res = v.querySelector('#sRes');
       const ares = v.querySelector('#sAutoRes');
+      v.querySelector('#sMode').addEventListener('change', e => {v.querySelector('#sRemoteFields').hidden=e.target.value!=='remote';});
 
       // ── 本地大脑（sidecar）卡片：状态读数 + 重启 ──────────────
       // 只在 Electron 里有（网页 harness 没有 window.vigil.sidecar）
@@ -2933,12 +2936,17 @@
       v.querySelector('#sSave').addEventListener('click', async () => {
         const base = v.querySelector('#sBase').value.trim();
         const tok = v.querySelector('#sToken').value.trim();
-        if (base) await API.saveCfg({ base });
-        if (tok) {
+        const mode=v.querySelector('#sMode').value;
+        if(mode==='remote' && !base){res.textContent='请填写远程 Brain 地址';return;}
+        await API.saveCfg({connection_mode:mode,...(mode==='remote'?{remote_base:base}:{})});
+        if (tok && mode==='remote') {
           const r = await global.vigil.token.set(tok);
           if (r && r.warn) toast(r.warn);
         }
         res.textContent = '已保存，正在重连…';
+        const connected=await global.vigil.autoConnect();
+        if(!connected.ok){res.textContent=connected.err || 'Brain 未就绪';return;}
+        await API.loadCfg();
         await API.ping();
         res.textContent = state.conn.ok ? '连接正常（' + state.conn.ms + ' ms）' : '连不上：' + state.conn.err;
         ctx.refresh();
@@ -2966,7 +2974,7 @@
       if (!isCurrent()) return;
       const sync = (live && live.sync) || {};
       const hasCloud = !!(sync.cloud_url && sync.cloud_token);
-      if (!state.mSrc) state.mSrc = hasCloud ? 'cloud' : 'local';
+      if (!state.mSrc) state.mSrc = 'local';
       const mb = () => (hasCloud && state.mSrc === 'cloud') ? 'cloud' : null;
       const mget = (p, timeoutMs) => get(p, { base: mb(), timeoutMs });
       const mpost = (p, b, timeoutMs) => post(p, b, { base: mb(), timeoutMs });

@@ -283,3 +283,14 @@ keytar 是原生模块，`package.json` 里已经声明 `asarUnpack`。
 **还没有的**：桌宠 Live2D（阶段5）、消息通知、开机自启、自动更新、语音发送。
 
 按方案的说法，这些都排在骨架之后，而且大半卡在 brain 侧的前置依赖上。
+
+
+## 一体化开发分支（1.1.0）
+
+Windows 安装包包含同一提交构建的 Electron 与 Brain。首次启动默认连接随包本地 Brain，配置模型后即可聊天与使用 Creator。无需安装 Python/Node 或填写 Brain 地址。旧 sidecar 路径只用于迁移数据，不作为运行目标。
+
+用户数据位于 `%APPDATA%/vigil-client/brain`，更新不覆盖模型、数据库、插件及 Skill 数据。远程 Brain 在连接设置里明确选择；云端同步及微信桥独立保留。未配置个人云服务器时，更新检查使用公共 GitHub release 清单。
+
+开发：仓库根运行 `scripts/start_dev.bat`，缺失或过期的配套 Brain 会先生成候选构建，开发数据隔离在 `.vigil-dev`。正式打包运行 `python scripts/build_release.py`，要求干净已提交源码；验收阶段用 `--candidate --installer-test`，候选包不发布。
+
+迁移风险、版本门禁、恢复和 Windows 验收见 [一体化方案](../docs/UNIFIED_CLIENT_BRAIN.md)。

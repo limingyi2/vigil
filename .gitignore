@@ -273,3 +273,8 @@ brain/config/management_agent_tokens.json
 ssh.txt
 .env
 !.env.example
+client/build-info.json
+brain/build-info.json
+brain/plugins/_pending_restart.json
+
+.vigil-dev/

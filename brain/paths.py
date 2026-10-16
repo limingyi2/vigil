@@ -21,7 +21,9 @@ import sys
 # 非冻结（云端/本机源码跑）行为一字不变。
 # 注意：全项目其余地方的 `os.path.dirname(__file__)` 都只是"单独跑某个
 # 文件"的兜底分支，正常都走本文件的常量 —— 所以改这一处就够。
-if getattr(sys, "frozen", False):
+if os.environ.get('VIGIL_HOME'):
+    ROOT = os.path.abspath(os.environ['VIGIL_HOME'])
+elif getattr(sys, "frozen", False):
     ROOT = os.path.dirname(os.path.abspath(sys.executable))
 else:
     # VIGIL_HOME：测试/多实例场景把整个家（config/ data/ logs/）挪到别处。

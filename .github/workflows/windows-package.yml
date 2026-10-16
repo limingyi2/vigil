@@ -1,0 +1,30 @@
+name: Windows unified installer acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/unified-client-brain']
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install build dependencies
+        run: |
+          python -m pip install -r brain/requirements.txt pyinstaller pypdf
+          npm ci --prefix client
+      - name: Build isolated acceptance installer
+        run: python scripts/build_windows_acceptance.py
+      - name: Real install, upgrade, mismatch and rollback
+        run: python scripts/test_windows_install.py client/dist/Vigil-Acceptance-1.1.0.exe --baseline client/dist/Vigil-Acceptance-1.0.99.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-unified-acceptance-candidate
+          path: client/dist/Vigil-Acceptance-*.exe

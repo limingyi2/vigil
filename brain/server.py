@@ -3030,6 +3030,10 @@ def start_remote_api(brain):
             # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
             if self._deny_if_limited_device("GET", path):
                 return
+            if path == '/api/runtime':
+                import build_identity
+                self._json(200, dict(ok=True, **build_identity.runtime()))
+                return
             if self._agent_api('GET', path):
                 return
             if path.startswith("/api/agent-center/"):
@@ -3569,7 +3573,7 @@ def start_remote_api(brain):
     # 默认只绑 127.0.0.1（公网碰不到）。要让手机 App 直接连，必须配
     # `bind_host: "0.0.0.0"`，靠 token 兜底鉴权；旧配置里这个值在
     # mobile.remote_host，继续认
-    host = str(api_config.get("bind_host")
+    host = str(os.environ.get('VIGIL_BIND_HOST') or api_config.get("bind_host")
                or MOB_CFG.get("remote_host") or "127.0.0.1")
     # 没配 token 就别往外绑：那等于开了一个谁都能用的接口（以前 _check 是空 token
     # 全放行，忘填 token 很常见，配上 0.0.0.0 就是公网裸奔）。宁可不开这个口。

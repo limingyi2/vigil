@@ -1,6 +1,6 @@
 {
   "name": "vigil-client",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "private": true,
   "description": "Vigil 桌面客户端：聊天 + 管理面板 + 本地操控（骨架阶段）",
   "main": "electron/main.js",
@@ -24,7 +24,8 @@
       "version.json",
       "package.json",
       "!src/_harness.html",
-      "!src/js/_devstub.js"
+      "!src/js/_devstub.js",
+      "build-info.json"
     ],
     "asarUnpack": [
       "**/node_modules/keytar/**"
@@ -45,8 +46,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
-    }
+      "perMachine": false,
+      "include": "tools/installer.nsh"
+    },
+    "beforePack": "./tools/build-hooks.js",
+    "afterPack": "./tools/build-hooks.js"
   },
   "dependencies": {
     "keytar": "^7.9.0",
