@@ -47,23 +47,22 @@ async function run(){
   const chat=await evaluate(`(async()=>{const events=[];let text='';let final='';const off=vigil.onStreamEvent(e=>{events.push(e.type);if(e.type==='text')text+=e.text||'';if(e.type==='done')final=e.text||'';});try{const r=await vigil.apiStream('/api/chat/stream',{text:'fixture hello',src:'pc',request_id:'request_fixture_'+crypto.randomUUID()});return {ok:r.ok,events,hasReply:(text+final).includes('Hello fixture')};}finally{off();}})()`);
   assert.ok(chat.events.includes('done'),JSON.stringify(chat));
   assert.equal(chat.hasReply,true,'Ordinary chat did not return the fixture model response: '+JSON.stringify(chat));
-  const session='unified-install-fixture';
-  const created=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'Create a minimal isolated fixture plugin. Do not install.',session_id:'${session}',request_id:'creator_fixture_'+crypto.randomUUID()})`);
+  const created=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'Create a minimal isolated fixture plugin. Do not install.',request_id:'creator_fixture_'+crypto.randomUUID()})`);
   assert.equal(created.status,200);const jid=created.json.job_id;
   const streamed=await evaluate(`(async()=>{const events=[];const off=vigil.onCreatorEvent(e=>{if(e.job_id===${JSON.stringify(jid)})events.push(e);});try{return {result:await vigil.apiStream('/api/creator/jobs/${jid}/events?after=0',null),events};}finally{off();}})()`);
-  assert.equal(streamed.result?.ok,true,'Creator Jobs SSE subscription failed');
+  assert.equal(streamed.result?.ok,true,'Creator Jobs SSE subscription failed: '+JSON.stringify(streamed.result));
   assert.ok(streamed.events.some(e=>e.type==='text_delta'&&e.payload?.text),'Creator Jobs did not stream generated text');
   let job;
-  for(let i=0;i<120;i++){const r=await evaluate(`vigil.api('GET','/api/creator/jobs/${jid}?session_id=${session}')`);job=r.json;if(['failed','succeeded'].includes(job.status))break;await sleep(250);}
+  for(let i=0;i<120;i++){const r=await evaluate(`vigil.api('GET','/api/creator/jobs/${jid}')`);job=r.json;if(['failed','succeeded'].includes(job.status))break;await sleep(250);}
   assert.equal(job.status,'succeeded',JSON.stringify({status:job.status,error:job.error?.code}));
   assert.ok(job.draft_id,'Creator Job did not associate its generated draft');
   const draft=await evaluate(`vigil.api('GET','/api/creator/draft?id='+encodeURIComponent(${JSON.stringify(job.draft_id)}))`);
   assert.equal(draft.status,200);assert.equal(draft.json?.draft?.id,job.draft_id);
   assert.ok(draft.json.draft.files.some(f=>f.name==='fixture_plugin.py'&&f.content.includes('NAME = "fixture_plugin"')));
 
-  const failed=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'fixture forced failure',session_id:'${session}',request_id:'creator_failed_'+crypto.randomUUID()})`);
+  const failed=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'fixture forced failure',request_id:'creator_failed_'+crypto.randomUUID()})`);
   assert.equal(failed.status,200);const failedId=failed.json.job_id;let failure;
-  for(let i=0;i<120;i++){const r=await evaluate(`vigil.api('GET','/api/creator/jobs/${failedId}?session_id=${session}')`);failure=r.json;if(['failed','succeeded'].includes(failure.status))break;await sleep(250);}
+  for(let i=0;i<120;i++){const r=await evaluate(`vigil.api('GET','/api/creator/jobs/${failedId}')`);failure=r.json;if(['failed','succeeded'].includes(failure.status))break;await sleep(250);}
   assert.equal(failure.status,'failed');assert.ok(failure.error?.log_id);assert.equal(failure.error?.http_status,503);
   const savedFailures=await evaluate("vigil.api('GET','/api/creator/jobs')");
   assert.ok(savedFailures.json.items.some(item=>item.job_id===failedId&&item.status==='failed'));
