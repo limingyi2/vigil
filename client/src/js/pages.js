@@ -967,9 +967,10 @@
         const t = item.created_at * 1000;
         items.push({role:'user',text:input,t,request_id:item.request_id});
         const message = item.error?.message || ({pending:'请求尚未确认送达，未自动重发',running:'原请求执行中，未自动重发',
-          failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:'草稿已生成'})[status] || status;
+          failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:item.kind === 'chat' ? '任务完成' : '草稿已生成'})[status] || status;
         items.push({role:'assistant',text:(item.content || '') + '\n\n' + message,t,
-          request_id:item.request_id,partial:status!=='succeeded',job:item.job_id ? item : null});
+          request_id:item.request_id,partial:status!=='succeeded',job:item.job_id ? item : null,
+          run:item.run_id ? item : null});
         if (item.job_id && !['failed','cancelled','interrupted'].includes(status)) jobsToWatch.push(item);
       }
       items.sort((a,b)=>toMs(a.t)-toMs(b.t));
@@ -1008,8 +1009,19 @@
         if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + atts + '</div></div></div>';
         return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
           '<div class="txt md">' + t + '</div>' +
-          '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span></div></div></div>';
+          '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span>' +
+          (m.run && ['queued','running','paused_budget'].includes(m.run.status) ?
+            '<button class="btn oline agent-cancel" data-run="' + esc(m.run.run_id) + '">取消任务</button>' : '') +
+          '</div></div></div>';
       }).join('');
+      for (const button of msgs.querySelectorAll('.agent-cancel')) {
+        button.onclick = async () => {
+          button.disabled = true;
+          const r = pick(await post('/api/agent/runs/' + encodeURIComponent(button.dataset.run) + '/cancel', {}));
+          if (!r.ok) { button.disabled = false; toast('取消未确认，请检查任务状态'); }
+          else await loadMsgs(true);
+        };
+      }
       draftCards.forEach((n) => msgs.appendChild(n));
       for (const job of jobsToWatch) {
         const root = msgs.querySelector('[data-job="' + job.job_id + '"]');
@@ -1145,6 +1157,22 @@
       let thinkDirty = false;
       let textDirty = false;
       let rafPending = false;
+      let agentRunId = null;
+      const agentCancel = document.createElement('button');
+      agentCancel.className = 'btn oline agent-cancel';
+      agentCancel.textContent = '取消任务';
+      agentCancel.onclick = async () => {
+        if (!agentRunId) return;
+        agentCancel.disabled = true;
+        try {
+          const r = pick(await post('/api/agent/runs/' + encodeURIComponent(agentRunId) + '/cancel', {}));
+          if (!r.ok) throw Error(r._err || '取消未确认');
+          statusEl.textContent = '已取消后续调度；在途操作可能仍在执行';
+        } catch (_) {
+          agentCancel.disabled = false;
+          toast('取消未确认，请检查任务状态');
+        }
+      };
 
       // 借鉴 DeepSeek Harness：事件逐个进状态，但按动画帧合并绘制，
       // 避免每个 token 都重绘导致主线程卡顿
@@ -1168,10 +1196,25 @@
       // 监听流式事件
       const onEvent = (evt) => {
         if (evt.job_id) return;
+        if (evt.request_id && evt.request_id !== requestId) return;
+        if (evt.run_id && agentRunId && evt.run_id !== agentRunId) return;
         if (turnScope !== recordKey()) return;
         if (streamDone) return;
         console.log('[stream]', evt.type, evt.text ? evt.text.slice(0, 30) : '');
-        if (evt.type === 'think' && evt.text) {
+        if (evt.type === 'agent_run') {
+          agentRunId = evt.run_id;
+          remember({run_id:agentRunId,status:'running'});
+          statusEl.textContent = '执行中 ';
+          statusEl.appendChild(agentCancel);
+        } else if (evt.type === 'stage') {
+          statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
+          if (agentRunId) statusEl.appendChild(agentCancel);
+        } else if (evt.type === 'run_snapshot') {
+          textBuf = evt.text || '';
+          remember({content:textBuf,status:'running'});
+          textDirty = true;
+          scheduleRender();
+        } else if (evt.type === 'think' && evt.text) {
           thinkBuf += evt.text;
           thinkDirty = true;
           scheduleRender();
@@ -1182,7 +1225,8 @@
           scheduleRender();
         } else if (evt.type === 'done') {
           streamDone = true;
-          remember({content:textBuf || evt.text || '',status:'succeeded',error:null});
+          textBuf = evt.text || textBuf;
+          remember({content:textBuf,status:'succeeded',error:null});
           // 强制刷新最后一帧
           if (thinkDirty) { thinkInner.textContent = thinkBuf; thinkDirty = false; }
           if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
@@ -1201,10 +1245,11 @@
           updateComposer();
         } else if (evt.type === 'error') {
           streamDone = true;
-          remember({content:textBuf || evt.text || '',status:'failed',
+          textBuf = evt.text || textBuf;
+          remember({content:textBuf,status:evt.status || 'failed',
             error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
           textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
-          statusEl.textContent = '失败';
+          statusEl.textContent = ({cancelled:'已取消',paused_budget:'预算已用尽',interrupted:'执行中断'})[evt.status] || '失败';
           busy = false;
           updateComposer();
         }

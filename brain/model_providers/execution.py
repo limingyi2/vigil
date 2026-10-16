@@ -154,6 +154,7 @@ def completion_events(provider, payload, timeout=180):
         yield dict(type='completion', result=result)
         return
     content, reasoning, finish, usage = [], [], None, None
+    calls = {}
     with provider.stream(dict(payload, stream=True, stream_options={'include_usage': True}), timeout=timeout) as response:
         response.raise_for_status()
         for line in response.iter_lines():
@@ -174,6 +175,22 @@ def completion_events(provider, payload, timeout=180):
                 delta = choice.get('delta') or {}
                 if choice.get('finish_reason') is not None:
                     finish = choice['finish_reason']
+                for call in delta.get('tool_calls') or []:
+                    index = call.get('index')
+                    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < 128:
+                        raise ValueError('invalid tool index')
+                    entry = calls.setdefault(index, {'id': '', 'type': 'function',
+                        'function': {'name': '', 'arguments': ''}})
+                    if call.get('type', 'function') != 'function':
+                        raise ValueError('invalid tool type')
+                    fn = call.get('function') or {}
+                    for source, target, key in [(call, entry, 'id'),
+                        (fn, entry['function'], 'name'), (fn, entry['function'], 'arguments')]:
+                        value = source.get(key)
+                        if value is not None:
+                            if not isinstance(value, str):
+                                raise ValueError('invalid tool fragment')
+                            target[key] += value
                 for field, buffer, kind in [('content', content, 'text_delta'),
                     ('reasoning_content', reasoning, 'think_delta')]:
                     value = delta.get(field)
@@ -182,10 +199,11 @@ def completion_events(provider, payload, timeout=180):
                             raise ValueError('invalid delta')
                         buffer.append(value)
                         yield dict(type=kind, text=value)
-            except (ValueError, TypeError, KeyError, IndexError):
+            except (ValueError, TypeError, KeyError, IndexError, AttributeError):
                 raise ProviderResponseError('流式响应结构错误')
     result = normalize({'choices': [{'message': {'content': ''.join(content),
-        'reasoning_content': ''.join(reasoning)}, 'finish_reason': finish}], 'usage': usage})
+        'reasoning_content': ''.join(reasoning),
+        'tool_calls': [calls[i] for i in sorted(calls)]}, 'finish_reason': finish}], 'usage': usage})
     if finish is None:
         result.update(reason='connection_lost', complete=False)
     yield dict(type='completion', result=result)
