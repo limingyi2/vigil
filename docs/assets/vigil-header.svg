@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-labelledby="title desc">
+  <title id="title">Vigil</title>
+  <desc id="desc">Local-first Agent Workspace. Streaming chat, tools and plugins.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101f30"/><stop offset="1" stop-color="#090f1a"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#63e4d1"/><stop offset="1" stop-color="#81aaff"/></linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#a7c5e0" stroke-opacity=".045"/></pattern>
+  </defs>
+  <rect width="1280" height="340" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="340" rx="20" fill="url(#grid)"/>
+  <path d="M760 0V340" stroke="#b5cbe1" stroke-opacity=".1"/>
+  <rect x="52" y="43" width="44" height="44" rx="12" fill="url(#accent)"/>
+  <path d="M64 56L74 75L84 56" fill="none" stroke="#112033" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="112" y="70" fill="#a9bbcd" font-family="Segoe UI,Arial,sans-serif" font-size="13" letter-spacing="2.6">LOCAL-FIRST AGENT WORKSPACE</text>
+  <text x="49" y="191" fill="#f3f7fb" font-family="Segoe UI,Arial,sans-serif" font-size="94" font-weight="700" letter-spacing="-5">Vigil</text>
+  <text x="55" y="232" fill="#b9c9d8" font-family="Segoe UI,Arial,sans-serif" font-size="18">A desktop workspace for conversations and actions.</text>
+  <path d="M55 273H89" stroke="#68dcca" stroke-width="3" stroke-linecap="round"/>
+  <text x="104" y="279" fill="#8fa6bc" font-family="Segoe UI,Arial,sans-serif" font-size="13" letter-spacing="1.5">PYTHON  /  ELECTRON  /  WINDOWS</text>
+  <circle cx="817" cy="62" r="4" fill="#68dcca"/>
+  <text x="832" y="67" fill="#8fa6bc" font-family="Segoe UI,Arial,sans-serif" font-size="11" letter-spacing="1.5">IN ACTIVE DEVELOPMENT</text>
+  <g font-family="Segoe UI,Arial,sans-serif">
+    <rect x="807" y="105" width="420" height="53" rx="10" fill="#122435" stroke="#294253"/>
+    <text x="827" y="138" fill="#68dcca" font-size="12">01</text><text x="868" y="138" fill="#dfebf5" font-size="16">Streaming conversations</text>
+    <path d="M832 159V177" stroke="#426477" stroke-width="1.5"/>
+    <rect x="807" y="177" width="420" height="53" rx="10" fill="#12202f" stroke="#294253"/>
+    <text x="827" y="210" fill="#89adf8" font-size="12">02</text><text x="868" y="210" fill="#dfebf5" font-size="16">Agent runs &amp; authorized tools</text>
+    <path d="M832 231V249" stroke="#426477" stroke-width="1.5"/>
+    <rect x="807" y="249" width="420" height="53" rx="10" fill="#101b29" stroke="#294253"/>
+    <text x="827" y="282" fill="#a5b6c9" font-size="12">03</text><text x="868" y="282" fill="#dfebf5" font-size="16">Plugin drafts &amp; local knowledge</text>
+  </g>
+</svg>
