@@ -33,6 +33,11 @@ async function run(){
   const runtime=await evaluate("vigil.api('GET','/api/runtime')");assert.equal(runtime.status,200);assert.equal(runtime.json.pid,state.pid);
   assert.ok(runtime.json.capabilities.includes('creator_jobs')&&runtime.json.capabilities.includes('agent_runs'));
   const unauth=await fetch(state.base+'/api/creator/jobs');assert.equal(unauth.status,401);
+  const migratedModel=await evaluate("vigil.api('GET','/api/models/saved')");
+  assert.equal(migratedModel.status,200);assert.equal(migratedModel.json.current.provider,'custom');
+  assert.equal(migratedModel.json.current.model,'fixture-model');assert.equal(migratedModel.json.current.has_key,true);
+  const legacyDraft=await evaluate("vigil.api('GET','/api/creator/draft?id=cr_20261017000100_fixture')");
+  assert.equal(legacyDraft.status,200);assert.equal(legacyDraft.json?.draft?.id,'cr_20261017000100_fixture');
   let host;
   for(let i=0;i<30;i++){host=await evaluate("vigil.api('POST','/api/skill/status',{})");if(host.json?.alive)break;await sleep(100);}
   assert.equal(host.json?.alive,true,'Bundled Electron Node Skill Host failed without system Node');
@@ -44,11 +49,26 @@ async function run(){
   assert.equal(chat.hasReply,true,'Ordinary chat did not return the fixture model response: '+JSON.stringify(chat));
   const session='unified-install-fixture';
   const created=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'Create a minimal isolated fixture plugin. Do not install.',session_id:'${session}',request_id:'creator_fixture_'+crypto.randomUUID()})`);
-  assert.equal(created.status,200);const jid=created.json.job_id;let job;
+  assert.equal(created.status,200);const jid=created.json.job_id;
+  const streamed=await evaluate(`(async()=>{const events=[];const off=vigil.onCreatorEvent(e=>{if(e.job_id===${JSON.stringify(jid)})events.push(e);});try{return {result:await vigil.apiStream('/api/creator/jobs/${jid}/events?after=0',null),events};}finally{off();}})()`);
+  assert.equal(streamed.result?.ok,true,'Creator Jobs SSE subscription failed');
+  assert.ok(streamed.events.some(e=>e.type==='text_delta'&&e.payload?.text),'Creator Jobs did not stream generated text');
+  let job;
   for(let i=0;i<120;i++){const r=await evaluate(`vigil.api('GET','/api/creator/jobs/${jid}?session_id=${session}')`);job=r.json;if(['failed','succeeded'].includes(job.status))break;await sleep(250);}
   assert.equal(job.status,'succeeded',JSON.stringify({status:job.status,error:job.error?.code}));
+  assert.ok(job.draft_id,'Creator Job did not associate its generated draft');
+  const draft=await evaluate(`vigil.api('GET','/api/creator/draft?id='+encodeURIComponent(${JSON.stringify(job.draft_id)}))`);
+  assert.equal(draft.status,200);assert.equal(draft.json?.draft?.id,job.draft_id);
+  assert.ok(draft.json.draft.files.some(f=>f.name==='fixture_plugin.py'&&f.content.includes('NAME = "fixture_plugin"')));
+
+  const failed=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'fixture forced failure',session_id:'${session}',request_id:'creator_failed_'+crypto.randomUUID()})`);
+  assert.equal(failed.status,200);const failedId=failed.json.job_id;let failure;
+  for(let i=0;i<120;i++){const r=await evaluate(`vigil.api('GET','/api/creator/jobs/${failedId}?session_id=${session}')`);failure=r.json;if(['failed','succeeded'].includes(failure.status))break;await sleep(250);}
+  assert.equal(failure.status,'failed');assert.ok(failure.error?.log_id);assert.equal(failure.error?.http_status,503);
+  const savedFailures=await evaluate("vigil.api('GET','/api/creator/jobs')");
+  assert.ok(savedFailures.json.items.some(item=>item.job_id===failedId&&item.status==='failed'));
   assert.ok(fs.existsSync(path.join(profile,'brain/data')));
   assert.equal(fs.existsSync(path.join(install,'resources/vigil-brain/config')),false);
-  console.log('PASS installed fresh profile auto-auth, paired identity, no external Node/Python, model setup, chat and Creator');
+  console.log('PASS installed pair, migrated model and draft, isolated model fixture, chat, Creator SSE, saved failure and generated draft');
 }
 run().then(()=>{if(ws)ws.close();if(child?.pid)execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}).catch(e=>{console.error(e.message);if(ws)ws.close();if(child?.pid){try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}catch(_){}}process.exitCode=1;});

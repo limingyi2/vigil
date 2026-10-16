@@ -38,7 +38,7 @@ jobs:
 
       - name: 共享订阅与 Creator 界面回归
         if: always()
-        run: node --test client/tools/test-p2-stream-lifecycle.js client/tools/test-unified-runtime.js
+        run: node --test client/tools/test-p2-stream-lifecycle.js client/tools/test-unified-runtime.js client/tools/test-public-updates.js
 
       - name: 保存测试结果
         if: always()

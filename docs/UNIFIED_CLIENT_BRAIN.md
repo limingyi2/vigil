@@ -23,9 +23,9 @@ python scripts/build_release.py
 # 或 scripts\build_client.bat；自动先构建 Brain，再打包 Electron。
 ```
 
-脚本使用自身位置定位仓库。需要 Python 打包依赖及 client npm 依赖；优先使用本地 venv，也可显式使用 .venv/Python 执行脚本。正式构建要求干净已提交源码；任何缺失 Brain、源码变化、版本变化、文件摘要变化均拒绝打包。直接 npm run dist 同样执行门禁。build-info 与文件清单是生成产物，不入 Git，不含本地凭据。
+脚本使用自身位置定位仓库。需要 Python 打包依赖及 client npm 依赖；优先使用本地 venv，也可显式使用 .venv/Python 执行脚本。正式构建要求干净已提交源码；任何缺失 Brain、源码变化、版本变化、文件摘要变化均拒绝打包。Brain 中间构建目录与 `client/dist-release` 每次先清理，避免复用旧配对产物。build-info 与文件清单是生成产物，不入 Git，不含本地凭据。NSIS 文件名固定为 `Vigil.Setup.<version>.exe`，发布清单直接采用产物文件名，并核验提交、版本、大小和 SHA-256。
 
-尚未提交的工作只能生成 `--candidate` 验收包，标记 candidate=true，禁止用作正式发布。验收使用 `--candidate --installer-test` 生成独立 appId 的 NSIS，避免覆盖正式安装。禁止将验收安装包上传用户更新通道。
+未发布的验收构建使用 `--candidate`，标记 candidate=true，更新器会拒绝。Windows Actions 在一次性 hosted runner 上下载并校验正式 Vigil 1.0.2 安装包，再以正式 appId 在临时安装目录覆盖升级到 1.1.0；不要在装有日常 Vigil 的电脑上运行这个生产身份安装器。Actions 产物仅用于验收，不创建 Release，也不推送到用户更新通道。
 
 ## 更新和恢复
 
@@ -39,13 +39,12 @@ python scripts/build_release.py
 
 ```powershell
 python -m pytest tests/test_unified_runtime.py -q
-node --test client/tools/test-unified-runtime.js client/tools/test-p2-stream-lifecycle.js
-python scripts/build_release.py --candidate --installer-test
-python scripts/test_windows_install.py client/dist/Vigil-Acceptance-1.1.0.exe
+node --test client/tools/test-unified-runtime.js client/tools/test-p2-stream-lifecycle.js client/tools/test-public-updates.js
+python scripts/build_release.py --candidate
 ```
 
-Windows 验收实际运行 NSIS 安装/覆盖升级、安装后的 Electron/preload/Brain、隔离模型 HTTP 服务、聊天流式请求及 Creator 草稿生成；检查不安装插件、未认证请求被拒绝、旧端口不回退、版本不匹配阻止服务，以及完整二进制恢复和数据保留。子进程 PATH 移除 Node/Python，验证随包运行时。模型服务是本机测试替身，不使用真实凭据。
+Windows Actions 使用官方 `Vigil.Setup.1.0.2.exe` 作为升级基线，校验 SHA-256 与大小后执行 NSIS 安装、真实覆盖升级、旧目录迁移、Brain 失败回滚及检查点失败保护。测试验证模型配置、聊天记录、Creator 草稿、插件、Skill 和其他数据；打包后的 Electron/Brain 版本身份必须配对。Creator 使用隔离的本地模型替身，验收流式输出、失败记录、诊断和草稿；不使用真实 API Key。
 
-本机隔离安装与全新物理机/虚拟机有区别。Windows Actions 工作流提供干净 hosted runner 复验；正式发布应保留该结果和新机器安装证据，不将尚未执行的验证写为已通过。
+Creator Renderer 错误诊断与 GitHub Release 清单/下载/重定向/大小/SHA-256 检查另有自动化回归。当前公开 latest 仍是 1.0.2，尚无 1.1.0 release-manifest；正式 Release 创建前只验证更新器的隔离测试，不把未发布包报告为线上可更新。
 
 内置插件更新使用上次随包代码摘要识别未修改文件；用户改动保留。旧版迁移时使用旧包 `_internal/plugins` 辨认原版代码。Skill Host 使用独立 ESM 技能目录，Brain 退出后宿主自动结束。

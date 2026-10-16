@@ -44,6 +44,7 @@
       ]
     },
     "nsis": {
+      "artifactName": "Vigil.Setup.${version}.exe",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
