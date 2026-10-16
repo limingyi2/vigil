@@ -79,7 +79,7 @@ def main(installer, baseline=None):
     # Exercise the shipped restore helper; no production installation or profile.
     request = profile / 'updates/restore.json'
     request.write_text(json.dumps(dict(checkpoint, userData=str(profile), waitPid=0)))
-    subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'client/electron/rollback.ps1'), '-RequestPath', str(request)], env=env, check=True, timeout=180)
+    subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'client/electron/rollback.ps1'), '-RequestPath', str(request), '-NoLaunch'], env=env, check=True, timeout=180)
     assert marker.read_text() == 'fixture retained'
     assert json.loads(manifest.read_text())['commit'] != 'mismatched-fixture'
     # Restore helper launches the recovered GUI. Stop only processes in this isolated install.

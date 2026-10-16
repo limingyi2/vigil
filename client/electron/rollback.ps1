@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$RequestPath)
+param([Parameter(Mandatory=$true)][string]$RequestPath,[switch]$NoLaunch)
 $ErrorActionPreference = 'Stop'
 function Get-Sha256([string]$Path) {
   $algorithm = [Security.Cryptography.SHA256]::Create()
@@ -33,4 +33,4 @@ try { Move-Item -LiteralPath $stage -Destination $install }
 catch { Move-Item -LiteralPath $failed -Destination $install; throw }
 $request.status = 'rolled_back'
 $request | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $homeDir 'updates\pending.json') -Encoding UTF8
-Start-Process -FilePath (Join-Path $install 'Vigil.exe') -WindowStyle Hidden
+if (-not $NoLaunch) { Start-Process -FilePath (Join-Path $install 'Vigil.exe') -WindowStyle Hidden }
