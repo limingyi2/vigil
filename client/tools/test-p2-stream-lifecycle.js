@@ -61,7 +61,7 @@ function pages() {
   };
   let source=fs.readFileSync(path.join(client,'src/js/pages.js'),'utf8');
   // Expose existing functions only in this isolated VM, without a production test API.
-  source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,watchCreatorJob};\n  global.PAGES = [');
+  source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,creatorRequestFailure,rememberTurn,localRecords,watchCreatorJob};\n  global.PAGES = [');
   vm.runInNewContext(source,context);
   return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers};
 }
@@ -107,6 +107,29 @@ test('each Creator failure stage remains distinguishable on reload', () => {
     const text=p.creatorErrorText({stage,error_code:stage+'_failed',message:'失败',hint:'建议',log_id:'job_id'});
     assert.ok(text.includes(stage+'_failed'));assert.ok(text.includes('建议'));assert.ok(text.includes('job_id'));
   }
+});
+
+test('Creator 404 is a durable failed request with HTTP status and actual destination', () => {
+  const p=pages();
+  const failure=p.creatorRequestFailure({_status:404,_target:'http://127.0.0.1:61285',err:'no such api'});
+  assert.equal(failure.status,'failed');
+  p.rememberTurn('req_missing_api',failure);
+  const saved=p.localRecords()[0];
+  assert.equal(saved.status,'failed');
+  const text=p.creatorErrorText(saved.error);
+  for(const wanted of ['Creator jobs 接口','404','http://127.0.0.1:61285','creator_api_missing','sidecar'])assert.ok(text.includes(wanted),text);
+});
+
+test('Creator rejects confirmed client errors but preserves uncertain network/server outcomes', () => {
+  const p=pages();
+  for(const status of [400,401,403,409,429])assert.equal(p.creatorRequestFailure({_status:status}).status,'failed');
+  for(const status of [0,408,500,502,504])assert.equal(p.creatorRequestFailure({_status:status}).status,'pending');
+});
+
+test('API pick preserves transport status and safe destination without trusting JSON ok on HTTP failure', () => {
+  const window={};vm.runInNewContext(fs.readFileSync(path.join(client,'src/js/api.js'),'utf8'),{window,navigator:{userAgent:'Electron/28'}});
+  const r=window.API.pick({ok:false,status:404,target:'http://127.0.0.1:61285',json:{ok:true,err:'no such api'}});
+  assert.equal(r.ok,false);assert.equal(r._status,404);assert.equal(r._target,'http://127.0.0.1:61285');
 });
 
 test('production chat disposes both terminal events, exceptions, fallback and missing-done timeout', () => {

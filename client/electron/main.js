@@ -1089,8 +1089,10 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const requestedTimeout = Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(30000, timeoutMs)) : centerTimeout;
   const perfLabel = p === '/api/persona' ? 'connect.persona' : '';
   const r = await request(method, b + withSrc, body, token, requestedTimeout, perfLabel);
-  if (!r.ok && r.status === 401) return { ...r, err: 'token 不对（设置 → 连接与设备）' };
-  return r;
+  // Report the actual destination, without credentials, query strings or paths.
+  const target = new URL(b).origin;
+  if (!r.ok && r.status === 401) return { ...r, target, err: 'token 不对（设置 → 连接与设备）' };
+  return { ...r, target };
 });
 
 ipcMain.handle('attachment:chunk', async (_e, { bytes, headers = {} } = {}) => {

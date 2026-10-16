@@ -4,7 +4,7 @@ const fs=require('fs'),path=require('path'),os=require('os'),assert=require('ass
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'vigil-p2-creator-ui-'));
 const client=path.resolve(__dirname,'..');
 app.setPath('userData',path.join(tmp,'profile'));
-let win,job,stage='parse',chatRequests=0;
+let win,job,stage='parse',chatRequests=0,creatorRequests=0;
 const jobs=[];
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const ev=s=>win.webContents.executeJavaScript(s,true);
@@ -17,6 +17,8 @@ function fixture(method,raw,body){
   if(p==='/api/plugins/frontend')json={version:1,plugins:[]};
   if(p==='/api/creator/drafts')json={ok:true,drafts:[]};
   if(p==='/api/creator/jobs' && method==='POST'){
+    creatorRequests++;
+    if(stage==='missing_api')return {ok:false,status:404,target:'http://127.0.0.1:61285',json:{err:'no such api'}};
     job={job_id:'job_'+jobs.length,request_id:body.request_id,kind:'plugin',requirement:body.requirement,status:'failed',stage,content:'',event_cursor:1,
       error:{stage,error_code:stage+'_failed',message:'Expecting value (line 3, column 10) <img src=x onerror=alert(1)>',hint:'检查配置后重试',log_id:'job_log_'+jobs.length}};
     jobs.push(job);json={...job,status:'queued',error:null,event_cursor:0};
@@ -27,7 +29,7 @@ function fixture(method,raw,body){
 }
 async function send(text){
   await ev(`document.querySelector('#ta').value=${JSON.stringify(text)};document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
-  await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
+  await until("document.querySelector('#ta').value === '' && !document.querySelector('#sendBtn').classList.contains('is-sending')");
 }
 async function run(){
   ipcMain.handle('api',(_,a)=>fixture(a.method,a.path,a.body));
@@ -62,5 +64,20 @@ async function run(){
   await ev("document.querySelector('#gnav [data-page=\"chat\"]').click()");
   await until("!!document.querySelector('#ta') && document.querySelector('#msgs').textContent.includes('draft_save_failed')");
   console.log('PASS Creator failure details survive page navigation and rehydration');
+  stage='missing_api';await send('missing Creator endpoint fixture');
+  await until("document.querySelector('#msgs').textContent.includes('creator_api_missing')");
+  let text=await ev("document.querySelector('#msgs').textContent");
+  for(const wanted of ['404','http://127.0.0.1:61285','未开始生成'])assert.ok(text.includes(wanted),text);
+  const sent=creatorRequests;
+  await ev("document.querySelector('#gnav [data-page=\"agent-center\"]').click()");
+  await until("!!document.querySelector('#ac-agent-grid')");
+  await ev("document.querySelector('#gnav [data-page=\"chat\"]').click()");
+  await until("!!document.querySelector('#ta') && document.querySelector('#msgs').textContent.includes('creator_api_missing')");
+  assert.equal(creatorRequests,sent);
+  text=await ev("document.querySelector('#msgs').textContent");
+  assert.ok(text.includes('404') && text.includes('http://127.0.0.1:61285'));
+  const records=await ev("Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')&&!k.endsWith(':cleared')).flatMap(k=>JSON.parse(localStorage.getItem(k)))");
+  assert.equal(records.find(r=>r.input==='missing Creator endpoint fixture').status,'failed');
+  console.log('PASS missing Creator API shows HTTP/target, persists failed and never resubmits on navigation');
 }
 app.whenReady().then(run).then(()=>{win.destroy();app.exit(0);}).catch(e=>{console.error(e.stack);app.exit(1);});

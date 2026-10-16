@@ -73,7 +73,21 @@
     return [e.message || '请求未完成', e.stage ? '失败阶段：' + (stages[e.stage] || e.stage) : '',
       e.error_code || e.code ? '错误码：' + (e.error_code || e.code) : '',
       e.http_status ? 'HTTP：' + e.http_status : '', e.hint ? '建议：' + e.hint : '',
+      e.target ? '当前连接：' + e.target : '',
       e.log_id ? '日志 ID：' + e.log_id : ''].filter(Boolean).join('；');
+  }
+
+  function creatorRequestFailure(r) {
+    const status = Number(r && r._status) || 0;
+    const confirmed = status >= 400 && status < 500 && status !== 408;
+    return {status: confirmed ? 'failed' : 'pending', error: {
+      message: status === 404 ? '当前 Brain 没有 Creator jobs 接口，未开始生成'
+        : confirmed ? 'Creator 请求被拒绝，未开始生成' : '请求未确认完成，未自动重发',
+      code: status === 404 ? 'creator_api_missing' : confirmed ? 'creator_request_rejected' : 'creator_request_unconfirmed',
+      http_status: status || undefined, target: (r && r._target) || '',
+      hint: status === 404 ? '检查 Electron 与 Brain 版本、sidecar 启动路径是否匹配'
+        : confirmed ? '检查认证和请求参数后手动重试' : '检查连接和已有作业，确认后再手动重试',
+    }};
   }
 
   async function watchCreatorJob(root, initial, scope = recordKey()) {
@@ -1406,9 +1420,14 @@
       }
       const el = document.getElementById(turnId);
       if (!r || !r.ok || !r.draft) {
-        rememberTurn(requestId, {status:'pending',error:{message:'请求未确认完成，未自动重发；请检查连接'}}, turnScope);
-        if (el) el.querySelector('.txt').innerHTML =
-          '<span style="color:var(--err)">生成失败：' + esc((r && r.err) || '未知错误') + '</span>';
+        const failure = creatorRequestFailure(r);
+        rememberTurn(requestId, failure, turnScope);
+        if (el) {
+          const node = el.querySelector('.txt');
+          node.textContent = '生成失败：' + creatorErrorText(failure.error);
+          node.style.color = 'var(--err)';
+          node.setAttribute('role', 'alert');
+        }
       } else {
         const holder = document.createElement('div');
         holder.innerHTML = draftCardHtml(r.draft);
@@ -4023,7 +4042,12 @@
         const r = pick(await API.post('/api/creator/jobs', { kind: d.kind || 'plugin',
           draft_id: d.id, feedback: fb, request_id: requestId }));
         if (r.ok && r.job_id) { await watchCreatorJob(root, r); return; }
-        if (!r || !r.ok || !r.draft) { toast('修改失败：' + ((r && r.err) || '未知错误')); return; }
+        if (!r || !r.ok || !r.draft) {
+          const failure = creatorRequestFailure(r);
+          rememberTurn(requestId, failure);
+          toast('修改失败：' + creatorErrorText(failure.error));
+          return;
+        }
         redrawCard(root, r.draft);
         toast('已生成新版本 v' + r.draft.version);
         return;
