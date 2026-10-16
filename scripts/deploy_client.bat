@@ -7,7 +7,7 @@ echo 用法: deploy_client.bat [版本号] [更新说明]
 echo 示例: deploy_client.bat 9 "修复bug"
 echo.
 
-cd /d F:\Vigil
+cd /d "%~dp0.."
 
 set CODE=%1
 set NOTES=%2
@@ -32,7 +32,9 @@ echo [2/3] 推送到云端...
 venv\Scripts\python.exe deploy\client\deploy_client.py --code %CODE% --notes "%NOTES%"
 
 echo [3/3] 验证云端版本...
-venv\Scripts\python.exe -c "import requests; r=requests.get('http://203.0.113.10:8788/api/client/version', headers={'Authorization':'Bearer REPLACE_WITH_PRIVATE_TOKEN'}, timeout=10); print(r.text)"
+if not defined VIGIL_DEPLOY_URL exit /b 1
+if not defined VIGIL_DEPLOY_TOKEN exit /b 1
+venv\Scripts\python.exe -c "import os,requests; r=requests.get(os.environ['VIGIL_DEPLOY_URL'].rstrip('/')+'/api/client/version', headers={'Authorization':'Bearer '+os.environ['VIGIL_DEPLOY_TOKEN']}, timeout=10); r.raise_for_status(); print(r.text)"
 
 echo.
 echo ========================================
