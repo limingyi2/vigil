@@ -17,10 +17,10 @@ import os
 import time
 import paramiko
 
-KEY = r"F:\Vigil\deploy\sshkeys\linzhixia_deploy"
-CLOUD = "203.0.113.10"
-LOCAL_EXE = r"F:\Vigil\dist\VigilSetup.exe"
-REMOTE_DIR = r"C:\Vigil\app\client"
+KEY = os.environ.get("VIGIL_DEPLOY_SSH_KEY", "")
+CLOUD = os.environ.get("VIGIL_DEPLOY_HOST", "")
+LOCAL_EXE = os.environ.get("VIGIL_DEPLOY_INSTALLER") or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "dist", "client", "VigilSetup.exe"))
+REMOTE_DIR = os.environ.get("VIGIL_DEPLOY_REMOTE_DIR", "")
 
 
 def run(ssh, cmd, timeout=120):
@@ -36,6 +36,9 @@ def main():
     parser.add_argument("--ver", type=str, default=None, help="语义化版本号（如 0.1.3）")
     parser.add_argument("--notes", type=str, default="常规更新", help="更新说明")
     args = parser.parse_args()
+
+    if not all((KEY, CLOUD, REMOTE_DIR)):
+        parser.error("Set VIGIL_DEPLOY_SSH_KEY, VIGIL_DEPLOY_HOST and VIGIL_DEPLOY_REMOTE_DIR privately")
 
     code = args.code
     ver = args.ver or f"0.1.{code}"
@@ -67,7 +70,7 @@ def main():
     print(f"\n连接服务器 {CLOUD} ...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(CLOUD, username="Administrator", key_filename=KEY,
+    ssh.connect(CLOUD, username=os.environ.get("VIGIL_DEPLOY_USER", "Administrator"), key_filename=KEY,
                 timeout=30, banner_timeout=30, auth_timeout=30)
     sftp = ssh.open_sftp()
     print("  已连接")
