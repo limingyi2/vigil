@@ -83,7 +83,8 @@
         if (item.status !== 'succeeded') status.textContent += '（结果不完整）';
       }
     }
-    const off = global.vigil && global.vigil.onCreatorEvent ? global.vigil.onCreatorEvent(evt => {
+    const streamApi = global.vigil && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent);
+    const off = streamApi ? streamApi(evt => {
       if (evt.job_id !== jid || finished || !root.isConnected || recordKey() !== scope) return;
       if (evt.type === 'snapshot') { applySnapshot(evt.payload); return; }
       if (evt.seq <= cursor) return;
@@ -99,7 +100,7 @@
     applySnapshot(initial);
     try {
       while (!finished && root.isConnected && recordKey() === scope) {
-        if (global.vigil && global.vigil.apiStream && global.vigil.onCreatorEvent) {
+        if (global.vigil && global.vigil.apiStream && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent)) {
           await global.vigil.apiStream('/api/creator/jobs/' + jid + '/events?after=' + cursor, null);
         } else await new Promise(resolve => setTimeout(resolve, 500));
         if (!root.isConnected || recordKey() !== scope) break;

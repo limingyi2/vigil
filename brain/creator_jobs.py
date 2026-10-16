@@ -53,6 +53,35 @@ def _save(db, item):
     db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(item, ensure_ascii=False), item['job_id']))
 
 
+def _log_detail(jid, text):
+    """完整内部异常链只落服务端诊断日志；客户端仅凭 log_id 关联查询。
+
+    禁止把 API Key、Token、系统提示词或原始模型输出写进界面可见字段。
+    """
+    if not text:
+        return
+    try:
+        os.makedirs(paths.DATA_DIR, exist_ok=True)
+        with open(os.path.join(paths.DATA_DIR, 'creator_diagnostics.log'), 'a',
+                  encoding='utf-8') as fh:
+            fh.write('[%s] %s\n' % (jid, str(text).replace('\n', ' ')[:2000]))
+    except Exception:
+        pass
+
+
+def _mirror_update(owner, jid, **changes):
+    """把 Creator 作业状态镜像进主对话记录库（display_turns）。
+
+    复用主聊天的持久化与去重：失败/中断也保留用户请求与部分输出，
+    刷新或重开后仍可见；该记录库明确不作为模型历史。
+    """
+    try:
+        import display_turns as _dt
+        _dt.update(owner, jid, **changes)
+    except Exception:
+        pass
+
+
 def snapshot(jid, owner):
     with LOCK, _db() as db:
         row = db.execute('SELECT data FROM jobs WHERE id=? AND owner=?', (jid, owner)).fetchone()
@@ -110,7 +139,10 @@ def cancel(jid, owner):
             item['status'] = 'cancelled'
             _event(item, 'cancelled', {'status': 'cancelled'})
             _save(db, item)
-        return item
+    if item:
+        _mirror_update(owner, item['request_id'], status='cancelled',
+                       content=item.get('content') or '')
+    return item
 
 
 def create(body, cfg, owner, start=True):
@@ -138,6 +170,12 @@ def create(body, cfg, owner, start=True):
             created_at=time.time(), model_snapshot={'model': cfg.get('model') or (cfg.get('ollama') or {}).get('model'),
                 'provider': cfg.get('provider') or cfg.get('model_mode') or 'cloud'})
         db.execute('INSERT INTO jobs VALUES (?,?,?,?,?)', (item['job_id'], owner, request, fingerprint, json.dumps(item, ensure_ascii=False)))
+    try:
+        import display_turns as _dt
+        _dt.begin(owner, item['request_id'], requirement or ('修改草稿：%s' % draft_id))
+        _dt.update(owner, item['request_id'], status='running')
+    except Exception:
+        pass
     if start:
         threading.Thread(target=_run, args=(item['job_id'], owner, copy.deepcopy(cfg)), daemon=True).start()
     return item
@@ -188,11 +226,15 @@ def _run(jid, owner, cfg):
                         text.append(delta)
                         item['content'] = (item['content'] + delta)[-MAX_PREVIEW:]
                         item['preview_truncated'] = size > MAX_PREVIEW
+                        _mirror_update(owner, item['request_id'], content=item['content'])
                     _event(item, event['type'], {'text': delta})
                 _save(db, item)
         if not result or not result['complete']:
+            from model_providers.execution import stage_of
             reason = result['reason'] if result else 'connection_lost'
-            _fail(jid, owner, reason)
+            _fail(jid, owner, reason, stage=stage_of(reason),
+                  detail=('finish_reason=%s' % result.get('finish_reason')) if result else None,
+                  http_status=(result or {}).get('http_status'))
             return
         with LOCK, _db() as db:
             item = snapshot(jid, owner)
@@ -205,39 +247,69 @@ def _run(jid, owner, cfg):
             draft, err = creator._persist(item['kind'], item['requirement'], ''.join(text), cfg,
                 prev_meta=previous, feedback=item['feedback'])
             if err:
-                _fail(jid, owner, 'invalid_structure', 'invalid_format' if 'JSON' in err else 'validation_failed')
+                # err 可能含模型原文：只服务端留痕，界面用安全摘要。
+                safe = ('模型没按契约返回 JSON（未落地文件）' if 'JSON' in str(err)
+                        else '生成文件未通过静态检查（未落地文件）')
+                _fail(jid, owner, 'invalid_structure', 'invalid_format',
+                      stage='parse', message=safe, detail=err)
                 return
             item.update(status='succeeded', stage='assembling', draft_id=draft['id'])
             if draft.get('validation', {}).get('ok') is False:
-                item.update(status='failed', error={'class': 'invalid_structure', 'code': 'validation_failed', 'message': '草稿未通过静态检查，请审核问题'})
+                verrs = (draft.get('validation') or {}).get('errors') or []
+                vcodes = [str(e.get('code')) for e in verrs if isinstance(e, dict) and e.get('code')][:5]
+                item.update(status='failed', error={'class': 'invalid_structure', 'stage': 'static_validation', 'code': 'validation_failed',
+                    'message': '草稿未通过静态检查：' + ('、'.join(vcodes) if vcodes else '详见卡片')})
                 _event(item, 'error', item['error'])
+                _mirror_update(owner, item['request_id'], status='failed', content=''.join(text), error=item['error'])
             else:
                 _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
+                _mirror_update(owner, item['request_id'], status='succeeded', content=''.join(text))
             _save(db, item)
     except Exception as exc:
-        reason = 'invalid_structure' if isinstance(exc, (ValueError, ProviderResponseError)) else (
-            'service_error' if isinstance(exc, ProviderHTTPError) else 'connection_lost')
-        _fail(jid, owner, reason, exception_type=type(exc).__name__)
+        if isinstance(exc, ProviderHTTPError):
+            reason, stage = 'service_error', 'model_request'
+        elif isinstance(exc, ProviderResponseError):
+            reason, stage = 'invalid_structure', 'parse'
+        elif isinstance(exc, ValueError):
+            reason, stage = 'invalid_structure', 'codegen'
+        else:
+            reason, stage = 'connection_lost', 'network'
+        status = getattr(exc, 'status', None) or getattr(exc, 'status_code', None)
+        _fail(jid, owner, reason, exception_type=type(exc).__name__,
+              stage=stage, detail=str(exc)[:300], http_status=status)
 
 
-def _fail(jid, owner, reason, code=None, exception_type=None):
+def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,
+          detail=None, http_status=None, message=None):
     with LOCK, _db() as db:
         item = snapshot(jid, owner)
         if item['status'] in TERMINAL:
             return
         code = code or {'length': 'output_truncated', 'thinking_only': 'empty_content',
             'invalid_structure': 'invalid_format', 'service_error': 'provider_error',
-            'connection_lost': 'provider_error'}.get(reason, reason)
-        item.update(status='failed', error={'class': reason, 'code': code,
-            'message': ERROR_MESSAGES.get(reason, '生成失败，请检查输入或配置')})
+            'connection_lost': 'provider_error', 'auth': 'auth_failed'}.get(reason, reason)
+        if detail:
+            _log_detail(jid, detail)
+        try:
+            from model_providers.execution import diagnose
+            err = diagnose(reason, stage=stage, error_code=code,
+                           http_status=http_status, log_id=item.get('job_id'),
+                           message=message)
+            err['code'] = code
+        except Exception:
+            err = {'class': reason, 'stage': stage or 'model_request', 'code': code,
+                   'message': ERROR_MESSAGES.get(reason, '生成失败，请检查输入或配置')}
         if exception_type:
-            item['error']['exception_type'] = exception_type
-        if reason == 'invalid_structure':
-            item['error']['message'] = '模型没按契约返回 JSON，或生成文件未通过检查'
-        elif reason == 'service_error':
-            item['error']['message'] = '模型调用失败（服务返回错误）'
+            err['exception_type'] = exception_type
+        item.update(status='failed', error=err)
         _event(item, 'error', item['error'])
         _save(db, item)
+    changes = {'status': 'failed', 'error': item['error']}
+    # 仅在有部分输出时覆盖 content，避免把流式过程中已镜像的正文清空。
+    if item.get('content'):
+        changes['content'] = item['content']
+    _mirror_update(owner, item['request_id'], **changes)
+    return item
 
 
 def legacy(body, cfg, owner):

@@ -11,15 +11,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // 用闭包变量存储流式事件处理函数，避免依赖 global 对象（sandbox 下可能受限）
-let _streamHandler = null;
+// 单一流式订阅总线：主对话与创作模式共用同一套事件注册，不再各自一套流式系统。
+// 每个处理器都自带"完成/作用域"守卫（streamDone / turnScope / job_id），
+// 因此用集合注册是安全的；某个处理器抛错也不影响其它订阅。
+const _streamHandlers = new Set();
 let _streamBound = false;
-const _creatorHandlers = new Set();
 function bindStream() {
   if (_streamBound) return;
   _streamBound = true;
   ipcRenderer.on('api:stream:event', (_e, evt) => {
-    if (evt && evt.job_id) _creatorHandlers.forEach(fn => fn(evt));
-    else if (typeof _streamHandler === 'function') _streamHandler(evt);
+    for (const fn of Array.from(_streamHandlers)) {
+      try { fn(evt); } catch (err) { /* 隔离单个订阅的异常 */ }
+    }
   });
 }
 let _settingsNavigateHandler = null;
@@ -43,14 +46,16 @@ contextBridge.exposeInMainWorld('vigil', {
   attachments: {
     chunk: (bytes, headers) => ipcRenderer.invoke('attachment:chunk', { bytes, headers }),
   },
+  // 主对话与创作模式共用同一条订阅总线（onCreatorEvent 为兼容别名）。
   onStreamEvent: (fn) => {
     bindStream();
-    _streamHandler = fn;
+    _streamHandlers.add(fn);
+    return () => _streamHandlers.delete(fn);
   },
   onCreatorEvent: (fn) => {
     bindStream();
-    _creatorHandlers.add(fn);
-    return () => _creatorHandlers.delete(fn);
+    _streamHandlers.add(fn);
+    return () => _streamHandlers.delete(fn);
   },
 
   cfg: {

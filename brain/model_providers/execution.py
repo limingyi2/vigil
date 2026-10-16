@@ -140,7 +140,71 @@ ERROR_MESSAGES = {'length': '模型输出被截断，未生成完整结果',
     'empty_content': '模型未返回正文',
     'thinking_only': '模型仅返回思考，未得到正文',
     'invalid_structure': '模型返回结构错误', 'refusal': '模型拒绝生成',
-    'connection_lost': '模型连接中断或超时', 'service_error': '模型服务请求失败'}
+    'connection_lost': '模型连接中断或超时', 'service_error': '模型服务请求失败',
+    'auth': '模型服务认证失败（API Key 或权限无效）',
+    'network': '无法连接模型服务（网络或网关不可达）',
+    'parse': '模型返回内容无法解析',
+    'codegen': '生成产物构造失败',
+    'static_validation': '生成产物未通过静态校验',
+    'draft_save': '草稿保存失败'}
+
+# 失败阶段：每次失败都要能定位到具体环节，界面不得所有失败都显示同一句“创作失败”。
+STAGES = ('model_request', 'network', 'auth', 'parse', 'codegen',
+          'static_validation', 'draft_save')
+
+_STAGE_OF_REASON = {'invalid_structure': 'parse', 'empty_content': 'model_request',
+    'thinking_only': 'model_request', 'length': 'model_request',
+    'refusal': 'model_request', 'connection_lost': 'network',
+    'auth': 'auth', 'service_error': 'model_request'}
+
+_STAGE_HINTS = {'model_request': '可稍后重试，或换用更稳定的模型/缩短输出',
+    'network': '检查网络、代理与模型网关地址后重试',
+    'auth': '检查模型 API Key、账号权限与余额',
+    'parse': '模型未按契约输出，请重试或更换模型',
+    'codegen': '检查生成产物模板与模型输出内容',
+    'static_validation': '按校验报告修正后重新生成',
+    'draft_save': '检查磁盘空间与目录写权限'}
+
+
+def stage_of(reason):
+    """把底层归一化原因映射到失败阶段（用于界面分阶段提示）。"""
+    if reason in STAGES:
+        return reason
+    return _STAGE_OF_REASON.get(reason or '', 'model_request')
+
+
+def diagnose(reason, stage=None, *, message=None, error_code=None,
+             http_status=None, hint=None, detail=None, log_id=None,
+             missing=None, position=None):
+    """结构化诊断：阶段 + 原因 + 可选错误码/HTTP 状态 + 建议 + 内部细节。
+
+    仅包含非敏感字段；禁止写入 API Key、Token 或完整系统提示词。
+    内部异常链与日志 ID 供开发者排查。
+    """
+    reason = reason or 'service_error'
+    stage = stage or stage_of(reason)
+    info = {'class': reason, 'stage': stage, 'reason': reason,
+            'message': message or ERROR_MESSAGES.get(reason, '请求未能完成，请检查连接或模型配置'),
+            'hint': hint or _STAGE_HINTS.get(stage, '请稍后重试')}
+    if error_code is not None:
+        info['error_code'] = str(error_code)[:64]
+    if http_status is not None:
+        try:
+            info['http_status'] = int(http_status)
+        except (TypeError, ValueError):
+            pass
+    if missing:
+        info['missing'] = [str(m)[:64] for m in missing][:16]
+    if position is not None:
+        try:
+            info['position'] = int(position)
+        except (TypeError, ValueError):
+            pass
+    if detail:
+        info['detail'] = str(detail)[:300]
+    if log_id:
+        info['log_id'] = str(log_id)[:64]
+    return info
 
 
 def completion_events(provider, payload, timeout=180):
