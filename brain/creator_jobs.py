@@ -54,17 +54,16 @@ def _save(db, item):
 
 
 def _log_detail(jid, text):
-    """完整内部异常链只落服务端诊断日志；客户端仅凭 log_id 关联查询。
-
-    禁止把 API Key、Token、系统提示词或原始模型输出写进界面可见字段。
-    """
+    """Log metadata only; exception strings/provider bodies are never diagnostics."""
     if not text:
         return
     try:
         os.makedirs(paths.DATA_DIR, exist_ok=True)
         with open(os.path.join(paths.DATA_DIR, 'creator_diagnostics.log'), 'a',
                   encoding='utf-8') as fh:
-            fh.write('[%s] %s\n' % (jid, str(text).replace('\n', ' ')[:2000]))
+            record = {k: text[k] for k in ('stage', 'code', 'http_status', 'position', 'line', 'column')
+                      if isinstance(text, dict) and k in text}
+            fh.write(json.dumps(dict(log_id=jid, **record), ensure_ascii=False) + '\n')
     except Exception:
         pass
 
@@ -182,6 +181,7 @@ def create(body, cfg, owner, start=True):
 
 
 def _run(jid, owner, cfg):
+    item = {}
     try:
         with LOCK, _db() as db:
             item = snapshot(jid, owner)
@@ -247,26 +247,28 @@ def _run(jid, owner, cfg):
             draft, err = creator._persist(item['kind'], item['requirement'], ''.join(text), cfg,
                 prev_meta=previous, feedback=item['feedback'])
             if err:
-                # err 可能含模型原文：只服务端留痕，界面用安全摘要。
-                safe = ('模型没按契约返回 JSON（未落地文件）' if 'JSON' in str(err)
-                        else '生成文件未通过静态检查（未落地文件）')
-                _fail(jid, owner, 'invalid_structure', 'invalid_format',
-                      stage='parse', message=safe, detail=err)
+                diagnostic = getattr(err, 'diagnostic', {})
+                _fail(jid, owner, 'invalid_structure', diagnostic.get('code', 'invalid_format'),
+                      stage=diagnostic.get('stage', 'parse'),
+                      message=diagnostic.get('message', '生成产物不符合契约（未落地文件）'),
+                      parse_fields={k: diagnostic[k] for k in ('position', 'line', 'column', 'missing') if k in diagnostic})
                 return
             item.update(status='succeeded', stage='assembling', draft_id=draft['id'])
             if draft.get('validation', {}).get('ok') is False:
                 verrs = (draft.get('validation') or {}).get('errors') or []
                 vcodes = [str(e.get('code')) for e in verrs if isinstance(e, dict) and e.get('code')][:5]
-                item.update(status='failed', error={'class': 'invalid_structure', 'stage': 'static_validation', 'code': 'validation_failed',
-                    'message': '草稿未通过静态检查：' + ('、'.join(vcodes) if vcodes else '详见卡片')})
-                _event(item, 'error', item['error'])
-                _mirror_update(owner, item['request_id'], status='failed', content=''.join(text), error=item['error'])
+                failed = _fail(jid, owner, 'static_validation', 'validation_failed', stage='static_validation')
+                failed['draft_id'] = draft['id']
+                _save(db, failed)
+                return
             else:
                 _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
                 _mirror_update(owner, item['request_id'], status='succeeded', content=''.join(text))
             _save(db, item)
     except Exception as exc:
-        if isinstance(exc, ProviderHTTPError):
+        if isinstance(exc, OSError) and item.get('stage') == 'validating':
+            reason, stage = 'draft_save', 'draft_save'
+        elif isinstance(exc, ProviderHTTPError):
             reason, stage = 'service_error', 'model_request'
         elif isinstance(exc, ProviderResponseError):
             reason, stage = 'invalid_structure', 'parse'
@@ -275,12 +277,14 @@ def _run(jid, owner, cfg):
         else:
             reason, stage = 'connection_lost', 'network'
         status = getattr(exc, 'status', None) or getattr(exc, 'status_code', None)
+        if status in (401, 403):
+            reason, stage = 'auth', 'auth'
         _fail(jid, owner, reason, exception_type=type(exc).__name__,
-              stage=stage, detail=str(exc)[:300], http_status=status)
+              stage=stage, http_status=status)
 
 
 def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,
-          detail=None, http_status=None, message=None):
+          detail=None, http_status=None, message=None, parse_fields=None):
     with LOCK, _db() as db:
         item = snapshot(jid, owner)
         if item['status'] in TERMINAL:
@@ -288,8 +292,6 @@ def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,
         code = code or {'length': 'output_truncated', 'thinking_only': 'empty_content',
             'invalid_structure': 'invalid_format', 'service_error': 'provider_error',
             'connection_lost': 'provider_error', 'auth': 'auth_failed'}.get(reason, reason)
-        if detail:
-            _log_detail(jid, detail)
         try:
             from model_providers.execution import diagnose
             err = diagnose(reason, stage=stage, error_code=code,
@@ -300,8 +302,10 @@ def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,
             err = {'class': reason, 'stage': stage or 'model_request', 'code': code,
                    'message': ERROR_MESSAGES.get(reason, '生成失败，请检查输入或配置')}
         if exception_type:
-            err['exception_type'] = exception_type
-        item.update(status='failed', error=err)
+            err['exception_type'] = exception_type if exception_type in ('ValueError', 'OSError', 'PermissionError', 'ProviderResponseError', 'ProviderHTTPError', 'ProviderUnavailable') else 'Exception'
+        err.update(parse_fields or {})
+        _log_detail(jid, err)
+        item.update(status='failed', stage=err['stage'], error=err)
         _event(item, 'error', item['error'])
         _save(db, item)
     changes = {'status': 'failed', 'error': item['error']}

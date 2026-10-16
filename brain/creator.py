@@ -387,6 +387,14 @@ def validate_draft(draft_id):
     return rep, ""
 
 
+class DraftFailure(str):
+    """Keep the legacy (draft, error-string) API while carrying safe diagnostics."""
+    def __new__(cls, message, code, stage='parse', **fields):
+        value = super().__new__(cls, message)
+        value.diagnostic = dict(message=message, code=code, stage=stage, **fields)
+        return value
+
+
 def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
     """公共落盘流程：解析 JSON → 写文件 → 验证 → 存 meta。返回 (meta, err)。"""
     obj = _extract_json(text)
@@ -394,17 +402,17 @@ def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
         probe = _json_probe(text)
         status = probe.get("status")
         if status == "empty":
-            return None, "模型没按契约返回 JSON：本次没有返回任何内容（未落地文件）"
+            return None, DraftFailure("模型没按契约返回 JSON：本次没有返回任何内容（未落地文件）", 'json_empty')
         if status == "no_object":
-            return None, "模型没按契约返回 JSON：输出里找不到 JSON 对象（未落地文件）"
+            return None, DraftFailure("模型没按契约返回 JSON：输出里找不到 JSON 对象（未落地文件）", 'json_object_missing')
         if status == "unterminated":
-            return None, "模型没按契约返回 JSON：对象未闭合，疑似在第 %s 个字符附近被截断（未落地文件）" % probe.get("position")
+            return None, DraftFailure("模型没按契约返回 JSON：对象未闭合，疑似在第 %s 个字符附近被截断（未落地文件）" % probe.get("position"), 'json_unterminated', position=probe.get('position'))
         if status == "parse_error":
-            return None, "模型没按契约返回 JSON：第 %s 个字符附近解析失败（%s，未落地文件）" % (probe.get("position"), probe.get("detail"))
-        return None, "模型没按契约返回 JSON（未落地文件）"
+            return None, DraftFailure("JSON 解析失败：%s（第 %s 行，第 %s 列，字符 %s；未落地文件）" % (probe['detail'], probe['line'], probe['column'], probe['position']), 'json_parse_error', **{k: probe[k] for k in ('position', 'line', 'column')})
+        return None, DraftFailure("模型没按契约返回 JSON（未落地文件）", 'json_invalid')
     files = obj.get("files")
     if not isinstance(files, dict) or not files:
-        return None, "模型没按契约返回 JSON：缺少 files 字段或 files 为空（未落地文件）"
+        return None, DraftFailure("模型没按契约返回 JSON：缺少 files 字段或 files 为空（未落地文件）", 'files_missing', missing=['files'])
     summary = str(obj.get("summary") or "").strip()[:300]
     risks = str(obj.get("risks") or "").strip()[:500] or "无"
 
@@ -430,7 +438,7 @@ def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
             pass
     written, errs = _write_files(d, files, kind)
     if not written:
-        return None, "生成的文件全部被拒绝：" + "；".join(errs[:3])
+        return None, DraftFailure("生成的文件全部被拒绝，请检查文件名和内容", 'files_rejected', 'codegen')
 
     meta = {
         "id": os.path.basename(d),
@@ -594,7 +602,9 @@ def _json_probe(text):
                 try:
                     json.loads(blob)
                     return {"status": "parsed"}
-                except ValueError as e:
-                    return {"status": "parse_error", "position": start,
-                            "detail": type(e).__name__}
+                except json.JSONDecodeError as e:
+                    return {"status": "parse_error", "position": start + e.pos,
+                            "line": t[:start + e.pos].count('\n') + 1,
+                            "column": start + e.pos - t.rfind('\n', 0, start + e.pos),
+                            "detail": e.msg}
     return {"status": "unterminated", "position": len(t)}

@@ -19,11 +19,27 @@ let _streamBound = false;
 function bindStream() {
   if (_streamBound) return;
   _streamBound = true;
-  ipcRenderer.on('api:stream:event', (_e, evt) => {
-    for (const fn of Array.from(_streamHandlers)) {
-      try { fn(evt); } catch (err) { /* 隔离单个订阅的异常 */ }
+  ipcRenderer.on('api:stream:event', dispatchStream);
+}
+function dispatchStream(_e, evt) {
+  for (const fn of Array.from(_streamHandlers)) {
+    if (!_streamHandlers.has(fn)) continue;
+    try { fn(evt); } catch (_) { /* One subscriber cannot break other streams. */ }
+  }
+}
+function subscribeStream(fn) {
+  if (typeof fn !== 'function') throw new TypeError('Stream subscriber must be a function');
+  // Separate registrations of the same callback have independent lifetimes.
+  const handler = evt => fn(evt);
+  bindStream();
+  _streamHandlers.add(handler);
+  return () => {
+    _streamHandlers.delete(handler);
+    if (!_streamHandlers.size && _streamBound) {
+      ipcRenderer.removeListener('api:stream:event', dispatchStream);
+      _streamBound = false;
     }
-  });
+  };
 }
 let _settingsNavigateHandler = null;
 let _pendingSettingsNavigation = null;
@@ -47,16 +63,8 @@ contextBridge.exposeInMainWorld('vigil', {
     chunk: (bytes, headers) => ipcRenderer.invoke('attachment:chunk', { bytes, headers }),
   },
   // 主对话与创作模式共用同一条订阅总线（onCreatorEvent 为兼容别名）。
-  onStreamEvent: (fn) => {
-    bindStream();
-    _streamHandlers.add(fn);
-    return () => _streamHandlers.delete(fn);
-  },
-  onCreatorEvent: (fn) => {
-    bindStream();
-    _streamHandlers.add(fn);
-    return () => _streamHandlers.delete(fn);
-  },
+  onStreamEvent: subscribeStream,
+  onCreatorEvent: subscribeStream,
 
   cfg: {
     get: () => ipcRenderer.invoke('cfg:get'),

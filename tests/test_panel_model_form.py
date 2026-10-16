@@ -190,17 +190,17 @@ class TestPanelJsSyntax(unittest.TestCase):
         m = re.search(r"<script>(.*?)</script>", h, re.S)
         self.assertIsNotNone(m, "找不到内联脚本")
         import subprocess
-        node = None
-        for c in (r"C:\Users\limingyi\.workbuddy\binaries\node\versions\22.22.2-6\node.exe",
-                  "node"):
-            r = subprocess.run([c, "-e",
-                                "new Function(require('fs').readFileSync(0,'utf8'))"],
-                               input=m.group(1), text=True, capture_output=True)
-            if r.returncode == 0:
-                node = c
-                break
+        import shutil
+        node = shutil.which('node')
         if not node:
             self.skipTest("找不到 node，跳过语法检查")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            script = os.path.join(tmp, 'panel.js')
+            with open(script, 'w', encoding='utf-8') as output:
+                output.write(m.group(1))
+            r = subprocess.run([node, '--check', script], text=True,
+                               capture_output=True, timeout=15)
         self.assertEqual(r.returncode, 0, "面板脚本编译失败：%s" % r.stderr[:300])
 
 

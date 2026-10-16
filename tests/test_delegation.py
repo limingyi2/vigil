@@ -136,10 +136,15 @@ class TestSandbox(_Workspace, unittest.TestCase):
         self.assertIn("error.log:1", out)
 
     def test_绝对路径拒绝(self):
+        # Use a real absolute path on the runner's platform for the category.
+        with self.assertRaises(SandboxError) as cm:
+            self.sb.read_file(os.path.abspath(__file__))
+        self.assertEqual(cm.exception.category, 'path_escape')
         for p in (r"C:\Windows\win.ini", "/etc/passwd"):
-            with self.assertRaises(SandboxError) as cm:
+            # A foreign-platform path may be a nonexistent relative filename;
+            # it must still never read outside the sandbox.
+            with self.assertRaises(SandboxError):
                 self.sb.read_file(p)
-            self.assertEqual(cm.exception.category, "path_escape")
 
     def test_dotdot拒绝(self):
         with self.assertRaises(SandboxError):

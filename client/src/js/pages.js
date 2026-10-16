@@ -50,6 +50,32 @@
       '<div class="foot"><span class="stream-status">正在生成…</span></div>';
   }
 
+  function subscribeUntilDetached(root, subscribe, handler) {
+    let active = true, unsubscribe = null;
+    const observer = new MutationObserver(() => { if (!root.isConnected) close(); });
+    function close() {
+      if (!active) return;
+      active = false;
+      observer.disconnect();
+      if (typeof unsubscribe === 'function') unsubscribe();
+    }
+    unsubscribe = subscribe(evt => { if (active && root.isConnected) handler(evt); });
+    // The transport may synchronously deliver a terminal snapshot during subscribe.
+    if (!active && typeof unsubscribe === 'function') unsubscribe();
+    if (active) observer.observe(document.body, {childList:true,subtree:true});
+    return close;
+  }
+
+  function creatorErrorText(error) {
+    const e = error || {};
+    const stages = {model_request:'模型请求',network:'网络连接',auth:'认证',parse:'JSON 解析',
+      codegen:'产物构造',static_validation:'静态校验',draft_save:'草稿保存'};
+    return [e.message || '请求未完成', e.stage ? '失败阶段：' + (stages[e.stage] || e.stage) : '',
+      e.error_code || e.code ? '错误码：' + (e.error_code || e.code) : '',
+      e.http_status ? 'HTTP：' + e.http_status : '', e.hint ? '建议：' + e.hint : '',
+      e.log_id ? '日志 ID：' + e.log_id : ''].filter(Boolean).join('；');
+  }
+
   async function watchCreatorJob(root, initial, scope = recordKey()) {
     const jid = initial.job_id;
     const thinkId = 'creatorThink_' + jid;
@@ -76,7 +102,8 @@
       text.textContent = item.content || '';
       rememberTurn(item.request_id, {input:item.feedback || item.requirement,kind:item.kind,job_id:jid,
         status:item.status,content:item.content || '',error:item.error}, scope);
-      status.textContent = item.error ? item.error.message : item.stage || item.status;
+      status.textContent = item.error ? creatorErrorText(item.error) : item.stage || item.status;
+      status.setAttribute('role', item.error ? 'alert' : 'status');
       finished = ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(item.status);
       if (finished) {
         cancel.hidden = true;
@@ -84,12 +111,13 @@
       }
     }
     const streamApi = global.vigil && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent);
-    const off = streamApi ? streamApi(evt => {
+    const off = streamApi ? subscribeUntilDetached(root, streamApi, evt => {
       if (evt.job_id !== jid || finished || !root.isConnected || recordKey() !== scope) return;
       if (evt.type === 'snapshot') { applySnapshot(evt.payload); return; }
       if (evt.seq <= cursor) return;
       cursor = evt.seq;
       const p = evt.payload || {};
+      if (evt.type === 'error') { applySnapshot({...current,status:'failed',error:p,content:text.textContent,event_cursor:cursor}); return; }
       if (evt.type === 'text_delta') {
         text.textContent += p.text || '';
         rememberTurn(initial.request_id, {content:text.textContent}, scope);
@@ -967,7 +995,7 @@
         }
         const t = item.created_at * 1000;
         items.push({role:'user',text:input,t,request_id:item.request_id});
-        const message = item.error?.message || ({pending:'请求尚未确认送达，未自动重发',running:'原请求执行中，未自动重发',
+        const message = (item.error ? creatorErrorText(item.error) : '') || ({pending:'请求尚未确认送达，未自动重发',running:'原请求执行中，未自动重发',
           failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:item.kind === 'chat' ? '任务完成' : '草稿已生成'})[status] || status;
         items.push({role:'assistant',text:(item.content || '') + '\n\n' + message,t,
           request_id:item.request_id,partial:status!=='succeeded',job:item.job_id ? item : null,
@@ -1201,7 +1229,6 @@
         if (evt.run_id && agentRunId && evt.run_id !== agentRunId) return;
         if (turnScope !== recordKey()) return;
         if (streamDone) return;
-        console.log('[stream]', evt.type, evt.text ? evt.text.slice(0, 30) : '');
         if (evt.type === 'agent_run') {
           agentRunId = evt.run_id;
           remember({run_id:agentRunId,status:'running'});
@@ -1226,6 +1253,7 @@
           scheduleRender();
         } else if (evt.type === 'done') {
           streamDone = true;
+          stopListening();
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:'succeeded',error:null});
           // 强制刷新最后一帧
@@ -1246,6 +1274,7 @@
           updateComposer();
         } else if (evt.type === 'error') {
           streamDone = true;
+          stopListening();
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
             error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
@@ -1257,8 +1286,10 @@
       };
 
       // 注册流式事件监听
-      if (global.vigil && global.vigil.onStreamEvent) {
-        global.vigil.onStreamEvent(onEvent);
+      let stopListening = () => {};
+      if (!sendingAttachments.length && global.vigil && global.vigil.onStreamEvent) {
+        stopListening = subscribeUntilDetached(document.getElementById(turnId), global.vigil.onStreamEvent, onEvent);
+        if (streamDone) stopListening();
       } else {
         console.warn('[stream] vigil.onStreamEvent not found');
       }
@@ -1285,7 +1316,6 @@
           // 开始流式请求
           console.log('[stream] starting apiStream...');
           const r = await global.vigil.apiStream('/api/chat/stream', chatPayload);
-          console.log('[stream] apiStream returned:', r);
           if (!streamDone) {
             // 如果请求返回了但还没收到 done 事件，等一下
             setTimeout(() => {
@@ -1300,6 +1330,7 @@
                 busy = false;
                 updateComposer();
                 streamDone = true;
+                stopListening();
               }
             }, 2000);
           }
@@ -1314,11 +1345,13 @@
           statusEl.textContent = fmtTime(Date.now(), 'time');
           busy = false;
           updateComposer();
+          streamDone = true;
+          stopListening();
         }
       } catch (e) {
-        console.error('[stream] error:', e);
         remember({content:textBuf,status:'interrupted',error:{message:'连接中断，结果不完整；未自动重发'}});
         streamDone = true;
+        stopListening();
         textEl.innerHTML = '<span style="color:var(--err)">出错了：' + esc(String(e.message || e)) + '</span>';
         statusEl.textContent = '失败';
         busy = false;

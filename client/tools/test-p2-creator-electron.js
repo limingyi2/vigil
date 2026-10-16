@@ -1,0 +1,66 @@
+// Production renderer/preload, isolated services and no model/network requests.
+const {app,BrowserWindow,ipcMain} = require('electron');
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert/strict');
+const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'vigil-p2-creator-ui-'));
+const client=path.resolve(__dirname,'..');
+app.setPath('userData',path.join(tmp,'profile'));
+let win,job,stage='parse',chatRequests=0;
+const jobs=[];
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const ev=s=>win.webContents.executeJavaScript(s,true);
+async function until(s){for(let i=0;i<250;i++){if(await ev(s))return;await wait(40);}throw Error('Timed out: '+s);}
+function fixture(method,raw,body){
+  const p=raw.split('?')[0];let json={ok:true,items:[]};
+  if(p==='/api/stats')json={model:'fixture',turns:0};
+  if(p==='/api/persona')json={key:'default',name:'fixture',templates:[]};
+  if(p==='/api/models/saved')json={current:{model:'fixture'},models:[]};
+  if(p==='/api/plugins/frontend')json={version:1,plugins:[]};
+  if(p==='/api/creator/drafts')json={ok:true,drafts:[]};
+  if(p==='/api/creator/jobs' && method==='POST'){
+    job={job_id:'job_'+jobs.length,request_id:body.request_id,kind:'plugin',requirement:body.requirement,status:'failed',stage,content:'',event_cursor:1,
+      error:{stage,error_code:stage+'_failed',message:'Expecting value (line 3, column 10) <img src=x onerror=alert(1)>',hint:'检查配置后重试',log_id:'job_log_'+jobs.length}};
+    jobs.push(job);json={...job,status:'queued',error:null,event_cursor:0};
+  } else if(p==='/api/creator/jobs')json={ok:true,items:jobs};
+  else if(p.startsWith('/api/creator/jobs/'))json=job;
+  if(p.startsWith('/api/agent-center/'))return {ok:false,status:404,json:{err:'no such api'}};
+  return {ok:true,status:200,json};
+}
+async function send(text){
+  await ev(`document.querySelector('#ta').value=${JSON.stringify(text)};document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
+  await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
+}
+async function run(){
+  ipcMain.handle('api',(_,a)=>fixture(a.method,a.path,a.body));
+  ipcMain.handle('api:stream',async(e,a)=>{
+    if(a.path.includes('/creator/'))e.sender.send('api:stream:event',{job_id:job.job_id,type:'snapshot',payload:job});
+    else {chatRequests++;e.sender.send('api:stream:event',{type:'text',text:'safe result',request_id:a.body.request_id});e.sender.send('api:stream:event',{type:'done',text:'safe result',request_id:a.body.request_id});}
+    await wait(30);return {ok:true};
+  });
+  for(const [name,fn] of Object.entries({
+    'cfg:get':()=>({wizard_done:true,roots:[]}), 'app:version':()=> 'P2 fixture',
+    'plugins:load':()=>({ok:true}),'auto:connect':()=>({ok:false}),
+    'sidecar:status':()=>({status:'stopped'}),'local:caps':()=>[],
+    'local:defaults':()=>({roots:[],commands:[]}),
+    'wallpaper:request':()=>({ok:true,data:{settings:{id:''},wallpapers:[]}}),
+  }))ipcMain.handle(name,fn);
+  win=new BrowserWindow({show:false,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+  await win.loadFile(path.join(client,'src/index.html'));
+  await until("!!document.querySelector('#ta')");await wait(350);
+  for(let i=0;i<20;i++)await send('bounded fixture '+i);
+  assert.equal(chatRequests,20);console.log('PASS 20 ordinary streaming turns complete without cross-turn updates');
+  await ev("document.querySelector('#creatorBtn').click()");
+  for(const s of ['model_request','network','auth','parse','codegen','static_validation','draft_save']){
+    stage=s;await send('creator '+s);
+    await until(`Array.from(document.querySelectorAll('.stream-status')).at(-1)?.textContent.includes(${JSON.stringify(s+'_failed')})`);
+    const text=await ev("Array.from(document.querySelectorAll('.stream-status')).at(-1).textContent");
+    for(const wanted of [s+'_failed','line 3, column 10','检查配置后重试','job_log_'])assert.ok(text.includes(wanted),text);
+    assert.equal(await ev("document.querySelectorAll('.turn img[src=x]').length"),0);
+  }
+  console.log('PASS all seven Creator stages show structured errors, parser location, advice and log ID safely');
+  await ev("document.querySelector('#gnav [data-page=\"agent-center\"]').click()");
+  await until("!!document.querySelector('#ac-agent-grid')");
+  await ev("document.querySelector('#gnav [data-page=\"chat\"]').click()");
+  await until("!!document.querySelector('#ta') && document.querySelector('#msgs').textContent.includes('draft_save_failed')");
+  console.log('PASS Creator failure details survive page navigation and rehydration');
+}
+app.whenReady().then(run).then(()=>{win.destroy();app.exit(0);}).catch(e=>{console.error(e.stack);app.exit(1);});
