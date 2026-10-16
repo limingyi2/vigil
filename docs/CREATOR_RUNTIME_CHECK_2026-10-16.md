@@ -30,7 +30,7 @@
 - Node 回归 10/10 通过；实际 Electron 隔离测试验证 20 轮聊天、7 类 Creator 错误、导航恢复，以及 404 的 failed 持久化、HTTP/目标展示和不重发。
 
 - 最后正常重启（关闭临时调试端口）后，Brain PID 33116、地址 `http://127.0.0.1:52575`，health 200；原隔离作业 GET 200 且仍为 succeeded，没有重新提交。动态端口每次启动可能变化。
-- 本地全量 pytest JUnit：937 tests、926 passed、11 skipped、0 failures、0 errors。
+- 本地全量 pytest JUnit：952 tests、941 passed、11 skipped、0 failures、0 errors。
 
 ## 交付范围与限制
 
