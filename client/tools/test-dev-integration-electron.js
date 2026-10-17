@@ -98,7 +98,7 @@ async function run() {
   assert.equal(await ev("document.querySelector('#sendBtn').disabled"),true);
   await ev("document.querySelector('#sendBtn').click()");
   assert.equal(calls.length, beforeLarge);
-  assert.ok(await ev("document.querySelector('#toast').textContent.includes('256 MB')"));
+  assert.ok(await ev("document.querySelector('.attachment-status.failed').textContent.includes('256 MB')"));
   await ev("document.querySelector('#atClr').click()");
   console.log('PASS oversized file shows a clear failure and cannot enter chat analysis');
   // A rejected chunk also must stop before /api/chat.
@@ -110,17 +110,21 @@ async function run() {
   assert.equal(await ev("document.querySelector('#sendBtn').disabled"),true);
   await ev("document.querySelector('#atClr').click()");
   console.log('PASS failed chunk upload cannot enter chat analysis');
-  // Paste a deliberately undecodable video. Upload must finish before metadata failure.
-  await ev(`(() => { window.__framePromptSeen=false; window.confirm=(message)=>{if(String(message).includes('关键帧'))window.__framePromptSeen=true;return true}; const data=new DataTransfer(); data.items.add(new File(['undecodable safe fixture'],'safe.mp4',{type:'video/mp4'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true})); document.querySelector('#sendBtn').click(); })()`);
+  // Video intent is visible inline. Selecting the original requires no native
+  // confirmation; the explicit send click starts its isolated test upload.
+  await ev(`(() => { window.confirm=()=>{throw Error('native confirm forbidden')}; const data=new DataTransfer(); data.items.add(new File(['safe video fixture'],'safe.mp4',{type:'video/mp4'})); document.querySelector('#ta').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true})); })()`);
+  await until("!!document.querySelector('[data-video-choice=frames]') && !!document.querySelector('[data-video-choice=original]')");
+  assert.ok(await ev("document.querySelector('#attach').textContent.includes('当前模型不支持直接理解完整视频')"));
+  await ev("document.querySelector('[data-video-choice=original]').click(); document.querySelector('#sendBtn').click()");
   await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
   const attachmentCall = calls.find(c => c.path === '/api/chat' && c.body.attachments?.some(a => a.name === 'safe.mp4'));
   assert.ok(attachmentCall);
-  assert.equal(chunks.at(-1).bytes.toString(), 'undecodable safe fixture');
+  assert.equal(chunks.at(-1).bytes.toString(), 'safe video fixture');
   assert.equal(chunks.at(-1).headers['X-Attachment-Confirmed'], '1');
-  assert.equal(await ev('window.__framePromptSeen'), true);
+  assert.ok(await ev("document.querySelector('#msgs').textContent.includes('fixture attachment accepted')"));
   assert.equal(attachmentCall.body.attachments[0].kind, 'video');
   assert.ok(!('img' in attachmentCall.body));
-  console.log('PASS pasted undecodable video uploads and sends metadata despite frame failure');
+  console.log('PASS video choices stay inline, native confirmation is not used, and chosen original uploads');
   await ev("document.querySelector('#gnav [data-page=\"agent-center\"]').click()");
   await until("!!document.querySelector('#ac-agent-grid') && document.querySelector('#ac-overview-error').textContent.includes('当前 Brain 版本不支持')");
   assert.equal(await ev("document.querySelectorAll('.ac-agent-card').length"), 3);
