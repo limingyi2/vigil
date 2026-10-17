@@ -3912,6 +3912,18 @@
     const py = fs.find((f) => /\.py$/i.test(f.name));
     return py ? py.name.replace(/\.py$/i, '') : (d.kind === 'skill' ? '（由 skill.json 决定）' : '（由插件文件名决定）');
   }
+  // Keep transport failures visible: API.pick stores non-JSON failures in _err,
+  // not err. Include status and the already-sanitized request origin when available.
+  function creatorActionError(r, fallback) {
+    const detail = String(r && (r.err || (r.install && r.install.err) || r._err || r.text) || '').trim();
+    const status = Number(r && (r._status || r.status)) || 0;
+    const target = String(r && (r._target || r.target) || '').trim();
+    const parts = [];
+    if (status > 0) parts.push('HTTP ' + status);
+    if (target) parts.push(target);
+    if (detail) parts.push(detail);
+    return String(fallback || '操作失败') + '：' + (parts.join(' · ') || '未知错误');
+  }
   // 一条草稿的完整卡片（聊天气泡形态：外层 .turn/.bdy，内部复用 .card）
   function draftCardHtml(d) {
     const v = d.validation || {};
@@ -4018,23 +4030,30 @@
       }
       if (e.target.closest('#crApproveNow')) {
         const approveButton = e.target.closest('#crApproveNow');
+        const approvalState = root.querySelector('#crApprovalState');
         approveButton.disabled = true;
+        approveButton.textContent = '审批中…';
+        if (approvalState) approvalState.textContent = '正在创建一次性审批，请稍候…';
         let r;
         try {
           r = pick(await API.post('/api/creator/approve', { id: d.id }));
         } catch (error) {
           approveButton.disabled = false;
-          const detail = error && error.message ? error.message : 'Brain 连接失败或请求超时';
-          toast('审批请求失败：' + String(detail).slice(0, 120));
+          approveButton.textContent = '明确批准';
+          const detail = creatorActionError({err: error && error.message ? error.message : 'Brain 连接失败或请求超时'}, '审批请求失败');
+          if (approvalState) approvalState.textContent = detail;
+          toast(detail);
           return;
         }
-        if (!r || !r.ok || !r.approval) {
+        if (!r || !r.ok || !r.approval || !r.approval.approval_id) {
           approveButton.disabled = false;
-          toast('审批失败：' + ((r && r.err) || '未知错误'));
+          approveButton.textContent = '明确批准';
+          const detail = creatorActionError(r, '审批失败');
+          if (approvalState) approvalState.textContent = detail;
+          toast(detail);
           return;
         }
-        const state = root.querySelector('#crApprovalState');
-        if (state) state.textContent = '已批准草稿 v' + r.approval.version + '，审批编号 ' + r.approval.approval_id.slice(0, 14) + '…；请点击“仅本次安装”完成一次性消费。';
+        if (approvalState) approvalState.textContent = '已批准草稿 v' + r.approval.version + '，审批编号 ' + String(r.approval.approval_id).slice(0, 14) + '…；请点击“仅本次安装”完成一次性消费。';
         approveButton.style.display = 'none';
         const installButton = root.querySelector('#crInstallNow');
         if (installButton) { installButton.style.display = 'inline-block'; installButton.dataset.approval = r.approval.approval_id; }
@@ -4046,25 +4065,40 @@
         const aid = installButton.dataset.approval || '';
         if (!aid) { toast('请先点击“明确批准”生成一次性审批'); return; }
         if (!confirm('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
+        const approvalState = root.querySelector('#crApprovalState');
         installButton.disabled = true;
+        installButton.textContent = '安装中…';
+        if (approvalState) approvalState.textContent = '正在安装到“' + creatorTargetOf(d) + '”，请稍候…';
         let r;
         try {
           r = pick(await API.post('/api/creator/install', { approval_id: aid }));
         } catch (error) {
           installButton.disabled = false;
-          const detail = error && error.message ? error.message : 'Brain 连接失败或请求超时';
-          toast('安装请求失败：' + String(detail).slice(0, 120));
+          installButton.textContent = '仅本次安装';
+          const detail = creatorActionError({err: error && error.message ? error.message : 'Brain 连接失败或请求超时'}, '安装请求失败');
+          if (approvalState) approvalState.textContent = detail;
+          toast(detail);
           return;
         }
         if (!r || !r.ok) {
-          installButton.disabled = false;
-          toast('安装失败：' + ((r && (r.err || r.install?.err)) || '事务已回滚或审批已失效'));
+          const detail = creatorActionError(r, '安装失败');
+          const status = Number(r && (r._status || r.status)) || 0;
+          installButton.dataset.approval = '';
+          if (status >= 400 && status < 500) {
+            installButton.textContent = '需重新批准';
+            if (approvalState) approvalState.textContent = detail + '。请重新验证草稿后，再次明确批准并安装。';
+          } else {
+            installButton.textContent = '结果待确认';
+            if (approvalState) approvalState.textContent = detail + '。安装结果暂不确定，请先刷新插件列表确认，避免重复安装。';
+          }
+          toast(detail);
           return;
         }
-        const state = root.querySelector('#crApprovalState');
-        if (state) state.textContent = '已安装，审批已消费，不能重复使用。';
-        toast('已受控安装 ' + creatorTargetOf(d) + (r.install?.restart_needed ? ' · 需要重启/确认生效' : ''));
+        if (approvalState) approvalState.textContent = '已安装，审批已消费，不能重复使用。';
+        installButton.textContent = '已安装';
+        installButton.disabled = true;
         if (typeof window.__vigilRefreshExtensions === 'function') window.__vigilRefreshExtensions();
+        toast('已受控安装 ' + creatorTargetOf(d) + (r.install?.restart_needed ? ' · 需要重启/确认生效' : ''));
         return;
       }
       if (e.target.closest('#crRev')) {
