@@ -88,10 +88,17 @@ def main(installer, expected_commit, output):
     conversations_db = brain_home / 'data/conversations.sqlite3'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
     chat_histories = []
+    jsonl_inventory = []
     for path in data_dir.rglob('*.jsonl'):
         content = path.read_text(encoding='utf-8')
+        jsonl_inventory.append({'path': str(path), 'size': path.stat().st_size,
+                               'contains_user': 'P8_FRESH_CHAT_SENTINEL' in content,
+                               'contains_reply': 'FRESH_INSTALL_CHAT_OK' in content,
+                               'sample': content[:400]})
         if 'P8_FRESH_CHAT_SENTINEL' in content and 'FRESH_INSTALL_CHAT_OK' in content:
             chat_histories.append(path)
+    print('P8_JSONL_DIAGNOSTIC=' + json.dumps({'data_dir': str(data_dir), 'exists': data_dir.is_dir(),
+                                               'files': jsonl_inventory}, ensure_ascii=False))
     assert chat_histories, 'Fresh PC conversation was not persisted to an isolated JSONL history file'
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
