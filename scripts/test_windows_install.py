@@ -337,6 +337,10 @@ def main(installer, baseline):
             'creator_jobs': {'streamed_output': True, 'failed_record_saved': True,
                              'diagnostics': True, 'draft_generated': True,
                              'fixture_model_calls': ModelFixture.calls},
+            'chat_ui_multisession': {'created_and_switched': True,
+                                     'context_isolated': all(x['ok'] for x in ModelFixture.conversation_checks
+                                                             if x.get('chat_request')),
+                                     'renderer_reload_restored': True},
             'plugin_chat': {'installed_and_loaded': ModelFixture.smoke_schema_seen,
                             'tool_schema_sent': ModelFixture.smoke_schema_seen,
                             'model_requested_tool': ModelFixture.smoke_tool_call_requested,
