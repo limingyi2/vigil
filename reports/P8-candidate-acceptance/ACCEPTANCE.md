@@ -138,6 +138,10 @@ gh workflow run windows-package.yml --ref codex/p6-multisession-dialogs `
 
 本次新增了候选安装升级/回滚 artifact、真实 Electron 回归，以及对同一候选包进行的隔离空目录安装、卸载和数据保留复测。安装生命周期缺口已关闭；Wallpaper 集成首帧问题仍未解决。
 
+### P8.2 后续：上游 WebWallGL 候选原因对比（2026-10-17）
+
+对 Vigil vendored WebWallGL 2.1.0 与 DSH 上游当前使用的 3.0.0 做了定向源码比较。未发现零图层场景首帧完成条件的明确修复，因此未创建实验分支、替换引擎或运行无依据的 A/B。Wallpaper 集成超时仍未定位；建议先作为 SwiftShader 完整集成测试的已知限制记录并转向其他功能。详见[对比报告](WALLPAPER-UPSTREAM-CANDIDATE-CHECK.md)。
+
 ## 截图与原始证据
 
 - [真实 Electron 冷启动欢迎页](evidence/p6.3-cold-start-home.png)
