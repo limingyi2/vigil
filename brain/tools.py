@@ -267,12 +267,16 @@ def _static_tool_array(src=None):
     out = []
     for name in sorted(specs):
         spec = specs[name]
+        declared_schema = spec.get("parameters")
+        parameters = (declared_schema if isinstance(declared_schema, dict)
+                      and declared_schema.get("type") == "object"
+                      else _parameters_schema(spec["params"]))
         out.append({
             "type": "function",
             "function": {
                 "name": name,
                 "description": spec["desc"],
-                "parameters": _parameters_schema(spec["params"]),
+                "parameters": parameters,
             },
         })
     return out

@@ -152,7 +152,24 @@ class Plugin(object):
         self.feature = str(getattr(mod, "FEATURE", "") or "").strip()
         self.mod = mod
         self.path = path
-        self.tools = dict(getattr(mod, "TOOLS", {}) or {})
+        raw_tools = getattr(mod, "TOOLS", {}) or {}
+        self.generic_tool_names = set()
+        self.generic_tool_dispatch = getattr(mod, "call_tool", None)
+        if isinstance(raw_tools, dict):
+            self.tools = dict(raw_tools)
+        elif isinstance(raw_tools, (list, tuple, set)):
+            # Compatibility for Creator drafts produced by the earlier list-based
+            # contract: TOOLS = ["name", ...] + call_tool(name, args).
+            names = list(raw_tools)
+            if (not names or any(not isinstance(n, str) or not n.strip() for n in names)
+                    or len(names) != len(set(names))):
+                raise ValueError("TOOLS 列表必须包含不重复的非空工具名")
+            if not callable(self.generic_tool_dispatch):
+                raise ValueError("TOOLS 为名称列表时必须提供 call_tool(name, args)")
+            self.generic_tool_names = {n.strip() for n in names}
+            self.tools = {n: None for n in self.generic_tool_names}
+        else:
+            raise ValueError("TOOLS 必须是工具名到函数的字典，或配套 call_tool 的工具名列表")
         self.tool_help = str(getattr(mod, "TOOL_HELP", "") or "").strip()
         # 可选的**动态**说明提供者。工具清单会随安装变（面板装一个技能，
         # 宿主上就多几个工具），而 `TOOL_HELP` 是模块级字符串、装载时读一次
@@ -470,8 +487,21 @@ def run_tool(name, arg, src=None, arg_dict=None):
 
     p = get_by_tool(n)
     if p and _enabled(p, src):
+        # Legacy Creator format dispatches every listed tool through one module
+        # entry point. Native function-calling supplies the full argument dict.
+        if n in getattr(p, "generic_tool_names", set()):
+            try:
+                payload = dict(arg_dict) if isinstance(arg_dict, dict) else None
+                if payload is None:
+                    spec = tool_specs(src).get(n, {})
+                    arg_param = spec.get("arg_param")
+                    payload = ({arg_param: arg} if arg_param and arg else
+                               ({"input": arg} if arg else {}))
+                return p.generic_tool_dispatch(n, payload) or None
+            except Exception as e:
+                return _log(p.name, "工具 %s 失败：%s" % (n, str(e)[:100]))
         fn = p.tools.get(n)
-        if fn:
+        if callable(fn):
             ctx = Turn(text=(arg or "") if not arg_dict else "")
             ctx._owner = p.name
             try:
@@ -536,17 +566,57 @@ def tool_specs(src=None):
             continue
         try:
             got = getattr(p.mod, "TOOL_SPECS", {}) or {}
-            # 支持 TOOL_SPECS 是函数：插件可以按渠道返回不同的工具集
-            # （比如 remote 插件在微信渠道返回空——微信没有本地文件系统）。
-            # 调用形式 TOOL_SPECS(src)，src 可能是 None。
+            # 支持 TOOL_SPECS(src)，供按渠道动态返回工具规格。
             if callable(got):
                 got = got(src)
-            got = dict(got)
+            if isinstance(got, dict):
+                entries = list(got.items())
+            elif isinstance(got, (list, tuple)):
+                # List schemas are only paired with the generic call_tool dispatcher.
+                if not getattr(p, "generic_tool_names", set()):
+                    continue
+                # Compatibility for earlier Creator output:
+                # [{"name": "...", "description": "...", "parameters": {...}}]
+                entries = []
+                for item in got:
+                    if not isinstance(item, dict):
+                        continue
+                    key = str(item.get("name") or "").strip()
+                    desc = str(item.get("description") or item.get("desc") or "").strip()
+                    schema = item.get("parameters")
+                    if (not key or not desc or not isinstance(schema, dict)
+                            or schema.get("type") != "object"
+                            or not isinstance(schema.get("properties", {}), dict)):
+                        continue
+                    properties = schema.get("properties", {})
+                    required = schema.get("required", [])
+                    if not isinstance(required, list):
+                        continue
+                    params = []
+                    valid = True
+                    for pname, pdef in properties.items():
+                        if not isinstance(pname, str) or not pname.strip() or not isinstance(pdef, dict):
+                            valid = False
+                            break
+                        pdesc = str(pdef.get("description") or pname).strip()
+                        params.append((pname, pdesc, pname in required))
+                    if not valid:
+                        continue
+                    entries.append((key, {
+                        "desc": desc,
+                        "params": params,
+                        "arg_param": params[0][0] if len(params) == 1 else None,
+                        "multi_args": True,
+                        "parameters": schema,
+                    }))
+            else:
+                continue
         except Exception:
             continue
-        for n, s in got.items():
+        for n, s in entries:
             key = str(n or "").strip()
-            if key and isinstance(s, dict) and s.get("desc") and key not in out:
+            if (key and isinstance(s, dict) and s.get("desc") and key not in out
+                    and (not getattr(p, "generic_tool_names", set()) or key in p.generic_tool_names)):
                 out[key] = s
     return out
 

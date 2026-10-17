@@ -92,25 +92,35 @@ def _literal_dict_keys(node):
     return keys if len(keys) == len(set(keys)) else None
 
 
+def _literal_string_list(node):
+    """Return unique non-empty string values for a literal list/tuple, otherwise None."""
+    if not isinstance(node, (ast.List, ast.Tuple)) or not node.elts:
+        return None
+    try:
+        values = ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return None
+    if not isinstance(values, (list, tuple)) or any(
+        not isinstance(value, str) or not value.strip() for value in values
+    ):
+        return None
+    return list(values) if len(values) == len(set(values)) else None
+
+
 def _check_chat_tool_contract(tree, module_functions, errors, warnings, required=False):
-    """Check statically inspectable chat tools; optionally make them mandatory."""
+    """Check both the current mapping contract and legacy Creator list dispatch."""
     issues = errors if required else warnings
     tools_node = _module_assignment_value(tree, "TOOLS")
     specs_node = _module_assignment_value(tree, "TOOL_SPECS")
     tool_names = _literal_dict_keys(tools_node)
-    spec_names = _literal_dict_keys(specs_node)
+    tools_list_contract = False
 
     if tools_node is None:
         issues.append(_issue(
             "missing_tool_implementation",
-            "插件必须声明模块级 TOOLS 字典，提供至少一个可由聊天调用的工具实现"
+            "插件必须声明 TOOLS，并提供至少一个可由聊天调用的工具实现"
         ))
-    elif tool_names is None:
-        issues.append(_issue(
-            "invalid_tool_implementation",
-            "TOOLS 必须是键为工具名、值为模块级函数名的字典"
-        ))
-    else:
+    elif tool_names is not None:
         for name, value in zip(tool_names, tools_node.values):
             if not isinstance(value, ast.Name) or value.id not in module_functions:
                 issues.append(_issue(
@@ -118,6 +128,16 @@ def _check_chat_tool_contract(tree, module_functions, errors, warnings, required
                     "工具 %s 必须指向同一文件中定义的模块级函数" % name
                 ))
                 break
+    else:
+        list_names = _literal_string_list(tools_node)
+        if list_names is not None and "call_tool" in module_functions:
+            tool_names = list_names
+            tools_list_contract = True
+        else:
+            issues.append(_issue(
+                "invalid_tool_implementation",
+                "TOOLS 必须是工具名到模块级函数的字典，或配套 call_tool(name, args) 的工具名列表"
+            ))
 
     if specs_node is None:
         issues.append(_issue(
@@ -125,17 +145,80 @@ def _check_chat_tool_contract(tree, module_functions, errors, warnings, required
             "插件必须声明 TOOL_SPECS；否则原生聊天模型看不到工具"
         ))
         specs = None
+        spec_names = None
+        list_schema_contract = False
     else:
         try:
-            specs = ast.literal_eval(specs_node)
+            raw_specs = ast.literal_eval(specs_node)
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-            specs = None
-        if not isinstance(specs, dict) or not specs or spec_names is None:
+            raw_specs = None
+
+        if isinstance(raw_specs, dict) and _literal_dict_keys(specs_node) is not None:
+            specs = raw_specs
+            spec_names = list(raw_specs)
+            list_schema_contract = False
+        elif isinstance(raw_specs, (list, tuple)) and tools_list_contract:
+            specs = {}
+            spec_names = []
+            list_schema_contract = True
+            valid_list = bool(raw_specs)
+            for item in raw_specs:
+                if not isinstance(item, dict):
+                    valid_list = False
+                    break
+                name = item.get("name")
+                desc = item.get("description") or item.get("desc")
+                schema = item.get("parameters")
+                if (not isinstance(name, str) or not name.strip()
+                        or not isinstance(desc, str) or not desc.strip()
+                        or not isinstance(schema, dict) or schema.get("type") != "object"
+                        or not isinstance(schema.get("properties", {}), dict)
+                        or not isinstance(schema.get("required", []), list)
+                        or any(not isinstance(key, str) for key in schema.get("required", []))):
+                    valid_list = False
+                    break
+                properties = schema.get("properties", {})
+                required_names = schema.get("required", [])
+                if any(key not in properties for key in required_names):
+                    valid_list = False
+                    break
+                params = []
+                for pname, pdef in properties.items():
+                    if (not isinstance(pname, str) or not pname.strip()
+                            or not isinstance(pdef, dict)):
+                        valid_list = False
+                        break
+                    pdesc = pdef.get("description") or pname
+                    if not isinstance(pdesc, str) or not pdesc.strip():
+                        valid_list = False
+                        break
+                    params.append((pname, pdesc, pname in required_names))
+                if not valid_list or name in specs:
+                    valid_list = False
+                    break
+                specs[name] = {
+                    "desc": desc,
+                    "params": params,
+                    "arg_param": params[0][0] if len(params) == 1 else None,
+                    "multi_args": True,
+                    "parameters": schema,
+                }
+                spec_names.append(name)
+            if not valid_list:
+                issues.append(_issue(
+                    "invalid_tool_specs",
+                    "列表格式 TOOL_SPECS 必须是工具名唯一、含 description 和合法 object parameters 的规格列表"
+                ))
+                specs = None
+                spec_names = None
+        else:
             issues.append(_issue(
                 "invalid_tool_specs",
-                "TOOL_SPECS 必须是包含至少一个工具规格的字面量字典"
+                "TOOL_SPECS 必须是规格字典，或与 TOOLS 名称列表配套的规格列表"
             ))
             specs = None
+            spec_names = None
+            list_schema_contract = False
 
     if specs is not None:
         for name, spec in specs.items():
@@ -174,17 +257,17 @@ def _check_chat_tool_contract(tree, module_functions, errors, warnings, required
                 ))
                 continue
             arg_param = spec.get("arg_param")
-            if len(param_names) > 1:
+            if len(param_names) > 1 and not list_schema_contract:
                 issues.append(_issue(
                     "unsupported_tool_params",
-                    "Creator 当前每个工具最多支持一个字符串参数；工具 %s 定义了多个参数" % name
+                    "Creator 当前每个字典格式工具最多支持一个字符串参数；工具 %s 定义了多个参数" % name
                 ))
-            elif param_names and arg_param != param_names[0]:
+            elif len(param_names) == 1 and not list_schema_contract and arg_param != param_names[0]:
                 issues.append(_issue(
                     "invalid_tool_specs",
                     "工具 %s 的 arg_param 必须指向唯一参数 %s" % (name, param_names[0])
                 ))
-            elif not param_names and arg_param is not None:
+            elif not param_names and not list_schema_contract and arg_param is not None:
                 issues.append(_issue(
                     "invalid_tool_specs",
                     "无参数工具 %s 的 arg_param 必须为 null" % name
