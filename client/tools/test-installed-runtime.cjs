@@ -54,32 +54,47 @@ async function run(){
   }
   assert.ok(ready,'Installed chat session controls did not render');
   const initialConversation=await evaluate('API.state.chatConversationId');
-  assert.ok(initialConversation,'Installed renderer has no persisted active conversation');
-  const createSession=async()=>{
-    const previous=await evaluate('API.state.chatConversationId');
+  assert.equal(initialConversation,'','A new Electron process must open the welcome page without selecting a conversation');
+  assert.ok(await evaluate("!document.querySelector('#hero').hidden"),'Installed renderer did not show the welcome page');
+  const initialSessions=await evaluate("vigil.api('GET','/api/conversations?src=pc')");
+  assert.equal(initialSessions.status,200);
+  assert.ok(initialSessions.json.items.some(item=>item.legacy),'Migrated legacy chat history was not shown in the session list');
+  const startNewConversation=async()=>{
+    const before=await evaluate("vigil.api('GET','/api/conversations?src=pc')");
+    assert.equal(before.status,200);
+    const beforeIds=before.json.items.map(item=>item.id).sort();
     await evaluate("document.querySelector('#newTopicBtn').click();true");
+    let home=false;
     for(let i=0;i<100;i++){
-      const id=await evaluate('API.state.chatConversationId');
-      if(id&&id!==previous)return id;
+      home=await evaluate("API.state.chatConversationId===''&&!document.querySelector('#hero').hidden&&document.querySelector('#msgs').children.length===0");
+      if(home)break;
       await sleep(100);
     }
-    throw Error('Installed renderer did not activate a new conversation');
+    assert.ok(home,'New conversation did not show a clean welcome page');
+    const after=await evaluate("vigil.api('GET','/api/conversations?src=pc')");
+    assert.equal(after.status,200);
+    assert.deepEqual(after.json.items.map(item=>item.id).sort(),beforeIds,'Clicking new conversation must not create an empty persisted session');
   };
   const sendUiMessage=async(text,reply)=>{
     await evaluate(`(()=>{const t=document.querySelector('#ta');t.value=${JSON.stringify(text)};t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#sendBtn').click();return true})()`);
     for(let i=0;i<180;i++){
       const found=await evaluate(`document.querySelector('#msgs')?.innerText.includes(${JSON.stringify(reply)})`);
-      if(found)return;
+      if(found){
+        const id=await evaluate('API.state.chatConversationId');
+        if(id)return id;
+      }
       await sleep(100);
     }
     throw Error('Installed chat did not render expected reply: '+reply);
   };
-  const conversationA=await createSession();
-  await sendUiMessage('A_ONLY','Hello fixture');
+  await startNewConversation();
+  const conversationA=await sendUiMessage('A_ONLY','Hello fixture');
+  assert.ok(conversationA,'First user message did not create and activate conversation A');
   assert.ok(await evaluate(`document.querySelector('[data-session="${conversationA}"]').textContent.includes('A_ONLY')`),
     'First user message did not create a conversation title');
-  const conversationB=await createSession();
-  await sendUiMessage('B_ONLY','Hello fixture');
+  await startNewConversation();
+  const conversationB=await sendUiMessage('B_ONLY','Hello fixture');
+  assert.ok(conversationB,'First user message did not create and activate conversation B');
   await evaluate(`document.querySelector('[data-session="${conversationA}"]').click();true`);
   await sendUiMessage('A_CONTINUE','A_CONTEXT_OK');
   await evaluate(`document.querySelector('[data-session="${conversationB}"]').click();true`);
