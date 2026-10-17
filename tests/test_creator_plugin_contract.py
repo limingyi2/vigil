@@ -74,7 +74,7 @@ class CreatorPluginContractTests(unittest.TestCase):
 
     def test_creator_blocks_html_return_even_when_chat_tool_contract_is_valid(self):
         source = VALID + '\\nHTML_DEMO = "<!DOCTYPE html><html><body>demo</body></html>"\\n'
-        report = self.check_source(source.replace("\\\\n", "\\n"))
+        report = self.check_source(source.replace("\\n", "\n"))
         self.assertFalse(report["ok"], report)
         self.assertIn("html_string_not_ui", {item["code"] for item in report["errors"]})
 
