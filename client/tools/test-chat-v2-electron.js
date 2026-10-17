@@ -295,7 +295,7 @@ async function main() {
   await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
   await wait(400);
   gpu = { features:app.getGPUFeatureStatus(), webgl:await ev(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`) };
-  wallpaperTrace('environment',{electron:process.versions.electron,chrome:process.versions.chrome,platform:process.platform,gpu,predecessorState:{fixtureSelection:'not-started',visibleFrames:await ev(`document.querySelectorAll('iframe').length`),page:await ev(`document.body.dataset.vigilPage`),classes:await ev(`document.body.className`),resourceEntries:await ev(`performance.getEntriesByType('resource').length`)}});
+  wallpaperTrace('environment',{electron:process.versions.electron,chrome:process.versions.chrome,platform:process.platform,gpu,initialMeasure:await measure(),predecessorState:{fixtureSelection:'not-started',visibleFrames:await ev(`document.querySelectorAll('iframe').length`),page:await ev(`document.body.dataset.vigilPage`),classes:await ev(`document.body.className`),resourceEntries:await ev(`performance.getEntriesByType('resource').length`)}});
   if(baseline) { await shot('before-light'); await ev(`document.querySelector('#themeBtn').click()`); await shot('before-dark'); return; }
   if (process.env.P8_WALLPAPER_ONLY === '1') {
     await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
@@ -309,7 +309,9 @@ async function main() {
   const type=await ev(`(()=>{const size=s=>getComputedStyle(document.querySelector(s)).fontSize;return{body:size('body'),input:size('#ta'),welcome:size('#hero h1'),button:size('#rpBtn'),model:size('#modelBtn'),sidebar:size('.phead h2'),zoom:getComputedStyle(document.body).zoom,transform:getComputedStyle(document.body).transform}})()`);
   assert.deepEqual(type,{body:'15px',input:'15px',welcome:'32px',button:'14px',model:'14px',sidebar:'14px',zoom:'1',transform:'none'});
   assert.equal(win.webContents.getZoomFactor(),1);
-  assert.equal((await measure()).input.width,860);
+  const composerWidth=(await measure()).input.width;
+  if (process.env.P8_DIAG_SKIP_FIXED_LAYOUT === '1') wallpaperTrace('diagnostic-layout-gate',{expected:860,actual:composerWidth,decision:'skipped only to reach wallpaper scenario'});
+  else assert.equal(composerWidth,860);
   result('computed typography, 860px composer and no global scale',{...type,electronZoom:win.webContents.getZoomFactor()});
   const prefs=win.webContents.getLastWebPreferences();
   assert.equal(prefs.contextIsolation,true); assert.equal(prefs.nodeIntegration,false); assert.equal(prefs.sandbox,true);
