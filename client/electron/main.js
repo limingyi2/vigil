@@ -996,6 +996,21 @@ ipcMain.handle('wallpaper:directory', async () => {
   try { return { ok: true, ...(await wallpaperHost.request('POST', '/upload-dir', { dir: result.filePaths[0], migrate: false })) }; }
   catch (e) { return { ok: false, err: e.message }; }
 });
+ipcMain.handle('project-picker:directory', async () => {
+  if (!win || win.isDestroyed()) return { ok: false, err: '窗口尚未准备好' };
+  try {
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择 Git 仓库根目录（包含 .git 的文件夹）',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) {
+      return { ok: true, canceled: true };
+    }
+    return { ok: true, path: result.filePaths[0] };
+  } catch (e) {
+    return { ok: false, err: String(e && e.message || e).slice(0, 160) };
+  }
+});
 ipcMain.handle('auto:connect', () => autoConnect());
 ipcMain.handle('local:defaults', () => ({
   roots: localtool.defaultRoots(),
