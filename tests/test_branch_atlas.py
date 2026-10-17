@@ -12,9 +12,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 PLUGIN_DIR = ROOT / "brain" / "plugins" / "branch-atlas"
-SPEC = importlib.util.spec_from_file_location("branch_atlas_test", PLUGIN_DIR / "__init__.py")
-branch_atlas = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(branch_atlas)
+PLUGIN_SOURCE = PLUGIN_DIR / "__init__.py"
+branch_atlas = importlib.util.module_from_spec(
+    importlib.util.spec_from_file_location("branch_atlas_test", PLUGIN_SOURCE)
+)
+exec(compile(PLUGIN_SOURCE.read_text(encoding="utf-8"), str(PLUGIN_SOURCE), "exec"),
+     branch_atlas.__dict__)
 
 
 def git(root, *args):
