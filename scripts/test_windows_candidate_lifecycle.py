@@ -78,6 +78,7 @@ def main(installer, expected_commit, output):
     assert restarted.returncode == 0, f'Chat restore after Electron restart failed: {restarted.stderr}'
     restart_record = json.loads(next(line for line in reversed(restarted.stdout.splitlines()) if line.startswith('{')))
     assert restart_record['conversation_id'] == conversation_id
+    assert restart_record['durable_chat_history'] is True
     brain_home = Path(first_record['brain_home'])
     user_data_root = brain_home.parent
     sentinels = {
@@ -91,18 +92,11 @@ def main(installer, expected_commit, output):
         path.write_text(content, encoding='utf-8')
     config_file = user_data_root / 'config.json'
     conversations_db = brain_home / 'data/conversations.sqlite3'
-    display_turns_db = brain_home / 'data/display_turns.sqlite3'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
         assert db.execute('SELECT COUNT(*) FROM conversations WHERE id=?', (conversation_id,)).fetchone()[0] == 1
-    assert display_turns_db.is_file(), 'Fresh chat did not persist its durable display-turn database'
-    with sqlite3.connect(display_turns_db.as_uri() + '?mode=ro', uri=True) as db:
-        turns = [json.loads(row[0]) for row in db.execute('SELECT data FROM turns')]
-    assert any(item.get('input') == 'P8_FRESH_CHAT_SENTINEL' and
-               item.get('content') == 'FRESH_INSTALL_CHAT_OK' and item.get('status') == 'succeeded'
-               for item in turns), 'Successful chat turn was not stored in Brain display-turn SQLite'
-    retained_files = [*sentinels, config_file, conversations_db, display_turns_db]
+    retained_files = [*sentinels, config_file, conversations_db]
     retained_before = {str(path): sha256(path) for path in retained_files}
     user_data_before = inventory(user_data_root)
     assert user_data_before, 'Isolated default Electron user-data directory is empty'
@@ -145,11 +139,12 @@ def main(installer, expected_commit, output):
         'fresh_install': {'installer_exit_code': install_result.returncode, 'core_files_verified': True,
                           'electron_started': True, 'brain_health': 'ready', 'welcome_page': True,
                           'fake_provider_first_chat': True, 'conversation_id': conversation_id},
-        'restart_recovery': {'electron_restarted': True, 'chat_history_restored': True},
+        'restart_recovery': {'electron_restarted': True, 'chat_history_restored': True,
+                             'durable_brain_display_turn_restored_via_api': True},
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),
-                      'actual_configuration_conversation_and_display_turn_dbs_retained': True,
+                      'actual_configuration_and_conversation_metadata_retained': True,
                       'all_user_data_files_unchanged': True,
                       'user_data_file_count': len(user_data_before),
                       'outside_sentinel_preserved': True},

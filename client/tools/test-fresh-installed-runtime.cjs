@@ -139,7 +139,8 @@ async function start() {
       'Brain did not restore the persisted successful chat turn from its conversation-scoped display records');
   }
   console.log(JSON.stringify({ result: 'passed', mode, conversation_id: conversationId, brain_home: home,
-    brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored' }));
+    brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored',
+    durable_chat_history: mode === 'restart' }));
 }
 
 async function stop() {
