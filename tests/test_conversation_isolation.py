@@ -133,7 +133,7 @@ class ConversationIsolationTests(unittest.TestCase):
         owner = 'test-owner'
         brain = Brain(None, {'persona_file':'base'}, mode='api')
         legacy_path = brain._log_for('pc')
-        payload = '{"t":"2026-10-17 10:00","role":"user","text":"LEGACY_ROW"}' + "\\n"
+        payload = '{"t":"2026-10-17 10:00","role":"user","text":"LEGACY_ROW"}' + "\n"
         Path(legacy_path).write_text(payload, encoding='utf-8')
         before = Path(legacy_path).read_bytes()
         self.assertEqual(brain.read_history(src='pc'), [{'t':'2026-10-17 10:00','role':'user','text':'LEGACY_ROW'}])
