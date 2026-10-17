@@ -168,7 +168,7 @@ def _check_chat_tool_contract(tree, module_functions, errors, warnings, required
                     break
                 param_names.append(item[0])
             if not params_valid or len(param_names) != len(set(param_names)):
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_specs",
                     "工具 %s 的每个 params 项必须是 (名称, 说明, 必填布尔值)，且名称不能重复" % name
                 ))
@@ -180,12 +180,12 @@ def _check_chat_tool_contract(tree, module_functions, errors, warnings, required
                     "Creator 当前每个工具最多支持一个字符串参数；工具 %s 定义了多个参数" % name
                 ))
             elif param_names and arg_param != param_names[0]:
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_specs",
                     "工具 %s 的 arg_param 必须指向唯一参数 %s" % (name, param_names[0])
                 ))
             elif not param_names and arg_param is not None:
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_specs",
                     "无参数工具 %s 的 arg_param 必须为 null" % name
                 ))
@@ -282,8 +282,7 @@ def _read_manifest(root, package_name, names, errors):
 def check_plugin_directory(path, require_chat_tools=False):
     """静态检查一个插件开发目录，返回可序列化的报告字典。
 
-    ``ok`` 只表示结构和 Manifest 通过；warnings 不会触碰旧插件的兼容性，
-    但会把动态 NAME、缺少 DESC 等运行时才可确定的事项明确列出来。
+    ``ok`` 表示基础结构和 Manifest 通过；传入 ``require_chat_tools=True`` 时，聊天工具契约也必须通过。默认仅警告，以兼容既有的非聊天型插件。
     """
     root = os.path.abspath(os.fspath(path))
     report = {"ok": False, "path": root, "layout": "", "entry": "",
@@ -366,7 +365,8 @@ def check_plugin_directory(path, require_chat_tools=False):
         return report
     if entry_name:
         _check_python(os.path.join(root, entry_name), package_name,
-                      report["errors"], report["warnings"], report["layout"],\n                      require_chat_tools=require_chat_tools)
+                      report["errors"], report["warnings"], report["layout"],
+                      require_chat_tools=require_chat_tools)
     report["manifest"] = _read_manifest(root, package_name, names, report["errors"])
     report["ok"] = not report["errors"]
     return report
