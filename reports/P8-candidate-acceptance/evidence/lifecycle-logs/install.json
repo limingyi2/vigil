@@ -1,0 +1,11 @@
+{
+  "command": [
+    "D:\\a\\vigil\\vigil\\client\\dist-release\\Vigil.Setup.1.1.0.exe",
+    "/S",
+    "/LOG=C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\nsis-install.log",
+    "/D=C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\application"
+  ],
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": ""
+}

@@ -1,0 +1,20 @@
+Wallpaper WebGL first-frame investigation (P8 supplement)
+
+Failing integrated reproduction
+- Candidate source: 05ba0c7544ddca2509c22e22d064bcb9745d9149.
+- Command and failure: see wallpaper-webgl-timeout.txt; the integrated chat-v2 Electron test times out after 30 seconds waiting for "WebWallGL 实时渲染中".
+- Electron 28.3.3 / Chromium 120.0.6099.291, hardware acceleration enabled, AMD Radeon RX 9070 XT / Direct3D11. WebGL and WebGL2 were reported enabled.
+- The preserved host trace at C:\Users\limingyi\AppData\Local\Temp\vigil-chat-v2-dokJfV\wallpaper\diag\http.jsonl shows the live-render iframe requested project.json and scene.json successfully (HTTP 200). The embedded renderer logs scene initialization, then "renderer started: 0 layers" and "containers total=0 canvasCandidates=0 passesResolved=0". There are no host HTTP failures in this trace. The fixture scene has `objects: []`.
+- Parent UI remained visible and focused. The recorded state stayed at "WebWallGL 正在准备首帧", error empty and fps 0; no first-frame state reached the host adapter.
+
+Baseline/candidate comparison
+- PR base: 808684ac79d6023b0b1dd08ed042380a68cf4838.
+- Candidate: 05ba0c7544ddca2509c22e22d064bcb9745d9149.
+- `client/src/plugins/wallpaper.js` has the same Git blob on base and candidate: db2b7d649fdabbce74dd72f14d51fdf33a1ab7ed. A diff of the wallpaper adapter, host and vendored engine between the two commits is empty.
+- The focused wallpaper-v2 Electron regression was run on both base and candidate using the same hardware-accelerated AMD/Direct3D11 path. Its four unrelated chat-material assertions were bypassed only in an untracked temporary diagnostic copy so execution could reach the Wallpaper scene assertion; the repository tests were not edited or disabled. Both reached and passed "WebGL scene first frame". With its default software renderer, the base diagnostic also passed.
+- The unmodified focused wallpaper-v2 test exits earlier on both base and candidate at its chat-material assertion (`.composer` expected non-transparent, actual `rgba(0, 0, 0, 0)`), before testing its WebGL scene. This is separate from the integrated timeout.
+
+Assessment
+- The candidate does not change the Wallpaper adapter, host or vendored WebGL engine, and the focused hardware-rendered baseline/candidate controls both pass.
+- The original integrated chat-v2 timeout remains unresolved. Its trace suggests a renderer lifecycle/test-order interaction: this run's child renderer had no layers/canvas candidates, while the standalone regression reaches a first frame with the same empty-scene fixture. No evidence currently isolates a hardware, network, iframe-load or candidate-code regression. Do not treat the integrated timeout as passed or disable its assertion.
+- Preserve the original diagnostic directory; it was not removed or modified.

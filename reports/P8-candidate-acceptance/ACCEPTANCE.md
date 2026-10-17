@@ -29,14 +29,14 @@ PR：[#8](https://github.com/limingyi2/vigil/pull/8)，状态 Open，未合并
 | 验收项 | 结果 | 证据/说明 |
 | --- | --- | --- |
 | 以 PR 最新 SHA 构建候选包并核对版本、提交、体积、SHA-256 | **通过** | 见上方 manifest、下载 artifact 与 SHA。 |
-| 全新安装 1.1.0 候选包并启动 | **未执行** | workflow 首先在干净临时路径安装官方 1.0.2，再将 1.1.0 安装到同一路径做升级；没有单独把 1.1.0 安装到第二个空目录。runner JSON 的 `fresh_install: true` 指基线安装，不能据此认定 1.1.0 候选做过空目录安装。 |
+| 全新安装 1.1.0 候选包并启动 | **通过（P8 补测）** | 见下方 P8.1 补测；在 GitHub 临时 Windows runner 的空安装目录和隔离 profile 中直接安装精确候选包。 |
 | 从受支持旧版本升级 | **通过** | 校验官方 1.0.2 安装包（100,523,853 字节，SHA-256 `6ea65b226b11ee685ee190a9f0bd760f00bb35e515818a492f2f36ecc6970971`），再于隔离目录执行 1.0.2 → 1.1.0。 |
 | 配置、聊天历史、Creator 草稿、插件、Skill、其他用户文件保留 | **通过** | runner 写入各类 sentinel，升级后逐项断言；回滚后再次断言保留。 |
 | 新会话 A/B 隔离及 renderer 重载恢复 | **通过** | 已安装 UI + Fake Provider 验证 A/B 上下文不串、renderer reload 恢复。 |
 | 插件安装、加载与聊天工具调用 | **通过** | 安装 `vigil_smoke`，确认插件列表加载；模型请求 `smoke_ping`，Electron 收到 `VIGIL_PLUGIN_CALL_OK`。 |
 | Brain 启动失败/配对不匹配时阻断 | **通过** | 注入不匹配的 Brain manifest；客户端拒绝服务请求，随后验证恢复旧版本。 |
 | 安装失败的回滚和旧安装保护 | **通过** | 损坏 checkpoint 时安装被拒绝且旧目录 hash 不变；精确回滚恢复官方 1.0.2 文件树，用户数据保持。 |
-| 卸载行为与用户数据保留策略 | **未执行** | 本次 workflow 没有调用 NSIS uninstaller；不能据此确认卸载后用户数据策略。 |
+| 卸载行为与用户数据保留策略 | **通过（P8 补测）** | 实际运行候选安装目录中的 `Uninstall Vigil.exe /S`，程序文件已移除；配置、聊天、插件、Skill、Creator 草稿及安装目录外 sentinel 均保留。 |
 | PR Python 单测 | **通过** | SHA `05ba0c7…` 的 CI JUnit：981 tests，0 failures，0 errors，10 skipped。 [JUnit artifact](https://github.com/limingyi2/vigil/actions/runs/39030289911/artifacts/12099817644)。 |
 | 全仓 Python 语法检查 | **通过** | 同一 CI 的 `compileall brain pet` job 成功。 |
 | CI JavaScript 逻辑回归 | **通过** | 同一 CI 的 `test-p2-stream-lifecycle.js`、`test-unified-runtime.js`、`test-public-updates.js` step 成功。 |
@@ -45,7 +45,7 @@ PR：[#8](https://github.com/limingyi2/vigil/pull/8)，状态 Open，未合并
 | 精确 SHA `test-chat-v2-electron.js` | **部分通过** | 聊天/P6、附件、视频行内选项、弹窗、布局和 Wallpaper 布局检查均通过。最后 Wallpaper WebGL 场景 30 秒未渲染首帧而超时，见下节。 |
 | 用户主力环境未被触碰 | **通过** | 没有在主力机执行安装、升级或卸载；Windows 安装生命周期测试在 GitHub 临时 runner。 |
 
-## Wallpaper WebGL 失败记录
+## Wallpaper WebGL 首帧问题
 
 在精确 SHA `05ba0c7544ddca2509c22e22d064bcb9745d9149` 上复跑：
 
@@ -63,7 +63,35 @@ hidden = false; focused = true
 iframeLoaded = null; webError = null; fps = 0
 ```
 
-复现时聊天、P6、附件/视频和前置 Wallpaper 布局测试已通过。当前日志没有表明是 P6 会话/UI 改动导致；根因仍未定位，不能标记为通过。失败测试留下的隔离诊断目录：`C:\Users\limingyi\AppData\Local\Temp\vigil-chat-v2-dokJfV`，未清理。
+复现时聊天、P6、附件/视频和前置 Wallpaper 布局测试已通过。详细 HTTP/renderer 诊断、基线对照和限制见 [Wallpaper 调查记录](evidence/wallpaper-webgl-investigation.txt)；原始 host trace 另存于 [wallpaper-host-http.jsonl](evidence/wallpaper-host-http.jsonl)。
+
+**集成场景首帧问题仍未解决。** Base `808684a` 与候选的 Wallpaper adapter、host 和 vendored renderer 无代码差异；两者的独立硬件渲染对照均通过，但未能解释为何完整 `test-chat-v2-electron.js` 流程只在末尾超时。原诊断目录 `C:\Users\limingyi\AppData\Local\Temp\vigil-chat-v2-dokJfV` 保留未清理。
+
+## P8.1 缺口补测（2026-10-17）
+
+最终补测工作流：[run 39035232427](https://github.com/limingyi2/vigil/actions/runs/39035232427)，运行于 GitHub Actions 临时 Windows runner。工作流直接下载 run `39030814929` 的不可变候选 artifact；没有重建或替换候选安装包。补测脚本/工作流提交为 `1e1d08de06d5c3a5ff6c7f05dadf6996118e7b30`，被测安装包仍精确来自 `05ba0c7544ddca2509c22e22d064bcb9745d9149`。
+
+- **通过：独立全新安装。** 安装程序在空临时目录以退出码 0 完成；应用和 Brain 核心文件 hash 与 contents manifest 相符；Electron 启动、Brain `/api/runtime` 健康检查、欢迎首页及 Fake Provider 首条消息均通过。
+- **通过：重启恢复。** 结束并重新启动已安装的 Electron 进程后，会话列表及消息正文恢复。此项使用本地 Fake Provider，不代表在线模型验证。
+- **通过：卸载和数据边界。** NSIS 卸载程序退出码 0，应用安装目录无残留文件；隔离 profile 中 62 个文件在卸载前后整树 SHA-256 完全相同，覆盖模型配置、会话 SQLite 元数据、Renderer 本地数据、插件、Skill、Creator 草稿及聊天记录；安装目录之外的 sentinel 未被删除。产品 `nsis` 配置未启用卸载时删除用户数据的选项；本补测没有改变该策略。
+- **通过：候选包身份。** `Vigil.Setup.1.1.0.exe` 仍为 101,661,668 字节，SHA-256 `89d187103c237a66df788f0bc45c0162a771428f969c30b4ee322eac5e90735c`；补测下载文件与原候选文件 hash 一致。没有生成新的安装包。
+- **日志限制：** 候选安装器接受 `/LOG=<path>` 参数且安装/卸载均返回 0，但没有生成 NSIS 详细日志文件。已保存命令行、进程退出码和 stdout/stderr（为空）JSON，以及 Electron/Brain 首次启动和重启日志；最终结果明确记录 NSIS 详细日志不可用。
+- **证据：** [补测结果 JSON](evidence/windows-lifecycle-acceptance.json)、[安装命令与退出码](evidence/lifecycle-logs/install.json)、[首次启动日志](evidence/lifecycle-logs/first_launch.json)、[重启恢复日志](evidence/lifecycle-logs/restart.json)、[卸载命令与退出码](evidence/lifecycle-logs/uninstall.json)。完整 runner artifact：[12102061894](https://github.com/limingyi2/vigil/actions/runs/39035232427/artifacts/12102061894)，ZIP 101,664,861 字节，digest `sha256:f186799729bd5b98e6d8a6e3ee14a7f97eb46f1eef34ced190ff0c68c737704c`。该 artifact 包含与原候选逐字节相同的安装包及补测日志。
+
+### 本轮状态
+
+| 缺口 | 状态 | 结论 |
+| --- | --- | --- |
+| 空目录直接全新安装 1.1.0 | **通过** | Electron、Brain、欢迎页、Fake Provider 聊天通过。 |
+| 退出并重启后恢复聊天 | **通过** | 真实安装版 UI 中恢复了补测创建的 conversation 和消息。 |
+| 实际卸载和用户数据保护 | **通过** | 程序文件移除，所有指定用户数据及目录外 sentinel 保留。 |
+| Wallpaper 集成回归首帧 | **未解决** | 独立 Wallpaper 控制测试在基线/候选均通过；完整聊天回归仍在末尾超时，不能据此判为通过，也没有删除或跳过该断言。 |
+
+### 验收器迭代记录
+
+下列失败是补测脚本探针的逐步修正，不是候选安装/卸载失败；最终版本在 [run 39035232427](https://github.com/limingyi2/vigil/actions/runs/39035232427) 通过：[run 39033053887](https://github.com/limingyi2/vigil/actions/runs/39033053887) 发现重启后会话行需等待 DOM 渲染；[runs 39033503802](https://github.com/limingyi2/vigil/actions/runs/39033503802)、[39033652411](https://github.com/limingyi2/vigil/actions/runs/39033652411)、[39033895120](https://github.com/limingyi2/vigil/actions/runs/39033895120) 发现对话落盘位置不能按猜测的 JSONL 文件名定位，改为用 Brain 会话 API 验证并对完整 userData 文件树做卸载前后 SHA-256 对比；[run 39034094278](https://github.com/limingyi2/vigil/actions/runs/39034094278) 暴露默认 Electron userData 路径不适合作为独立 DevTools 探针，改为在临时 `%APPDATA%/vigil-client` 下指定隔离 userData；[run 39034560746](https://github.com/limingyi2/vigil/actions/runs/39034560746) 发现 SQLite 内部字段断言比公开会话 API 语义更窄，改为断言会话 API 返回成功的历史 turn；[run 39034929601](https://github.com/limingyi2/vigil/actions/runs/39034929601) 确认候选 NSIS 包不会输出 `/LOG` 详细文件，实际安装/卸载仍成功，最终将日志限制明确记录而不把它误报成安装失败。
+
+本轮没有改动产品运行时代码；只增加候选验收脚本/工作流和报告证据，因此没有重跑与本轮无关的 Python、Electron 全量回归。
 
 ## 与 P6.3 报告的变化
 
@@ -82,7 +110,10 @@ iframeLoaded = null; webError = null; fps = 0
 - [候选安装内容 hash 清单](evidence/Vigil.Setup.1.1.0.contents.json)
 - [Python CI JUnit 原始结果](evidence/python-test-results.xml)
 - [Wallpaper WebGL 超时日志与复现方式](evidence/wallpaper-webgl-timeout.txt)
+- [Wallpaper WebGL 基线对照与根因调查](evidence/wallpaper-webgl-investigation.txt)
+- [独立全新安装及卸载验收 JSON](evidence/windows-lifecycle-acceptance.json)
+- [隔离 runner 安装/运行/卸载日志](evidence/lifecycle-logs/)
 
 ## 合并建议
 
-**当前不建议合并 PR #8。** 已通过的隔离升级/数据迁移/回滚和功能回归有较强证据，但用户要求的 1.1.0 空目录全新安装及卸载/用户数据行为尚未执行，且 Wallpaper WebGL 回归仍失败。应先补齐前两项隔离验收，并决定 WebGL 首帧问题的处理或正式豁免，再重新评估合并。
+**目前仍不建议合并 PR #8。** 本轮已补齐空目录全新安装、重启恢复和卸载数据保护；安装生命周期验收缺口关闭。完整 Wallpaper 集成回归的首帧超时仍未解决，应继续定位或由人工决定是否接受该已隔离的测试问题，再重新评估合并。
