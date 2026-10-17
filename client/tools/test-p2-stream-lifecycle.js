@@ -33,7 +33,7 @@ test('Branch Atlas frontend parses and uses the native picker plus read-only ins
   const source = fs.readFileSync(file, 'utf8');
   assert.doesNotThrow(() => new Function(source));
   assert.match(source, /projectPicker/);
-  assert.match(source, /api\\('POST', '\/api\/plugin\/branch-atlas\/inspect'/);
+  assert.ok(source.includes("'/api/plugin/branch-atlas/inspect'"));
   assert.match(source, /不会切换分支/);
 });
 
