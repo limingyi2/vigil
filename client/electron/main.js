@@ -21,6 +21,9 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 if (process.env.VIGIL_USER_DATA) app.setPath('userData', path.resolve(process.env.VIGIL_USER_DATA));
 if (process.platform === 'win32') app.setAppUserModelId('com.vigil.client');
+// Stable only for this Electron process: renderer reloads can restore the
+// selected chat, while a normal app launch starts at the welcome page.
+const APP_PROCESS_INSTANCE_ID = crypto.randomUUID();
 
 // Keep Chromium's hardware acceleration enabled so WebGL wallpapers and glass
 // surfaces use the selected GPU. SwiftShader remains available as a fallback.
@@ -979,6 +982,7 @@ ipcMain.handle('wallpaper:request', async (_e, { method, resource, body }) => {
   catch (e) { return { ok: false, err: e.message }; }
 });
 ipcMain.handle('app:version', () => app.getVersion());
+ipcMain.handle('app:instance-id', () => APP_PROCESS_INSTANCE_ID);
 ipcMain.handle('wallpaper:import', async () => {
   const result = await dialog.showOpenDialog(win, { title: '导入壁纸', properties: ['openFile'],
     filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png'] }] });

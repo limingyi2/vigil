@@ -1,12 +1,30 @@
 name: Windows unified installer acceptance
 on:
   workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: 'Existing Windows candidate artifact run ID (tests that exact artifact; skips rebuild)'
+        required: false
+        type: string
+      candidate_source_commit:
+        description: 'Expected source commit recorded in the candidate release manifest'
+        required: false
+        type: string
+      wallpaper_diagnostics:
+        description: 'Run isolated P8 Wallpaper WebGL diagnostics only; do not build or install a package'
+        required: false
+        default: false
+        type: boolean
   push:
     branches: ['master', 'codex/unified-client-brain']
 jobs:
   windows-installer:
+    if: ${{ inputs.wallpaper_diagnostics != true }}
     runs-on: windows-latest
     timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,10 +34,14 @@ jobs:
         with:
           node-version: '22'
       - name: Install build dependencies
+        if: ${{ !inputs.candidate_run_id }}
         run: |
           python -m pip install -r brain/requirements.txt pyinstaller pypdf
+      - name: Install client dependencies
+        run: npm ci --prefix client
           npm ci --prefix client
       - name: Download and verify the official Vigil 1.0.2 baseline
+        if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         run: |
           $baseline = Join-Path $env:RUNNER_TEMP 'Vigil.Setup.1.0.2.exe'
@@ -30,18 +52,184 @@ jobs:
             throw "Official v1.0.2 installer integrity mismatch: sha256=$actual size=$size"
           }
       - name: Build isolated acceptance installer
+        if: ${{ inputs.candidate_run_id == '' }}
         run: python scripts/build_windows_acceptance.py
       - name: Real 1.0.2 install, 1.1.0 upgrade, migration and rollback
+        if: ${{ inputs.candidate_run_id == '' }}
         run: python scripts/test_windows_install.py client/dist-release/Vigil.Setup.1.1.0.exe --baseline "$env:RUNNER_TEMP\\Vigil.Setup.1.0.2.exe"
+      - name: Download the immutable existing candidate artifact
+        if: ${{ inputs.candidate_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: vigil-1.1.0-windows-acceptance-candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: client/dist-release
+      - name: Fresh install, first chat, restart recovery and uninstall retention
+        if: ${{ inputs.candidate_run_id != '' }}
+        shell: pwsh
+        run: |
+          python scripts/test_windows_candidate_lifecycle.py client/dist-release/Vigil.Setup.1.1.0.exe `
+            --expected-source-commit '${{ inputs.candidate_source_commit }}' `
+            --output client/dist-release/windows-lifecycle-acceptance.json
       - name: Creator renderer diagnostics acceptance
+        if: ${{ !inputs.candidate_run_id }}
         working-directory: client
         run: npm exec -- electron tools/test-p2-creator-electron.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: vigil-1.1.0-windows-acceptance-candidate
+          name: vigil-1.1.0-windows-acceptance-${{ github.run_number }}
           path: |
             client/dist-release/Vigil.Setup.1.1.0.exe
             client/dist-release/Vigil.Setup.1.1.0.contents.json
             client/dist-release/release-manifest.json
             client/dist-release/windows-acceptance.json
+            client/dist-release/windows-lifecycle-acceptance.json
+            client/dist-release/lifecycle-logs/**
+
+  wallpaper-diagnostics:
+    if: ${{ inputs.wallpaper_diagnostics == true }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify target commit and unchanged product runtime
+        shell: pwsh
+        run: |
+          $target = '${{ inputs.candidate_source_commit }}'
+          if (-not $target) { throw 'candidate_source_commit is required in wallpaper diagnostics mode.' }
+          git cat-file -e "$target^{commit}"
+          $changed = git diff --name-only $target HEAD -- client/src client/electron client/vendor
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to compare product runtime against target commit.' }
+          if ($changed) { throw "Product runtime differs from target commit ${target}: $changed" }
+          "Target commit: $target" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Diagnostic checkout: $(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Verified identical paths: client/src, client/electron, client/vendor" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install client dependencies
+        run: npm ci --prefix client
+
+      - name: Full chat-v2 Electron flow (same product runtime)
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-full.jsonl'
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-full.log'
+          $env:P8_WALLPAPER_DIAG = '1'
+          $env:P8_WALLPAPER_DIAG_FILE = $diag
+          $env:P8_DIAG_SKIP_FIXED_LAYOUT = '1'
+          Push-Location client
+          try { npm exec -- electron tools/test-chat-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          Remove-Item Env:P8_DIAG_SKIP_FIXED_LAYOUT -ErrorAction SilentlyContinue
+          @{test='full-chat-v2-electron';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-full-result.json')
+          Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-full-shots -Recurse -Force -ErrorAction SilentlyContinue
+          "Full test exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Isolated scene in chat harness, no preceding scenarios
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-isolated.jsonl'
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-isolated.log'
+          $env:P8_WALLPAPER_DIAG = '1'
+          $env:P8_WALLPAPER_DIAG_FILE = $diag
+          $env:P8_WALLPAPER_ONLY = '1'
+          Push-Location client
+          try { npm exec -- electron tools/test-chat-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          Remove-Item Env:P8_WALLPAPER_ONLY -ErrorAction SilentlyContinue
+          @{test='isolated-chat-harness-wallpaper-scene';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-isolated-result.json')
+          Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-isolated-shots -Recurse -Force -ErrorAction SilentlyContinue
+          "Isolated scene exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Isolated scene after window resize only
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-resize-only.jsonl'
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-resize-only.log'
+          $env:P8_WALLPAPER_DIAG = '1'
+          $env:P8_WALLPAPER_DIAG_FILE = $diag
+          $env:P8_WALLPAPER_RESIZE_ONLY = '1'
+          Push-Location client
+          try { npm exec -- electron tools/test-chat-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          Remove-Item Env:P8_WALLPAPER_RESIZE_ONLY -ErrorAction SilentlyContinue
+          @{test='window-resize-only-then-scene';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-resize-only-result.json')
+          Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-resize-only-shots -Recurse -Force -ErrorAction SilentlyContinue
+          "Resize-only sequence exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Isolated scene after Wallpaper layout setup only
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-layout-only.jsonl'
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-layout-only.log'
+          $env:P8_WALLPAPER_DIAG = '1'
+          $env:P8_WALLPAPER_DIAG_FILE = $diag
+          $env:P8_WALLPAPER_LAYOUT_ONLY = '1'
+          Push-Location client
+          try { npm exec -- electron tools/test-chat-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          Remove-Item Env:P8_WALLPAPER_LAYOUT_ONLY -ErrorAction SilentlyContinue
+          @{test='wallpaper-layout-setup-then-scene';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-layout-only-result.json')
+          Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-layout-only-shots -Recurse -Force -ErrorAction SilentlyContinue
+          "Wallpaper layout-only sequence exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Full chat-v2 control without diagnostic instrumentation
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-full-control.log'
+          $env:P8_DIAG_SKIP_FIXED_LAYOUT = '1'
+          Push-Location client
+          try { npm exec -- electron tools/test-chat-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          Remove-Item Env:P8_DIAG_SKIP_FIXED_LAYOUT -ErrorAction SilentlyContinue
+          @{test='full-chat-v2-electron-uninstrumented-control';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-full-control-result.json')
+          Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-full-control-shots -Recurse -Force -ErrorAction SilentlyContinue
+          "Uninstrumented full control exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Standalone Wallpaper Electron flow
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to install ffmpeg fixture dependency.' }
+          $ffmpegPath = (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue).Source
+          if (-not $ffmpegPath) { throw 'ffmpeg.exe was not available on PATH after installation.' }
+          "ffmpeg: $ffmpegPath" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $diag = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-standalone.jsonl'
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-standalone.log'
+          $env:P8_WALLPAPER_DIAG = '1'
+          $env:P8_WALLPAPER_DIAG_FILE = $diag
+          $env:P8_DIAG_SKIP_CHAT_MATERIAL = '1'
+          $env:VIGIL_TEST_SOFTWARE_RENDERER = '0'
+          Push-Location client
+          try { npm exec -- electron tools/test-wallpaper-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          @{test='standalone-wallpaper-v2-electron';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}';hardware_acceleration='enabled';chat_material_probe='skipped only to proceed past known unrelated paint assertion'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-standalone-result.json')
+          "Standalone Wallpaper exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Preserve all diagnostics and raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p8-wallpaper-webgl-diagnostics-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/p8-wallpaper-*.jsonl
+            ${{ runner.temp }}/p8-wallpaper-*.log
+            ${{ runner.temp }}/p8-wallpaper-*-result.json
+            ${{ runner.temp }}/p8-wallpaper-*-shots/**
+            client/_shots/ui-v2/**

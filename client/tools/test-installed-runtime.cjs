@@ -4,7 +4,7 @@ const WS=require('ws');
 const [install,profile,modelBase,mode='normal',pluginZip]=process.argv.slice(2);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let child,ws,next=0;const waiting=new Map();
-async function evaluate(expression){return new Promise((resolve,reject)=>{const id=++next;waiting.set(id,{resolve,reject});ws.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});}
+async function evaluate(expression){return new Promise((resolve,reject)=>{const id=++next;waiting.set(id,{resolve,reject,expression});ws.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});}
 async function run(){
   const env={...process.env,VIGIL_USER_DATA:profile,VIGIL_BRAIN_EXE:'Z:/old/missing-brain.exe',
     PATH:process.env.SystemRoot+'\\System32',VIGIL_SIDECAR_DISABLE:'1'};
@@ -18,7 +18,7 @@ async function run(){
     }catch(_){}await sleep(250);
   }
   assert.ok(ws,'Installed renderer unavailable');
-  ws.on('message',raw=>{const r=JSON.parse(raw);const w=waiting.get(r.id);if(!w)return;waiting.delete(r.id);if(r.error||r.result?.exceptionDetails)w.reject(Error('Installed renderer evaluation failed'));else w.resolve(r.result?.result?.value);});
+  ws.on('message',raw=>{const r=JSON.parse(raw);const w=waiting.get(r.id);if(!w)return;waiting.delete(r.id);if(r.error||r.result?.exceptionDetails){const detail=r.error?.message||r.result?.exceptionDetails?.text||'unknown renderer error';w.reject(Error(`Installed renderer evaluation failed: ${detail}; expression=${String(w.expression).slice(0,180)}`));}else w.resolve(r.result?.result?.value);});
   let bridge=false;
   for(let i=0;i<100;i++){try{bridge=await evaluate('!!window.vigil?.sidecar');if(bridge)break;}catch(_){}await sleep(100);}
   assert.ok(bridge,'Installed preload unavailable');
@@ -47,6 +47,98 @@ async function run(){
   const chat=await evaluate(`(async()=>{const events=[];let text='';let final='';const off=vigil.onStreamEvent(e=>{events.push(e.type);if(e.type==='text')text+=e.text||'';if(e.type==='done')final=e.text||'';});try{const r=await vigil.apiStream('/api/chat/stream',{text:'fixture hello',src:'pc',request_id:'request_fixture_'+crypto.randomUUID()});return {ok:r.ok,events,hasReply:(text+final).includes('Hello fixture')};}finally{off();}})()`);
   assert.ok(chat.events.includes('done'),JSON.stringify(chat));
   assert.equal(chat.hasReply,true,'Ordinary chat did not return the fixture model response: '+JSON.stringify(chat));
+  let ready=false;
+  for(let i=0;i<100;i++){
+    ready=await evaluate("Boolean(document.querySelector('#newTopicBtn')&&document.querySelector('#sessList')&&document.querySelector('#ta'))");
+    if(ready)break;await sleep(100);
+  }
+  assert.ok(ready,'Installed chat session controls did not render');
+  const initialConversation=await evaluate('API.state.chatConversationId');
+  assert.equal(initialConversation,'','A new Electron process must open the welcome page without selecting a conversation');
+  assert.ok(await evaluate("!document.querySelector('#hero').hidden"),'Installed renderer did not show the welcome page');
+  const initialSessions=await evaluate("vigil.api('GET','/api/conversations?src=pc')");
+  assert.equal(initialSessions.status,200);
+  assert.ok(initialSessions.json.items.some(item=>item.legacy),'Migrated legacy chat history was not shown in the session list');
+  const startNewConversation=async()=>{
+    const before=await evaluate("vigil.api('GET','/api/conversations?src=pc')");
+    assert.equal(before.status,200);
+    const beforeIds=before.json.items.map(item=>item.id).sort();
+    await evaluate("document.querySelector('#newTopicBtn').click();true");
+    let home=false;
+    for(let i=0;i<100;i++){
+      home=await evaluate("API.state.chatConversationId===''&&!document.querySelector('#hero').hidden&&document.querySelector('#msgs').children.length===0");
+      if(home)break;
+      await sleep(100);
+    }
+    assert.ok(home,'New conversation did not show a clean welcome page');
+    const after=await evaluate("vigil.api('GET','/api/conversations?src=pc')");
+    assert.equal(after.status,200);
+    assert.deepEqual(after.json.items.map(item=>item.id).sort(),beforeIds,'Clicking new conversation must not create an empty persisted session');
+  };
+  const sendUiMessage=async(text,reply)=>{
+    await evaluate(`(()=>{const t=document.querySelector('#ta');t.value=${JSON.stringify(text)};t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#sendBtn').click();return true})()`);
+    for(let i=0;i<180;i++){
+      const found=await evaluate(`document.querySelector('#msgs')?.innerText.includes(${JSON.stringify(reply)})`);
+      if(found){
+        const id=await evaluate('API.state.chatConversationId');
+        if(id)return id;
+      }
+      await sleep(100);
+    }
+    throw Error('Installed chat did not render expected reply: '+reply);
+  };
+  await startNewConversation();
+  const conversationA=await sendUiMessage('A_ONLY','Hello fixture');
+  assert.ok(conversationA,'First user message did not create and activate conversation A');
+  assert.ok(await evaluate(`document.querySelector('[data-session="${conversationA}"]').textContent.includes('A_ONLY')`),
+    'First user message did not create a conversation title');
+  await startNewConversation();
+  const conversationB=await sendUiMessage('B_ONLY','Hello fixture');
+  assert.ok(conversationB,'First user message did not create and activate conversation B');
+  await evaluate(`document.querySelector('[data-session="${conversationA}"]').click();true`);
+  await sendUiMessage('A_CONTINUE','A_CONTEXT_OK');
+  await evaluate(`document.querySelector('[data-session="${conversationB}"]').click();true`);
+  await sendUiMessage('B_CONTINUE','B_CONTEXT_OK');
+  const providerStatus=await(await fetch(modelBase.replace(/\/v1\/?$/,'/__fixture/status'))).json();
+  const contextChecks=providerStatus.conversation_checks||[];
+  for(const id of ['A','B']){
+    const checks=contextChecks.filter(x=>x.conversation===id&&x.chat_request);
+    assert.ok(checks.length&&checks.every(x=>x.ok),
+      `Fake Provider chat request saw another session in ${id} context: ${JSON.stringify(contextChecks)}`);
+  }
+  await evaluate('location.reload();true');
+  let restored=false;
+  for(let i=0;i<120;i++){
+    restored=await evaluate(`typeof API!=='undefined'&&API.state.chatConversationId===${JSON.stringify(conversationB)}&&document.querySelector('#msgs')?.innerText.includes('B_CONTEXT_OK')`);
+    if(restored)break;await sleep(100);
+  }
+  assert.ok(restored,'Installed renderer restart did not restore the selected conversation and its messages');
+  console.log('PASS installed chat UI creates, switches, continues and restores isolated A/B conversations');
+  await evaluate("window.confirm=()=>{throw Error('native confirm forbidden')};document.querySelector('#clearBtn').click();true");
+  let confirmReady=false;
+  for(let i=0;i<50;i++){
+    confirmReady=await evaluate("Boolean(document.querySelector('.vigil-confirm [data-choice=cancel]'))");
+    if(confirmReady)break;await sleep(50);
+  }
+  assert.ok(confirmReady,'Installed destructive action did not show the themed in-app confirmation');
+  await evaluate("document.querySelector('.vigil-confirm [data-choice=cancel]').click();true");
+  assert.ok(await evaluate("document.querySelector('#msgs').innerText.includes('B_CONTEXT_OK')"),
+    'Canceling the in-app confirmation changed the conversation');
+  await evaluate(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();document.createElement=original;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange();true})()`);
+  let videoReady=false;
+  for(let i=0;i<100;i++){
+    videoReady=await evaluate("Boolean(document.querySelector('[data-video-choice=frames]')&&document.querySelector('[data-video-choice=original]'))");
+    if(videoReady)break;await sleep(50);
+  }
+  assert.ok(videoReady,'Installed video attachment did not show inline keyframe/original choices');
+  assert.ok(await evaluate("document.querySelector('#attach').textContent.includes('当前模型不支持直接理解完整视频')"),
+    'Installed video attachment omitted the unsupported-model explanation');
+  await evaluate("document.querySelector('[data-video-choice=original]').click();true");
+  assert.ok(await evaluate("document.querySelector('[data-video-choice=original]').classList.contains('on')"),
+    'Installed original-video option did not activate');
+  await evaluate("document.querySelector('#atClr').click();true");
+  assert.ok(await evaluate("document.querySelector('#attach').hidden"),'Installed attachment removal did not clear the video');
+  console.log('PASS installed UI keeps destructive confirmation themed and video choices inline without native dialogs');
   const created=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'Create a minimal isolated fixture plugin. Do not install.',request_id:'creator_fixture_'+crypto.randomUUID()})`);
   assert.equal(created.status,200);const jid=created.json.job_id;
   const streamed=await evaluate(`(async()=>{const events=[];const off=vigil.onCreatorEvent(e=>{if(e.job_id===${JSON.stringify(jid)})events.push(e);});try{return {result:await vigil.apiStream('/api/creator/jobs/${jid}/events?after=0',null),events};}finally{off();}})()`);

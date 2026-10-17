@@ -50,6 +50,7 @@ ipcRenderer.on('settings:navigate', (_e, target) => {
 
 contextBridge.exposeInMainWorld('vigil', {
   appVersion: () => ipcRenderer.invoke('app:version'),
+  appInstanceId: () => ipcRenderer.invoke('app:instance-id'),
   // 所有网络请求走主进程：token 在那边加，渲染层拿不到凭据
   api: (method, path, body, opts) => ipcRenderer.invoke('api', {
     method, path, body,

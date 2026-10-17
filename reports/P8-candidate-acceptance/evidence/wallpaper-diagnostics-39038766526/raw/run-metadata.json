@@ -1,0 +1,11 @@
+{
+  "run": "https://github.com/limingyi2/vigil/actions/runs/39038766526",
+  "artifact": "https://github.com/limingyi2/vigil/actions/runs/39038766526/artifacts/12103092295",
+  "source_commit": "193f297234a36a91ef61a4dedd63d4564df41c87",
+  "diagnostic_commit": "cac6f0b20ac76ee65cb2e550ae37686a88a56a12",
+  "runner": "GitHub Actions windows-latest",
+  "electron": "28.3.3",
+  "chromium": "120.0.6099.291",
+  "webgl": "ANGLE SwiftShader software renderer",
+  "candidate_installer_rebuilt": false
+}

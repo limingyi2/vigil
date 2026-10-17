@@ -1,0 +1,57 @@
+{
+  "result": "passed",
+  "environment": {
+    "os": "Windows",
+    "runner_name": "GitHub Actions 1000000724",
+    "isolation_root": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc"
+  },
+  "candidate": {
+    "version": "1.1.0",
+    "source_commit": "05ba0c7544ddca2509c22e22d064bcb9745d9149",
+    "installer": "Vigil.Setup.1.1.0.exe",
+    "size": 101661668,
+    "sha256": "89d187103c237a66df788f0bc45c0162a771428f969c30b4ee322eac5e90735c"
+  },
+  "fresh_install": {
+    "installer_exit_code": 0,
+    "core_files_verified": true,
+    "electron_started": true,
+    "brain_health": "ready",
+    "welcome_page": true,
+    "fake_provider_first_chat": true,
+    "conversation_id": "91cf8e0d-ad9c-40da-9ee3-01030a7935ed"
+  },
+  "restart_recovery": {
+    "electron_restarted": true,
+    "chat_history_restored": true,
+    "durable_brain_display_turn_restored_via_api": true
+  },
+  "uninstall": {
+    "uninstaller": "Uninstall Vigil.exe",
+    "exit_code": 0,
+    "program_files_removed": true,
+    "user_data_policy": "preserved",
+    "retained_test_data": [
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\profile\\vigil-client\\brain\\plugins\\p8-retention-plugin.py",
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\profile\\vigil-client\\brain\\skill_host\\skills\\p8-retention\\skill.json",
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\profile\\vigil-client\\brain\\data\\creator_drafts\\p8-retention\\meta.json",
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\profile\\vigil-client\\brain\\data\\p8-retention-chat.jsonl",
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\profile\\vigil-client\\config.json",
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\profile\\vigil-client\\brain\\data\\conversations.sqlite3"
+    ],
+    "actual_configuration_and_conversation_metadata_retained": true,
+    "all_user_data_files_unchanged": true,
+    "user_data_file_count": 62,
+    "outside_sentinel_preserved": true
+  },
+  "nsis_verbose_logs": {
+    "install_available": false,
+    "uninstall_available": false
+  },
+  "logs": {
+    "install": "lifecycle-logs/install.json",
+    "first_launch": "lifecycle-logs/first_launch.json",
+    "restart": "lifecycle-logs/restart.json",
+    "uninstall": "lifecycle-logs/uninstall.json"
+  }
+}

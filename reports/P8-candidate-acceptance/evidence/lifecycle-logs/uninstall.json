@@ -1,0 +1,10 @@
+{
+  "command": [
+    "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\application\\Uninstall Vigil.exe",
+    "/S",
+    "/LOG=C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil candidate lifecycle uiydfawc\\nsis-uninstall.log"
+  ],
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": ""
+}

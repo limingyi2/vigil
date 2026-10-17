@@ -6,6 +6,11 @@ const client=path.resolve(__dirname,'..');
 app.setPath('userData',path.join(tmp,'profile'));
 let win,job,stage='parse',chatRequests=0,creatorRequests=0;
 const jobs=[];
+const sessions=[];
+let sessionCounter=0;
+const approvalCalls=[];
+const evidenceDir=path.resolve(client,'..','reports','p6.2-evidence');
+fs.mkdirSync(evidenceDir,{recursive:true});
 const fullSource=Array.from({length:10},(_,i)=>`# vigil_smoke.py line ${i+1}`).join('\n');
 const fixtureDraft={id:'draft_fold_ui',kind:'plugin',summary:'折叠交互验收',version:1,model:'fixture',
   requirement:'UI-only Creator file preview fixture',risks:'fixture only',validation:{ok:true,errors:[],warnings:[]},
@@ -16,11 +21,25 @@ async function until(s){for(let i=0;i<250;i++){if(await ev(s))return;await wait(
 function fixture(method,raw,body){
   const p=raw.split('?')[0];let json={ok:true,items:[]};
   if(p==='/api/stats')json={model:'fixture',turns:0};
+  if(p==='/api/conversations' && method==='GET')json={ok:true,items:sessions};
+  if(p==='/api/conversations' && method==='POST'){
+    const n=(++sessionCounter).toString(16).padStart(12,'0');
+    const item={id:`00000000-0000-4000-8000-${n}`,title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false};
+    sessions.unshift(item);json={ok:true,item};
+  }
   if(p==='/api/persona')json={key:'default',name:'fixture',templates:[]};
   if(p==='/api/models/saved')json={current:{model:'fixture'},models:[]};
   if(p==='/api/plugins/frontend')json={version:1,plugins:[]};
   if(p==='/api/creator/drafts')json={ok:true,drafts:[]};
   if(p==='/api/creator/draft')json={ok:true,draft:fixtureDraft};
+  if(p==='/api/creator/approve' && method==='POST'){
+    approvalCalls.push({path:p,body});
+    json={ok:true,approval:{approval_id:'fixture_once_123456789',version:fixtureDraft.version,target_name:'vigil_smoke'}};
+  }
+  if(p==='/api/creator/install' && method==='POST'){
+    approvalCalls.push({path:p,body});
+    json={ok:true,install:{package:'vigil_smoke',restart_needed:true,dynamic_loaded:false}};
+  }
   if(p==='/api/creator/jobs' && method==='POST'){
     creatorRequests++;
     if(stage==='missing_api')return {ok:false,status:404,target:'http://127.0.0.1:61285',json:{err:'no such api'}};
@@ -51,6 +70,7 @@ async function run(){
   });
   for(const [name,fn] of Object.entries({
     'cfg:get':()=>({wizard_done:true,roots:[]}), 'app:version':()=> 'P2 fixture',
+    'app:instance-id':()=> 'p2-creator-test-process',
     'plugins:load':()=>({ok:true}),'auto:connect':()=>({ok:false}),
     'sidecar:status':()=>({status:'stopped'}),'local:caps':()=>[],
     'local:defaults':()=>({roots:[],commands:[]}),
@@ -73,6 +93,22 @@ async function run(){
   stage='fold_ui';await send('render Creator file preview fixture');
   await until("!!document.querySelector('.crturn[data-crid=\"draft_fold_ui\"] [data-cr-file-toggle=\"0\"]')");
   const card=".crturn[data-crid=\"draft_fold_ui\"]";
+  const beforeReview=await ev("(()=>{const c=document.querySelector('.composer').getBoundingClientRect(),m=document.querySelector('#msgs');return{composer:{top:c.top,bottom:c.bottom},messageScroll:m.scrollHeight>m.clientHeight,scrollTop:m.scrollTop}})()");
+  await ev(`document.querySelector('${card} #crReview').click()`);
+  await until(`document.querySelector('${card} #crReviewBox').hidden===false`);
+  const reviewLayout=await ev("(()=>{const c=document.querySelector('.composer').getBoundingClientRect(),d=document.querySelector('#crReviewBox').getBoundingClientRect(),m=document.querySelector('#msgs');return{viewportWidth:innerWidth,composer:{top:c.top,bottom:c.bottom},drawer:{top:d.top,right:d.right,width:d.width,bottom:d.bottom,position:getComputedStyle(document.querySelector('#crReviewBox')).position},messageScroll:m.scrollHeight>m.clientHeight,scrollTop:m.scrollTop}})()");
+  assert.deepEqual(reviewLayout.composer,beforeReview.composer,'opening installation review must not move the composer');
+  assert.equal(reviewLayout.drawer.position,'fixed');assert.equal(reviewLayout.drawer.top,0);
+  assert.ok(reviewLayout.drawer.width<=520 && Math.abs(reviewLayout.drawer.right-reviewLayout.viewportWidth)<=1,JSON.stringify(reviewLayout));
+  assert.equal(reviewLayout.messageScroll,true,'message history stays independently scrollable');
+  assert.equal(reviewLayout.scrollTop,beforeReview.scrollTop,'opening review must not scroll the chat');
+  win.show();await wait(2600);
+  fs.writeFileSync(path.join(evidenceDir,'installation-steps-drawer.png'),(await win.webContents.capturePage()).toPNG());
+  win.hide();
+  await ev(`document.querySelector('${card} #crCancel').click()`);
+  await until(`document.querySelector('${card} #crReviewBox').hidden===true`);
+  assert.deepEqual(await ev("(()=>{const c=document.querySelector('.composer').getBoundingClientRect();return{top:c.top,bottom:c.bottom}})()"),beforeReview.composer);
+  console.log('PASS Creator installation review opens in a fixed drawer without moving the composer or chat scroll');
   let fileState=await ev(`(()=>{const r=document.querySelector('${card}'),p=r.querySelector('[data-cr-file-preview="0"]'),b=r.querySelector('[data-cr-file-body="0"]');return {toggle:r.querySelector('[data-cr-file-toggle="0"]')?.textContent,copy:r.querySelector('[data-copy-file="0"]')?.textContent,bodyHidden:b?.hidden,previewHidden:p?.hidden,previewText:p?.textContent||'',bodyText:b?.textContent||'',otherHidden:r.querySelector('[data-cr-file-body="1"]')?.hidden}})()`);
   assert.equal(fileState.toggle,'展开源码');assert.equal(fileState.copy,'复制完整源码');
   assert.equal(fileState.bodyHidden,true);assert.equal(fileState.previewHidden,false);
@@ -97,6 +133,18 @@ async function run(){
   assert.equal(await ev(`document.querySelector('${card} [data-copy-file="0"]').textContent`),'已复制');
   assert.equal(await ev(`document.querySelector('${card} [data-cr-file-body="1"]').hidden`),true);
   console.log('PASS collapse restores preview and copy writes the entire file while collapsed; other file stays collapsed');
+  await ev(`document.querySelector('${card} #crReview').click()`);
+  await until(`document.querySelector('${card} #crReviewBox').hidden===false`);
+  await ev(`document.querySelector('${card} #crApproveNow').click()`);
+  await until(`document.querySelector('${card} #crInstallNow').dataset.approval==='fixture_once_123456789'`);
+  assert.equal(approvalCalls[0].path,'/api/creator/approve');
+  await ev(`document.querySelector('${card} #crInstallNow').click()`);
+  await until("!!document.querySelector('.vigil-confirm [data-choice=ok]')");
+  await ev("document.querySelector('.vigil-confirm [data-choice=ok]').click()");
+  await until(`document.querySelector('${card} #crInstallNow').textContent.includes('已安装')`);
+  assert.deepEqual(approvalCalls[1],{path:'/api/creator/install',body:{approval_id:'fixture_once_123456789'}});
+  assert.ok(await ev(`document.querySelector('${card} #crApprovalState').textContent.includes('审批已消费')`));
+  console.log('PASS drawer preserves explicit approval, one-time install confirmation, and consumed-approval result');
   await ev("document.querySelector('#gnav [data-page=\"agent-center\"]').click()");
   await until("!!document.querySelector('#ac-agent-grid')");
   await ev("document.querySelector('#gnav [data-page=\"chat\"]').click()");

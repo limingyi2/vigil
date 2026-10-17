@@ -17,6 +17,7 @@ const token = 'e2e-' + require('node:crypto').randomBytes(24).toString('hex');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-p5-joint-'));
 const home = path.join(root, 'brain-home');
 const profile = path.join(root, 'electron-profile');
+const captureScreenshots = process.argv.includes('--packaged') || process.argv.includes('--screenshots');
 const modelRequests = [];
 const modelWaiters = [];
 let modelServer, brain, electron, cdp;
@@ -73,7 +74,15 @@ async function startModel() {
         await new Promise(resolve => res.once('close', resolve));
         return;
       }
-      const parts = ['E2E_STREAM_PART_A', 'E2E_STREAM_PART_B'];
+      const creatorOutput = JSON.stringify({files:{'p6_session.py':[
+        'NAME = "p6_session"', 'DESC = "isolated session draft"', '',
+        'def p6_session_status(arg):', '    return "fixture only"', '',
+        'TOOLS = {"p6_session_status": p6_session_status}',
+        'TOOL_SPECS = {"p6_session_status": {"desc": "fixture status", "params": [], "arg_param": None}}',
+      ].join('\n')},summary:'P6 session scoped draft',risks:'fixture only'});
+      const parts = userText.includes('P6_FIXTURE_PLUGIN')
+        ? [creatorOutput.slice(0, Math.floor(creatorOutput.length / 2)), creatorOutput.slice(Math.floor(creatorOutput.length / 2))]
+        : ['E2E_STREAM_PART_A', 'E2E_STREAM_PART_B'];
       for (const part of parts) {
         res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: part } }] }) + '\n\n');
         await wait(60);
@@ -114,6 +123,7 @@ async function startModel() {
 
 function writeFixtures(modelBase, brainPort) {
   fs.mkdirSync(path.join(home, 'config'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'data'), { recursive: true });
   fs.mkdirSync(path.join(home, 'plugins'), { recursive: true });
   fs.mkdirSync(path.join(profile), { recursive: true });
   const pluginTrace = path.join(root, 'plugin-executions.jsonl');
@@ -148,8 +158,8 @@ function writeFixtures(modelBase, brainPort) {
   return pluginTrace;
 }
 
-async function startBrain(modelBase) {
-  const port = await freePort();
+async function startBrain(modelBase, fixedPort) {
+  const port = fixedPort || await freePort();
   const pluginTrace = writeFixtures(modelBase, port);
   const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
   if (!fs.existsSync(python)) throw new Error('Python interpreter not found: ' + python);
@@ -157,6 +167,7 @@ async function startBrain(modelBase) {
     VIGIL_E2E_PLUGIN_TRACE: pluginTrace, PYTHONDONTWRITEBYTECODE: '1', PYTHONUNBUFFERED: '1' };
   const logFile = fs.openSync(path.join(root, 'brain.log'), 'w');
   brain = spawn(python, ['server.py'], { cwd: brainDir, env, stdio: ['ignore', logFile, logFile], windowsHide: true });
+  fs.closeSync(logFile); // The child owns the inherited handle; Windows cleanup must not retain a parent lock.
   brain.once('error', error => { throw error; });
   const base = 'http://127.0.0.1:' + port;
   const deadline = Date.now() + 60000;
@@ -167,7 +178,7 @@ async function startBrain(modelBase) {
       if (r.ok) {
         const runtime = await r.json();
         assert.equal(runtime.protocol, 1);
-        return { base, pluginTrace };
+        return { base, pluginTrace, port };
       }
     } catch (_) {}
     await wait(250);
@@ -188,12 +199,18 @@ async function evaluate(expression) {
   if (result.exceptionDetails) throw new Error('Renderer evaluation failed: ' + (result.exceptionDetails.text || expression));
   return result.result && result.result.value;
 }
+async function screenshot(name) {
+  const result = await cdpSend('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
+  const dir = path.join(repo, 'reports', 'p6.1-evidence');
+  fs.mkdirSync(dir, {recursive:true});
+  fs.writeFileSync(path.join(dir, name + '.png'), Buffer.from(result.data, 'base64'));
+}
 async function connectRenderer(debugPort) {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     try {
       const pages = await (await fetch('http://127.0.0.1:' + debugPort + '/json/list')).json();
-      const page = pages.find(p => p.type === 'page' && String(p.url || '').includes('client/src/index.html'));
+      const page = pages.find(p => p.type === 'page' && String(p.url || '').includes('index.html'));
       if (page) {
         cdp = new WebSocket(page.webSocketDebuggerUrl, { origin: 'http://localhost' });
         await new Promise((resolve, reject) => { cdp.once('open', resolve); cdp.once('error', reject); });
@@ -205,6 +222,7 @@ async function connectRenderer(debugPort) {
           }
         });
         await cdpSend('Runtime.enable');
+        await cdpSend('Page.enable');
         return;
       }
     } catch (_) {}
@@ -214,13 +232,20 @@ async function connectRenderer(debugPort) {
 }
 async function startElectron(brainBase) {
   const debugPort = await freePort();
-  const electronExe = require(path.join(client, 'node_modules', 'electron'));
+  const packaged = process.argv.includes('--packaged');
+  const electronExe = packaged
+    ? path.join(client, 'dist-release', 'win-unpacked', 'Vigil.exe')
+    : require(path.join(client, 'node_modules', 'electron'));
+  if (packaged && !fs.existsSync(electronExe)) throw new Error('Candidate packaged executable not found: ' + electronExe);
   const env = { ...process.env, VIGIL_USER_DATA: profile, VIGIL_TEST_MODE: '1',
     ELECTRON_ENABLE_LOGGING: '1', ELECTRON_DISABLE_SECURITY_WARNINGS: '1' };
   const logFile = fs.openSync(path.join(root, 'electron.log'), 'w');
-  electron = spawn(electronExe, ['--remote-debugging-port=' + debugPort, '--remote-allow-origins=*', '--disable-gpu', client], {
+  const args = ['--remote-debugging-port=' + debugPort, '--remote-allow-origins=*', '--disable-gpu'];
+  if (!packaged) args.push(client);
+  electron = spawn(electronExe, args, {
     cwd: client, env, stdio: ['ignore', logFile, logFile], windowsHide: true,
   });
+  fs.closeSync(logFile); // Release the parent's duplicate handle when the child exits.
   const ready = connectRenderer(debugPort);
   await ready;
   const deadline = Date.now() + 20000;
@@ -291,8 +316,53 @@ async function run() {
   const { base: brainBase, pluginTrace } = await startBrain(modelBase);
   await startElectron(brainBase);
 
+  // A new Electron process always opens the welcome page. Listing sessions on
+  // an empty Brain must not create the legacy placeholder or select a chat.
+  await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'cold-start welcome page');
+  assert.equal(await evaluate('API.state.chatConversationId'), '', 'cold start must have no active conversation');
+  assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '');
+  if (captureScreenshots) await screenshot('p6.3-cold-start-home');
+  let listResponse = await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}});
+  let listed = await listResponse.json();
+  assert.deepEqual(listed.items, [], 'opening the welcome page must not create an empty Brain conversation');
+  pass('cold start with no history opens a clean welcome page without creating a conversation');
+
+  // Seed an old transcript and nine independent chats after the first-start
+  // check, then refresh the renderer to verify ten saved rows stay on the home.
+  fs.writeFileSync(path.join(home, 'data', 'pc.chat_history.jsonl'), [
+    {t:'2026-10-17 18:00',role:'user',text:'LEGACY_FIRST_PROMPT'},
+    {t:'2026-10-17 18:00',role:'assistant',text:'legacy response'},
+  ].map(row => JSON.stringify(row)).join('\n') + '\n', 'utf8');
+  for (let i = 0; i < 9; i++) {
+    const response = await fetch(brainBase + '/api/conversations', {
+      method:'POST', headers:{Authorization:'Bearer ' + token,'Content-Type':'application/json'},
+      body:JSON.stringify({src:'pc'}),
+    });
+    assert.equal(response.status, 201, 'fixture history conversation should be created');
+  }
+  listResponse = await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}});
+  listed = await listResponse.json();
+  assert.equal(listed.items.length, 10, 'legacy transcript plus nine saved sessions should be listed');
+  const legacyId = listed.items.find(item => item.legacy).id;
+  const legacyFirstPrompt = 'LEGACY_FIRST_PROMPT';
+  await evaluate("document.querySelector('#reloadBtn').click()");
+  await waitFor("document.querySelectorAll('[data-session]').length===10 && !document.querySelector('#hero').hidden", 'ten saved sessions on welcome page');
+  assert.equal(await evaluate('API.state.chatConversationId'), '', 'ten saved sessions must not auto-select the last chat');
+  assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'home must not show saved messages or Creator cards');
+  if (captureScreenshots) await screenshot('p6.3-ten-history-home');
+  await evaluate(`document.querySelector('[data-session="${legacyId}"]').click()`);
+  await waitFor(`API.state.chatConversationId===${JSON.stringify(legacyId)} && document.querySelector('#msgs').innerText.includes(${JSON.stringify(legacyFirstPrompt)})`, 'legacy history explicitly opened');
+  assert.equal(await evaluate(`document.querySelector('[data-session="${legacyId}"] .tx b')?.textContent || ''`), legacyFirstPrompt.slice(0, 7));
+  pass('ten saved conversations remain visible on welcome; legacy opens only after explicit selection');
+
+  await evaluate("document.querySelector('#newTopicBtn').click()");
+  await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'new conversation welcome state');
+  assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'new conversation must clear old messages and cards');
+  if (captureScreenshots) await screenshot('p6.3-new-conversation-home');
   await submit('E2E_TOOL_SUCCESS 请调用 smoke_ping');
   await waitFor("[...document.querySelectorAll('#msgs .turn:not(.me) .txt')].some(x=>x.innerText.includes('VIGIL_PLUGIN_CALL_OK'))", 'successful plugin reply');
+  let conversationA = await evaluate('API.state.chatConversationId');
+  assert.ok(conversationA && conversationA !== legacyId, 'first sent message creates an independent conversation');
   let calls = modelRequests.filter(x => x.toolNames.includes('smoke_ping'));
   assert.ok(calls.length >= 2, 'model request and tool-result follow-up must both reach Fake Provider');
   assert.ok(calls.some(x => x.toolNames.includes('smoke_ping')), 'Brain must send smoke_ping schema to the model');
@@ -301,7 +371,7 @@ async function run() {
   assert.ok((await assertToolCall(pluginTrace, 'ok')).some(row => row.mode === 'ok'), 'plugin host must execute the fixture tool');
   let events = await evaluate('window.__vigilE2EEvents');
   assert.equal(events.filter(e => e.type === 'done').length, 1, 'one terminal done event must reach renderer');
-  pass('real Electron -> Brain tool schema -> plugin host -> tool result -> renderer');
+  pass('first message from welcome creates a scoped conversation and completes a plugin call');
 
   await submit('你好');
   await waitFor("[...document.querySelectorAll('#msgs .turn:not(.me) .txt')].some(x=>x.innerText.includes('E2E_STREAM_PART_AE2E_STREAM_PART_B'))", 'multi-event stream final text');
@@ -314,6 +384,87 @@ async function run() {
   const rendered = await evaluate("[...document.querySelectorAll('#msgs .turn:not(.me) .txt')].map(x=>x.innerText).filter(x=>x.includes('E2E_STREAM_PART_AE2E_STREAM_PART_B')).length");
   assert.equal(rendered, 1, 'multi-event stream must render once without duplicate final content');
   pass('multiple SSE text events and one terminal event are rendered exactly once');
+
+  assert.equal(await evaluate(`document.querySelector('[data-session="${legacyId}"] .tx b')?.textContent || ''`), legacyFirstPrompt.slice(0, 7), 'legacy row title comes from its first user question');
+  await submit('A_ONLY');
+  await waitFor("document.querySelector('#msgs').innerText.includes('A_ONLY') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'A-only message');
+  assert.equal(conversationA, await evaluate('API.state.chatConversationId'));
+  const aOnlyCall = modelRequests.filter(x => x.userText === 'A_ONLY').at(-1);
+  assert.ok(aOnlyCall && !aOnlyCall.messages.some(m => String(m.content || '').includes('LEGACY_FIRST_PROMPT')),
+    'a new chat must not inherit the explicitly opened legacy transcript');
+  await evaluate("document.querySelector('#newTopicBtn').click()");
+  await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'empty B welcome page');
+  assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'new B welcome must be blank');
+  assert.equal((await (await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}})).json()).items.length, 11,
+    'clicking new conversation alone must not create a Brain row');
+  await submit('B_ONLY');
+  const bOnlyCall = await requestStarted(x => x.userText === 'B_ONLY');
+  await waitFor("document.querySelector('#msgs .turn:not(.me)') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'B response');
+  const conversationB = await evaluate('API.state.chatConversationId');
+  assert.ok(conversationB && conversationB !== conversationA, 'first B message creates its own conversation');
+  let bCall = bOnlyCall;
+  assert.ok(bCall, 'Fake Provider must receive B_ONLY');
+  assert.equal(bCall.messages.some(m => m.role === 'user' && String(m.content).includes('A_ONLY')), false,
+    'B model context must not contain A');
+  await evaluate(`document.querySelector('[data-session="${conversationA}"]').click()`);
+  await waitFor("document.querySelector('#msgs').innerText.includes('A_ONLY')", 'A transcript restore');
+  assert.equal(await evaluate("document.querySelector('#msgs').innerText.includes('B_ONLY')"), false,
+    'A transcript must not contain B');
+  await submit('A_CONTINUE');
+  await waitFor("document.querySelector('#msgs').innerText.includes('A_CONTINUE') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'A continuation');
+  const aCall = modelRequests.filter(x => x.userText === 'A_CONTINUE').at(-1);
+  assert.ok(aCall.messages.some(m => m.role === 'user' && String(m.content).includes('A_ONLY')));
+  assert.equal(aCall.messages.some(m => m.role === 'user' && String(m.content).includes('B_ONLY')), false,
+    'A model context must not contain B');
+
+  await evaluate("document.querySelector('#creatorBtn').click()");
+  await submit('P6_FIXTURE_PLUGIN');
+  await waitFor("document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')", 'Creator draft in A', 30000);
+  await evaluate(`document.querySelector('[data-session="${conversationB}"]').click()`);
+  await waitFor("document.querySelector('#msgs').innerText.includes('B_ONLY')", 'B transcript after draft');
+  assert.equal(await evaluate("document.querySelectorAll('#msgs .crturn').length"), 0,
+    'A Creator card must not leak into B');
+  if (captureScreenshots) await screenshot('packaged-b-isolated');
+  await evaluate(`document.querySelector('[data-session="${conversationA}"]').click()`);
+  await waitFor("document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')", 'A Creator draft restore');
+  await evaluate("document.querySelector('#creatorBtn').click();document.querySelector('#creatorBtn').click()");
+  await waitFor("document.querySelector('#creatorBtn').innerText.includes('关')", 'return to ordinary chat mode');
+  const brainPort = Number(new URL(brainBase).port);
+  await stopChild(brain, true); brain = null;
+  await wait(500);
+  const restarted = await startBrain(modelBase, brainPort);
+  await evaluate('location.reload()');
+  await wait(1200);
+  await waitFor(`API.state.chatConversationId===${JSON.stringify(conversationA)} && document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')`,
+    'A transcript and Creator card after Brain restart', 30000);
+  if (captureScreenshots) await screenshot('packaged-a-draft-restored');
+  await evaluate(`document.querySelector('[data-session="${conversationB}"]').click()`);
+  await waitFor("document.querySelector('#msgs').innerText.includes('B_ONLY')", 'B transcript after Brain restart');
+  assert.equal(await evaluate("document.querySelectorAll('#msgs .crturn').length"), 0);
+  await evaluate(`document.querySelector('[data-session="${legacyId}"]').click()`);
+  await waitFor(`API.state.chatConversationId===${JSON.stringify(legacyId)} && document.querySelector('#hero')`, 'legacy entry remains selectable');
+  await waitFor(`document.querySelector('#msgs').innerText.includes(${JSON.stringify(legacyFirstPrompt)})`, 'legacy transcript remains readable');
+  assert.equal(await evaluate(`document.querySelector('[data-session="${legacyId}"] .tx b')?.textContent || ''`), legacyFirstPrompt.slice(0, 7));
+  await evaluate(`document.querySelector('[data-session="${conversationA}"]').click()`);
+  await waitFor("document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')", 'A draft before normal app restart');
+  if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close();
+  cdp = null;
+  await stopChild(electron, true); electron = null;
+  await wait(500);
+  await startElectron(brainBase);
+  await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'cold launch after an existing session');
+  assert.equal(await evaluate('API.state.chatConversationId'), '', 'normal app relaunch must return to welcome');
+  assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'normal relaunch must not show old messages/cards');
+  assert.equal(await evaluate("document.querySelectorAll('[data-session]').length"), 12, 'all twelve saved conversations remain listed');
+  if (captureScreenshots) await screenshot('p6.3-restart-home-with-history');
+  await evaluate(`document.querySelector('[data-session="${conversationA}"]').click()`);
+  await waitFor("document.querySelector('#msgs').innerText.includes('A_ONLY') && document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')",
+    'saved conversation and Creator draft reopen after app restart');
+  for (let i = 0; i < 3 && !(await evaluate("document.querySelector('#creatorBtn').innerText.includes('关')")); i++) {
+    await evaluate("document.querySelector('#creatorBtn').click()");
+  }
+  assert.ok(await evaluate("document.querySelector('#creatorBtn').innerText.includes('关')"), 'ordinary chat mode should be restored for remaining chat checks');
+  pass('real Electron + Fake Provider: A/B isolation, Creator restore, renderer reload, Brain restart, and cold-launch welcome');
 
   const failureStart = modelRequests.length;
   await submit('E2E_TOOL_FAIL 请调用 smoke_ping');
@@ -346,11 +497,14 @@ run().catch(error => {
   try { if (fs.existsSync(path.join(root, 'brain.log'))) console.error('Brain log retained until cleanup: ' + path.join(root, 'brain.log')); } catch (_) {}
   process.exitCode = 1;
 }).finally(async () => {
-  if (cdp && cdp.readyState === WebSocket.OPEN) {
-    try { await cdpSend('Browser.close'); } catch (_) {}
-  }
+  // Closing the browser target may close CDP before its response arrives, leaving
+  // cdpSend waiting for its timeout. Close the test-owned socket directly; the
+  // child process tree is terminated immediately below.
   try { if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close(); } catch (_) {}
-  await stopChild(electron);
+  // This is an isolated test profile; force-close the test-owned Electron tree
+  // after the assertions so background renderer/utility processes cannot hold
+  // temporary log handles open on Windows.
+  await stopChild(electron, true);
   await stopChild(brain, true);
   if (modelServer) {
     if (typeof modelServer.closeAllConnections === 'function') modelServer.closeAllConnections();
