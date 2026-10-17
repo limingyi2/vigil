@@ -79,3 +79,5 @@ jobs:
             client/dist-release/Vigil.Setup.1.1.0.contents.json
             client/dist-release/release-manifest.json
             client/dist-release/windows-acceptance.json
+            client/dist-release/windows-lifecycle-acceptance.json
+            client/dist-release/lifecycle-logs/**
