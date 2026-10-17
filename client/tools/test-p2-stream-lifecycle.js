@@ -49,23 +49,53 @@ test('shared subscriptions isolate errors, reentrant removal and duplicate callb
   assert.equal(ipc.listenerCount('api:stream:event'),0);
 });
 
-function pages() {
-  const observers=new Set(),storage=new Map(),handlers=new Set();
+function pages(options={}) {
+  const observers=new Set(),storage=new Map(),handlers=new Set(),toasts=[];
   const window={vigil:{onStreamEvent:fn=>{handlers.add(fn);return ()=>handlers.delete(fn);}}};
-  const context={window,console,setTimeout,clearTimeout,
+  const context={window,console,setTimeout,clearTimeout,confirm:options.confirm || (()=>true),navigator:{clipboard:{writeText:options.writeClipboard || (async()=>{})}},
     document:{body:{}},
     MutationObserver:class {constructor(fn){this.fn=fn;} observe(){observers.add(this);} disconnect(){observers.delete(this);}},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,v)=>storage.set(key,v)},
-    U:{esc:String,icon:()=>'',toast:()=>{}},
-    API:{state:{cfg:{},src:'pc'},get:async()=>({ok:false}),post:async()=>({ok:false}),pick:x=>x},
+    U:{esc:String,icon:()=>'',md:source=>'<rendered>'+source+'</rendered>',toast:msg=>{toasts.push(String(msg));}},
+    API:{state:{cfg:{},src:'pc'},get:async()=>({ok:false}),post:options.post || (async()=>({ok:false})),pick:x=>x},
   };
   let source=fs.readFileSync(path.join(client,'src/js/pages.js'),'utf8');
   // Expose existing functions only in this isolated VM, without a production test API.
-  source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,creatorRequestFailure,rememberTurn,localRecords,watchCreatorJob};\n  global.PAGES = [');
+  source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,creatorRequestFailure,rememberTurn,localRecords,watchCreatorJob,creatorActionError,bindDraftCard,draftCardHtml};\n  global.PAGES = [');
   vm.runInNewContext(source,context);
-  return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers};
+  return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers,toasts};
 }
 
+function draftRoot() {
+  const nodes = {
+    '#crApproveNow': {disabled:false, textContent:'明确批准', style:{}},
+    '#crInstallNow': {disabled:false, textContent:'仅本次安装', style:{display:'none'}, dataset:{}},
+    '#crApprovalState': {textContent:'尚未批准'},
+    '[data-cr-file-toggle="0"]': {textContent:'展开源码', dataset:{crFileToggle:'0'}, attrs:{}, setAttribute(k,v){this.attrs[k]=v;}},
+    '[data-cr-file-toggle="1"]': {textContent:'展开源码', dataset:{crFileToggle:'1'}, attrs:{}, setAttribute(k,v){this.attrs[k]=v;}},
+    '[data-copy-file="0"]': {textContent:'复制完整源码', dataset:{copyFile:'0'}, isConnected:true},
+    '[data-cr-file-preview="0"]': {hidden:false},
+    '[data-cr-file-preview="1"]': {hidden:false},
+    '[data-cr-file-body="0"]': {hidden:true, innerHTML:'', dataset:{}},
+    '[data-cr-file-body="1"]': {hidden:true, innerHTML:'', dataset:{}},
+  };
+  const listeners = {};
+  return {
+    nodes, listeners,
+    addEventListener(type, callback) { listeners[type] = callback; },
+    querySelector(selector) { return nodes[selector] || null; },
+    click(selector) {
+      const button = nodes[selector];
+      const closest = candidate => {
+        if (candidate === selector) return button;
+        if (candidate === '[data-cr-file-toggle]' && selector.startsWith('[data-cr-file-toggle=')) return button;
+        if (candidate === '[data-copy-file]' && selector.startsWith('[data-copy-file=')) return button;
+        return null;
+      };
+      return listeners.click({target:{closest}});
+    },
+  };
+}
 function root() {
   const nodes=new Map();
   return {isConnected:true,innerHTML:'',querySelector(selector){
@@ -130,6 +160,104 @@ test('API pick preserves transport status and safe destination without trusting 
   const window={};vm.runInNewContext(fs.readFileSync(path.join(client,'src/js/api.js'),'utf8'),{window,navigator:{userAgent:'Electron/28'}});
   const r=window.API.pick({ok:false,status:404,target:'http://127.0.0.1:61285',json:{ok:true,err:'no such api'}});
   assert.equal(r.ok,false);assert.equal(r._status,404);assert.equal(r._target,'http://127.0.0.1:61285');
+});
+
+test('Creator files render compact previews and lazy-render independent source panels', async () => {
+  const p = pages();
+  const content = Array.from({length:80}, (_,i)=>'line '+(i+1)).join('\n');
+  const html = p.draftCardHtml({id:'cr_files', kind:'plugin', version:1, files:[
+    {name:'large.py', content}, {name:'small.json', content:'{"ok":true}'},
+  ]});
+  assert.ok(html.includes('data-cr-file-toggle="0" aria-expanded="false">展开源码'));
+  assert.ok(html.includes('data-copy-file="0">复制完整源码'));
+  assert.ok(html.includes('预览前 6 行 · 还有 74 行'));
+  assert.ok(!html.includes('line 80'), 'full file should not be emitted into initial preview HTML');
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_files', kind:'plugin', version:1, files:[
+    {name:'large.py', content}, {name:'small.json', content:'{"ok":true}'},
+  ]});
+  await r.click('[data-cr-file-toggle="0"]');
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, false);
+  assert.equal(r.nodes['[data-cr-file-preview="0"]'].hidden, true);
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].dataset.rendered, 'true');
+  assert.ok(r.nodes['[data-cr-file-body="0"]'].innerHTML.includes('line 80'));
+  assert.equal(r.nodes['[data-cr-file-body="1"]'].hidden, true, 'other file remains collapsed');
+  assert.equal(r.nodes['[data-cr-file-toggle="0"]'].textContent, '收起源码');
+  await r.click('[data-cr-file-toggle="0"]');
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, true);
+  assert.equal(r.nodes['[data-cr-file-preview="0"]'].hidden, false);
+  assert.equal(r.nodes['[data-cr-file-toggle="0"]'].attrs['aria-expanded'], 'false');
+});
+
+test('Creator full source can be copied without expanding its preview', async () => {
+  let copied = '';
+  const p = pages({writeClipboard:async value=>{copied=value;}});
+  const content = 'line 1\nline 2\nline 3';
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_copy', kind:'plugin', version:1, files:[{name:'demo.py', content}]});
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, true);
+  await r.click('[data-copy-file="0"]');
+  assert.equal(copied, content);
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, true);
+  assert.equal(r.nodes['[data-copy-file="0"]'].textContent, '已复制');
+});
+
+test('Creator approval and install clicks consume the returned one-time approval', async () => {
+  const calls = [];
+  const p = pages({post:async (path, body) => {
+    calls.push({path, body});
+    if (path === '/api/creator/approve') return {ok:true, approval:{version:2, approval_id:'ca_fixture_approval'}};
+    if (path === '/api/creator/install') return {ok:true, approval:{target_name:'fixture_plugin'}, install:{restart_needed:true,dynamic_loaded:false,package:'fixture_plugin'}};
+    return {ok:false, _status:404, _err:'unexpected route'};
+  }});
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:2, files:[{name:'fixture.py'}]});
+  await r.click('#crApproveNow');
+  assert.equal(calls[0].path, '/api/creator/approve');
+  assert.equal(calls[0].body.id, 'cr_fixture');
+  assert.equal(r.nodes['#crApproveNow'].style.display, 'none');
+  assert.equal(r.nodes['#crInstallNow'].style.display, 'inline-block');
+  assert.equal(r.nodes['#crInstallNow'].dataset.approval, 'ca_fixture_approval');
+  assert.match(r.nodes['#crApprovalState'].textContent, /已批准草稿 v2/);
+  await r.click('#crInstallNow');
+  assert.equal(calls[1].path, '/api/creator/install');
+  assert.equal(calls[1].body.approval_id, 'ca_fixture_approval');
+  assert.equal(r.nodes['#crInstallNow'].textContent, '已安装 · 待重启');
+  assert.equal(r.nodes['#crInstallNow'].disabled, true);
+  assert.match(r.nodes['#crApprovalState'].textContent, /安装成功/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /fixture_plugin\.py/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /Brain 插件目录/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /重启 Brain 后/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /TOOLS \/ TOOL_SPECS/);
+  assert.match(r.nodes['#crInstallNow'].textContent, /待重启/);
+});
+
+test('Creator approval transport failure displays destination and error, then re-enables approval', async () => {
+  const p = pages({post:async()=>({ok:false, _status:0, _target:'http://127.0.0.1:61285', _err:'connection refused'})});
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:1, files:[{name:'fixture.py'}]});
+  await r.click('#crApproveNow');
+  assert.equal(r.nodes['#crApproveNow'].disabled, false);
+  assert.equal(r.nodes['#crApproveNow'].textContent, '明确批准');
+  for (const expected of ['connection refused', 'http://127.0.0.1:61285']) {
+    assert.ok(r.nodes['#crApprovalState'].textContent.includes(expected), r.nodes['#crApprovalState'].textContent);
+    assert.ok(p.toasts.some(t => t.includes(expected)), p.toasts.join(' | '));
+  }
+});
+
+test('Creator install failure prevents blind retry and asks for fresh approval', async () => {
+  const p = pages({post:async path => {
+    if (path === '/api/creator/approve') return {ok:true, approval:{version:1, approval_id:'ca_expired'}};
+    return {ok:false, _status:400, _target:'http://127.0.0.1:61285', err:'审批已过期'};
+  }});
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:1, files:[{name:'fixture.py'}]});
+  await r.click('#crApproveNow');
+  await r.click('#crInstallNow');
+  assert.equal(r.nodes['#crInstallNow'].disabled, true);
+  assert.equal(r.nodes['#crInstallNow'].textContent, '需重新批准');
+  assert.match(r.nodes['#crApprovalState'].textContent, /重新验证/);
+  assert.ok(p.toasts.some(t => t.includes('审批已过期')));
 });
 
 test('production chat disposes both terminal events, exceptions, fallback and missing-done timeout', () => {

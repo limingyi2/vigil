@@ -380,7 +380,7 @@ def validate_draft(draft_id):
     try:
         if kind == "plugin":
             import plugin_structure
-            rep = plugin_structure.check_plugin_directory(d)
+            rep = plugin_structure.check_plugin_directory(d, require_chat_tools=True)
         else:
             import skill_structure
             pkg = ""

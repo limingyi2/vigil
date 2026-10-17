@@ -46,8 +46,11 @@ def _draft(drafts, kind="plugin", name="creator_probe", valid=True):
     root.mkdir()
     if kind == "plugin":
         (root / (name + ".py")).write_text(
-            'NAME = %r\nDESC = "safe test"\n' % name +
-            ('def on_message(text, ctx):\n    return "ok"\n' if valid else 'def broken(:\n'),
+            ('NAME = %r\nDESC = "safe test"\n'
+             'def run(arg):\n    return "ok"\n'
+             'TOOLS = {"probe": run}\n'
+             'TOOL_SPECS = {"probe": {"desc": "safe test", "params": [], "arg_param": None}}\n') % name
+            if valid else ('NAME = %r\nDESC = "safe test"\ndef broken(:\n' % name),
             encoding="utf-8")
         (root / "zxplugin.json").write_text(json.dumps({"name": name, "version": "0.0.1", "desc": "safe test"}), encoding="utf-8")
     else:
@@ -70,6 +73,22 @@ def test_approval_requires_admin_and_invalid_draft_is_rejected(isolated):
     bad = _draft(drafts, name="bad", valid=False)
     with pytest.raises(ValueError):
         ci.approve(bad, ADMIN)
+
+
+
+def test_creator_install_rejects_plugin_without_chat_tools(isolated):
+    _, drafts, _ = isolated
+    did = _draft(drafts, name="chat_missing", valid=False)
+    # Replace the syntax-invalid fixture with syntactically valid legacy-style
+    # code that only declares on_message, which the current host never calls.
+    root = drafts / did
+    (root / "chat_missing.py").write_text(
+        'NAME = "chat_missing"\nDESC = "legacy callback only"\n'
+        'def on_message(text, ctx):\n    return "ok"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        ci.approve(did, ADMIN)
 
 
 def test_changed_draft_invalidates_old_approval(isolated):

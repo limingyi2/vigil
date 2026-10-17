@@ -3912,6 +3912,18 @@
     const py = fs.find((f) => /\.py$/i.test(f.name));
     return py ? py.name.replace(/\.py$/i, '') : (d.kind === 'skill' ? '（由 skill.json 决定）' : '（由插件文件名决定）');
   }
+  // Keep transport failures visible: API.pick stores non-JSON failures in _err,
+  // not err. Include status and the already-sanitized request origin when available.
+  function creatorActionError(r, fallback) {
+    const detail = String(r && (r.err || (r.install && r.install.err) || r._err || r.text) || '').trim();
+    const status = Number(r && (r._status || r.status)) || 0;
+    const target = String(r && (r._target || r.target) || '').trim();
+    const parts = [];
+    if (status > 0) parts.push('HTTP ' + status);
+    if (target) parts.push(target);
+    if (detail) parts.push(detail);
+    return String(fallback || '操作失败') + '：' + (parts.join(' · ') || '未知错误');
+  }
   // 一条草稿的完整卡片（聊天气泡形态：外层 .turn/.bdy，内部复用 .card）
   function draftCardHtml(d) {
     const v = d.validation || {};
@@ -3942,12 +3954,13 @@
         '<p style="margin:8px 0 0"><b>用途：</b>' + esc(d.summary || '（模型没给）') + '</p>' +
         '<p style="margin:4px 0 0"><b>风险与限制：</b>' + esc(d.risks || '无') + '</p>' +
         '<p class="muted" style="font-size:12px;margin:8px 0 0">' +
-          '静态验证只检查目录结构与 Manifest，不执行生成的代码；' +
+          '静态验证检查插件结构、Manifest 与聊天工具契约，不执行生成的代码；' +
           '<b>通过 ≠ 沙箱安全</b>。安装前仍需人工阅读上面的代码。</p>' +
       '</div>' +
       '<div class="card" style="margin-top:8px">' +
         '<div class="pkg-h">静态验证 ' + okBadge + '</div>' +
         errHtml + warnHtml +
+        (!v.ok ? '<p class="muted" style="font-size:12px;margin-top:8px">验证未通过，安装步骤暂不可用。请先修复上面的错误，再点击“重新验证”。</p>' : '') +
         (!errs.length && !warns.length ? '<p class="muted" style="font-size:12px">没有错误或警告。</p>' : '') +
       '</div>' +
       (v.ok ? '<div class="card" id="crReviewBox" style="margin-top:8px;display:none;border-color:var(--warn)">' +
@@ -3961,12 +3974,30 @@
           '<button class="btn" id="crInstallNow" style="display:none">仅本次安装</button>' +
           '<button class="btn ghost" id="crCancel">取消</button>' +
         '</div></div>' : '') +
-      (d.files || []).map((f) =>
-        '<div class="card" style="margin-top:8px">' +
-          '<div class="pkg-h">' + icon('clip', 'sm') + ' ' + esc(f.name) +
-          '<span class="muted" style="font-size:12px;margin-left:8px">' + f.content.length + ' 字符</span></div>' +
-          '<div class="cr-code"><div class="md">' + U.md(creatorFenceFor(f.content) + creatorLangOf(f.name) + '\n' + f.content + '\n' + creatorFenceFor(f.content), { codeActions: true }) + '</div></div>' +
-        '</div>').join('') +
+      (d.files || []).map((f, i) => {
+        const content = String(f.content || '');
+        const lines = content.split(/\r?\n/);
+        const preview = lines.slice(0, 6).join('\n');
+        const omitted = Math.max(0, lines.length - 6);
+        return '<div class="card cr-file-card" style="margin-top:8px">' +
+          '<div class="cr-file-head">' +
+            '<div class="cr-file-title">' +
+              icon('clip', 'sm') + ' <strong>' + esc(f.name) + '</strong>' +
+              '<span class="muted cr-file-size">' + content.length + ' 字符</span>' +
+              '<span class="tag neutral">' + esc(creatorLangOf(f.name)) + '</span>' +
+            '</div>' +
+            '<div class="cr-file-actions">' +
+              '<button class="btn ghost" type="button" data-cr-file-toggle="' + i + '" aria-expanded="false">展开源码</button>' +
+              '<button class="btn ghost" type="button" data-copy-file="' + i + '">复制完整源码</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="cr-file-preview" data-cr-file-preview="' + i + '">' +
+            '<pre>' + esc(preview || '（空文件）') + '</pre>' +
+            '<div class="cr-file-more">' + (omitted ? '预览前 6 行 · 还有 ' + omitted + ' 行' : '共 ' + lines.length + ' 行') + '</div>' +
+          '</div>' +
+          '<div class="cr-file-full" data-cr-file-body="' + i + '" hidden></div>' +
+        '</div>';
+      }).join('') +
       '<div class="card" style="margin-top:8px">' +
         '<div class="pkg-h">修改草稿</div>' +
         '<textarea id="crFb" rows="2" style="width:100%;box-sizing:border-box" ' +
@@ -3982,6 +4013,38 @@
   // 重新绑一次（旧元素已丢弃，监听不会叠加）。
   function bindDraftCard(root, d, onGone) {
     root.addEventListener('click', async (e) => {
+      const fileToggle = e.target.closest('[data-cr-file-toggle]');
+      if (fileToggle) {
+        const index = String(fileToggle.dataset.crFileToggle || '');
+        const body = root.querySelector('[data-cr-file-body="' + index + '"]');
+        const preview = root.querySelector('[data-cr-file-preview="' + index + '"]');
+        const file = (d.files || [])[Number(index)];
+        if (!body || !preview || !file) return;
+        const opening = body.hidden;
+        if (opening && body.dataset.rendered !== 'true') {
+          const content = String(file.content || '');
+          body.innerHTML = '<div class="cr-code"><div class="md">' +
+            U.md(creatorFenceFor(content) + creatorLangOf(file.name) + '\n' + content + '\n' + creatorFenceFor(content), { codeActions: true }) +
+            '</div></div>';
+          body.dataset.rendered = 'true';
+        }
+        body.hidden = !opening;
+        preview.hidden = opening;
+        fileToggle.textContent = opening ? '收起源码' : '展开源码';
+        fileToggle.setAttribute('aria-expanded', String(opening));
+        return;
+      }
+      const copyFileButton = e.target.closest('[data-copy-file]');
+      if (copyFileButton) {
+        const file = (d.files || [])[Number(copyFileButton.dataset.copyFile)];
+        if (!file) { toast('找不到要复制的文件'); return; }
+        try {
+          await navigator.clipboard.writeText(String(file.content || ''));
+          copyFileButton.textContent = '已复制';
+          setTimeout(() => { if (copyFileButton.isConnected) copyFileButton.textContent = '复制完整源码'; }, 1500);
+        } catch (_) { toast('复制失败，请检查剪贴板权限'); }
+        return;
+      }
       const button = e.target.closest('[data-copy-code]');
       if (button) {
         try {
@@ -4018,23 +4081,30 @@
       }
       if (e.target.closest('#crApproveNow')) {
         const approveButton = e.target.closest('#crApproveNow');
+        const approvalState = root.querySelector('#crApprovalState');
         approveButton.disabled = true;
+        approveButton.textContent = '审批中…';
+        if (approvalState) approvalState.textContent = '正在创建一次性审批，请稍候…';
         let r;
         try {
           r = pick(await API.post('/api/creator/approve', { id: d.id }));
         } catch (error) {
           approveButton.disabled = false;
-          const detail = error && error.message ? error.message : 'Brain 连接失败或请求超时';
-          toast('审批请求失败：' + String(detail).slice(0, 120));
+          approveButton.textContent = '明确批准';
+          const detail = creatorActionError({err: error && error.message ? error.message : 'Brain 连接失败或请求超时'}, '审批请求失败');
+          if (approvalState) approvalState.textContent = detail;
+          toast(detail);
           return;
         }
-        if (!r || !r.ok || !r.approval) {
+        if (!r || !r.ok || !r.approval || !r.approval.approval_id) {
           approveButton.disabled = false;
-          toast('审批失败：' + ((r && r.err) || '未知错误'));
+          approveButton.textContent = '明确批准';
+          const detail = creatorActionError(r, '审批失败');
+          if (approvalState) approvalState.textContent = detail;
+          toast(detail);
           return;
         }
-        const state = root.querySelector('#crApprovalState');
-        if (state) state.textContent = '已批准草稿 v' + r.approval.version + '，审批编号 ' + r.approval.approval_id.slice(0, 14) + '…；请点击“仅本次安装”完成一次性消费。';
+        if (approvalState) approvalState.textContent = '已批准草稿 v' + r.approval.version + '，审批编号 ' + String(r.approval.approval_id).slice(0, 14) + '…；请点击“仅本次安装”完成一次性消费。';
         approveButton.style.display = 'none';
         const installButton = root.querySelector('#crInstallNow');
         if (installButton) { installButton.style.display = 'inline-block'; installButton.dataset.approval = r.approval.approval_id; }
@@ -4046,25 +4116,58 @@
         const aid = installButton.dataset.approval || '';
         if (!aid) { toast('请先点击“明确批准”生成一次性审批'); return; }
         if (!confirm('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
+        const approvalState = root.querySelector('#crApprovalState');
         installButton.disabled = true;
+        installButton.textContent = '安装中…';
+        if (approvalState) approvalState.textContent = '正在安装到“' + creatorTargetOf(d) + '”，请稍候…';
         let r;
         try {
           r = pick(await API.post('/api/creator/install', { approval_id: aid }));
         } catch (error) {
           installButton.disabled = false;
-          const detail = error && error.message ? error.message : 'Brain 连接失败或请求超时';
-          toast('安装请求失败：' + String(detail).slice(0, 120));
+          installButton.textContent = '仅本次安装';
+          const detail = creatorActionError({err: error && error.message ? error.message : 'Brain 连接失败或请求超时'}, '安装请求失败');
+          if (approvalState) approvalState.textContent = detail;
+          toast(detail);
           return;
         }
         if (!r || !r.ok) {
-          installButton.disabled = false;
-          toast('安装失败：' + ((r && (r.err || r.install?.err)) || '事务已回滚或审批已失效'));
+          const detail = creatorActionError(r, '安装失败');
+          const status = Number(r && (r._status || r.status)) || 0;
+          installButton.dataset.approval = '';
+          if (status >= 400 && status < 500) {
+            installButton.textContent = '需重新批准';
+            if (approvalState) approvalState.textContent = detail + '。请重新验证草稿后，再次明确批准并安装。';
+          } else {
+            installButton.textContent = '结果待确认';
+            if (approvalState) approvalState.textContent = detail + '。安装结果暂不确定，请先刷新插件列表确认，避免重复安装。';
+          }
+          toast(detail);
           return;
         }
-        const state = root.querySelector('#crApprovalState');
-        if (state) state.textContent = '已安装，审批已消费，不能重复使用。';
-        toast('已受控安装 ' + creatorTargetOf(d) + (r.install?.restart_needed ? ' · 需要重启/确认生效' : ''));
+        const installResult = r.install || {};
+        const installedName = String(installResult.package || installResult.name ||
+          (r.approval && r.approval.target_name) || creatorTargetOf(d));
+        const isPlugin = d.kind !== 'skill';
+        // The Creator route deliberately commits files without importing newly supplied code.
+        // plugin_ops reports restart_needed/dynamic_loaded, so don't claim the Agent can use it yet.
+        const restartNeeded = installResult.restart_needed === true ||
+          (isPlugin && installResult.dynamic_loaded === false);
+        let installStatus;
+        if (isPlugin && restartNeeded) {
+          installStatus = '安装成功：' + installedName + '.py 已写入 Brain 插件目录。当前运行中的 Brain 尚未加载它；重启 Brain 后，Agent 才能调用插件声明的 TOOLS / TOOL_SPECS。审批已消费，不能重复使用。';
+        } else if (isPlugin) {
+          installStatus = '安装成功：' + installedName + '.py 已写入 Brain 插件目录。请到插件管理页确认运行状态和工具清单，再在聊天中描述要执行的任务。审批已消费，不能重复使用。';
+        } else if (restartNeeded) {
+          installStatus = '安装成功：' + installedName + ' 已写入技能目录，但需要重启技能宿主后才能完全生效。审批已消费，不能重复使用。';
+        } else {
+          installStatus = '安装成功：' + installedName + ' 已写入技能目录。请到技能管理页确认宿主已加载，再在聊天中描述要执行的任务。审批已消费，不能重复使用。';
+        }
+        if (approvalState) approvalState.textContent = installStatus;
+        installButton.textContent = restartNeeded ? '已安装 · 待重启' : '已安装';
+        installButton.disabled = true;
         if (typeof window.__vigilRefreshExtensions === 'function') window.__vigilRefreshExtensions();
+        toast(installStatus);
         return;
       }
       if (e.target.closest('#crRev')) {
