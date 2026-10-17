@@ -47,6 +47,55 @@ async function run(){
   const chat=await evaluate(`(async()=>{const events=[];let text='';let final='';const off=vigil.onStreamEvent(e=>{events.push(e.type);if(e.type==='text')text+=e.text||'';if(e.type==='done')final=e.text||'';});try{const r=await vigil.apiStream('/api/chat/stream',{text:'fixture hello',src:'pc',request_id:'request_fixture_'+crypto.randomUUID()});return {ok:r.ok,events,hasReply:(text+final).includes('Hello fixture')};}finally{off();}})()`);
   assert.ok(chat.events.includes('done'),JSON.stringify(chat));
   assert.equal(chat.hasReply,true,'Ordinary chat did not return the fixture model response: '+JSON.stringify(chat));
+  let ready=false;
+  for(let i=0;i<100;i++){
+    ready=await evaluate("Boolean(document.querySelector('#newTopicBtn')&&document.querySelector('#sessList')&&document.querySelector('#ta'))");
+    if(ready)break;await sleep(100);
+  }
+  assert.ok(ready,'Installed chat session controls did not render');
+  const initialConversation=await evaluate('API.state.chatConversationId');
+  assert.ok(initialConversation,'Installed renderer has no persisted active conversation');
+  const createSession=async()=>{
+    const previous=await evaluate('API.state.chatConversationId');
+    await evaluate("document.querySelector('#newTopicBtn').click();true");
+    for(let i=0;i<100;i++){
+      const id=await evaluate('API.state.chatConversationId');
+      if(id&&id!==previous)return id;
+      await sleep(100);
+    }
+    throw Error('Installed renderer did not activate a new conversation');
+  };
+  const sendUiMessage=async(text,reply)=>{
+    await evaluate(`(()=>{const t=document.querySelector('#ta');t.value=${JSON.stringify(text)};t.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#sendBtn').click();return true})()`);
+    for(let i=0;i<180;i++){
+      const found=await evaluate(`document.querySelector('#msgs')?.innerText.includes(${JSON.stringify(reply)})`);
+      if(found)return;
+      await sleep(100);
+    }
+    throw Error('Installed chat did not render expected reply: '+reply);
+  };
+  const conversationA=await createSession();
+  await sendUiMessage('A_ONLY','Hello fixture');
+  assert.ok(await evaluate(`document.querySelector('[data-session="${conversationA}"]').textContent.includes('A_ONLY')`),
+    'First user message did not create a conversation title');
+  const conversationB=await createSession();
+  await sendUiMessage('B_ONLY','Hello fixture');
+  await evaluate(`document.querySelector('[data-session="${conversationA}"]').click();true`);
+  await sendUiMessage('A_CONTINUE','A_CONTEXT_OK');
+  await evaluate(`document.querySelector('[data-session="${conversationB}"]').click();true`);
+  await sendUiMessage('B_CONTINUE','B_CONTEXT_OK');
+  assert.deepEqual(ModelFixture.conversation_checks.filter(x=>x.conversation==='A').map(x=>x.ok),[true],
+    'Fake Provider saw another session in A context: '+JSON.stringify(ModelFixture.conversation_checks));
+  assert.deepEqual(ModelFixture.conversation_checks.filter(x=>x.conversation==='B').map(x=>x.ok),[true],
+    'Fake Provider saw another session in B context: '+JSON.stringify(ModelFixture.conversation_checks));
+  await evaluate('location.reload();true');
+  let restored=false;
+  for(let i=0;i<120;i++){
+    restored=await evaluate(`API.state.chatConversationId===${JSON.stringify(conversationB)}&&document.querySelector('#msgs')?.innerText.includes('B_CONTEXT_OK')`);
+    if(restored)break;await sleep(100);
+  }
+  assert.ok(restored,'Installed renderer restart did not restore the selected conversation and its messages');
+  console.log('PASS installed chat UI creates, switches, continues and restores isolated A/B conversations');
   const created=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'Create a minimal isolated fixture plugin. Do not install.',request_id:'creator_fixture_'+crypto.randomUUID()})`);
   assert.equal(created.status,200);const jid=created.json.job_id;
   const streamed=await evaluate(`(async()=>{const events=[];const off=vigil.onCreatorEvent(e=>{if(e.job_id===${JSON.stringify(jid)})events.push(e);});try{return {result:await vigil.apiStream('/api/creator/jobs/${jid}/events?after=0',null),events};}finally{off();}})()`);

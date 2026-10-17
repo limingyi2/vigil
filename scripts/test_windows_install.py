@@ -22,6 +22,7 @@ class ModelFixture(BaseHTTPRequestHandler):
     smoke_schema_seen = False
     smoke_tool_call_requested = False
     smoke_tool_result_received = False
+    conversation_checks = []
 
     def log_message(self, *_):
         pass
@@ -36,8 +37,17 @@ class ModelFixture(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         assert self.headers.get('Authorization') == 'Bearer fixture-model-key'
         ModelFixture.calls += 1
-        system = '\n'.join(m.get('content', '') for m in body.get('messages', []) if m.get('role') == 'system')
-        request = '\n'.join(m.get('content', '') for m in body.get('messages', []) if m.get('role') == 'user')
+        messages = body.get('messages', [])
+        system = '\n'.join(m.get('content', '') for m in messages if m.get('role') == 'system')
+        user_messages = [str(m.get('content') or '') for m in messages
+                         if isinstance(m, dict) and m.get('role') == 'user']
+        request = '\n'.join(user_messages)
+        if 'A_CONTINUE' in request:
+            ModelFixture.conversation_checks.append({
+                'conversation': 'A', 'ok': 'A_ONLY' in request and 'B_ONLY' not in request})
+        if 'B_CONTINUE' in request:
+            ModelFixture.conversation_checks.append({
+                'conversation': 'B', 'ok': 'B_ONLY' in request and 'A_ONLY' not in request})
         tools = body.get('tools') or []
         has_smoke_ping = any((item.get('function') or {}).get('name') == 'smoke_ping'
                              for item in tools if isinstance(item, dict))
@@ -89,7 +99,12 @@ class ModelFixture(BaseHTTPRequestHandler):
             self.wfile.write(result)
             return
 
-        content = json.dumps({'files': {
+        if 'A_CONTINUE' in request:
+            content = 'A_CONTEXT_OK' if 'A_ONLY' in request and 'B_ONLY' not in request else 'A_CONTEXT_LEAK'
+        elif 'B_CONTINUE' in request:
+            content = 'B_CONTEXT_OK' if 'B_ONLY' in request and 'A_ONLY' not in request else 'B_CONTEXT_LEAK'
+        else:
+            content = json.dumps({'files': {
             'fixture_plugin.py': (
                 'NAME = "fixture_plugin"\n'
                 'DESC = "migration acceptance"\n'
@@ -100,7 +115,7 @@ class ModelFixture(BaseHTTPRequestHandler):
                 '"desc": "Return a fixed marker to verify this plugin is callable from chat.", '
                 '"params": [], "arg_param": None}}\n'
             )
-        }, 'summary': 'fixture draft', 'risks': 'none'}) if creator else 'Hello fixture'
+            }, 'summary': 'fixture draft', 'risks': 'none'}) if creator else 'Hello fixture'
         result = {'choices': [{'message': {'content': content}, 'finish_reason': 'stop'}],
                   'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
         self.send_response(200)
