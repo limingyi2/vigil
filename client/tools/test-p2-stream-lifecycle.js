@@ -149,6 +149,59 @@ test('API pick preserves transport status and safe destination without trusting 
   assert.equal(r.ok,false);assert.equal(r._status,404);assert.equal(r._target,'http://127.0.0.1:61285');
 });
 
+test('Creator approval and install clicks consume the returned one-time approval', async () => {
+  const calls = [];
+  const p = pages({post:async (path, body) => {
+    calls.push({path, body});
+    if (path === '/api/creator/approve') return {ok:true, approval:{version:2, approval_id:'ca_fixture_approval'}};
+    if (path === '/api/creator/install') return {ok:true, install:{restart_needed:false}};
+    return {ok:false, _status:404, _err:'unexpected route'};
+  }});
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:2, files:[{name:'fixture.py'}]});
+  await r.click('#crApproveNow');
+  assert.equal(calls[0].path, '/api/creator/approve');
+  assert.deepEqual(calls[0].body, {id:'cr_fixture'});
+  assert.equal(r.nodes['#crApproveNow'].style.display, 'none');
+  assert.equal(r.nodes['#crInstallNow'].style.display, 'inline-block');
+  assert.equal(r.nodes['#crInstallNow'].dataset.approval, 'ca_fixture_approval');
+  assert.match(r.nodes['#crApprovalState'].textContent, /已批准草稿 v2/);
+  await r.click('#crInstallNow');
+  assert.equal(calls[1].path, '/api/creator/install');
+  assert.deepEqual(calls[1].body, {approval_id:'ca_fixture_approval'});
+  assert.equal(r.nodes['#crInstallNow'].textContent, '已安装');
+  assert.equal(r.nodes['#crInstallNow'].disabled, true);
+  assert.match(r.nodes['#crApprovalState'].textContent, /已安装/);
+});
+
+test('Creator approval transport failure displays destination and error, then re-enables approval', async () => {
+  const p = pages({post:async()=>({ok:false, _status:0, _target:'http://127.0.0.1:61285', _err:'connection refused'})});
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:1, files:[{name:'fixture.py'}]});
+  await r.click('#crApproveNow');
+  assert.equal(r.nodes['#crApproveNow'].disabled, false);
+  assert.equal(r.nodes['#crApproveNow'].textContent, '明确批准');
+  for (const expected of ['connection refused', 'http://127.0.0.1:61285']) {
+    assert.ok(r.nodes['#crApprovalState'].textContent.includes(expected), r.nodes['#crApprovalState'].textContent);
+    assert.ok(p.toasts.some(t => t.includes(expected)), p.toasts.join(' | '));
+  }
+});
+
+test('Creator install failure prevents blind retry and asks for fresh approval', async () => {
+  const p = pages({post:async path => {
+    if (path === '/api/creator/approve') return {ok:true, approval:{version:1, approval_id:'ca_expired'}};
+    return {ok:false, _status:400, _target:'http://127.0.0.1:61285', err:'审批已过期'};
+  }});
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:1, files:[{name:'fixture.py'}]});
+  await r.click('#crApproveNow');
+  await r.click('#crInstallNow');
+  assert.equal(r.nodes['#crInstallNow'].disabled, true);
+  assert.equal(r.nodes['#crInstallNow'].textContent, '需重新批准');
+  assert.match(r.nodes['#crApprovalState'].textContent, /重新验证/);
+  assert.ok(p.toasts.some(t => t.includes('审批已过期')));
+});
+
 test('production chat disposes both terminal events, exceptions, fallback and missing-done timeout', () => {
   const source=fs.readFileSync(path.join(client,'src/js/pages.js'),'utf8');
   const chat=source.slice(source.indexOf('// 监听流式事件'),source.indexOf("view.querySelector('#sendBtn').addEventListener('click', send)"));
