@@ -21,6 +21,7 @@ app.setPath('userData', path.join(tmp, 'electron'));
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 const wallpaperDiag = process.env.P8_WALLPAPER_DIAG === '1';
 const wallpaperDiagFile = process.env.P8_WALLPAPER_DIAG_FILE || path.join(tmp, 'wallpaper-webgl-diagnostic.jsonl');
+let wallpaperDiagnosticScriptSource = '';
 function wallpaperTrace(kind, data={}) {
   if (!wallpaperDiag) return;
   fs.appendFileSync(wallpaperDiagFile, JSON.stringify({t:Date.now(), monotonic:process.hrtime.bigint().toString(), kind, ...data})+'\n');
@@ -173,10 +174,16 @@ async function setup() {
   if (wallpaperDiag) {
     try {
       win.webContents.debugger.attach('1.3');
-      win.webContents.debugger.on('message',(_,method,params)=>{
+      win.webContents.debugger.on('message',(_,method,params,sessionId)=>{
+        if (method === 'Target.attachedToTarget') {
+          wallpaperTrace('cdp-target-attached',{target:params.targetInfo,sessionId:params.sessionId});
+          const session=params.sessionId;
+          for(const childMethod of ['Network.enable','Page.enable','Runtime.enable','Log.enable']) win.webContents.debugger.sendCommand(childMethod,{},session).catch(e=>wallpaperTrace('cdp-child-enable-error',{childMethod,sessionId:session,error:e.message}));
+          if(wallpaperDiagnosticScriptSource)win.webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument',{source:wallpaperDiagnosticScriptSource},session).catch(e=>wallpaperTrace('cdp-child-script-error',{sessionId:session,error:e.message}));
+        }
         if (method.startsWith('Network.') || method.startsWith('Page.frame') || method==='Runtime.exceptionThrown' || method==='Log.entryAdded') {
           if (method.startsWith('Network.') && !/wallpaper|scene|project\.json|\.js(?:\?|$)|\.wasm(?:\?|$)/i.test(JSON.stringify(params))) return;
-          wallpaperTrace('cdp-'+method,params);
+          wallpaperTrace('cdp-'+method,{sessionId,params});
         }
       });
       wallpaperTrace('cdp-attached');
@@ -184,11 +191,13 @@ async function setup() {
   }
   await win.loadFile(path.join(src,'index.html'));
   if (wallpaperDiag) {
-    const source=`(()=>{const log=(kind,data={})=>{try{console.info('[P8-WALLPAPER-DIAG]',JSON.stringify({kind,url:location.href,t:Date.now(),...data}))}catch(_){}};addEventListener('error',e=>log('page-error',{message:e.message,source:e.filename,line:e.lineno,column:e.colno}));addEventListener('unhandledrejection',e=>log('unhandled-rejection',{reason:String(e.reason)}));const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){const result=get.call(this,type,...args);if(/webgl/i.test(String(type)))log('webgl-context',{type,created:!!result,width:this.width,height:this.height,renderer:result&&(()=>{try{return result.getParameter(result.RENDERER)}catch(_){return ''}})()});return result};const raf=requestAnimationFrame;let first=true;window.requestAnimationFrame=function(cb){return raf.call(this,(ts)=>{if(first){first=false;log('first-animation-frame',{ts})}return cb(ts)})};let lastStatus;const seen=new WeakSet();const inspect=()=>{for(const f of document.querySelectorAll('iframe'))if(!seen.has(f)){seen.add(f);f.addEventListener('load',()=>log('iframe-load',{src:f.src}));f.addEventListener('error',()=>log('iframe-error',{src:f.src}));log('iframe-created',{src:f.src,connected:f.isConnected})}const s=document.querySelector('[data-status]');if(s&&s.textContent!==lastStatus){lastStatus=s.textContent;log('status-transition',{status:lastStatus,iframe:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,connected:f.isConnected}))})}};new MutationObserver(inspect).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});addEventListener('pagehide',()=>log('pagehide'));addEventListener('beforeunload',()=>log('beforeunload'));inspect()})();`;
+    const source=`(()=>{const log=(kind,data={})=>{try{console.info('[P8-WALLPAPER-DIAG]',JSON.stringify({kind,url:location.href,t:Date.now(),...data}))}catch(_){}};addEventListener('error',e=>log('page-error',{message:e.message,source:e.filename,line:e.lineno,column:e.colno}));addEventListener('unhandledrejection',e=>log('unhandled-rejection',{reason:String(e.reason)}));addEventListener('message',e=>{if(e.data?.vigilWallpaper===true)log('wallpaper-parent-message',{origin:e.origin,data:e.data})});const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){const result=get.call(this,type,...args);if(/webgl/i.test(String(type)))log('webgl-context',{type,created:!!result,width:this.width,height:this.height,renderer:result&&(()=>{try{return result.getParameter(result.RENDERER)}catch(_){return ''}})()});return result};const raf=requestAnimationFrame;let first=true;window.requestAnimationFrame=function(cb){return raf.call(this,(ts)=>{if(first){first=false;log('first-animation-frame',{ts})}return cb(ts)})};let lastStatus;const seen=new WeakSet();const inspect=()=>{for(const f of document.querySelectorAll('iframe'))if(!seen.has(f)){seen.add(f);f.addEventListener('load',()=>log('iframe-load',{src:f.src}));f.addEventListener('error',()=>log('iframe-error',{src:f.src}));log('iframe-created',{src:f.src,connected:f.isConnected})}const s=document.querySelector('[data-status]');if(s&&s.textContent!==lastStatus){lastStatus=s.textContent;log('status-transition',{status:lastStatus,iframe:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,connected:f.isConnected}))})}};new MutationObserver(inspect).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});addEventListener('pagehide',()=>log('pagehide'));addEventListener('beforeunload',()=>log('beforeunload'));inspect()})();`;
+    wallpaperDiagnosticScriptSource=source;
     try {
-      const send=(method,params)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('CDP timeout: '+method)),2500);win.webContents.debugger.sendCommand(method,params).then(value=>{clearTimeout(timer);resolve(value)},error=>{clearTimeout(timer);reject(error)})});
+      const send=(method,params,sessionId)=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('CDP timeout: '+method)),2500);win.webContents.debugger.sendCommand(method,params,sessionId).then(value=>{clearTimeout(timer);resolve(value)},error=>{clearTimeout(timer);reject(error)})});
       for(const method of ['Network.enable','Page.enable','Runtime.enable','Log.enable']) await send(method);
       await send('Page.addScriptToEvaluateOnNewDocument',{source});
+      await send('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:false,flatten:true});
       await win.webContents.executeJavaScript(source,true);
       wallpaperTrace('cdp-ready');
     } catch(e) { wallpaperTrace('cdp-setup-error',{error:e.message}); }
@@ -202,7 +211,7 @@ async function wallpaperDiagnosticSnapshot(stage) {
   try { wallpaperTrace('renderer-snapshot',{stage,detail:await ev(`(()=>({url:location.href,hidden:document.hidden,focused:document.hasFocus(),page:document.body.dataset.vigilPage,bodyClass:document.body.className,status:document.querySelector('[data-status]')?.textContent,iframes:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,loading:f.loading,connected:f.isConnected,rect:(()=>{const r=f.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height}})()})),resources:performance.getEntriesByType('resource').slice(-35).map(r=>({name:r.name,duration:r.duration,transferSize:r.transferSize})),scroll:{height:document.documentElement.scrollHeight,client:document.documentElement.clientHeight}}))()`) }); }
   catch(e) { wallpaperTrace('renderer-snapshot-error',{stage,error:e.message}); }
   for (const frame of win.webContents.mainFrame.frames) {
-    try { wallpaperTrace('frame-snapshot',{stage,url:frame.url,detail:await frame.executeJavaScript(`(()=>({url:location.href,hidden:document.hidden,state:window.__wp?.getState?.(),stats:window.__wpStats?.frame?.(),canvases:[...document.querySelectorAll('canvas')].map(c=>({w:c.width,h:c.height,rect:(()=>{const r=c.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height}})()}))}))()`) }); }
+    try { wallpaperTrace('frame-snapshot',{stage,url:frame.url,detail:await frame.executeJavaScript(`(()=>({url:location.href,readyState:document.readyState,hidden:document.hidden,state:window.__wp?.getState?.(),stats:window.__wpStats?.frame?.(),scripts:[...document.scripts].map(s=>({src:s.src||'<inline>',type:s.type,async:s.async})),resources:performance.getEntriesByType('resource').map(r=>r.name).filter(x=>/wallpaper|webwall|\.js(?:\?|$)/i.test(x)),canvases:[...document.querySelectorAll('canvas')].map(c=>({w:c.width,h:c.height,rect:(()=>{const r=c.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height}})()}))}))()`) }); }
     catch(e) { wallpaperTrace('frame-snapshot-error',{stage,url:frame.url,error:e.message}); }
   }
 }
