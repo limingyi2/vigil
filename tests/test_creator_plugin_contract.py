@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 
 import creator
+import plugin_host
+import tools
 from plugin_structure import check_plugin_directory
 
 
@@ -16,6 +18,17 @@ VALID = (
     'def run(arg):\n    return str(arg)\n'
     'TOOLS = {"demo_tool": run}\n'
     'TOOL_SPECS = {"demo_tool": {"desc": "Run demo", "params": [("query", "Query text", True)], "arg_param": "query"}}\n'
+)
+
+
+LEGACY_LIST_VALID = (
+    'NAME = "vigil_smoke"\nDESC = "A legacy Creator chat tool"\n'
+    'def call_tool(name, args):\n'
+    '    if name == "smoke_ping": return "VIGIL_PLUGIN_CALL_OK"\n'
+    '    raise ValueError("unknown tool")\n'
+    'TOOLS = ["smoke_ping"]\n'
+    'TOOL_SPECS = [{"name": "smoke_ping", "description": "Return a fixed marker", '
+    '"parameters": {"type": "object", "properties": {}, "required": []}}]\n'
 )
 
 
@@ -37,6 +50,50 @@ class CreatorPluginContractTests(unittest.TestCase):
         report = self.check_source(VALID)
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["errors"], [])
+
+    def test_legacy_list_chat_tool_contract_passes_validation(self):
+        report = self.check_source(LEGACY_LIST_VALID)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["errors"], [])
+
+    def test_legacy_list_chat_tool_loads_registers_schema_and_executes(self):
+        old_dir = plugin_host._DIR
+        old_registry = dict(plugin_host._registry)
+        old_index = dict(plugin_host._TOOL_INDEX)
+        old_loaded = plugin_host._loaded
+        try:
+            with tempfile.TemporaryDirectory(prefix="vigil-legacy-tool-") as tmp:
+                plugin_path = Path(tmp) / "vigil_smoke.py"
+                plugin_path.write_text(LEGACY_LIST_VALID, encoding="utf-8")
+                plugin_host._DIR = tmp
+                loaded = plugin_host.load()
+                self.assertIn("vigil_smoke", loaded)
+
+                plugin = plugin_host.get("vigil_smoke")
+                self.assertIsNotNone(plugin)
+                self.assertIn("smoke_ping", plugin.info()["tools"])
+
+                specs = plugin_host.tool_specs()
+                self.assertIn("smoke_ping", specs)
+                self.assertTrue(specs["smoke_ping"]["multi_args"])
+
+                native = tools._static_tool_array()
+                schema = next(
+                    item["function"] for item in native
+                    if item["function"]["name"] == "smoke_ping"
+                )
+                self.assertEqual(schema["parameters"]["type"], "object")
+                self.assertEqual(
+                    tools.invoke_spec("smoke_ping", {}),
+                    "VIGIL_PLUGIN_CALL_OK",
+                )
+        finally:
+            plugin_host._DIR = old_dir
+            plugin_host._registry.clear()
+            plugin_host._registry.update(old_registry)
+            plugin_host._TOOL_INDEX.clear()
+            plugin_host._TOOL_INDEX.update(old_index)
+            plugin_host._loaded = old_loaded
 
     def test_unsupported_hook_and_html_ui_are_reported_but_not_misrepresented_as_ui(self):
         source = (
