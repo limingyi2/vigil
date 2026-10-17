@@ -3,7 +3,7 @@
 
 这个模块只读开发目录，不 import 插件代码、不安装、不执行任何钩子。
 规则复用 ``plugin_ops`` 的扩展名边界和 Manifest 校验，并对
-``plugin_host`` 当前支持的单文件和 ``__init__.py`` 目录插件分别检查。
+``plugin_host`` 当前支持的单文件和 ``__init__.py`` 目录插件分别检查；Creator 插件还必须满足可调用聊天工具契约。
 """
 import ast
 import json
@@ -65,6 +65,137 @@ def _literal_assignment(tree, key):
     return None
 
 
+def _module_assignment_value(tree, name):
+    """Return the last module-level assignment value for *name*, if any."""
+    found = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            found = node.value
+    return found
+
+
+def _literal_dict_keys(node):
+    """Return unique literal string keys for a dict expression, otherwise None."""
+    if not isinstance(node, ast.Dict) or not node.keys:
+        return None
+    keys = []
+    for key in node.keys:
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+            return None
+        keys.append(key.value)
+    return keys if len(keys) == len(set(keys)) else None
+
+
+def _check_chat_tool_contract(tree, module_functions, errors):
+    """Creator plugins must expose matching, statically inspectable chat tools."""
+    tools_node = _module_assignment_value(tree, "TOOLS")
+    specs_node = _module_assignment_value(tree, "TOOL_SPECS")
+    tool_names = _literal_dict_keys(tools_node)
+    spec_names = _literal_dict_keys(specs_node)
+
+    if tools_node is None:
+        errors.append(_issue(
+            "missing_tool_implementation",
+            "插件必须声明模块级 TOOLS 字典，提供至少一个可由聊天调用的工具实现"
+        ))
+    elif tool_names is None:
+        errors.append(_issue(
+            "invalid_tool_implementation",
+            "TOOLS 必须是键为工具名、值为模块级函数名的字典"
+        ))
+    else:
+        for name, value in zip(tool_names, tools_node.values):
+            if not isinstance(value, ast.Name) or value.id not in module_functions:
+                errors.append(_issue(
+                    "invalid_tool_implementation",
+                    "工具 %s 必须指向同一文件中定义的模块级函数" % name
+                ))
+                break
+
+    if specs_node is None:
+        errors.append(_issue(
+            "missing_tool_specs",
+            "插件必须声明 TOOL_SPECS；否则原生聊天模型看不到工具"
+        ))
+        specs = None
+    else:
+        try:
+            specs = ast.literal_eval(specs_node)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            specs = None
+        if not isinstance(specs, dict) or not specs or spec_names is None:
+            errors.append(_issue(
+                "invalid_tool_specs",
+                "TOOL_SPECS 必须是包含至少一个工具规格的字面量字典"
+            ))
+            specs = None
+
+    if specs is not None:
+        for name, spec in specs.items():
+            if not isinstance(name, str) or not name.strip() or not isinstance(spec, dict):
+                errors.append(_issue(
+                    "invalid_tool_specs",
+                    "每个 TOOL_SPECS 项都必须以非空工具名映射到规格字典"
+                ))
+                continue
+            if not isinstance(spec.get("desc"), str) or not spec["desc"].strip():
+                errors.append(_issue(
+                    "invalid_tool_specs",
+                    "工具 %s 缺少非空 desc" % name
+                ))
+            params = spec.get("params", [])
+            if not isinstance(params, (list, tuple)):
+                errors.append(_issue(
+                    "invalid_tool_specs",
+                    "工具 %s 的 params 必须是参数三元组列表" % name
+                ))
+                continue
+            param_names = []
+            params_valid = True
+            for item in params:
+                if (not isinstance(item, (list, tuple)) or len(item) != 3
+                        or not isinstance(item[0], str) or not item[0].strip()
+                        or not isinstance(item[1], str) or not item[1].strip()
+                        or type(item[2]) is not bool):
+                    params_valid = False
+                    break
+                param_names.append(item[0])
+            if not params_valid or len(param_names) != len(set(param_names)):
+                errors.append(_issue(
+                    "invalid_tool_specs",
+                    "工具 %s 的每个 params 项必须是 (名称, 说明, 必填布尔值)，且名称不能重复" % name
+                ))
+                continue
+            arg_param = spec.get("arg_param")
+            if len(param_names) > 1:
+                errors.append(_issue(
+                    "unsupported_tool_params",
+                    "Creator 当前每个工具最多支持一个字符串参数；工具 %s 定义了多个参数" % name
+                ))
+            elif param_names and arg_param != param_names[0]:
+                errors.append(_issue(
+                    "invalid_tool_specs",
+                    "工具 %s 的 arg_param 必须指向唯一参数 %s" % (name, param_names[0])
+                ))
+            elif not param_names and arg_param is not None:
+                errors.append(_issue(
+                    "invalid_tool_specs",
+                    "无参数工具 %s 的 arg_param 必须为 null" % name
+                ))
+
+    if tool_names is not None and spec_names is not None and set(tool_names) != set(spec_names):
+        errors.append(_issue(
+            "tool_name_mismatch",
+            "TOOLS 与 TOOL_SPECS 的工具名称必须完全一致"
+        ))
+
+
 def _check_python(path, package_name, errors, warnings, layout="single"):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -94,18 +225,9 @@ def _check_python(path, package_name, errors, warnings, layout="single"):
     if "on_message" in module_functions:
         warnings.append(_issue(
             "unsupported_on_message_hook",
-            "当前插件宿主不会调用 on_message；聊天工具请同时声明 TOOLS 与 TOOL_SPECS"
+            "当前插件宿主不会调用 on_message；请使用 TOOLS 与 TOOL_SPECS 实现聊天功能"
         ))
-    if "TOOLS" in module_assignments and "TOOL_SPECS" not in module_assignments:
-        warnings.append(_issue(
-            "missing_tool_specs",
-            "插件声明了 TOOLS，但缺少 TOOL_SPECS；原生聊天模型看不到这些工具"
-        ))
-    if "TOOL_SPECS" in module_assignments and "TOOLS" not in module_assignments:
-        warnings.append(_issue(
-            "missing_tool_implementation",
-            "插件声明了 TOOL_SPECS，但缺少 TOOLS 实现，工具调用不会成功"
-        ))
+    _check_chat_tool_contract(tree, module_functions, errors)
     if layout == "single" and any(
         isinstance(node, ast.Constant) and isinstance(node.value, str)
         and ("<!doctype html" in node.value.lower() or "<html" in node.value.lower())
