@@ -3974,12 +3974,30 @@
           '<button class="btn" id="crInstallNow" style="display:none">仅本次安装</button>' +
           '<button class="btn ghost" id="crCancel">取消</button>' +
         '</div></div>' : '') +
-      (d.files || []).map((f) =>
-        '<div class="card" style="margin-top:8px">' +
-          '<div class="pkg-h">' + icon('clip', 'sm') + ' ' + esc(f.name) +
-          '<span class="muted" style="font-size:12px;margin-left:8px">' + f.content.length + ' 字符</span></div>' +
-          '<div class="cr-code"><div class="md">' + U.md(creatorFenceFor(f.content) + creatorLangOf(f.name) + '\n' + f.content + '\n' + creatorFenceFor(f.content), { codeActions: true }) + '</div></div>' +
-        '</div>').join('') +
+      (d.files || []).map((f, i) => {
+        const content = String(f.content || '');
+        const lines = content.split(/\r?\n/);
+        const preview = lines.slice(0, 6).join('\n');
+        const omitted = Math.max(0, lines.length - 6);
+        return '<div class="card cr-file-card" style="margin-top:8px">' +
+          '<div class="cr-file-head">' +
+            '<div class="cr-file-title">' +
+              icon('clip', 'sm') + ' <strong>' + esc(f.name) + '</strong>' +
+              '<span class="muted cr-file-size">' + content.length + ' 字符</span>' +
+              '<span class="tag neutral">' + esc(creatorLangOf(f.name)) + '</span>' +
+            '</div>' +
+            '<div class="cr-file-actions">' +
+              '<button class="btn ghost" type="button" data-cr-file-toggle="' + i + '" aria-expanded="false">展开源码</button>' +
+              '<button class="btn ghost" type="button" data-copy-file="' + i + '">复制完整源码</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="cr-file-preview" data-cr-file-preview="' + i + '">' +
+            '<pre>' + esc(preview || '（空文件）') + '</pre>' +
+            '<div class="cr-file-more">' + (omitted ? '预览前 6 行 · 还有 ' + omitted + ' 行' : '共 ' + lines.length + ' 行') + '</div>' +
+          '</div>' +
+          '<div class="cr-file-full" data-cr-file-body="' + i + '" hidden></div>' +
+        '</div>';
+      }).join('') +
       '<div class="card" style="margin-top:8px">' +
         '<div class="pkg-h">修改草稿</div>' +
         '<textarea id="crFb" rows="2" style="width:100%;box-sizing:border-box" ' +
@@ -3995,6 +4013,38 @@
   // 重新绑一次（旧元素已丢弃，监听不会叠加）。
   function bindDraftCard(root, d, onGone) {
     root.addEventListener('click', async (e) => {
+      const fileToggle = e.target.closest('[data-cr-file-toggle]');
+      if (fileToggle) {
+        const index = String(fileToggle.dataset.crFileToggle || '');
+        const body = root.querySelector('[data-cr-file-body="' + index + '"]');
+        const preview = root.querySelector('[data-cr-file-preview="' + index + '"]');
+        const file = (d.files || [])[Number(index)];
+        if (!body || !preview || !file) return;
+        const opening = body.hidden;
+        if (opening && body.dataset.rendered !== 'true') {
+          const content = String(file.content || '');
+          body.innerHTML = '<div class="cr-code"><div class="md">' +
+            U.md(creatorFenceFor(content) + creatorLangOf(file.name) + '\n' + content + '\n' + creatorFenceFor(content), { codeActions: true }) +
+            '</div></div>';
+          body.dataset.rendered = 'true';
+        }
+        body.hidden = !opening;
+        preview.hidden = opening;
+        fileToggle.textContent = opening ? '收起源码' : '展开源码';
+        fileToggle.setAttribute('aria-expanded', String(opening));
+        return;
+      }
+      const copyFileButton = e.target.closest('[data-copy-file]');
+      if (copyFileButton) {
+        const file = (d.files || [])[Number(copyFileButton.dataset.copyFile)];
+        if (!file) { toast('找不到要复制的文件'); return; }
+        try {
+          await navigator.clipboard.writeText(String(file.content || ''));
+          copyFileButton.textContent = '已复制';
+          setTimeout(() => { if (copyFileButton.isConnected) copyFileButton.textContent = '复制完整源码'; }, 1500);
+        } catch (_) { toast('复制失败，请检查剪贴板权限'); }
+        return;
+      }
       const button = e.target.closest('[data-copy-code]');
       if (button) {
         try {
