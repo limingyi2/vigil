@@ -1,7 +1,7 @@
 // Real installed Electron + bundled Brain. All profile/model data are fixtures.
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),{spawn,execFileSync}=require('child_process');
 const WS=require('ws');
-const [install,profile,modelBase,mode='normal']=process.argv.slice(2);
+const [install,profile,modelBase,mode='normal',pluginZip]=process.argv.slice(2);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let child,ws,next=0;const waiting=new Map();
 async function evaluate(expression){return new Promise((resolve,reject)=>{const id=++next;waiting.set(id,{resolve,reject});ws.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});}
@@ -66,8 +66,20 @@ async function run(){
   assert.equal(failure.status,'failed');assert.ok(failure.error?.log_id);assert.equal(failure.error?.http_status,503);
   const savedFailures=await evaluate("vigil.api('GET','/api/creator/jobs')");
   assert.ok(savedFailures.json.items.some(item=>item.job_id===failedId&&item.status==='failed'));
+
+  assert.ok(pluginZip&&fs.existsSync(pluginZip),'Isolated smoke plugin archive is missing');
+  const pluginB64=fs.readFileSync(pluginZip).toString('base64');
+  const installed=await evaluate(`vigil.api('POST','/api/plugins/install',{zip_b64:${JSON.stringify(pluginB64)},source:'windows-acceptance'})`);
+  assert.equal(installed.status,200);assert.equal(installed.json?.ok,true,JSON.stringify(installed.json));
+  const reloaded=await evaluate("vigil.api('POST','/api/plugins/reload',{})");
+  assert.equal(reloaded.status,200);assert.ok(reloaded.json?.plugins?.some(p=>p.name==='vigil_smoke'));
+  const pluginList=await evaluate("vigil.api('GET','/api/plugins')");
+  assert.ok(pluginList.json?.plugins?.some(p=>p.name==='vigil_smoke'));
+  const smokeChat=await evaluate(`(async()=>{const events=[];let text='';let final='';const off=vigil.onStreamEvent(e=>{events.push(e.type);if(e.type==='text')text+=e.text||'';if(e.type==='done')final=e.text||'';});try{const r=await vigil.apiStream('/api/chat/stream',{text:'请实际调用 smoke_ping 工具并原样返回执行结果',src:'pc',request_id:'smoke_ping_'+crypto.randomUUID()});return {ok:r.ok,events,reply:text+final};}finally{off();}})()`);
+  assert.ok(smokeChat.ok&&smokeChat.events.includes('done'),'Installed plugin chat stream did not complete: '+JSON.stringify(smokeChat));
+  assert.equal(smokeChat.reply,'VIGIL_PLUGIN_CALL_OK','Real installed-chat tool result did not reach the Electron renderer');
   assert.ok(fs.existsSync(path.join(profile,'brain/data')));
   assert.equal(fs.existsSync(path.join(install,'resources/vigil-brain/config')),false);
-  console.log('PASS installed pair, migrated model and draft, isolated model fixture, chat, Creator SSE, saved failure and generated draft');
+  console.log('PASS installed pair, migrated data, chat, installed smoke_ping tool call, Creator SSE, saved failure and generated draft');
 }
 run().then(()=>{if(ws)ws.close();if(child?.pid)execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}).catch(e=>{console.error(e.message);if(ws)ws.close();if(child?.pid){try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}catch(_){}}process.exitCode=1;});

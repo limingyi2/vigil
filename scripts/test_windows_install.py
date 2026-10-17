@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_NAME = 'Vigil.Setup.1.0.2.exe'
@@ -18,6 +19,9 @@ BASELINE_SHA256 = '6ea65b226b11ee685ee190a9f0bd760f00bb35e515818a492f2f36ecc6970
 
 class ModelFixture(BaseHTTPRequestHandler):
     calls = 0
+    smoke_schema_seen = False
+    smoke_tool_call_requested = False
+    smoke_tool_result_received = False
 
     def log_message(self, *_):
         pass
@@ -34,6 +38,47 @@ class ModelFixture(BaseHTTPRequestHandler):
         ModelFixture.calls += 1
         system = '\n'.join(m.get('content', '') for m in body.get('messages', []) if m.get('role') == 'system')
         request = '\n'.join(m.get('content', '') for m in body.get('messages', []) if m.get('role') == 'user')
+        tools = body.get('tools') or []
+        has_smoke_ping = any((item.get('function') or {}).get('name') == 'smoke_ping'
+                             for item in tools if isinstance(item, dict))
+        if has_smoke_ping:
+            ModelFixture.smoke_schema_seen = True
+            tool_result = next((m.get('content') for m in body.get('messages', [])
+                                if m.get('role') == 'tool'), None)
+            if tool_result is not None:
+                ModelFixture.smoke_tool_result_received = tool_result == 'VIGIL_PLUGIN_CALL_OK'
+                content = ('VIGIL_PLUGIN_CALL_OK' if ModelFixture.smoke_tool_result_received
+                           else 'PLUGIN_TOOL_RESULT_MISMATCH')
+                result = {'choices': [{'message': {'content': content}, 'finish_reason': 'stop'}],
+                          'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(json.dumps(result).encode())))
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode())
+                return
+            if not ModelFixture.smoke_tool_call_requested:
+                ModelFixture.smoke_tool_call_requested = True
+                result = {'choices': [{'message': {'content': None, 'tool_calls': [{
+                    'id': 'call_smoke_ping_fixture', 'type': 'function',
+                    'function': {'name': 'smoke_ping', 'arguments': '{}'},
+                }]}, 'finish_reason': 'tool_calls'}],
+                          'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(json.dumps(result).encode())))
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode())
+                return
+            content = 'PLUGIN_TOOL_RESULT_MISSING'
+            result = {'choices': [{'message': {'content': content}, 'finish_reason': 'stop'}],
+                      'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(json.dumps(result).encode())))
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+            return
         creator = '创作助手' in system
         if creator and 'fixture forced failure' in request:
             result = json.dumps({'error': {'message': 'isolated fixture failure'}}).encode()
@@ -107,6 +152,7 @@ def seed_legacy_profile(install, model_base):
         'model': 'fixture-model', 'brain_token': 'fixture-brain-token',
         'saved_models': [{'provider': 'custom', 'base': model_base, 'model': 'fixture-model',
                           'name': 'Migration fixture'}],
+        'agent_execution': {'enabled': False},
     }
     cfg = old / 'config' / 'config.json'
     cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -142,6 +188,20 @@ def seed_legacy_profile(install, model_base):
     return {'draft_id': draft_id, 'old_home': old}
 
 
+def make_smoke_plugin_archive(path):
+    source = (
+        'NAME = "vigil_smoke"\n'
+        'DESC = "Isolated installer acceptance fixture"\n'
+        'def smoke_ping(arg):\n'
+        '    return "VIGIL_PLUGIN_CALL_OK"\n'
+        'TOOLS = {"smoke_ping": smoke_ping}\n'
+        'TOOL_SPECS = {"smoke_ping": {"desc": "Return the isolated acceptance marker.", '
+        '"params": [], "arg_param": None}}\n'
+    )
+    with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('vigil_smoke.py', source)
+
+
 def assert_migrated(profile, fixture):
     home = Path(profile) / 'brain'
     cfg = json.loads((home / 'config/config.json').read_text(encoding='utf-8'))
@@ -168,6 +228,8 @@ def main(installer, baseline):
 
     root = Path(tempfile.mkdtemp(prefix='Vigil Windows acceptance '))
     install, profile = root / 'application', root / 'profile'
+    plugin_zip = root / 'vigil_smoke.zip'
+    make_smoke_plugin_archive(plugin_zip)
     env = dict(os.environ, VIGIL_USER_DATA=str(profile))
     env.pop('ELECTRON_RUN_AS_NODE', None)
     server = ThreadingHTTPServer(('127.0.0.1', 0), ModelFixture)
@@ -185,7 +247,7 @@ def main(installer, baseline):
 
     def check(mode='normal'):
         subprocess.run(['node', str(ROOT / 'client/tools/test-installed-runtime.cjs'),
-                        str(install), str(profile), base, mode], env=env, check=True, timeout=240)
+                        str(install), str(profile), base, mode, str(plugin_zip)], env=env, check=True, timeout=240)
 
     try:
         setup(baseline)
@@ -198,6 +260,7 @@ def main(installer, baseline):
         check()
         assert marker.read_text(encoding='utf-8') == 'fixture retained'
         assert_migrated(profile, fixture)
+        assert (profile / 'brain/plugins/vigil_smoke.py').is_file(), 'Installed smoke plugin was lost during rollback'
 
         pending = profile / 'updates/pending.json'
         checkpoint = json.loads(pending.read_text(encoding='utf-8-sig'))
@@ -248,12 +311,17 @@ def main(installer, baseline):
             'creator_jobs': {'streamed_output': True, 'failed_record_saved': True,
                              'diagnostics': True, 'draft_generated': True,
                              'fixture_model_calls': ModelFixture.calls},
+            'plugin_chat': {'installed_and_loaded': ModelFixture.smoke_schema_seen,
+                            'tool_schema_sent': ModelFixture.smoke_schema_seen,
+                            'model_requested_tool': ModelFixture.smoke_tool_call_requested,
+                            'tool_result_returned': ModelFixture.smoke_tool_result_received},
             'brain_start_failure_blocked_and_rolled_back': True,
             'install_checkpoint_failure_kept_previous_install': True,
             'rollback_restored_exact_official_baseline': True,
             'daily_install_touched': False,
             'test_root': str(root),
         }
+        assert all(report['plugin_chat'].values()), 'Installed smoke_ping tool call did not complete end-to-end'
         (installer.parent / 'windows-acceptance.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
         print(json.dumps(report))
     finally:
