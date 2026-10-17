@@ -132,6 +132,11 @@ async function start() {
       await sleep(100);
     }
     assert.ok(restored, 'Restarted Electron could not restore the first conversation and response');
+    const savedHistory = await evaluate(`vigil.api('GET','/api/history?src=pc&conversation_id=${conversationId}')`);
+    assert.equal(savedHistory.status, 200);
+    assert.ok(savedHistory.json.display_turns?.some(turn => turn.input === 'P8_FRESH_CHAT_SENTINEL' &&
+      turn.content === 'FRESH_INSTALL_CHAT_OK' && turn.status === 'succeeded'),
+      'Brain did not restore the persisted successful chat turn from its conversation-scoped display records');
   }
   console.log(JSON.stringify({ result: 'passed', mode, conversation_id: conversationId, brain_home: home,
     brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored' }));

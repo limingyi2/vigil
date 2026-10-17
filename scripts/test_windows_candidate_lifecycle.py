@@ -91,11 +91,18 @@ def main(installer, expected_commit, output):
         path.write_text(content, encoding='utf-8')
     config_file = user_data_root / 'config.json'
     conversations_db = brain_home / 'data/conversations.sqlite3'
+    display_turns_db = brain_home / 'data/display_turns.sqlite3'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
         assert db.execute('SELECT COUNT(*) FROM conversations WHERE id=?', (conversation_id,)).fetchone()[0] == 1
-    retained_files = [*sentinels, config_file, conversations_db]
+    assert display_turns_db.is_file(), 'Fresh chat did not persist its durable display-turn database'
+    with sqlite3.connect(display_turns_db.as_uri() + '?mode=ro', uri=True) as db:
+        turns = [json.loads(row[0]) for row in db.execute('SELECT data FROM turns')]
+    assert any(item.get('input') == 'P8_FRESH_CHAT_SENTINEL' and
+               item.get('content') == 'FRESH_INSTALL_CHAT_OK' and item.get('status') == 'succeeded'
+               for item in turns), 'Successful chat turn was not stored in Brain display-turn SQLite'
+    retained_files = [*sentinels, config_file, conversations_db, display_turns_db]
     retained_before = {str(path): sha256(path) for path in retained_files}
     user_data_before = inventory(user_data_root)
     assert user_data_before, 'Isolated default Electron user-data directory is empty'
@@ -142,7 +149,7 @@ def main(installer, expected_commit, output):
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),
-                      'actual_configuration_and_conversation_db_retained': True,
+                      'actual_configuration_conversation_and_display_turn_dbs_retained': True,
                       'all_user_data_files_unchanged': True,
                       'user_data_file_count': len(user_data_before),
                       'outside_sentinel_preserved': True},
