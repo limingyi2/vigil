@@ -107,7 +107,7 @@ jobs:
           git cat-file -e "$target^{commit}"
           $changed = git diff --name-only $target HEAD -- client/src client/electron client/vendor
           if ($LASTEXITCODE -ne 0) { throw 'Unable to compare product runtime against target commit.' }
-          if ($changed) { throw "Product runtime differs from target commit $target: $changed" }
+          if ($changed) { throw "Product runtime differs from target commit ${target}: $changed" }
           "Target commit: $target" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "Diagnostic checkout: $(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "Verified identical paths: client/src, client/electron, client/vendor" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
