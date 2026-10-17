@@ -459,7 +459,7 @@ function requestBinary(method, urlStr, bytes, token, headers, timeoutMs) {
 
 // 流式请求：SSE 逐块推送，onEvent 每收到一个 data: 事件就调用一次。
 // 用于 /api/chat/stream 的实时思考过程和正文。
-function requestStream(method, urlStr, body, token, onEvent) {
+function requestStream(method, urlStr, body, token, onEvent, isTerminalEvent) {
   return new Promise((resolve) => {
     let u;
     try {
@@ -511,7 +511,9 @@ function requestStream(method, urlStr, body, token, onEvent) {
               if (line.startsWith('data: ')) {
                 try {
                   const evt = JSON.parse(line.slice(6));
-                  if (evt && (evt.type === 'done' || evt.type === 'error')) terminalEvent = true;
+                  if (evt && (isTerminalEvent
+                    ? isTerminalEvent(evt)
+                    : (evt.type === 'done' || evt.type === 'error'))) terminalEvent = true;
                   onEvent && onEvent(evt);
                 } catch (e) { /* 解析失败的行跳过 */ }
               }
@@ -1136,10 +1138,14 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
   const token = await getToken();
   const wc = e.sender;
   const subscription = /^\/api\/creator\/jobs\/[A-Za-z0-9_-]+\/events(?:\?|$)/.test(p);
+  const isTerminalEvent = subscription
+    ? (evt) => evt.type === 'snapshot' &&
+      ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(evt.payload?.status)
+    : null;
   return requestStream(subscription ? 'GET' : 'POST', b + withSrc, subscription ? null : body, token, (evt) => {
     if (subscription && !evt.job_id) evt = { ...evt, job_id: p.split('/')[4] };
     if (!wc.isDestroyed()) wc.send('api:stream:event', evt);
-  });
+  }, isTerminalEvent);
 });
 
 ipcMain.handle('cfg:get', () => { const c=readCfg();return {...c,connection_mode:c.connection_mode || 'local',remote_base:c.remote_base || c.base || '',base:connectionBase(c)}; });
