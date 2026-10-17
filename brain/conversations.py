@@ -29,7 +29,7 @@ def _db():
 
 
 def _row(row):
-    return {"id": row[0], "title": "旧对话" if row[4] else row[1], "created_at": row[2],
+    return {"id": row[0], "title": "之前的聊天" if row[4] else row[1], "created_at": row[2],
             "updated_at": row[3], "legacy": bool(row[4])}
 
 
