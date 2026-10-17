@@ -1,0 +1,6 @@
+{
+  "diagnostic_commit": "cac6f0b20ac76ee65cb2e550ae37686a88a56a12",
+  "test": "full-chat-v2-electron-uninstrumented-control",
+  "source_commit": "193f297234a36a91ef61a4dedd63d4564df41c87",
+  "exit_code": 1
+}

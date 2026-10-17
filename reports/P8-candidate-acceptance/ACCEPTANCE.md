@@ -93,6 +93,45 @@ iframeLoaded = null; webError = null; fps = 0
 
 本轮没有改动产品运行时代码；只增加候选验收脚本/工作流和报告证据，因此没有重跑与本轮无关的 Python、Electron 全量回归。
 
+## P8.2 Wallpaper WebGL 集成超时调查（2026-10-17）
+
+调查针对用户指定的 PR HEAD `193f297234a36a91ef61a4dedd63d4564df41c87`。诊断提交只改 Electron 验收测试与可选 Windows Actions 诊断步骤；工作流在 runner 上核对 `client/src`、`client/electron`、`client/vendor` 与该提交逐文件一致。未改 Wallpaper 产品运行时代码，未重建候选安装包。有效对照为 [Actions run 39038766526](https://github.com/limingyi2/vigil/actions/runs/39038766526)，诊断提交 `cac6f0b20ac76ee65cb2e550ae37686a88a56a12`；[原始 artifact 12103092295](https://github.com/limingyi2/vigil/actions/runs/39038766526/artifacts/12103092295)。
+
+### 复现命令与环境
+
+Actions 手动复现（临时 `windows-latest` runner；不执行 installer job）：
+
+```powershell
+gh workflow run windows-package.yml --ref codex/p6-multisession-dialogs `
+  -f wallpaper_diagnostics=true `
+  -f candidate_source_commit=193f297234a36a91ef61a4dedd63d4564df41c87
+```
+
+核心场景由该工作流运行 `npm exec -- electron tools/test-chat-v2-electron.js`，并分别打开 `P8_WALLPAPER_ONLY=1`、`P8_WALLPAPER_RESIZE_ONLY=1` 或 `P8_WALLPAPER_LAYOUT_ONLY=1` 做对照；另运行一次不启用诊断插桩的完整流程及 `test-wallpaper-v2-electron.js`。为适配 runner 的 1024×720 viewport，诊断仅跳过测试最前面的 860px 固定布局断言；原有 Wallpaper 30 秒首帧断言保留。独立 Wallpaper 用例仅跳过两个已知且与 Wallpaper 无关的 composer/input paint 断言，以便运行到 WebGL 检查。
+
+环境为 `windows-latest`、Electron 28.3.3、Chromium 120.0.6099.291。Electron GPU features 报告 `webgl=unavailable_software`；实际 renderer 是 ANGLE SwiftShader（无硬件 GPU），不能将这轮结果称为 AMD/Direct3D 硬件测试。完整结果索引与本地 raw logs 见 [P8.2 diagnostics README](evidence/wallpaper-diagnostics-39038766526/README.md)；原始 Actions artifact 也保留所有截图和 runner 日志。此前探针转义错误的 run [39038332839](https://github.com/limingyi2/vigil/actions/runs/39038332839) 保留在 Actions 中，不能用于判断产品结果；修正的提交 `cac6f0b` 重新跑了整个矩阵。
+
+### 对照结果
+
+| 场景 | 结果 | 观察 |
+| --- | --- | --- |
+| 完整 `test-chat-v2-electron.js`（诊断开启） | **Wallpaper 子检查通过；整套测试后续失败** | 选中 fixture `990003` 后 iframe 创建、导航、load 完成；scene-live、`vigil-control.js`、renderer JS、`project.json` 与 `scene.json` 请求成功。WebGL2 创建成功，首个 RAF 到达；父页面收到 `state.running=true`，`data-status` 由“正在准备首帧”变为“实时渲染中”。之后整套脚本在独立的 `#retryHistory` 等待处超时。 |
+| 完整 `test-chat-v2-electron.js`（无诊断插桩） | **Wallpaper 首帧失败** | 在同一 runner、同一产品运行时代码上再次于“正在准备首帧”处超时；没有更早失败拦截 Wallpaper 场景。 |
+| 聊天 harness 中只运行 Wallpaper 场景 | **通过** | 首帧断言通过；没有执行先前聊天/布局场景。 |
+| 单独窗口 resize 后运行 Wallpaper 场景 | **通过** | 首帧断言通过。 |
+| 仅 Wallpaper 布局设置/尺寸场景后运行 Wallpaper | **通过** | 首帧断言通过。 |
+| standalone Wallpaper 流程 | **通过** | 生成 fixture 视频，原有 WebGL 场景首帧断言通过；仅绕过不相关 paint 断言。GPU 仍是 SwiftShader 软件渲染。 |
+
+同一 runner 的无插桩完整流程超时、而诊断完整流程和三种更窄场景通过，说明结果对完整流程/执行时序敏感；resize 与 Wallpaper layout 单独执行未复现前置场景残留。成功轨迹中 iframe 正常加载，关键资源均为 HTTP 200，WebGL2 context 创建成功，父子 `postMessage` 和 `data-status` 更新均发生，没有相关网络失败或 renderer exception。timeout 控制的状态快照则可能是 `running=false/fps=0`，并非明确的宿主消息丢失；fixture 本身为 0 层空场景，renderer 日志中的 `0 layers`、`0 canvasCandidates` 符合该 fixture，不单独构成失败原因。软件渲染路径多次记录 ReadPixels stall。原始失败保存在前述 P8.1 报告与 [run 39037805159](https://github.com/limingyi2/vigil/actions/runs/39037805159)；本轮成功/失败对照保存于 run 39038766526。
+
+### 根因判断与剩余验证
+
+**未完全定位；现有证据更支持 headless SwiftShader 环境中的执行时序/渲染调度敏感性，尚不能排除完整测试的竞争条件，也没有证据证明这是候选产品代码缺陷。** 关键证据是同一产品提交的 isolated、resize-only、layout-only、standalone 都能通过，且插桩完整流程也能通过首帧；相反，无插桩完整流程能再次失败。插桩会改变 renderer/CDP 的执行时序，因此这一差异不足以单独区分测试竞态与软件 GPU 运行时行为。前置 resize/layout 单项通过也不能完全排除真实完整前序场景组合造成的资源竞争。
+
+本轮未能在同一 PR HEAD 的真实 AMD/Direct3D runner 上复跑原先的失败，因此**根因保持未解决**。也没有修产品代码或延长/移除超时断言。下一步最小实验是在可重复且固定版本的 AMD 硬件 runner 上，对当前精确提交连续交替跑“完整流程、完整流程无插桩、Wallpaper-only”，同时保留现有事件 trace；若硬件 runner 无法取得，则在 SwiftShader runner 上进一步将完整流程按前序场景二分，找出触发 timeout 的最小序列，并与 timeout 时 GPU/context 状态对照。
+
+这一轮只运行上述 WebGL 对照，没有重跑安装生命周期或无关 P6 全量测试。没有候选安装包产物变更；没有合并 PR、发布版本或修改 master。
+
 ## 与 P6.3 报告的变化
 
 [P6.3 报告](P6.3-ACCEPTANCE.md) 记录的旧候选来自 `73af3af564debb7567952968634d7b012fa504aa`，大小 `101,662,065` 字节，SHA-256 `b4f47548546c334d465cf6070d85d733a62e65f6897790e51a3475f12062e7f1`。本报告使用的候选包源提交为 `05ba0c7544ddca2509c22e22d064bcb9745d9149`，其大小与 hash 均不同；旧候选未冒充本次产物。验收脚本和报告提交在该候选源提交之后，不改变候选包内容。

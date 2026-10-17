@@ -1,0 +1,6 @@
+{
+  "diagnostic_commit": "cac6f0b20ac76ee65cb2e550ae37686a88a56a12",
+  "source_commit": "193f297234a36a91ef61a4dedd63d4564df41c87",
+  "test": "wallpaper-layout-setup-then-scene",
+  "exit_code": 0
+}
