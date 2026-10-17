@@ -14,7 +14,7 @@ const ev = source => win.webContents.executeJavaScript(source, true);
 async function until(source) {
   const end = Date.now()+10000;
   while (Date.now()<end) { if (await ev('Boolean('+source+')')) return; await wait(30); }
-  throw Error('Timeout: '+source);
+  throw Error('Timeout: '+source+'; chat='+String(await ev("document.querySelector('#msgs') ? document.querySelector('#msgs').textContent : ''")));
 }
 function ok(name) { results.push(name); console.log('PASS '+name); }
 function response(method, raw) {
@@ -39,6 +39,14 @@ async function main() {
   ipcMain.handle('api:stream', async (event, {body})=>{
     streams++;
     assert.match(body.request_id,/^req_/);
+    assert.equal(body.src,'pc');
+    assert.equal(body.session_id || 'main','main');
+    if(mode === 'transport-failure') return {ok:false,status:0,err:'fixture timeout'};
+    if(mode === 'truncated') {
+      event.sender.send('api:stream:event',{type:'text',request_id:body.request_id,text:'不完整片段'});
+      event.sender.send('api:stream:event',{type:'error',request_id:body.request_id,class:'connection_lost',status:'interrupted',msg:'服务端提前关闭连接'});
+      return {ok:false,status:0,err:'fixture truncated stream'};
+    }
     const run = {run_id:'run_'+streams,request_id:body.request_id,input:body.text,status:'running',content:'',created_at:Date.now()/1000};
     runs.set(run.run_id,run);
     const send = (type,extra={})=>{if(!event.sender.isDestroyed())event.sender.send('api:stream:event',{type,run_id:run.run_id,request_id:run.request_id,...extra});};
@@ -75,6 +83,18 @@ async function main() {
   await until('document.querySelector("#msgs").textContent.includes("最终完成")');
   assert.equal(await ev('(document.querySelector("#msgs").textContent.match(/中间正文/g)||[]).length'),1);
   ok('Run snapshot replaces preview; authoritative final text is not duplicated');
+  mode='transport-failure'; await submit('P2传输失败');
+  await until('document.querySelector("#msgs").textContent.includes("fixture timeout")');
+  assert.match(await ev('document.querySelector("#msgs").textContent'),/失败/);
+  const failedRecord=await ev(`(()=>{const k=Object.keys(localStorage).find(x=>x.startsWith('vigil.display.v1:'));return JSON.parse(localStorage.getItem(k)||'[]').at(-1)})()`);
+  assert.equal(failedRecord.status,'interrupted');
+  ok('A failed stream transport is shown immediately and saved as interrupted');
+  mode='truncated'; await submit('P2流提前关闭');
+  await until('document.querySelector("#msgs").textContent.includes("fixture truncated stream")');
+  const interruptedRecord=await ev(`(()=>{const k=Object.keys(localStorage).find(x=>x.startsWith('vigil.display.v1:'));return JSON.parse(localStorage.getItem(k)||'[]').at(-1)})()`);
+  assert.equal(interruptedRecord.status,'interrupted');
+  assert.ok(interruptedRecord.content.includes('不完整片段'));
+  ok('A truncated stream displays partial output as interrupted, never as success');
   mode='cancel'; await submit('P2取消任务');
   await until('[...document.querySelectorAll(".agent-cancel")].some(b=>b.isConnected&&!b.disabled)');
   await ev('[...document.querySelectorAll(".agent-cancel")].find(b=>!b.disabled).click()');

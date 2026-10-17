@@ -1330,17 +1330,22 @@
           // 开始流式请求
           console.log('[stream] starting apiStream...');
           const r = await global.vigil.apiStream('/api/chat/stream', chatPayload);
+          // IPC 会在 HTTP 超时/断连时返回 {ok:false}。不能只等 SSE 事件，
+          // 否则历史会一直是 running；主进程也可能因进程退出而无法推送事件。
+          if (!streamDone && r && r.ok === false) {
+            onEvent({type:'error',class:'connection_lost',status:'interrupted',
+              msg:r.err || '连接中断，结果不完整'});
+          }
           if (!streamDone) {
             // 如果请求返回了但还没收到 done 事件，等一下
             setTimeout(() => {
               if (!streamDone) {
                 console.warn('[stream] no done event received, textBuf length:', textBuf.length);
-                if (textBuf) {
-                  textEl.innerHTML = U.md(textBuf, { codeActions: true });
-                  statusEl.textContent = fmtTime(Date.now(), 'time');
-                } else {
-                  statusEl.textContent = '无响应';
-                }
+                remember({content:textBuf,status:'interrupted',
+                  error:{class:'connection_lost',message:'未收到完整回复'}});
+                textEl.innerHTML = (textBuf ? U.md(textBuf, { codeActions: true }) : '') +
+                  '<br><span style="color:var(--err)">连接中断：未收到完整回复（结果不完整）</span>';
+                statusEl.textContent = '执行中断';
                 busy = false;
                 updateComposer();
                 streamDone = true;

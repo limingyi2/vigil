@@ -6,6 +6,10 @@ const client=path.resolve(__dirname,'..');
 app.setPath('userData',path.join(tmp,'profile'));
 let win,job,stage='parse',chatRequests=0,creatorRequests=0;
 const jobs=[];
+const fullSource=Array.from({length:10},(_,i)=>`# vigil_smoke.py line ${i+1}`).join('\n');
+const fixtureDraft={id:'draft_fold_ui',kind:'plugin',summary:'折叠交互验收',version:1,model:'fixture',
+  requirement:'UI-only Creator file preview fixture',risks:'fixture only',validation:{ok:true,errors:[],warnings:[]},
+  files:[{name:'vigil_smoke.py',content:fullSource},{name:'README.md',content:'fixture readme'}]};
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const ev=s=>win.webContents.executeJavaScript(s,true);
 async function until(s){for(let i=0;i<250;i++){if(await ev(s))return;await wait(40);}throw Error('Timed out: '+s);}
@@ -16,12 +20,19 @@ function fixture(method,raw,body){
   if(p==='/api/models/saved')json={current:{model:'fixture'},models:[]};
   if(p==='/api/plugins/frontend')json={version:1,plugins:[]};
   if(p==='/api/creator/drafts')json={ok:true,drafts:[]};
+  if(p==='/api/creator/draft')json={ok:true,draft:fixtureDraft};
   if(p==='/api/creator/jobs' && method==='POST'){
     creatorRequests++;
     if(stage==='missing_api')return {ok:false,status:404,target:'http://127.0.0.1:61285',json:{err:'no such api'}};
-    job={job_id:'job_'+jobs.length,request_id:body.request_id,kind:'plugin',requirement:body.requirement,status:'failed',stage,content:'',event_cursor:1,
-      error:{stage,error_code:stage+'_failed',message:'Expecting value (line 3, column 10) <img src=x onerror=alert(1)>',hint:'检查配置后重试',log_id:'job_log_'+jobs.length}};
-    jobs.push(job);json={...job,status:'queued',error:null,event_cursor:0};
+    if(stage==='fold_ui'){
+      job={job_id:'job_fold_ui',request_id:body.request_id,kind:'plugin',requirement:body.requirement,
+        status:'succeeded',draft_id:fixtureDraft.id,content:'fixture generated',event_cursor:1};
+      jobs.push(job);json={...job};
+    } else {
+      job={job_id:'job_'+jobs.length,request_id:body.request_id,kind:'plugin',requirement:body.requirement,status:'failed',stage,content:'',event_cursor:1,
+        error:{stage,error_code:stage+'_failed',message:'Expecting value (line 3, column 10) <img src=x onerror=alert(1)>',hint:'检查配置后重试',log_id:'job_log_'+jobs.length}};
+      jobs.push(job);json={...job,status:'queued',error:null,event_cursor:0};
+    }
   } else if(p==='/api/creator/jobs')json={ok:true,items:jobs};
   else if(p.startsWith('/api/creator/jobs/'))json=job;
   if(p.startsWith('/api/agent-center/'))return {ok:false,status:404,json:{err:'no such api'}};
@@ -59,6 +70,33 @@ async function run(){
     assert.equal(await ev("document.querySelectorAll('.turn img[src=x]').length"),0);
   }
   console.log('PASS all seven Creator stages show structured errors, parser location, advice and log ID safely');
+  stage='fold_ui';await send('render Creator file preview fixture');
+  await until("!!document.querySelector('.crturn[data-crid=\"draft_fold_ui\"] [data-cr-file-toggle=\"0\"]')");
+  const card=".crturn[data-crid=\"draft_fold_ui\"]";
+  let fileState=await ev(`(()=>{const r=document.querySelector('${card}'),p=r.querySelector('[data-cr-file-preview="0"]'),b=r.querySelector('[data-cr-file-body="0"]');return {toggle:r.querySelector('[data-cr-file-toggle="0"]')?.textContent,copy:r.querySelector('[data-copy-file="0"]')?.textContent,bodyHidden:b?.hidden,previewHidden:p?.hidden,previewText:p?.textContent||'',bodyText:b?.textContent||'',otherHidden:r.querySelector('[data-cr-file-body="1"]')?.hidden}})()`);
+  assert.equal(fileState.toggle,'展开源码');assert.equal(fileState.copy,'复制完整源码');
+  assert.equal(fileState.bodyHidden,true);assert.equal(fileState.previewHidden,false);
+  assert.ok(fileState.previewText.includes('line 6'));assert.ok(!fileState.previewText.includes('line 7'));
+  assert.ok(!fileState.bodyText.includes('line 10'),'full source must not be rendered before expansion');
+  assert.equal(fileState.otherHidden,true);console.log('PASS Creator file card starts with a six-line collapsed preview and both actions');
+  await ev(`document.querySelector('${card} [data-cr-file-toggle="0"]').click()`);
+  await until(`document.querySelector('${card} [data-cr-file-body="0"]').hidden===false`);
+  fileState=await ev(`(()=>{const r=document.querySelector('${card}');return {toggle:r.querySelector('[data-cr-file-toggle="0"]').textContent,expanded:r.querySelector('[data-cr-file-toggle="0"]').getAttribute('aria-expanded'),bodyHidden:r.querySelector('[data-cr-file-body="0"]').hidden,previewHidden:r.querySelector('[data-cr-file-preview="0"]').hidden,bodyText:r.querySelector('[data-cr-file-body="0"]').textContent,otherHidden:r.querySelector('[data-cr-file-body="1"]').hidden}})()`);
+  assert.equal(fileState.toggle,'收起源码');assert.equal(fileState.expanded,'true');assert.equal(fileState.bodyHidden,false);assert.equal(fileState.previewHidden,true);
+  assert.ok(fileState.bodyText.includes('line 10'),'expanded source must include the complete file');assert.equal(fileState.otherHidden,true);
+  console.log('PASS clicking expand renders the full file without expanding neighboring files');
+  await ev(`document.querySelector('${card} [data-cr-file-toggle="0"]').click()`);
+  await until(`document.querySelector('${card} [data-cr-file-body="0"]').hidden===true`);
+  fileState=await ev(`(()=>{const r=document.querySelector('${card}');return {toggle:r.querySelector('[data-cr-file-toggle="0"]').textContent,expanded:r.querySelector('[data-cr-file-toggle="0"]').getAttribute('aria-expanded'),bodyHidden:r.querySelector('[data-cr-file-body="0"]').hidden,previewHidden:r.querySelector('[data-cr-file-preview="0"]').hidden,otherHidden:r.querySelector('[data-cr-file-body="1"]').hidden}})()`);
+  assert.equal(fileState.toggle,'展开源码');assert.equal(fileState.expanded,'false');assert.equal(fileState.bodyHidden,true);assert.equal(fileState.previewHidden,false);assert.equal(fileState.otherHidden,true);
+  await ev("window.__creatorClipboardWrites=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.__creatorClipboardWrites.push(value);}}});true");
+  await ev(`document.querySelector('${card} [data-copy-file="0"]').click()`);
+  await until("window.__creatorClipboardWrites.length===1");
+  assert.deepEqual(await ev('window.__creatorClipboardWrites'),[fullSource]);
+  assert.equal(await ev(`document.querySelector('${card} [data-cr-file-body="0"]').hidden`),true);
+  assert.equal(await ev(`document.querySelector('${card} [data-copy-file="0"]').textContent`),'已复制');
+  assert.equal(await ev(`document.querySelector('${card} [data-cr-file-body="1"]').hidden`),true);
+  console.log('PASS collapse restores preview and copy writes the entire file while collapsed; other file stays collapsed');
   await ev("document.querySelector('#gnav [data-page=\"agent-center\"]').click()");
   await until("!!document.querySelector('#ac-agent-grid')");
   await ev("document.querySelector('#gnav [data-page=\"chat\"]').click()");

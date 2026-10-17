@@ -279,10 +279,14 @@ function writeCfg(patch) {
 // keytar 是原生模块，打包/换机器时可能加载不了。加载不了就退回文件存 ——
 // 但**要让人知道**，不能静默把密钥写成明文还以为在钥匙串里。
 let keytar = null;
-try {
-  keytar = require('keytar');
-} catch (e) {
-  console.warn('[配置] keytar 不可用（' + e.message + '），token 将退回本地明文文件');
+// Only an explicitly isolated, unpackaged E2E process may avoid the system
+// keychain; packaged builds always retain normal credential handling.
+if (process.env.VIGIL_TEST_MODE !== '1' || app.isPackaged) {
+  try {
+    keytar = require('keytar');
+  } catch (e) {
+    console.warn('[配置] keytar 不可用（' + e.message + '），token 将退回本地明文文件');
+  }
 }
 const KEY_SERVICE = 'vigil-client';
 const KEY_ACCOUNT = 'brain-token';
@@ -471,6 +475,14 @@ function requestStream(method, urlStr, body, token, onEvent) {
       headers['Content-Length'] = data.length;
     }
     if (token) headers['Authorization'] = 'Bearer ' + token;
+    let terminalEvent = false;
+    let transportFailed = false;
+    const failStream = (msg) => {
+      if (terminalEvent || transportFailed) return;
+      transportFailed = true;
+      onEvent && onEvent({ type: 'error', class: 'connection_lost',
+        status: 'interrupted', msg });
+    };
     const req = mod.request(
       {
         method,
@@ -499,17 +511,26 @@ function requestStream(method, urlStr, body, token, onEvent) {
               if (line.startsWith('data: ')) {
                 try {
                   const evt = JSON.parse(line.slice(6));
+                  if (evt && (evt.type === 'done' || evt.type === 'error')) terminalEvent = true;
                   onEvent && onEvent(evt);
                 } catch (e) { /* 解析失败的行跳过 */ }
               }
             }
           }
         });
-        res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode }));
+        res.on('aborted', () => failStream('连接中断，结果不完整'));
+        res.on('end', () => {
+          if (!terminalEvent) failStream('服务端提前关闭连接，结果不完整');
+          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300 && terminalEvent, status: res.statusCode });
+        });
       }
     );
-    req.on('timeout', () => req.destroy(new Error('请求超时')));
-    req.on('error', (e) => resolve({ ok: false, status: 0, err: e.message }));
+    req.on('timeout', () => { failStream('请求超时，结果不完整'); req.destroy(); });
+    req.on('error', (e) => {
+      failStream(e && e.message === 'socket hang up'
+        ? '连接中断，结果不完整' : '连接失败，结果不完整');
+      resolve({ ok: false, status: 0, err: '连接失败，结果不完整' });
+    });
     if (data) req.write(data);
     req.end();
   });

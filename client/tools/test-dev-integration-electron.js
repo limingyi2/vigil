@@ -69,8 +69,9 @@ async function run() {
   assert.ok(calls.some(c => c.path === '/api/chat/stream'));
   console.log('PASS ordinary text retains streaming route');
   await ev("document.querySelector('#creatorBtn').click(); document.querySelector('#ta').value='safe draft'; document.querySelector('#ta').dispatchEvent(new Event('input')); document.querySelector('#sendBtn').click()");
-  await until("!document.querySelector('#sendBtn').classList.contains('is-sending')");
-  assert.ok(calls.some(c => c.path === '/api/creator/draft'));
+  const creatorDeadline=Date.now()+10000;
+  while(!calls.some(c=>c.path==='/api/creator/jobs')&&Date.now()<creatorDeadline) await delay(30);
+  assert.ok(calls.some(c => c.path === '/api/creator/jobs'));
   console.log('PASS Creator retains separate draft route');
   await ev("document.querySelector('#creatorBtn').click(); document.querySelector('#creatorBtn').click()");
   const pngBase64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9ZsAAAAASUVORK5CYII=';
