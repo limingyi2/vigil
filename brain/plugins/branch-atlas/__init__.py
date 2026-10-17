@@ -67,7 +67,7 @@ def _inspect_repo(body, query=None):
             "log", "--graph", "--oneline", "--decorate", "--all",
             "--date-order", "--no-color", "-n", "80",
         ])
-        status = _run_git(root, ["status", "--short", "--branch", "--no-color"])
+        status = _run_git(root, ["status", "--short", "--branch"])
         branch_items = [line[:240] for line in branches[:_MAX_BRANCHES]]
         return {
             "ok": True,
