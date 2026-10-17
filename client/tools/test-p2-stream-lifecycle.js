@@ -28,6 +28,15 @@ test('native project picker exposes only the directory-selection IPC', async () 
   assert.equal(calls[0][0], 'project-picker:directory');
 });
 
+test('Branch Atlas frontend parses and uses the native picker plus read-only inspect route', () => {
+  const file = path.resolve(__dirname, '../../brain/plugins/branch-atlas/frontend.js');
+  const source = fs.readFileSync(file, 'utf8');
+  assert.doesNotThrow(() => new Function(source));
+  assert.match(source, /projectPicker/);
+  assert.match(source, /api\\('POST', '\/api\/plugin\/branch-atlas\/inspect'/);
+  assert.match(source, /不会切换分支/);
+});
+
 test('100 shared chat/Creator rounds release IPC and subscriber callbacks', () => {
   const {api,ipc} = preload();
   let calls = 0;
