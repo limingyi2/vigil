@@ -49,21 +49,21 @@ test('shared subscriptions isolate errors, reentrant removal and duplicate callb
   assert.equal(ipc.listenerCount('api:stream:event'),0);
 });
 
-function pages() {
-  const observers=new Set(),storage=new Map(),handlers=new Set();
+function pages(options={}) {
+  const observers=new Set(),storage=new Map(),handlers=new Set(),toasts=[];
   const window={vigil:{onStreamEvent:fn=>{handlers.add(fn);return ()=>handlers.delete(fn);}}};
-  const context={window,console,setTimeout,clearTimeout,
+  const context={window,console,setTimeout,clearTimeout,confirm:options.confirm || (()=>true),
     document:{body:{}},
     MutationObserver:class {constructor(fn){this.fn=fn;} observe(){observers.add(this);} disconnect(){observers.delete(this);}},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,v)=>storage.set(key,v)},
-    U:{esc:String,icon:()=>'',toast:()=>{}},
-    API:{state:{cfg:{},src:'pc'},get:async()=>({ok:false}),post:async()=>({ok:false}),pick:x=>x},
+    U:{esc:String,icon:()=>'',toast:msg=>{toasts.push(String(msg));}},
+    API:{state:{cfg:{},src:'pc'},get:async()=>({ok:false}),post:options.post || (async()=>({ok:false})),pick:x=>x},
   };
   let source=fs.readFileSync(path.join(client,'src/js/pages.js'),'utf8');
   // Expose existing functions only in this isolated VM, without a production test API.
-  source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,creatorRequestFailure,rememberTurn,localRecords,watchCreatorJob};\n  global.PAGES = [');
+  source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,creatorRequestFailure,rememberTurn,localRecords,watchCreatorJob,creatorActionError,bindDraftCard};\n  global.PAGES = [');
   vm.runInNewContext(source,context);
-  return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers};
+  return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers,toasts};
 }
 
 function root() {
