@@ -66,6 +66,23 @@ function pages(options={}) {
   return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers,toasts};
 }
 
+function draftRoot() {
+  const nodes = {
+    '#crApproveNow': {disabled:false, textContent:'明确批准', style:{}},
+    '#crInstallNow': {disabled:false, textContent:'仅本次安装', style:{display:'none'}, dataset:{}},
+    '#crApprovalState': {textContent:'尚未批准'},
+  };
+  const listeners = {};
+  return {
+    nodes, listeners,
+    addEventListener(type, callback) { listeners[type] = callback; },
+    querySelector(selector) { return nodes[selector] || null; },
+    click(selector) {
+      const button = nodes[selector];
+      return listeners.click({target:{closest: candidate => candidate === selector ? button : null}});
+    },
+  };
+}
 function root() {
   const nodes=new Map();
   return {isConnected:true,innerHTML:'',querySelector(selector){
