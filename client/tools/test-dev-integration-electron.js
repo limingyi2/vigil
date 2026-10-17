@@ -7,6 +7,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-dev-ui-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 const client = path.resolve(__dirname, '..');
 const calls = [], chunks = [];
+const sessions = [];
+let sessionCounter = 0;
 let failNextUpload = false;
 let win;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -19,6 +21,12 @@ async function until(script) {
 function fixture(method, raw, body) {
   const p = raw.split('?')[0]; calls.push({method, path:p, body});
   let json = {ok:true, items:[]};
+  if (p === '/api/conversations' && method === 'GET') json = {ok:true,items:sessions};
+  if (p === '/api/conversations' && method === 'POST') {
+    const n=(++sessionCounter).toString(16).padStart(12,'0');
+    const item={id:`00000000-0000-4000-8000-${n}`,title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false};
+    sessions.unshift(item);json={ok:true,item};
+  }
   if (p === '/api/stats') json = {model:'fixture-mimo', turns:0};
   if (p === '/api/history') json = {items:[]};
   if (p === '/api/persona') json = {key:'default', name:'Vigil', templates:[]};
@@ -48,6 +56,7 @@ async function run() {
     return {ok:true};
   });
   const handlers = {
+    'app:instance-id': () => 'dev-integration-test-process',
     'cfg:get':()=>({wizard_done:true, roots:[]}), 'app:version':()=> 'dev-fixture',
     'plugins:load':()=>({ok:true}), 'auto:connect':()=>({ok:false}),
     'sidecar:status':()=>({status:'stopped'}), 'local:caps':()=>[],

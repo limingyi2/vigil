@@ -29,7 +29,7 @@ def _db():
 
 
 def _row(row):
-    return {"id": row[0], "title": row[1], "created_at": row[2],
+    return {"id": row[0], "title": "旧对话" if row[4] else row[1], "created_at": row[2],
             "updated_at": row[3], "legacy": bool(row[4])}
 
 
@@ -40,13 +40,22 @@ def _init(db):
 def list_for(owner, src, persona):
     with _LOCK, _db() as db:
         _init(db)
-        row = db.execute("SELECT id FROM conversations WHERE owner=? AND src=? AND persona=? AND legacy=1", (owner, src, persona)).fetchone()
-        if not row:
-            now = time.time()
-            cid = str(uuid.uuid4())
-            db.execute("INSERT INTO conversations VALUES (?,?,?,?,?,?,?,1)", (owner, src, persona, cid, "旧版对话", now, now))
         rows = db.execute("SELECT id,title,created,updated,legacy FROM conversations WHERE owner=? AND src=? AND persona=? ORDER BY updated DESC,created DESC", (owner, src, persona)).fetchall()
         return [_row(item) for item in rows]
+
+
+def ensure_legacy(owner, src, persona):
+    """Keep the legacy entry only when the caller has confirmed old history exists."""
+    with _LOCK, _db() as db:
+        _init(db)
+        row = db.execute("SELECT id FROM conversations WHERE owner=? AND src=? AND persona=? AND legacy=1",
+                         (owner, src, persona)).fetchone()
+        if row:
+            return row[0]
+        now, cid = time.time(), str(uuid.uuid4())
+        db.execute("INSERT INTO conversations VALUES (?,?,?,?,?,?,?,1)",
+                   (owner, src, persona, cid, "旧对话", now, now))
+        return cid
 
 
 def create(owner, src, persona):

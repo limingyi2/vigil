@@ -9,6 +9,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-p2-electron-'));
 app.setPath('userData', path.join(tmp, 'userdata'));
 let win, mode = 'success', streams = 0, cancels = 0;
 const runs = new Map(), results = [], rendererErrors = [];
+const conversations = [];
+let conversationCounter = 0;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ev = source => win.webContents.executeJavaScript(source, true);
 async function until(source) {
@@ -17,9 +19,15 @@ async function until(source) {
   throw Error('Timeout: '+source+'; chat='+String(await ev("document.querySelector('#msgs') ? document.querySelector('#msgs').textContent : ''")));
 }
 function ok(name) { results.push(name); console.log('PASS '+name); }
-function response(method, raw) {
+function response(method, raw, body) {
   const p = new URL(raw, 'http://fixture').pathname;
   let data = {};
+  if (p === '/api/conversations' && method === 'GET') data = {ok:true,items:conversations};
+  if (p === '/api/conversations' && method === 'POST') {
+    const suffix=(++conversationCounter).toString(16).padStart(12,'0');
+    const item={id:`00000000-0000-4000-8000-${suffix}`,title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000};
+    conversations.unshift(item);data={ok:true,item};
+  }
   if (p === '/api/persona') data = {name:'Fixture',key:'default',templates:[]};
   if (p === '/api/history') data = {items:[],display_turns:[...runs.values()]};
   if (p === '/api/creator/jobs') data = {items:[]};
@@ -35,12 +43,13 @@ function response(method, raw) {
   return {ok:true,status:200,json:data};
 }
 async function main() {
-  ipcMain.handle('api',(_, {method,path:p})=>response(method,p));
+  ipcMain.handle('api',(_, {method,path:p,body})=>response(method,p,body));
   ipcMain.handle('api:stream', async (event, {body})=>{
     streams++;
     assert.match(body.request_id,/^req_/);
     assert.equal(body.src,'pc');
-    assert.equal(body.session_id || 'main','main');
+    assert.ok(body.conversation_id && /^[0-9a-f-]{36}$/i.test(body.conversation_id));
+    assert.equal(body.session_id,body.conversation_id);
     if(mode === 'transport-failure') return {ok:false,status:0,err:'fixture timeout'};
     if(mode === 'truncated') {
       event.sender.send('api:stream:event',{type:'text',request_id:body.request_id,text:'不完整片段'});
@@ -70,6 +79,7 @@ async function main() {
     'wallpaper:request':{ok:true,data:{settings:{},wallpapers:[]}},'updater:check':{}
   })) ipcMain.handle(name,()=>value);
   ipcMain.handle('cfg:get',()=>cfg);
+  ipcMain.handle('app:instance-id',()=> 'p2-test-process');
   ipcMain.handle('cfg:set',(_,p)=>(cfg={...cfg,...p}));
   win = new BrowserWindow({show:false,width:1300,height:900,webPreferences:{
     preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});

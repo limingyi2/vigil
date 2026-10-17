@@ -15,6 +15,7 @@ const client = path.resolve(__dirname, '..');
 const baseline = process.argv.includes('--baseline');
 const src = baseline ? path.join(client, '_shots/ui-v2/baseline-src/src') : path.join(client, 'src');
 const shots = path.join(client, '_shots/ui-v2');
+const evidenceDir = path.resolve(client, '..', 'reports', 'p6.1-evidence');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-chat-v2-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -22,8 +23,13 @@ const results = [], errors = [], requests = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win, host, history = [], failure = false, historyError = false, personaEmpty = false;
 const legacyConversationId = '11111111-1111-4111-8111-111111111111';
-const conversations = [{id:legacyConversationId,title:'旧版对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:true}];
+const conversations = [{id:legacyConversationId,title:'之前的聊天',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:true}];
 const otherHistories = new Map();
+const creatorJobs = new Map();
+const creatorJobById = new Map();
+const fixtureDraft = {id:'draft_p6_session',kind:'plugin',summary:'会话隔离草稿',version:1,model:'fixture',
+  requirement:'P6_SESSION_DRAFT',risks:'fixture only',validation:{ok:true,errors:[],warnings:[]},
+  files:[{name:'p6_session.py',content:'NAME = "p6_session"\nDESC = "fixture"\n'}]};
 let uploadFailure = false;
 let savedClipboard;
 let gpu;
@@ -32,7 +38,7 @@ const answer = '# 执行结果\n\n这是一段用于检查长文本排版的回�
 function result(name, detail) { results.push({ name, status:'passed', ...(detail ? { detail } : {}) }); console.log('PASS ' + name); }
 function fixtureApi(method, raw, body, base) {
   const url = new URL(raw, 'http://fixture'); const p = url.pathname;
-  requests.push({ method, path:p, body, base });
+  requests.push({ method, path:p, query:Object.fromEntries(url.searchParams.entries()), body, base });
   let json = {};
   if (p === '/api/stats') json = { model:'mimo-v2.6-flash', name:'测试 Agent', turns:4, tok_in:2400, tok_out:600 };
   if (p === '/api/persona') json = { key:'default', name:'Vigil', templates:[{key:'default',label:'Vigil',desc:'日常对话与任务协作'},{key:'focus',label:'专注助手',desc:'清晰地拆解目标，逐步完成工作'}] };
@@ -44,7 +50,9 @@ function fixtureApi(method, raw, body, base) {
   if (p === '/api/plugin/kb/stats') json = {docs:1,count:2,dir:'temporary fixture/kb',scope:'pc'};
   if (p === '/api/plugin/kb/docs') json = {items:[{name:'fixture.md',chunks:2,size:100}]};
   if (p === '/api/history' && historyError) return {ok:false,status:503,err:'隔离测试：历史服务暂时不可用'};
-  if (p === '/api/conversations' && method === 'GET') json = {ok:true,items:conversations.slice().sort((a,b)=>b.updated_at-a.updated_at)};
+  if (p === '/api/conversations' && method === 'GET') json = {ok:true,items:conversations.map(s=>s.legacy
+    ? {...s,title:history.find(m=>['user','me','self'].includes(String(m.role).toLowerCase())&&m.text)?.text||'旧对话'} : s)
+    .sort((a,b)=>b.updated_at-a.updated_at)};
   if (p === '/api/conversations' && method === 'POST') {
     const item={id:crypto.randomUUID(),title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false};
     conversations.push(item); otherHistories.set(item.id,[]); json={ok:true,item};
@@ -54,6 +62,16 @@ function fixtureApi(method, raw, body, base) {
   }
   if (p === '/api/plugins/frontend') json = { version:1, plugins:[] };
   if (p === '/api/history') { const cid=url.searchParams.get('conversation_id'); json = { items:cid===legacyConversationId?history:(otherHistories.get(cid)||[]), display_turns:[] }; }
+  if (p === '/api/creator/jobs' && method === 'POST') {
+    const job={job_id:'job_'+crypto.randomUUID(),request_id:body.request_id,kind:body.kind,requirement:body.requirement,
+      conversation_id:body.conversation_id,created_at:Date.now()/1000,status:'succeeded',stage:'complete',draft_id:fixtureDraft.id,content:'fixture generated',event_cursor:1};
+    creatorJobs.set(body.conversation_id,[...(creatorJobs.get(body.conversation_id)||[]),job]);
+    creatorJobById.set(job.job_id,job);json={ok:true,...job};
+  }
+  if (p === '/api/creator/jobs' && method === 'GET') json={ok:true,items:creatorJobs.get(url.searchParams.get('conversation_id'))||[]};
+  if (p.startsWith('/api/creator/jobs/') && !p.endsWith('/events')) json={ok:true,...(creatorJobById.get(p.split('/').at(-1))||{})};
+  if (p === '/api/creator/draft') json={ok:true,draft:fixtureDraft};
+  if (p === '/api/creator/drafts') json={ok:true,drafts:[]};
   if (p === '/api/history/clear') history = [];
   if (p === '/api/models') json = { current:{ model:'mimo-v2.6-flash', api_key_set:true }, providers:[], models:[] };
   if (p === '/api/attachments/capabilities') json = {video:false,video_frames:true};
@@ -92,11 +110,21 @@ async function setup() {
   // are fixtures. No synthetic window.vigil or extra test bridge is injected.
   ipcMain.handle('wallpaper:request', async (_, {method,resource,body}) => { try { return {ok:true,...await host.request(method,resource,body)}; } catch(e) { return {ok:false,err:e.message}; } });
   ipcMain.handle('api', (_, {method,path:p,body,base}) => fixtureApi(method,p,body,base));
+  ipcMain.handle('app:instance-id',()=> 'ui-v2-test-process');
   ipcMain.handle('api:stream', async (event,{path:p,body}) => {
+    if (p.includes('/api/creator/jobs/')) {
+      const job=creatorJobById.get(p.split('/')[4]);
+      if(job)event.sender.send('api:stream:event',{job_id:job.job_id,type:'snapshot',payload:job});
+      await wait(30);return {ok:true};
+    }
     requests.push({method:'STREAM',path:p,body});
     if (failure) { await wait(120); event.sender.send('api:stream:event',{type:'error',msg:'隔离测试错误'}); return {ok:false}; }
     const activeHistory=body.conversation_id===legacyConversationId?history:otherHistories.get(body.conversation_id);
-    if(activeHistory) activeHistory.push({role:'user',text:body.text,t:Date.now()});
+    if(activeHistory) {
+      activeHistory.push({role:'user',text:body.text,t:Date.now()});
+      const conv=conversations.find(x=>x.id===body.conversation_id);
+      if(conv && !conv.legacy && conv.title==='新对话')conv.title=String(body.text||'').trim().slice(0,48)||conv.title;
+    }
     event.sender.send('api:stream:event',{type:'think',text:'检查布局'});
     await wait(120);
     for (const text of [answer.slice(0,100),answer.slice(100)]) { event.sender.send('api:stream:event',{type:'text',text}); await wait(120); }
@@ -193,7 +221,7 @@ async function wallpaperSettingsChecks() {
   result('wallpaper search/filter, all tabs, canceled import/directory and refresh');
 }
 async function main() {
-  await app.whenReady(); fs.mkdirSync(shots,{recursive:true}); await setup();
+  await app.whenReady(); fs.mkdirSync(shots,{recursive:true}); fs.mkdirSync(evidenceDir,{recursive:true}); await setup();
   for(const stream of [process.stdout,process.stderr]) {
     stream.emit('error',Object.assign(new Error('isolated disconnected-pipe fixture'),{code:'EPIPE'}));
   }
@@ -245,6 +273,7 @@ async function main() {
   assert.ok(await ev(`document.querySelector('#ta').clientHeight<=180 && document.querySelector('#ta').clientHeight>=120`));
   assert.equal(await ev(`getComputedStyle(document.querySelector('#ta')).overflowY`),'auto');
   await shot('after-dark-multiline'); result('textarea auto-height and max-height');
+  await chat(); // Historical sessions are entered explicitly; startup stays on the welcome page.
   let count=requests.filter(r=>r.method==='STREAM').length;
   await ev(`document.querySelector('#ta').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',shiftKey:true,bubbles:true,cancelable:true}))`);
   assert.equal(requests.filter(r=>r.method==='STREAM').length,count);
@@ -293,29 +322,58 @@ async function main() {
   await ev(`document.querySelector('[data-session]').click()`);
   assert.equal(await ev(`document.querySelector('[data-session]').closest('.session-row').classList.contains('on')`),true);
   result('history restored and persistent conversation selection is interactive');
-  const conversationA=await ev(`API.state.chatConversationId`);
+  await until(`document.querySelector('[data-session="${legacyConversationId}"]').textContent.includes('检查界面')`);
+  const legacyHistoryText=await ev(`document.querySelector('#msgs').textContent`);
+  assert.ok(legacyHistoryText.includes('检查界面'));
+  const conversationLegacy=await ev(`API.state.chatConversationId`);
   await ev(`document.querySelector('#newTopicBtn').click()`);
-  await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationA)} && document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
-  const conversationB=await ev(`API.state.chatConversationId`);
+  await until(`API.state.chatConversationId==='' && document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
+  assert.equal(await ev(`document.querySelector('#msgs').textContent`),'');
+  await ev(`document.querySelector('#ta').value='A_ONLY';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
+  await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationLegacy)} && document.querySelector('#msgs').textContent.includes('A_ONLY') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
+  const conversationA=await ev(`API.state.chatConversationId`);
+  assert.equal(requests.filter(r=>r.method==='STREAM').at(-1).body.conversation_id,conversationA);
+  await ev(`document.querySelector('#newTopicBtn').click()`);
+  await until(`API.state.chatConversationId==='' && document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
   assert.equal(await ev(`document.querySelector('#msgs').textContent`),'');
   await ev(`document.querySelector('#ta').value='B_ONLY';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
-  await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
+  await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationA)} && document.querySelector('#msgs').textContent.includes('B_ONLY') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
+  const conversationB=await ev(`API.state.chatConversationId`);
   assert.equal(requests.filter(r=>r.method==='STREAM').at(-1).body.conversation_id,conversationB);
   await ev(`document.querySelector('[data-session="${conversationA}"]').click()`);
-  await until(`document.querySelector('#msgs').textContent.includes('检查界面')`);
+  await until(`document.querySelector('#msgs').textContent.includes('A_ONLY')`);
   assert.equal(await ev(`document.querySelector('#msgs').textContent.includes('B_ONLY')`),false);
   await ev(`document.querySelector('#ta').value='A_CONTINUE';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
-  await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
+  await until(`document.querySelector('#msgs').textContent.includes('A_CONTINUE') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
   assert.equal(requests.filter(r=>r.method==='STREAM').at(-1).body.conversation_id,conversationA);
+  await ev(`document.querySelector('#creatorBtn').click()`);
+  await ev(`document.querySelector('#ta').value='P6_SESSION_DRAFT';document.querySelector('#ta').dispatchEvent(new Event('input'))`);
+  await until(`document.querySelector('#creatorBtn').classList.contains('on') && !document.querySelector('#sendBtn').disabled`);
+  await ev(`document.querySelector('#sendBtn').click()`);
+  await until(`document.querySelector('.crturn[data-crid="draft_p6_session"]')`);
+  assert.ok(requests.some(r=>r.path==='/api/creator/jobs' && r.method==='POST' && r.body.conversation_id===conversationA));
   await ev(`document.querySelector('[data-session="${conversationB}"]').click()`);
   await until(`document.querySelector('#msgs').textContent.includes('B_ONLY')`);
   assert.equal(await ev(`document.querySelector('#msgs').textContent.includes('A_CONTINUE')`),false);
+  assert.equal(await ev(`document.querySelectorAll('.crturn[data-crid="draft_p6_session"]').length`),0);
+  assert.ok(requests.some(r=>r.path==='/api/creator/jobs' && r.method==='GET' && r.query.conversation_id===conversationB));
+  await ev(`document.querySelector('#msgs').scrollTop=0`);
+  await until(`document.querySelector('[data-session="${conversationB}"] .tx b').textContent==='B_ONLY'`);
+  fs.writeFileSync(path.join(evidenceDir,'chat-b-isolated.png'),(await win.webContents.capturePage()).toPNG());
+  await ev(`document.querySelector('[data-session="${conversationA}"]').click()`);
+  await until(`document.querySelector('.crturn[data-crid="draft_p6_session"]')`);
+  assert.equal(await ev(`document.querySelector('#msgs').textContent.includes('B_ONLY')`),false);
+  fs.writeFileSync(path.join(evidenceDir,'chat-a-draft-restored.png'),(await win.webContents.capturePage()).toPNG());
+  await ev(`document.querySelector('#creatorBtn').click();document.querySelector('#creatorBtn').click()`);
+  await until(`document.querySelector('#creatorBtn').textContent.includes('关')`);
+  await ev(`document.querySelector('[data-session="${conversationB}"]').click()`);
+  await until(`document.querySelector('#msgs').textContent.includes('B_ONLY')`);
   await ev(`document.querySelector('[data-rename="${conversationB}"]').click()`);
   await ev(`document.querySelector('.session-title-edit').value='B 独立会话';document.querySelector('.session-row button[aria-label="保存标题"]').click()`);
-  await until(`document.querySelector('[data-session="${conversationB}"]').textContent.includes('B 独立会话')`);
+  await until(`document.querySelector('[data-session="${conversationB}"]').textContent.includes('B 独立')`);
   win.webContents.reload();
   await until(`API.state.chatConversationId===${JSON.stringify(conversationB)} && document.querySelector('#msgs').textContent.includes('B_ONLY')`);
-  result('A/B session creation, switch, continuation, title, renderer restart and transcript isolation');
+  result('A/B independent messages, scoped Creator draft restore, continuation, legacy label and renderer restart');
   await ev(`document.querySelector('#themeBtn').click()`); await shot('after-light-chat');
   await ev(`document.querySelector('#themeBtn').click()`);
   result('ordinary light-theme history and code rendering');

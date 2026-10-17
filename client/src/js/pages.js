@@ -53,7 +53,7 @@
   function recordKey() {
     const cfg = state.cfg || {};
     return 'vigil.display.v1:' + JSON.stringify([state.base || cfg.base || '', cfg.device_id || '',
-      cfg.token_kind || '', state.src || 'pc', state.chatConversationId || 'main']);
+      cfg.token_kind || '', state.src || 'pc', state.chatConversationId || 'welcome']);
   }
   async function loadRecordScope() {
     try { await API.loadCfg(); return true; }
@@ -249,8 +249,8 @@
     if (!pop || !btn) return null;
     const listEl = view.querySelector('#mqList');
     const searchEl = view.querySelector('#mqSearch');
+    const searchToggle = view.querySelector('#mqSearchToggle');
     const msgEl = view.querySelector('#mqMsg');
-    const curEl = view.querySelector('#mqCur');
 
     let data = { models: [], current: {} };
     let open = false;
@@ -267,15 +267,13 @@
       msgEl.style.color = bad ? 'var(--err)' : '';
       msgEl.title = text || '';
     }
-    // 当前模型：三处显示（composer 按钮 / 顶栏 / 下拉头部）一起刷新，
-    // 免得出现"按钮上写着 A、顶栏写着 B"这种自相矛盾。
+    // 当前模型名称同步到 composer 和顶栏；列表行的勾选由服务端 active 状态绘制。
     function label() {
       const c = data.current || {};
       btn.textContent = (c.name || c.model || '未配置') + ' ▾';
       btn.title = c.model
         ? ('当前模型：' + c.model + '（' + (c.provider_name || '?') + '）· 点一下切换')
         : '还没有可用模型：点开看看，或去设置里配一个';
-      if (curEl) curEl.textContent = c.model ? (provOf(c) + ' · ' + c.model) : '还没配模型';
       const top = topEl();
       if (top && c.model) { top.textContent = c.model; top.title = c.model; }
     }
@@ -293,18 +291,17 @@
         const i = all.indexOf(m);
         // 连接状态只用服务端给的事实：这家存没存过密钥。
         // 真正能不能连通留到切换时探（探不通会明说，不在这儿编）。
-        const st = m.active ? '<span class="tag ok">当前</span>'
-          : (m.has_key ? '<span class="muted" style="font-size:11.5px">已存密钥</span>'
-            : '<span class="tag warn">缺密钥</span>');
-        return '<div class="lprow mqrow' + (m.active ? ' on' : '') + '" role="button" tabindex="0" data-i="' + i + '">' +
-          '<span class="ic">' + icon(m.active ? 'check' : 'plug', 'sm') + '</span>' +
-          '<span class="lb" style="flex:1;min-width:0;text-align:left">' +
+        const status = !m.has_key && m.provider !== 'custom'
+          ? '<span class="mq-status">缺少密钥</span>' : '';
+        return '<div class="mq-item"><button class="mqrow' + (m.active ? ' on' : '') + '" type="button" data-i="' + i +
+          '" aria-pressed="' + String(!!m.active) + '">' +
+          '<span class="mq-check" aria-hidden="true">' + (m.active ? icon('check', 'sm') : '') + '</span>' +
+          '<span class="lb">' +
           '<b>' + esc(nameOf(m)) + (m.unsaved ? ' <span class="muted">(未保存)</span>' : '') + '</b>' +
           '<span class="muted">' + esc(provOf(m)) + ' · ' + esc(m.model) + '</span>' +
-          '</span>' + st +
-          (m.unsaved ? '' : '<span class="mq-x" role="button" tabindex="0" data-x="' + i +
-            '" title="从清单里移除（不影响当前设置）" aria-label="从清单里移除">×</span>') +
-          '</div>';
+          '</span>' + status +
+          '</button>' + (m.unsaved ? '' : '<button class="mq-x" type="button" data-x="' + i +
+            '" title="从清单里移除（不影响当前设置）" aria-label="从清单里移除 ' + esc(nameOf(m)) + '">×</button>') + '</div>';
       }).join('');
       listEl.querySelectorAll('.mqrow').forEach((n) => {
         const pickRow = () => {
@@ -321,11 +318,8 @@
         });
       });
       listEl.querySelectorAll('.mq-x').forEach((n) => {
-        const stop = (e) => { e.stopPropagation(); e.preventDefault(); };
+        const stop = (e) => { e.stopPropagation(); };
         n.addEventListener('click', (e) => { stop(e); forget(all[Number(n.dataset.x)]); });
-        n.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') { stop(e); forget(all[Number(n.dataset.x)]); }
-        });
       });
     }
     // 从清单移除一条（需求：删掉模型后下拉要跟着变）。只动清单不动当前配置，
@@ -351,6 +345,7 @@
       data = { models: r.models || [], current: r.current || {} };
       label();
       draw();
+      if (open) placePop();
     }
     async function select(m) {
       if (switching) return;
@@ -377,8 +372,8 @@
           { provider: m.provider, base: m.base, model: m.model }));
         if (!r || !r.ok) { say('切换失败：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
         await load();
+        say('');
         if (r.warn) say(r.warn, true);
-        else say('已切到 ' + ((data.current || {}).model || m.model));
         h.onSwitched && h.onSwitched(data.current || {});
       } catch (e) {
         say('切换失败：' + (e && e.message ? e.message : e), true);
@@ -386,13 +381,27 @@
         switching = false;
       }
     }
+    function placePop() {
+      if (pop.hidden || !btn.isConnected) return;
+      const composer = pop.closest('.composer');
+      if (!composer) return;
+      const cr = composer.getBoundingClientRect();
+      const br = btn.getBoundingClientRect();
+      const width = pop.getBoundingClientRect().width;
+      const left = Math.max(cr.left + 12, Math.min(window.innerWidth - width - 12, br.right - width));
+      const top = Math.max(12, br.top - pop.offsetHeight - 8);
+      pop.style.left = (left - cr.left) + 'px';
+      pop.style.right = 'auto';
+      pop.style.top = (top - cr.top) + 'px';
+      pop.style.bottom = 'auto';
+    }
     function closePop() { open = false; pop.hidden = true; }
     function openPop() {
       open = true; pop.hidden = false;
-      if (searchEl) searchEl.value = '';
+      placePop();
+      if (searchEl) { searchEl.value = ''; searchEl.hidden = true; }
       say('');
       load();
-      setTimeout(() => { if (searchEl && searchEl.isConnected) searchEl.focus(); }, 30);
     }
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -400,6 +409,14 @@
       if (open) closePop(); else openPop();
     });
     view.querySelector('#mqClose').addEventListener('click', closePop);
+    if (searchToggle) searchToggle.addEventListener('click', () => {
+      if (!searchEl) return;
+      searchEl.hidden = !searchEl.hidden;
+      if (searchEl.hidden) { searchEl.value = ''; draw(); }
+      else searchEl.focus();
+      placePop();
+    });
+    window.addEventListener('resize', placePop);
     view.querySelector('#mqManage').addEventListener('click', (e) => {
       e.stopPropagation();
       closePop();
@@ -450,32 +467,38 @@
       '<button class="ibtn" id="clearBtn" title="清空本机（pc）会话历史">' + icon('dots', 'sm') + '</button>' +
       '</div>';
 
-    // 会话由 Brain 持久化；本地只记当前选中 ID，不用日期或时间标记切历史。
+    // 会话由 Brain 持久化。localStorage 保留作旧版本兼容，但不会用于冷启动自动选中。
     panel.innerHTML =
       '<div class="phead"><h2>会话</h2><button class="ibtn" id="newTopicBtn" title="新建空白会话" aria-label="新建会话">' + icon('plus', 'sm') + '</button></div>' +
       '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>';
     const sessList = panel.querySelector('#sessList');
 
     const SESS_KEY = 'vigil.chat.active.v2:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
+    const RENDERER_SESSION_KEY = 'vigil.chat.renderer-session.v1';
     let sessionItems = [];
     let activeConversationId = '';
+    state.chatConversationId = '';
+    let appInstanceId = '';
+    let createConversationPromise = null;
+    let rendererSelection = null;
+    function rememberRendererSelection(id, mode) {
+      rendererSelection = { app_instance: appInstanceId, conversation_id: id || '', mode: mode || (id ? 'conversation' : 'welcome') };
+      try { localStorage.setItem(RENDERER_SESSION_KEY, JSON.stringify(rendererSelection)); } catch (_) {}
+    }
     async function refreshConversations() {
       if (API.runtime.preview) {
         const id = '00000000-0000-4000-8000-000000000001';
         sessionItems = [{id,title:'预览对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false}];
-        activeConversationId = id; state.chatConversationId = id; drawSessions(); return id;
+        if (activeConversationId && activeConversationId !== id) activeConversationId = '';
+        state.chatConversationId = activeConversationId; drawSessions(); return activeConversationId;
       }
       const r = pick(await get('/api/conversations?src=pc'));
       if (!r.ok || !Array.isArray(r.items)) throw new Error(r._err || '会话列表加载失败');
       sessionItems = r.items;
-      let saved = '';
-      try { saved = localStorage.getItem(SESS_KEY) || ''; } catch (_) {}
-      if (!sessionItems.some((x) => x.id === saved)) saved = sessionItems[0] && sessionItems[0].id || '';
-      activeConversationId = saved;
-      state.chatConversationId = saved;
-      if (saved) { try { localStorage.setItem(SESS_KEY, saved); } catch (_) {} }
+      if (activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
+      state.chatConversationId = activeConversationId;
       drawSessions();
-      return saved;
+      return activeConversationId;
     }
     const tsOf = (t) => {
       const n = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(String(t).replace(/-/g, '/'));
@@ -501,19 +524,40 @@
         const updated = Number(s.updated_at || s.created_at || 0) * 1000;
         return '<div class="li session-row' + (s.id === activeConversationId ? ' on' : '') + '">' +
           '<button class="session-open" data-session="' + esc(s.id) + '" title="切换会话">' +
-          '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(s.title) + '</b>' +
+          '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(String(s.title || '').slice(0, 7)) + '</b>' +
           '<span>' + esc(relative(updated)) + '</span></span></button>' +
           '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button></div>';
       }).join('');
       sessList.querySelectorAll('[data-session]').forEach((n) => n.addEventListener('click', () => activateConversation(n.dataset.session)));
       sessList.querySelectorAll('[data-rename]').forEach((n) => n.addEventListener('click', () => renameConversation(n.dataset.rename)));
     }
-    async function activateConversation(id) {
+    async function activateConversation(id, options = {}) {
       if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
       activeConversationId = id;
       state.chatConversationId = id;
-      try { localStorage.setItem(SESS_KEY, id); } catch (_) {}
+      if (options.persist !== false) {
+        try { localStorage.setItem(SESS_KEY, id); } catch (_) {}
+        rememberRendererSelection(id, 'conversation');
+      }
       lastCount = -1;
+      conversationLoadSeq++;
+      renderedDraftConversationId = id;
+      // Detach the previous transcript and any live task card immediately.
+      // Its persistent request continues in Brain and is restored when this
+      // conversation is selected again.
+      msgs.innerHTML = '';
+      heroEl.hidden = false;
+      heroEl.innerHTML = heroHtml();
+      chat.classList.add('is-empty');
+      view.querySelector('#chatLoadState').hidden = true;
+      busy = false;
+      busyScope = null;
+      taEl.value = '';
+      attachment = null;
+      imgB64 = '';
+      attachBox.hidden = true;
+      attachBox.innerHTML = '';
+      updateComposer();
       drawSessions();
       await loadMsgs(true);
     }
@@ -533,12 +577,7 @@
       row.querySelector('button').onclick = save;
       input.onkeydown = (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') drawSessions(); };
     }
-    panel.querySelector('#newTopicBtn').addEventListener('click', async () => {
-        const r = pick(await post('/api/conversations', {src:'pc'}));
-        if (!r.ok || !r.item) { toast('新建会话失败：' + (r._err || '')); return; }
-        sessionItems.unshift(r.item);
-        await activateConversation(r.item.id);
-    });
+    panel.querySelector('#newTopicBtn').addEventListener('click', () => showWelcomeHome(true));
 
     view.innerHTML =
       '<div class="split no-right">' +
@@ -548,10 +587,11 @@
       '    <div class="msgs" id="msgs" role="log" aria-label="聊天记录"></div>' +
       '    <div class="composer">' +
       '      <div class="localpop modelpop" id="modelPop" hidden>' +
-      '        <div class="lph">模型<span class="muted" id="mqCur"></span>' +
+      '        <div class="lph"><span>选择模型</span>' +
+      '          <button class="ibtn" id="mqSearchToggle" aria-label="搜索模型" title="搜索模型">' + icon('search', 'sm') + '</button>' +
       '          <button class="ibtn" id="mqClose" aria-label="收起模型列表" title="收起">' + icon('x', 'sm') + '</button></div>' +
       '        <div class="lpbody">' +
-      '          <input class="input" id="mqSearch" placeholder="搜索模型或服务商…" aria-label="搜索模型">' +
+      '          <input class="input" id="mqSearch" placeholder="搜索模型或服务商…" aria-label="搜索模型" hidden>' +
       '          <div id="mqList"></div>' +
       '        </div>' +
       '        <div class="lpadd mqfoot">' +
@@ -723,6 +763,86 @@
 
     let lastCount = -1;
     let busy = false;
+    let busyScope = null;
+    let conversationLoadSeq = 0;
+    let renderedDraftConversationId = '';
+    function finishBusy(scope) {
+      if (busyScope !== scope) return;
+      busy = false;
+      busyScope = null;
+      updateComposer();
+    }
+    function showWelcomeHome(persist = false) {
+      activeConversationId = '';
+      state.chatConversationId = '';
+      lastCount = -1;
+      conversationLoadSeq++;
+      renderedDraftConversationId = '';
+      msgs.innerHTML = '';
+      heroEl.hidden = false;
+      heroEl.innerHTML = heroHtml();
+      heroEl.querySelectorAll('[data-hint]').forEach((button) => button.addEventListener('click', () => {
+        const input = view.querySelector('#ta');
+        if (input) { input.value = button.dataset.hint; input.dispatchEvent(new Event('input')); input.focus(); }
+      }));
+      chat.classList.add('is-empty');
+      view.querySelector('#chatLoadState').hidden = true;
+      busy = false;
+      busyScope = null;
+      if (typeof taEl !== 'undefined') taEl.value = '';
+      if (typeof clearAttachment === 'function') clearAttachment();
+      if (persist) rememberRendererSelection('', 'welcome');
+      drawSessions();
+    }
+    async function ensureConversation() {
+      if (activeConversationId) return activeConversationId;
+      if (createConversationPromise) return createConversationPromise;
+      createConversationPromise = (async () => {
+        if (API.runtime.preview) {
+          const item = sessionItems[0];
+          if (item) activeConversationId = item.id;
+        } else {
+          const result = pick(await post('/api/conversations', {src:'pc'}));
+          if (!result.ok || !result.item || !result.item.id) return '';
+          const existing = sessionItems.findIndex((item) => item.id === result.item.id);
+          if (existing >= 0) sessionItems.splice(existing, 1);
+          sessionItems.unshift(result.item);
+          activeConversationId = result.item.id;
+        }
+        if (!activeConversationId) return '';
+        state.chatConversationId = activeConversationId;
+        try { localStorage.setItem(SESS_KEY, activeConversationId); } catch (_) {}
+        rememberRendererSelection(activeConversationId, 'conversation');
+        drawSessions();
+        return activeConversationId;
+      })().catch((error) => { toast('新建会话失败：' + String(error.message || error)); return ''; })
+        .finally(() => { createConversationPromise = null; });
+      return createConversationPromise;
+    }
+    async function initializeConversationView() {
+      try {
+        appInstanceId = global.vigil && global.vigil.appInstanceId
+          ? String(await global.vigil.appInstanceId() || '') : 'browser-session';
+      } catch (_) { appInstanceId = 'browser-session'; }
+      try {
+        rendererSelection = JSON.parse(localStorage.getItem(RENDERER_SESSION_KEY) || 'null');
+      } catch (_) { rendererSelection = null; }
+      const restoreId = rendererSelection && rendererSelection.app_instance === appInstanceId
+        && rendererSelection.mode === 'conversation' ? rendererSelection.conversation_id : '';
+      if (!await loadRecordScope()) { showWelcomeHome(false); return; }
+      try { await refreshConversations(); }
+      catch (error) {
+        showWelcomeHome(false);
+        sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">会话列表暂不可用</div>';
+        return;
+      }
+      if (!msgs.isConnected) return;
+      if (restoreId && sessionItems.some((item) => item.id === restoreId)) {
+        await activateConversation(restoreId, {persist:false});
+      } else {
+        showWelcomeHome(false);
+      }
+    }
     // ── 创作模式（Creator Mode MVP-1）─────────────────────────
     // 主页对话里的一个模式：切到「创作」后，发给 Agent 的自然语言不再进
     // /api/chat，而是进 /api/creator/draft 生成草稿卡。草稿只存独立工作区、
@@ -1036,21 +1156,28 @@
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
+      // The welcome page has no conversation context; never load unscoped
+      // history or Creator Jobs while it is active.
+      if (!activeConversationId) return;
+      const loadSeq = ++conversationLoadSeq;
+      let loadConversationId = activeConversationId;
       const loadState = view.querySelector('#chatLoadState');
       const showRetry = (message) => {
         heroEl.hidden = true; chat.classList.remove('is-empty'); loadState.hidden = false;
         loadState.innerHTML = '<b>暂时无法加载会话</b><p>' + esc(message || '检查连接设置') + '</p><button class="btn oline" id="retryHistory">重新加载</button>';
         loadState.querySelector('button').onclick = () => loadMsgs(true);
       };
-      if (!await loadRecordScope()) { if (force || lastCount < 0) showRetry(state.recordScopeError || '无法读取当前连接身份'); return; }
-      if (!activeConversationId) {
-        try { await refreshConversations(); }
-        catch (e) { showRetry(e.message || '会话服务暂不可用'); return; }
-      }
+      if (!await loadRecordScope()) { if (loadSeq === conversationLoadSeq && (force || lastCount < 0)) showRetry(state.recordScopeError || '无法读取当前连接身份'); return; }
+      if (loadSeq !== conversationLoadSeq || (loadConversationId && activeConversationId !== loadConversationId)) return;
+      loadConversationId = activeConversationId;
       state.chatConversationId = activeConversationId;
-      const r = pick(await get('/api/history?limit=300&src=pc&conversation_id=' + encodeURIComponent(activeConversationId)));
-      const creatorHistory = pick(await get('/api/creator/jobs'));
-      if (!msgs.isConnected) return;
+      const [historyResponse, creatorResponse] = await Promise.all([
+        get('/api/history?limit=300&src=pc&conversation_id=' + encodeURIComponent(loadConversationId)),
+        get('/api/creator/jobs?conversation_id=' + encodeURIComponent(loadConversationId)),
+      ]);
+      const r = pick(historyResponse);
+      const creatorHistory = pick(creatorResponse);
+      if (!msgs.isConnected || loadSeq !== conversationLoadSeq || activeConversationId !== loadConversationId) return;
       if (!r.ok && !localRecords().length && !(creatorHistory.items || []).length) {
         if (force || lastCount < 0) {
           showRetry(r._err || '检查连接设置');
@@ -1061,7 +1188,9 @@
       const items = (r.items || []).slice();
       const records = new Map(localRecords().map(item=>[item.request_id,item]));
       for (const item of r.display_turns || []) records.set(item.request_id, {...item,kind:'chat'});
-      for (const job of creatorHistory.items || []) records.set(job.request_id, {...job,input:job.feedback || job.requirement});
+      for (const job of creatorHistory.items || []) {
+        if (job.conversation_id === loadConversationId) records.set(job.request_id, {...job,input:job.feedback || job.requirement});
+      }
       const jobsToWatch = [];
       for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
         const input = item.input || item.requirement || '';
@@ -1101,10 +1230,11 @@
       drawSessions();
       heroEl.hidden = true;
       chat.classList.remove('is-empty');
-      // 草稿卡不在聊天历史里（草稿在独立工作区，不走 /api/chat）。重绘消息流
-      // 前先把 .crturn 摘下来，画完按原顺序贴回末尾 —— 否则之后每来一条
-      // 新历史消息，之前生成的草稿卡就凭空没了（用户会以为草稿丢了）。
-      const draftCards = [...msgs.querySelectorAll('.crturn')];
+      // Preserve live draft nodes only while refreshing this same conversation.
+      // Switching sessions detaches these nodes; scoped Creator jobs restore
+      // that conversation's cards from durable Brain state.
+      const draftCards = renderedDraftConversationId === loadConversationId
+        ? [...msgs.querySelectorAll('.crturn')] : [];
       msgs.innerHTML = items.map((m) => {
         const mine = ['me', 'user', 'self'].includes(String(m.role || '').toLowerCase());
         // 用户消息纯文本（esc），AI 消息用 Markdown 渲染
@@ -1122,6 +1252,7 @@
             '<button class="btn oline agent-cancel" data-run="' + esc(m.run.run_id) + '">取消任务</button>' : '') +
           '</div></div></div>';
       }).join('');
+      renderedDraftConversationId = loadConversationId;
       for (const button of msgs.querySelectorAll('.agent-cancel')) {
         button.onclick = async () => {
           button.disabled = true;
@@ -1149,12 +1280,24 @@
         renderAttachment();
         return;
       }
+      if (!activeConversationId) {
+        const welcomeScope = recordKey();
+        busy = true;
+        busyScope = welcomeScope;
+        updateComposer();
+        const createdId = await ensureConversation();
+        if (!createdId) { finishBusy(welcomeScope); return; }
+        finishBusy(welcomeScope);
+      }
+      const sendConversationId = activeConversationId;
+      const sendScope = recordKey();
       // 创作模式：同一条输入框，发给 creator 而不是聊天历史
       if (creatorMode !== 'off' && text) { creatorSend(text); return; }
       const pending = attachment;
       const uploadedAttachments = [];
       if (pending && pending.kind !== 'image') {
         busy = true;
+        busyScope = sendScope;
         pending.status = '准备上传';
         updateComposer();
         try {
@@ -1163,6 +1306,7 @@
           // 这份已经上传完成的原文件。
           const original = await uploadAttachment(pending);
           uploadedAttachments.push(original);
+          if (activeConversationId !== sendConversationId) { finishBusy(sendScope); return; }
           if (pending.kind === 'video') {
             if (pending.videoUnsupported && pending.videoChoice === 'frames') {
                 pending.status = '提取关键帧…';
@@ -1199,14 +1343,14 @@
           pending.failed = true;
           pending.status = '上传失败：' + String(e.message || e).slice(0, 80);
           renderAttachment();
-          busy = false;
-          updateComposer();
+          finishBusy(sendScope);
           return;
         }
       }
+      if (activeConversationId !== sendConversationId) { finishBusy(sendScope); return; }
       const sendingImg = imgB64;
       const requestId = 'req_' + crypto.randomUUID();
-      const turnScope = recordKey();
+      const turnScope = sendScope;
       const remember = patch => rememberTurn(requestId, patch, turnScope);
       remember({input:text,kind:'chat',status:'pending'});
       const sendingAttachments = uploadedAttachments;
@@ -1219,6 +1363,7 @@
       attachBox.innerHTML = '';
       ta.value = '';
       busy = true;
+      busyScope = turnScope;
       heroEl.hidden = true;
       view.querySelector('#chatLoadState').hidden = true;
       chat.classList.remove('is-empty');
@@ -1284,6 +1429,7 @@
         rafPending = true;
         requestAnimationFrame(() => {
           rafPending = false;
+          if (activeConversationId !== sendConversationId) return;
           if (thinkDirty) {
             thinkInner.textContent = thinkBuf;
             thinkDirty = false;
@@ -1298,6 +1444,7 @@
 
       // 监听流式事件
       const onEvent = (evt) => {
+        if (activeConversationId !== sendConversationId) return;
         if (evt.job_id) return;
         if (evt.request_id && evt.request_id !== requestId) return;
         if (evt.run_id && agentRunId && evt.run_id !== agentRunId) return;
@@ -1344,8 +1491,7 @@
             thinkContent.hidden = true;
           }
           statusEl.textContent = fmtTime(Date.now(), 'time');
-          busy = false;
-          updateComposer();
+          finishBusy(turnScope);
           refreshConversations().catch(() => {});
         } else if (evt.type === 'error') {
           streamDone = true;
@@ -1355,8 +1501,7 @@
             error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
           textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
           statusEl.textContent = ({cancelled:'已取消',paused_budget:'预算已用尽',interrupted:'执行中断'})[evt.status] || '失败';
-          busy = false;
-          updateComposer();
+          finishBusy(turnScope);
           refreshConversations().catch(() => {});
         }
       };
@@ -1387,8 +1532,7 @@
           const tb = msgs.querySelector('#' + turnId + ' .think-block');
           if (tb) tb.remove();
           statusEl.textContent = fmtTime(Date.now(), 'time');
-          busy = false;
-          updateComposer();
+          finishBusy(turnScope);
           refreshConversations().catch(() => {});
         } else if (global.vigil && global.vigil.apiStream) {
           // 开始流式请求
@@ -1410,8 +1554,7 @@
                 textEl.innerHTML = (textBuf ? U.md(textBuf, { codeActions: true }) : '') +
                   '<br><span style="color:var(--err)">连接中断：未收到完整回复（结果不完整）</span>';
                 statusEl.textContent = '执行中断';
-                busy = false;
-                updateComposer();
+                finishBusy(turnScope);
                 streamDone = true;
                 stopListening();
               }
@@ -1426,8 +1569,7 @@
           remember({content:textBuf,status:r.err?'failed':'succeeded',error:r.err?{message:'请求未完成'}:null});
           textEl.innerHTML = U.md(textBuf, { codeActions: true });
           statusEl.textContent = fmtTime(Date.now(), 'time');
-          busy = false;
-          updateComposer();
+          finishBusy(turnScope);
           streamDone = true;
           stopListening();
           refreshConversations().catch(() => {});
@@ -1438,8 +1580,7 @@
         stopListening();
         textEl.innerHTML = '<span style="color:var(--err)">出错了：' + esc(String(e.message || e)) + '</span>';
         statusEl.textContent = '失败';
-        busy = false;
-        updateComposer();
+        finishBusy(turnScope);
         refreshConversations().catch(() => {});
       }
     }
@@ -1458,7 +1599,10 @@
     async function creatorSend(text) {
       if (busy) return;
       if (!await loadRecordScope() || busy) return;
+      const turnScope = recordKey();
+      const turnConversationId = activeConversationId;
       busy = true;
+      busyScope = turnScope;
       updateComposer();
       taEl.value = '';
       heroEl.hidden = true;
@@ -1468,7 +1612,6 @@
         '<div class="turn me"><div class="bdy"><div class="txt">' + esc(text) + '</div></div></div>');
       const turnId = 'crturn_' + Date.now();
       const requestId = 'req_' + crypto.randomUUID();
-      const turnScope = recordKey();
       rememberTurn(requestId, {input:text,kind:creatorMode,status:'pending'}, turnScope);
       msgs.insertAdjacentHTML('beforeend',
         '<div class="turn" id="' + turnId + '"><div class="bdy"><div class="txt md" style="color:var(--text-3)">' +
@@ -1480,15 +1623,19 @@
         // draft 在 r.json 里。直接读 r.draft 会永远拿到失败+未知错误
         // （2026-10-12 实测：HTTP 200 也被显示成"生成失败：未知错误"）。
         r = pick(await API.post('/api/creator/jobs',
-          { kind: creatorMode, requirement: text, request_id: requestId }));
+          { kind: creatorMode, requirement: text, request_id: requestId,
+            src: 'pc', conversation_id: turnConversationId }));
+        if (activeConversationId !== turnConversationId) { finishBusy(turnScope); return; }
         if (r.ok && r.job_id) {
-          await watchCreatorJob(document.getElementById(turnId), r, turnScope);
-          busy = false; updateComposer(); loadRpDrafts();
+          const root = document.getElementById(turnId);
+          if (root) await watchCreatorJob(root, r, turnScope);
+          finishBusy(turnScope); loadRpDrafts();
           return;
         }
       } catch (e) {
         r = { ok: false, err: String((e && e.message) || e) };
       }
+      if (activeConversationId !== turnConversationId) { finishBusy(turnScope); return; }
       const el = document.getElementById(turnId);
       if (!r || !r.ok || !r.draft) {
         const failure = creatorRequestFailure(r);
@@ -1510,8 +1657,7 @@
         loadRpDrafts();
       }
       msgs.scrollTop = msgs.scrollHeight;
-      busy = false;
-      updateComposer();
+      finishBusy(turnScope);
     }
     taEl.addEventListener('input', updateComposer);
     const resizeComposer = () => { if (taEl.isConnected) { updateComposer(); applySessions(); } };
@@ -1726,7 +1872,8 @@
       else pop.hidden = true;
     });
 
-    void loadMsgs(true);
+    showWelcomeHome(false);
+    void initializeConversationView();
     clearInterval(chatTimer);
     chatTimer = setInterval(() => {
       if (state.page === 'chat' && state.conn.ok) loadMsgs(false);
@@ -4018,7 +4165,7 @@
           '<span class="muted" style="font-size:12px">模型：' + esc(d.model || '?') + '</span>' +
           '<div style="flex:1"></div>' +
           '<button class="btn ghost" id="crReval">重新验证</button>' +
-          (v.ok ? '<button class="btn" id="crReview">查看安装步骤</button>' : '') +
+          (v.ok ? '<button class="btn" id="crReview" aria-expanded="false">查看安装步骤</button>' : '') +
           '<button class="btn danger" id="crDel">删除草稿</button>' +
         '</div>' +
         '<p class="muted" style="font-size:12px;margin:8px 0 0">需求：' + esc(d.requirement || '') + '</p>' +
@@ -4034,8 +4181,9 @@
         (!v.ok ? '<p class="muted" style="font-size:12px;margin-top:8px">验证未通过，安装步骤暂不可用。请先修复上面的错误，再点击“重新验证”。</p>' : '') +
         (!errs.length && !warns.length ? '<p class="muted" style="font-size:12px">没有错误或警告。</p>' : '') +
       '</div>' +
-      (v.ok ? '<div class="card" id="crReviewBox" style="margin-top:8px;display:none;border-color:var(--warn)">' +
-        '<div class="pkg-h">安装前人工审核</div>' +
+      (v.ok ? '<div class="cr-review-drawer" id="crReviewBox" role="region" aria-label="安装步骤与人工审核" hidden>' +
+        '<div class="cr-review-head"><div class="pkg-h">安装前人工审核</div>' +
+        '<button class="btn ghost" id="crCancel" type="button" aria-label="关闭安装步骤">关闭</button></div>' +
         '<p style="margin:6px 0"><b>安装目标：</b><span id="crTarget">' + esc(creatorTargetOf(d)) + '</span></p>' +
         '<p class="muted" style="font-size:12px;margin:6px 0">将使用现有 ' + (d.kind === 'skill' ? 'Skill Host' : 'Plugin') +
         ' 事务安装。静态验证不会执行生成代码；技能热重载可能立即加载入口代码，请确认风险说明和完整代码后再批准。</p>' +
@@ -4043,7 +4191,7 @@
         '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
           '<button class="btn" id="crApproveNow">明确批准</button>' +
           '<button class="btn" id="crInstallNow" style="display:none">仅本次安装</button>' +
-          '<button class="btn ghost" id="crCancel">取消</button>' +
+        '<button class="btn ghost" id="crCancelAction">取消</button>' +
         '</div></div>' : '') +
       (d.files || []).map((f, i) => {
         const content = String(f.content || '');
@@ -4135,19 +4283,26 @@
       if (e.target.closest('#crReview')) {
         const box = root.querySelector('#crReviewBox');
         if (!box) { toast('当前草稿未通过静态验证，不能安装'); return; }
-        const opening = box.style.display === 'none';
-        box.style.display = opening ? 'block' : 'none';
+        const opening = box.hidden;
+        box.hidden = !opening;
         const reviewButton = root.querySelector('#crReview');
-        if (reviewButton) reviewButton.textContent = opening ? '收起安装步骤' : '查看安装步骤';
+        if (reviewButton) {
+          reviewButton.textContent = opening ? '收起安装步骤' : '查看安装步骤';
+          reviewButton.setAttribute('aria-expanded', String(opening));
+        }
         if (opening) {
-          box.scrollIntoView({ block: 'center', behavior: 'smooth' });
           toast('安装需要两步确认：先点击“明确批准”，再点击“仅本次安装”');
         }
         return;
       }
-      if (e.target.closest('#crCancel')) {
+      if (e.target.closest('#crCancel, #crCancelAction')) {
         const box = root.querySelector('#crReviewBox');
-        if (box) box.style.display = 'none';
+        if (box) box.hidden = true;
+        const reviewButton = root.querySelector('#crReview');
+        if (reviewButton) {
+          reviewButton.textContent = '查看安装步骤';
+          reviewButton.setAttribute('aria-expanded', 'false');
+        }
         return;
       }
       if (e.target.closest('#crApproveNow')) {
@@ -4247,7 +4402,8 @@
         const requestId = 'req_' + crypto.randomUUID();
         rememberTurn(requestId, {input:fb,kind:d.kind || 'plugin',status:'pending'});
         const r = pick(await API.post('/api/creator/jobs', { kind: d.kind || 'plugin',
-          draft_id: d.id, feedback: fb, request_id: requestId }));
+          draft_id: d.id, feedback: fb, request_id: requestId,
+          src: 'pc', conversation_id: activeConversationId }));
         if (r.ok && r.job_id) { await watchCreatorJob(root, r); return; }
         if (!r || !r.ok || !r.draft) {
           const failure = creatorRequestFailure(r);

@@ -959,6 +959,8 @@ def _cloud_history(limit=60, src="wechat"):
     #               连接直接断掉，**客户端收不到任何响应**（只有一个 traceback）
     #   limit=0   → items[-0:] 等于 items[0:]，**把整个存档全返回**
     #   负数      → 从开头切，同样不是调用方想要的
+    if limit is None:
+        return items
     try:
         n = int(limit)
     except (TypeError, ValueError):
@@ -1609,13 +1611,24 @@ def start_remote_api(brain):
                 from urllib.parse import parse_qs, urlparse
                 query = parse_qs(urlparse(self.path).query)
                 owner = self._display_owner(body)
+                conversation_id = (body or {}).get('conversation_id') or (query.get('conversation_id') or [None])[0]
                 parts = path.strip('/').split('/')
                 try:
                     if method == 'POST' and path == '/api/creator/jobs':
+                        if (body or {}).get('conversation_id'):
+                            conv, _, src, _ = self._conversation_context('pc', body.get('conversation_id'))
+                            if src != 'pc' or not conv:
+                                self._json(404, {'ok': False, 'err': '会话不存在'})
+                                return True
                         item = jobs.create(body, API_CFG, owner)
                         self._json(200, {'ok': True, **item})
                     elif method == 'GET' and path == '/api/creator/jobs':
-                        self._json(200, {'ok': True, 'items': jobs.listing(owner)})
+                        if conversation_id:
+                            conv, _, src, _ = self._conversation_context('pc', conversation_id)
+                            if src != 'pc' or not conv:
+                                self._json(404, {'ok': False, 'err': '会话不存在'})
+                                return True
+                        self._json(200, {'ok': True, 'items': jobs.listing(owner, conversation_id=conversation_id)})
                     elif len(parts) >= 4:
                         jid = parts[3]
                         item = jobs.snapshot(jid, owner)
@@ -3147,7 +3160,22 @@ def start_remote_api(brain):
                     return
                 _, owner, src, persona = self._conversation_context(src)
                 import conversations
-                self._json(200, {"ok": True, "items": conversations.list_for(owner, src, str(persona))})
+                items = conversations.list_for(owner, src, str(persona))
+                old_history = _cloud_history(None, src)
+                if old_history:
+                    conversations.ensure_legacy(owner, src, str(persona))
+                    items = conversations.list_for(owner, src, str(persona))
+                legacy = next((item for item in items if item.get('legacy')), None)
+                if legacy:
+                    # The historical transcript is one continuous record. Use
+                    # its first existing user prompt as the legacy row name;
+                    # this is a display title only and never rewrites history.
+                    first = next((str(item.get('text') or '').strip() for item in old_history
+                                  if str(item.get('role') or '').lower() in ('user', 'me', 'self')
+                                  and str(item.get('text') or '').strip()), '')
+                    if first:
+                        legacy['title'] = first[:48]
+                self._json(200, {"ok": True, "items": items})
                 return
             if path == '/api/runtime':
                 import build_identity

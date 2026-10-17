@@ -87,7 +87,7 @@ def snapshot(jid, owner):
         return json.loads(row[0]) if row else None
 
 
-def listing(owner):
+def listing(owner, conversation_id=None):
     with LOCK, _db() as db:
         from display_turns import LIMITS
         # Compact old terminal snapshots, preserving idempotency fingerprints
@@ -98,8 +98,13 @@ def listing(owner):
             AND (json_extract(data,'$.created_at')<? OR rowid IN
                 (SELECT rowid FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT -1 OFFSET ?))''',
             (owner, time.time()-LIMITS['retention_days']*86400, owner, LIMITS['max_records']))
-        return [item for row in db.execute('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))
-                if not (item := json.loads(row[0])).get('hidden')]
+        items = [item for row in db.execute('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))
+                 if not (item := json.loads(row[0])).get('hidden')]
+        if conversation_id:
+            # Older jobs without an explicit conversation remain available in
+            # the global drafts view, but never leak into a chat transcript.
+            items = [item for item in items if item.get('conversation_id') == conversation_id]
+        return items
 
 
 def hide(owner):
@@ -165,6 +170,7 @@ def create(body, cfg, owner, start=True):
             return json.loads(row[1])
         item = dict(job_id='job_' + uuid.uuid4().hex, request_id=request, kind=kind,
             requirement=requirement, feedback=feedback, source_draft_id=draft_id,
+            conversation_id=str(body.get('conversation_id') or '') or None,
             status='queued', stage='queued', content='', event_cursor=0, error=None,
             created_at=time.time(), model_snapshot={'model': cfg.get('model') or (cfg.get('ollama') or {}).get('model'),
                 'provider': cfg.get('provider') or cfg.get('model_mode') or 'cloud'})
