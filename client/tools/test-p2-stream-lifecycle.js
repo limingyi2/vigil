@@ -50,10 +50,25 @@ test('shared subscriptions isolate errors, reentrant removal and duplicate callb
 });
 
 function pages(options={}) {
-  const observers=new Set(),storage=new Map(),handlers=new Set(),toasts=[];
+  const observers=new Set(),storage=new Map(),handlers=new Set(),toasts=[],dialogs=[];
+  function element() {
+    const children = new Map();
+    return {
+      className:'', innerHTML:'', isConnected:false, listeners:{},
+      querySelector(selector) {
+        if (!children.has(selector)) children.set(selector, {textContent:'', value:'', onclick:null, focus(){}});
+        return children.get(selector);
+      },
+      addEventListener(type, fn) { this.listeners[type]=fn; },
+      remove() { this.isConnected=false; },
+      focus() {},
+    };
+  }
+  const document={body:{appendChild(node){node.isConnected=true;dialogs.push(node);}},
+    createElement:()=>element(), addEventListener(){}, removeEventListener(){}};
   const window={vigil:{onStreamEvent:fn=>{handlers.add(fn);return ()=>handlers.delete(fn);}}};
   const context={window,console,setTimeout,clearTimeout,confirm:options.confirm || (()=>true),navigator:{clipboard:{writeText:options.writeClipboard || (async()=>{})}},
-    document:{body:{}},
+    document,
     MutationObserver:class {constructor(fn){this.fn=fn;} observe(){observers.add(this);} disconnect(){observers.delete(this);}},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,v)=>storage.set(key,v)},
     U:{esc:String,icon:()=>'',md:source=>'<rendered>'+source+'</rendered>',toast:msg=>{toasts.push(String(msg));}},
@@ -63,7 +78,12 @@ function pages(options={}) {
   // Expose existing functions only in this isolated VM, without a production test API.
   source=source.replace('  global.PAGES = [','  global.p2 = {subscribeUntilDetached,creatorErrorText,creatorRequestFailure,rememberTurn,localRecords,watchCreatorJob,creatorActionError,bindDraftCard,draftCardHtml};\n  global.PAGES = [');
   vm.runInNewContext(source,context);
-  return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers,toasts};
+  return {...window.p2,handlers,notify:()=>[...observers].forEach(o=>o.fn()),observers,toasts,
+    confirmNext(value=true) {
+      const overlay=dialogs.find(item=>item.isConnected);
+      assert.ok(overlay,'expected an in-app confirmation dialog');
+      overlay.querySelector(`[data-choice="${value?'ok':'cancel'}"]`).onclick();
+    }};
 }
 
 function draftRoot() {
@@ -219,7 +239,7 @@ test('Creator approval and install clicks consume the returned one-time approval
   assert.equal(r.nodes['#crInstallNow'].style.display, 'inline-block');
   assert.equal(r.nodes['#crInstallNow'].dataset.approval, 'ca_fixture_approval');
   assert.match(r.nodes['#crApprovalState'].textContent, /已批准草稿 v2/);
-  await r.click('#crInstallNow');
+  const installRequest=r.click('#crInstallNow'); p.confirmNext(true); await installRequest;
   assert.equal(calls[1].path, '/api/creator/install');
   assert.equal(calls[1].body.approval_id, 'ca_fixture_approval');
   assert.equal(r.nodes['#crInstallNow'].textContent, '已安装 · 待重启');
@@ -253,7 +273,7 @@ test('Creator install failure prevents blind retry and asks for fresh approval',
   const r = draftRoot();
   p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:1, files:[{name:'fixture.py'}]});
   await r.click('#crApproveNow');
-  await r.click('#crInstallNow');
+  const installRequest=r.click('#crInstallNow'); p.confirmNext(true); await installRequest;
   assert.equal(r.nodes['#crInstallNow'].disabled, true);
   assert.equal(r.nodes['#crInstallNow'].textContent, '需重新批准');
   assert.match(r.nodes['#crApprovalState'].textContent, /重新验证/);

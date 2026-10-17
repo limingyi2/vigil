@@ -430,7 +430,8 @@ def _restore_hist(brain, text, ans, mode=None):
         print("[大脑] 历史修正失败（不影响回复）：%s" % str(e)[:60], flush=True)
 
 
-def _chat_with_tools(text, img_path, trace_out=None, src=None):
+def _chat_with_tools(text, img_path, trace_out=None, src=None,
+                    conversation_id=None):
     """聊一轮。工具调用走大脑**内部的原生 function calling 循环**（见
     brain.draft_native）：模型在响应的 tool_calls 字段请求工具，结果在同一
     条 messages 链上以 role:tool 回灌，直到她给出最终回复，不靠正文标签。
@@ -444,7 +445,11 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
     def _once(t, no_tools=False):
         with _chat_lock():
             b = _LOCAL["brain"]
+            b.use_src(src or 'wechat', conversation_id)
+            if len(b.hist) <= 1:
+                b.seed_history(src=src or 'wechat', conversation_id=conversation_id)
             ans, mode = b.chat(t, img=img_path, log=False, src=src,
+                               conversation_id=conversation_id,
                                no_tools=no_tools)
             # trace 字段长在共享的大脑对象上，得趁锁还在手里抄，出了锁并发
             # 那一轮会把它覆盖掉。
@@ -719,7 +724,7 @@ def _late_to_history(src, display, reply):
 
 
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
-                   dry_run=False, attachments=None):
+                   dry_run=False, attachments=None, conversation_id=None):
     """让她回一句话。
 
     img_b64：这一轮带的图片（base64），交给视觉模型让她"看见"。
@@ -789,7 +794,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             try:
                 _b = _LOCAL["brain"]
                 if src:
-                    _b.use_src(src)     # 存档走哪份文件，取决于这轮是哪个渠道
+                    _b.use_src(src, conversation_id)     # 存档按渠道及会话隔离
                 if not img_b64 and _looks_like_selfie(text):
                     sp, place = _selfie_prompt()
                     name = _cloud_gen_selfie(sp, negative_prompt=GEN_NEGATIVE,
@@ -798,7 +803,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                         ans = _selfie_caption(place) + "\n[img:" + name + "]"
                         if not dry_run:          # 探测轮不写存档（见 ask_with_retry）
                             try:
-                                _b._log_turn(orig_text, ans, img=None, src=_norm_src(src))
+                                _b._log_turn(orig_text, ans, img=None, src=_norm_src(src),
+                                             conversation_id=conversation_id)
                             except Exception as e:
                                 _log_history_error(src, e, "selfie_write")
                         return ans, "本地自拍", ""
@@ -806,7 +812,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                 print(f"[大脑] 自拍生成失败，回退正常对话：{e}", flush=True)
             # 锁在 _chat_with_tools 的每轮 chat 里拿（带超时），别抱着锁等网络
             ans, mode = _chat_with_tools(text, img_path or None,
-                                         trace_out=trace_out, src=src)
+                                         trace_out=trace_out, src=src,
+                                         conversation_id=conversation_id)
             if getattr(_LOCAL.get('brain'), 'last_err', ''):
                 return ans, mode, '模型请求未完成，未自动重试'
             # 剥掉学出来的「说」标记；[gen:xxx] 换成 [img:名字]
@@ -833,7 +840,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                 try:
                     _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None,
                                                attachments=attachments,
-                                               src=_norm_src(src))
+                                               src=_norm_src(src),
+                                               conversation_id=conversation_id)
                 except Exception as e:
                     _log_history_error(src, e, "write")
             return ans, mode, ""
@@ -1440,8 +1448,23 @@ def start_remote_api(brain):
             body = body or {}
             src = body.get('src') or _query_param(self.path, 'src')
             src = _norm_src(src if src else ('pc' if self.path.startswith(('/api/creator', '/api/agent/')) else None))
-            session = body.get('session_id') or _query_param(self.path, 'session_id') or 'main'
+            session = (body.get('conversation_id') or body.get('session_id')
+                       or _query_param(self.path, 'conversation_id')
+                       or _query_param(self.path, 'session_id') or 'main')
             return display_turns.owner(getattr(self, '_who', ('', '')), src, session)
+
+        def _conversation_context(self, src='pc', cid=None):
+            """Resolve a desktop conversation only within the current identity/persona."""
+            import conversations
+            src = _norm_src(src)
+            persona = _persona_for_src(src)
+            import display_turns
+            owner = display_turns.owner(getattr(self, '_who', ('', '')), src,
+                                        'conversations:' + str(persona))
+            if not conversations.valid_id(cid):
+                return None, owner, src, persona
+            item = conversations.get(owner, src, str(persona), cid)
+            return item, owner, src, persona
 
         def _new_agent_run(self, body):
             import agent_runs
@@ -1455,10 +1478,12 @@ def start_remote_api(brain):
             # release it: the run never mutates shared Brain history/last_* fields.
             if brain is not None:
                 with _chat_lock():
-                    brain.use_src(src)
+                    brain.use_src(src, body.get('brain_conversation_id'))
                     text = body.get('intent', body.get('text', ''))
                     parts, _ = brain._build_system_parts(text, '')
                     messages = [{'role': 'system', 'content': ''.join(parts)}]
+                    if len(brain.hist) <= 1:
+                        brain.seed_history(src=src, conversation_id=body.get('brain_conversation_id'))
                     messages.extend(copy.deepcopy(brain.recent_hist()))
                     # Completed runs can inform the next request in this owner/session.
                     # Partial/error/tool transcripts stay outside model history.
@@ -1839,6 +1864,27 @@ def start_remote_api(brain):
                 body = {}
             if self._agent_api('POST', path, body):
                 return
+            if path == '/api/conversations' or path.startswith('/api/conversations/'):
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "只有管理员能管理桌面会话"})
+                    return
+                src = _norm_src(body.get('src') or 'pc')
+                if src != 'pc':
+                    self._json(400, {"ok": False, "err": "会话管理仅用于桌面渠道"})
+                    return
+                _, owner, src, persona = self._conversation_context(src)
+                import conversations
+                if path == '/api/conversations':
+                    item = conversations.create(owner, src, str(persona))
+                    self._json(201, {"ok": True, "item": item})
+                    return
+                cid = path.rsplit('/', 1)[-1]
+                item = conversations.rename(owner, src, str(persona), cid, body.get('title'))
+                if not item:
+                    self._json(404, {"ok": False, "err": "会话不存在或标题无效"})
+                    return
+                self._json(200, {"ok": True, "item": item})
+                return
             # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
             # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
             # 会全写进 app 覆盖 —— 渠道错乱。
@@ -2125,6 +2171,18 @@ def start_remote_api(brain):
                     # 缺省/认不出来的值归一到主渠道 wechat（app 已退役；
                     # 未知值同时也是防路径穿越，绝不能原样拼进存档文件名）。
                     _src = _norm_src(body.get("src"))
+                    _cid = body.get('conversation_id')
+                    _brain_cid = None
+                    if _cid:
+                        _conv, _conv_owner, _conv_src, _conv_persona = self._conversation_context(_src, _cid)
+                        if _src != 'pc' or not _conv:
+                            self._json(404, {"ok": False, "err": "会话不存在"})
+                            return
+                        _brain_cid = None if _conv['legacy'] else _cid
+                        body['session_id'] = _cid
+                        if not body.get('dry_run'):
+                            import conversations as _conversations
+                            _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _disp)
                     _att_meta = body.get("attachments")
                     if not isinstance(_att_meta, list):
                         _att_meta = []
@@ -2326,6 +2384,7 @@ def start_remote_api(brain):
                     ans, mode, err = ask_with_retry(
                         _in_text, body.get("img") or None, display=_disp,
                         trace_out=_snap, src=_src, attachments=_att_meta,
+                        conversation_id=_brain_cid,
                         # 带 dry_run=true 的一轮**不写聊天存档**。
                         # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
                         # 她会开始答那些测试句（症状："她回复一点都不对"）。
@@ -2425,6 +2484,19 @@ def start_remote_api(brain):
                         return
                     _in_text = str(body.get("text") or "")
                     _src = _norm_src(body.get("src"))
+                    _cid = body.get('conversation_id')
+                    _brain_cid = None
+                    if _cid:
+                        _conv, _conv_owner, _conv_src, _conv_persona = self._conversation_context(_src, _cid)
+                        if _src != 'pc' or not _conv:
+                            self._json(404, {"ok": False, "err": "会话不存在"})
+                            return
+                        _brain_cid = None if _conv['legacy'] else _cid
+                        body['session_id'] = _cid
+                        body['brain_conversation_id'] = _brain_cid
+                        if not body.get('dry_run'):
+                            import conversations as _conversations
+                            _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _in_text)
                     try:
                         import features as _feat
                         _feat.set_current_src(_src)
@@ -2462,14 +2534,17 @@ def start_remote_api(brain):
                     def _factory():
                         with _chat_lock():
                             import tools as _chat_tools
+                            _LOCAL['brain'].use_src(_src, _brain_cid)
+                            if len(_LOCAL['brain'].hist) <= 1:
+                                _LOCAL['brain'].seed_history(src=_src, conversation_id=_brain_cid)
                             if _chat_tools.schema_needed(_in_text):
-                                _ans, _mode = _LOCAL['brain'].chat(_in_text, src=_src)
+                                _ans, _mode = _LOCAL['brain'].chat(_in_text, src=_src, conversation_id=_brain_cid)
                                 if getattr(_LOCAL['brain'], 'last_err', ''):
                                     yield {'type': 'error', 'class': 'service_error', 'msg': '模型请求未完成'}
                                 else:
                                     yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
-                                yield from _LOCAL['brain'].stream_chat(_in_text, src=_src)
+                                yield from _LOCAL['brain'].stream_chat(_in_text, src=_src, conversation_id=_brain_cid)
                     if _agent_item:
                         _events = self._agent_chat_events(_agent_item, self._display_owner(body))
                     else:
@@ -2521,20 +2596,32 @@ def start_remote_api(brain):
                     # 删的是本机文件，云上那份一动不动，看着清了其实没清。
                     # 分渠道后只清请求里指定的那份（不传=App），清微信的不影响手机。
                     _csrc = _norm_src(body.get("src") if body else None)
+                    _cid = body.get('conversation_id') if isinstance(body, dict) else None
+                    _brain_cid = None
+                    if _cid:
+                        _conv, _, _conv_src, _conv_persona = self._conversation_context(_csrc, _cid)
+                        if _csrc != 'pc' or not _conv:
+                            self._json(404, {"ok": False, "err": "会话不存在"})
+                            return
+                        _brain_cid = None if _conv['legacy'] else _cid
                     import display_turns, creator_jobs, agent_runs
                     display_turns.clear(self._display_owner(body))
                     creator_jobs.hide(self._display_owner(body))
                     agent_runs.hide(self._display_owner(body))
                     ok = False
                     try:
-                        from brain import Brain
-                        ok = bool(Brain.clear_history(_csrc))
+                        if _cid:
+                            _LOCAL['brain'].use_src(_csrc, _brain_cid)
+                            ok = bool(_LOCAL['brain'].clear_src_history(_csrc))
+                        else:
+                            from brain import Brain
+                            ok = bool(Brain.clear_history(_csrc))
                     except Exception as e:
                         _log_history_error(_csrc, e, "clear_disk")
                     try:
                         with _chat_lock():
                             _bl = _LOCAL.get("brain")
-                            if _bl is not None:
+                            if _bl is not None and not _cid:
                                 _bl.clear_src_history(_csrc)
                     except _Busy:
                         pass
@@ -3050,6 +3137,18 @@ def start_remote_api(brain):
             # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
             if self._deny_if_limited_device("GET", path):
                 return
+            if path == '/api/conversations':
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "只有管理员能读取桌面会话"})
+                    return
+                src = _norm_src(_query_param(self.path, 'src') or 'pc')
+                if src != 'pc':
+                    self._json(400, {"ok": False, "err": "会话管理仅用于桌面渠道"})
+                    return
+                _, owner, src, persona = self._conversation_context(src)
+                import conversations
+                self._json(200, {"ok": True, "items": conversations.list_for(owner, src, str(persona))})
+                return
             if path == '/api/runtime':
                 import build_identity
                 self._json(200, dict(ok=True, **build_identity.runtime()))
@@ -3398,8 +3497,29 @@ def start_remote_api(brain):
                 import agent_runs
                 _records = {i['request_id']: i for i in display_turns.listing(self._display_owner())}
                 _records.update({i['request_id']: i for i in agent_runs.display_records(self._display_owner())})
-                self._json(200, {"items": _cloud_history(
-                    lim, _norm_src(_query_param(self.path, "src"))),
+                src = _norm_src(_query_param(self.path, "src"))
+                cid = _query_param(self.path, "conversation_id")
+                if cid:
+                    item, owner, src, persona = self._conversation_context(src, cid)
+                    if src != 'pc' or not item:
+                        self._json(404, {"ok": False, "err": "会话不存在"})
+                        return
+                    if item['legacy']:
+                        history_items = _cloud_history(lim, src)
+                    else:
+                        try:
+                            n = max(1, min(int(lim), 1000))
+                        except (TypeError, ValueError):
+                            n = 60
+                        history_items = brain.read_history(n, src, cid)
+                        for rec in history_items:
+                            img = rec.get('img') or ''
+                            rec['img'] = os.path.basename(img.replace('\\', '/')) if img else ''
+                    _records = {i['request_id']: i for i in display_turns.listing(self._display_owner({'src':src,'conversation_id':cid}))}
+                    _records.update({i['request_id']: i for i in agent_runs.display_records(self._display_owner({'src':src,'conversation_id':cid}))})
+                    self._json(200, {"items": history_items, 'display_turns': list(_records.values()), 'conversation': item})
+                    return
+                self._json(200, {"items": _cloud_history(lim, src),
                     'display_turns': list(_records.values())})
             elif path == "/api/features":
                 # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。

@@ -157,6 +157,7 @@ async function startBrain(modelBase) {
     VIGIL_E2E_PLUGIN_TRACE: pluginTrace, PYTHONDONTWRITEBYTECODE: '1', PYTHONUNBUFFERED: '1' };
   const logFile = fs.openSync(path.join(root, 'brain.log'), 'w');
   brain = spawn(python, ['server.py'], { cwd: brainDir, env, stdio: ['ignore', logFile, logFile], windowsHide: true });
+  fs.closeSync(logFile); // The child owns the inherited handle; Windows cleanup must not retain a parent lock.
   brain.once('error', error => { throw error; });
   const base = 'http://127.0.0.1:' + port;
   const deadline = Date.now() + 60000;
@@ -221,6 +222,7 @@ async function startElectron(brainBase) {
   electron = spawn(electronExe, ['--remote-debugging-port=' + debugPort, '--remote-allow-origins=*', '--disable-gpu', client], {
     cwd: client, env, stdio: ['ignore', logFile, logFile], windowsHide: true,
   });
+  fs.closeSync(logFile); // Release the parent's duplicate handle when the child exits.
   const ready = connectRenderer(debugPort);
   await ready;
   const deadline = Date.now() + 20000;
@@ -346,11 +348,14 @@ run().catch(error => {
   try { if (fs.existsSync(path.join(root, 'brain.log'))) console.error('Brain log retained until cleanup: ' + path.join(root, 'brain.log')); } catch (_) {}
   process.exitCode = 1;
 }).finally(async () => {
-  if (cdp && cdp.readyState === WebSocket.OPEN) {
-    try { await cdpSend('Browser.close'); } catch (_) {}
-  }
+  // Closing the browser target may close CDP before its response arrives, leaving
+  // cdpSend waiting for its timeout. Close the test-owned socket directly; the
+  // child process tree is terminated immediately below.
   try { if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close(); } catch (_) {}
-  await stopChild(electron);
+  // This is an isolated test profile; force-close the test-owned Electron tree
+  // after the assertions so background renderer/utility processes cannot hold
+  // temporary log handles open on Windows.
+  await stopChild(electron, true);
   await stopChild(brain, true);
   if (modelServer) {
     if (typeof modelServer.closeAllConnections === 'function') modelServer.closeAllConnections();

@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const assert = require('assert/strict');
+const crypto = require('crypto');
 // GUI launchers can close their inherited pipes before Electron exits. Only a
 // disconnected output pipe is benign; other stream errors still fail the test.
 for(const stream of [process.stdout,process.stderr]) {
@@ -20,6 +21,10 @@ app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 const results = [], errors = [], requests = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win, host, history = [], failure = false, historyError = false, personaEmpty = false;
+const legacyConversationId = '11111111-1111-4111-8111-111111111111';
+const conversations = [{id:legacyConversationId,title:'旧版对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:true}];
+const otherHistories = new Map();
+let uploadFailure = false;
 let savedClipboard;
 let gpu;
 const answer = '# 执行结果\n\n这是一段用于检查长文本排版的回复。' + '内容应有舒适的行高和留白。'.repeat(18) +
@@ -39,10 +44,19 @@ function fixtureApi(method, raw, body, base) {
   if (p === '/api/plugin/kb/stats') json = {docs:1,count:2,dir:'temporary fixture/kb',scope:'pc'};
   if (p === '/api/plugin/kb/docs') json = {items:[{name:'fixture.md',chunks:2,size:100}]};
   if (p === '/api/history' && historyError) return {ok:false,status:503,err:'隔离测试：历史服务暂时不可用'};
+  if (p === '/api/conversations' && method === 'GET') json = {ok:true,items:conversations.slice().sort((a,b)=>b.updated_at-a.updated_at)};
+  if (p === '/api/conversations' && method === 'POST') {
+    const item={id:crypto.randomUUID(),title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false};
+    conversations.push(item); otherHistories.set(item.id,[]); json={ok:true,item};
+  }
+  if (p.startsWith('/api/conversations/') && method === 'POST') {
+    const item=conversations.find(x=>x.id===p.split('/').at(-1)); if(item){item.title=body.title;item.updated_at=Date.now()/1000;json={ok:true,item};}
+  }
   if (p === '/api/plugins/frontend') json = { version:1, plugins:[] };
-  if (p === '/api/history') json = { items:history };
+  if (p === '/api/history') { const cid=url.searchParams.get('conversation_id'); json = { items:cid===legacyConversationId?history:(otherHistories.get(cid)||[]), display_turns:[] }; }
   if (p === '/api/history/clear') history = [];
   if (p === '/api/models') json = { current:{ model:'mimo-v2.6-flash', api_key_set:true }, providers:[], models:[] };
+  if (p === '/api/attachments/capabilities') json = {video:false,video_frames:true};
   if (p === '/api/trace') json = { items:[] };
   return { ok:true, json };
 }
@@ -81,11 +95,12 @@ async function setup() {
   ipcMain.handle('api:stream', async (event,{path:p,body}) => {
     requests.push({method:'STREAM',path:p,body});
     if (failure) { await wait(120); event.sender.send('api:stream:event',{type:'error',msg:'隔离测试错误'}); return {ok:false}; }
-    history.push({role:'user',text:body.text,t:Date.now()});
+    const activeHistory=body.conversation_id===legacyConversationId?history:otherHistories.get(body.conversation_id);
+    if(activeHistory) activeHistory.push({role:'user',text:body.text,t:Date.now()});
     event.sender.send('api:stream:event',{type:'think',text:'检查布局'});
     await wait(120);
     for (const text of [answer.slice(0,100),answer.slice(100)]) { event.sender.send('api:stream:event',{type:'text',text}); await wait(120); }
-    history.push({role:'assistant',text:answer,t:Date.now()});
+    if(activeHistory) activeHistory.push({role:'assistant',text:answer,t:Date.now()});
     event.sender.send('api:stream:event',{type:'done'});
     return {ok:true};
   });
@@ -100,6 +115,7 @@ async function setup() {
   ipcMain.handle('sidecar:status',()=>({status:'stopped'}));
   ipcMain.handle('token:get',()=> '已保存');
   ipcMain.handle('wallpaper:import',()=>({ok:true,canceled:true}));
+  ipcMain.handle('attachment:chunk',()=>uploadFailure?{ok:false,err:'fixture upload failed'}:{ok:true});
   ipcMain.handle('wallpaper:directory',()=>({ok:true,canceled:true}));
   ipcMain.handle('updater:check',()=>({}));
   ipcMain.handle('auto:connect',()=>({ok:false}));
@@ -111,14 +127,18 @@ async function setup() {
   win.webContents.on('console-message',(_,level,message)=>{ if(level>=3) errors.push(message); });
   await win.loadFile(path.join(src,'index.html'));
 }
-const ev = s => win.webContents.executeJavaScript(s, true);
+const ev = async s => { try { return await win.webContents.executeJavaScript(s, true); } catch (e) { console.error('Renderer eval failed:', s, e.message); throw e; } };
 async function until(s, ms=15000) { const end=Date.now()+ms; while(Date.now()<end) { if(await ev('Boolean('+s+')'))return; await wait(60); } throw Error('Timeout: '+s); }
 async function shot(name) { await wait(100); fs.writeFileSync(path.join(shots,name+'.png'),(await win.webContents.capturePage()).toPNG()); }
 async function chat() {
   // Independent legacy layout scenarios start with empty fixture storage.
   // Refresh/reopen retention is covered by test-p1-electron.js.
   await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k));document.querySelector('#gnav [data-page="chat"]').click()`);
-  await until(`document.querySelector('#ta') && document.querySelector('#hero') && !document.querySelector('#hero').hidden`); await wait(100);
+  await until(`document.querySelector('#ta') && document.querySelector('[data-session="${legacyConversationId}"]')`);
+  if(await ev(`API.state.chatConversationId!==${JSON.stringify(legacyConversationId)}`)) {
+    await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
+  }
+  await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden`); await wait(100);
 }
 async function measure() {
   return ev(`(()=>{const rect=s=>{let r=document.querySelector(s).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}};return{viewport:{width:innerWidth,height:innerHeight},input:rect('.cbox'),composer:rect('.composer'),chat:rect('.chat'),hero:rect('#hero'),scroll:rect('#msgs'),context:getComputedStyle(document.querySelector('#rp')).display,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
@@ -250,6 +270,11 @@ async function main() {
   assert.equal(await ev(`document.querySelector('.codehead span').textContent`),'js');
   assert.ok(await ev(`U.md(${JSON.stringify('```\nfirst\nsecond\n```')},{codeActions:true}).includes('<code>first\\nsecond\\n</code>')`));
   result('Enter, Shift+Enter, IME, stream state and deduplicated IPC payload');
+  await ev(`document.querySelector('#clearBtn').click()`);
+  await until(`document.querySelector('.vigil-confirm[role="dialog"]')`);
+  await ev(`document.querySelector('.vigil-confirm [data-choice="cancel"]').click()`);
+  assert.equal(await ev(`document.querySelector('.vigil-confirm-backdrop')`),null);
+  result('destructive history clear retains a themed in-app confirmation');
   // Clipboard write executes in the real Electron renderer, not a mocked copy handler.
   savedClipboard = Object.fromEntries(require('electron').clipboard.availableFormats().map(format => [format,require('electron').clipboard.readBuffer(format)]));
   win.show(); win.focus(); await wait(150);
@@ -265,13 +290,39 @@ async function main() {
   // Load history through the existing refresh entry and select a real session row.
   await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelector('#msgs .codeblock')`);
   assert.equal(await ev(`document.querySelector('#hero').hidden`),true);
-  await ev(`document.querySelector('[data-goto]').click()`);
-  assert.equal(await ev(`document.querySelector('[data-goto]').classList.contains('on')`),true);
-  result('history restored and session selection preserved');
+  await ev(`document.querySelector('[data-session]').click()`);
+  assert.equal(await ev(`document.querySelector('[data-session]').closest('.session-row').classList.contains('on')`),true);
+  result('history restored and persistent conversation selection is interactive');
+  const conversationA=await ev(`API.state.chatConversationId`);
+  await ev(`document.querySelector('#newTopicBtn').click()`);
+  await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationA)} && document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
+  const conversationB=await ev(`API.state.chatConversationId`);
+  assert.equal(await ev(`document.querySelector('#msgs').textContent`),'');
+  await ev(`document.querySelector('#ta').value='B_ONLY';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
+  await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
+  assert.equal(requests.filter(r=>r.method==='STREAM').at(-1).body.conversation_id,conversationB);
+  await ev(`document.querySelector('[data-session="${conversationA}"]').click()`);
+  await until(`document.querySelector('#msgs').textContent.includes('检查界面')`);
+  assert.equal(await ev(`document.querySelector('#msgs').textContent.includes('B_ONLY')`),false);
+  await ev(`document.querySelector('#ta').value='A_CONTINUE';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
+  await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
+  assert.equal(requests.filter(r=>r.method==='STREAM').at(-1).body.conversation_id,conversationA);
+  await ev(`document.querySelector('[data-session="${conversationB}"]').click()`);
+  await until(`document.querySelector('#msgs').textContent.includes('B_ONLY')`);
+  assert.equal(await ev(`document.querySelector('#msgs').textContent.includes('A_CONTINUE')`),false);
+  await ev(`document.querySelector('[data-rename="${conversationB}"]').click()`);
+  await ev(`document.querySelector('.session-title-edit').value='B 独立会话';document.querySelector('.session-row button[aria-label="保存标题"]').click()`);
+  await until(`document.querySelector('[data-session="${conversationB}"]').textContent.includes('B 独立会话')`);
+  win.webContents.reload();
+  await until(`API.state.chatConversationId===${JSON.stringify(conversationB)} && document.querySelector('#msgs').textContent.includes('B_ONLY')`);
+  result('A/B session creation, switch, continuation, title, renderer restart and transcript isolation');
   await ev(`document.querySelector('#themeBtn').click()`); await shot('after-light-chat');
   await ev(`document.querySelector('#themeBtn').click()`);
   result('ordinary light-theme history and code rendering');
   // Inspect matched content edges and a fixed composer while scrolling long history.
+  await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
+  await until(`API.state.chatConversationId===${JSON.stringify(legacyConversationId)}`);
+  await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k))`);
   const many=Array.from({length:40},(_,i)=>({role:i%2?'assistant':'user',text:i%2?answer:'问题 '+i,t:Date.now()-40000+i*1000}));
   history=many; await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelectorAll('#msgs .turn').length===40`);
   const align=await ev(`(()=>{const t=document.querySelector('#msgs .turn').getBoundingClientRect(),c=document.querySelector('.cbox').getBoundingClientRect();return{left:Math.abs(t.left-c.left),right:Math.abs(t.right-c.right),width:c.width}})()`);
@@ -301,6 +352,21 @@ async function main() {
   assert.match(imageSent.request_id, /^req_[a-z0-9-]+$/);
   assert.deepEqual({text:imageSent.text,img:imageSent.img,src:imageSent.src},{text:'',img:pngBase64,src:'pc'});
   result('image-only send through original stream IPC');
+  await ev(`(()=>{window.confirm=()=>{throw new Error('native confirm forbidden')};window.__fixtureFileInput=null;const original=document.createElement.bind(document);window.__originalCreate=original;document.createElement=function(tag){const n=original(tag);if(tag==='input'){n.click=()=>{window.__fixtureFileInput=n}}return n};document.querySelector('#clipBtn').click();document.createElement=window.__originalCreate;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange()})()`);
+  await until(`document.querySelector('[data-video-choice="frames"]') && document.querySelector('[data-video-choice="original"]')`);
+  assert.ok(await ev(`document.querySelector('#attach').textContent.includes('当前模型不支持直接理解完整视频')`));
+  await ev(`document.querySelector('[data-video-choice="original"]').click()`);
+  assert.equal(await ev(`document.querySelector('[data-video-choice="original"]').classList.contains('on')`),true);
+  await ev(`document.querySelector('#atClr').click()`);
+  result('video limits show inline keyframe/original choices without native confirm; cancel removes attachment');
+  uploadFailure=true;
+  await ev(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();document.createElement=original;const file=new File(['fixture'],'failure.pdf',{type:'application/pdf'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange()})()`);
+  await until(`!document.querySelector('#sendBtn').disabled`);
+  await ev(`document.querySelector('#sendBtn').click()`);
+  await until(`document.querySelector('.attachment-status.failed')`);
+  assert.ok(await ev(`document.querySelector('.attachment-status').textContent.includes('fixture upload failed')`));
+  await ev(`document.querySelector('#atClr').click()`); uploadFailure=false;
+  result('attachment upload failure remains inline and does not claim chat success');
   // Current dev opens the model picker and delegates management to the
   // dedicated settings window via production IPC.
   await ev(`document.querySelector('#modelBtn').click()`);

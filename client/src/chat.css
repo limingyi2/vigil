@@ -40,6 +40,11 @@ body[data-vigil-page="chat"] .li.on { background:var(--chat-selected); box-shado
 body[data-vigil-page="chat"] .li .tx b { font-size:14px; color:var(--chat-text); font-weight:500; }
 body[data-vigil-page="chat"] .li .tx span { font-size:12px; color:var(--chat-muted); }
 body[data-vigil-page="chat"] .li .ic { color:var(--chat-muted); }
+body[data-vigil-page="chat"] .session-row { display:flex; align-items:center; gap:2px; padding:4px; }
+body[data-vigil-page="chat"] .session-open { display:flex; align-items:center; gap:9px; flex:1; min-width:0; padding:8px 6px; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; }
+body[data-vigil-page="chat"] .session-rename { flex:none; opacity:.55; }
+body[data-vigil-page="chat"] .session-row:hover .session-rename { opacity:1; }
+body[data-vigil-page="chat"] .session-title-edit { min-width:0; flex:1; }
 body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chat-topbar { height:56px; padding:0 24px; border:0; gap:12px; background:var(--chat-bg); }
 .chat-title { font-weight:600; font-size:14px; white-space:nowrap; }

@@ -344,6 +344,17 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.55; resize: ver
 .afile-icon { width:34px; height:34px; display:grid; place-items:center; color:var(--text-3); flex:none; }
 .attachment-status { font-size:11px; }
 .attachment-status.failed { color:var(--err); font-weight:600; }
+.attach { flex-direction:column; align-items:stretch; }
+.video-limit { font-size:12px; color:var(--err); padding:6px 0 0 42px; }
+.video-choice { display:flex; gap:6px; margin-top:6px; }
+.video-choice .chip.on { background:var(--chat-selected,var(--bg-hover)); border-color:var(--accent); }
+.attachment-target { color:var(--text-3); font-size:11px; padding-left:42px; }
+.vigil-confirm-backdrop { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; padding:20px; background:rgba(0,0,0,.38); }
+.vigil-confirm { width:min(440px,100%); padding:20px; border:1px solid var(--line); border-radius:12px; background:var(--bg); color:var(--text); box-shadow:0 20px 60px rgba(0,0,0,.22); }
+.vigil-confirm h3 { margin:0 0 10px; font-size:15px; }
+.vigil-confirm p { margin:0 0 16px; color:var(--text-2); line-height:1.55; white-space:pre-wrap; }
+.vigil-confirm textarea { width:100%; resize:vertical; margin-bottom:12px; }
+.vigil-confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
 .msg-attachment { display:flex; align-items:center; gap:5px; margin-top:6px; padding:5px 8px; border:1px solid var(--line); border-radius:var(--r-xs); color:var(--text-2); font-size:12px; max-width:360px; overflow:hidden; text-overflow:ellipsis; }
 .chatwrap .cbox.drop-active { border-color:var(--chat-accent); box-shadow:0 0 0 2px color-mix(in srgb, var(--chat-accent) 18%, transparent); }
 .aname { font-size: 12px; color: var(--text-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

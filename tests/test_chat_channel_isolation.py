@@ -73,9 +73,9 @@ class ChatChannelIsolationTests(unittest.TestCase):
             p.stop()
         self.tmp.cleanup()
 
-    def _fake_chat(self, text, _img, trace_out=None, src=None):
+    def _fake_chat(self, text, _img, trace_out=None, src=None, conversation_id=None):
         with server._chat_lock():
-            self.brain.use_src(src)
+            self.brain.use_src(src, conversation_id)
             self.brain.hist.extend([
                 {"role": "user", "content": text},
                 {"role": "assistant", "content": "reply-" + src},
@@ -118,9 +118,9 @@ class ChatChannelIsolationTests(unittest.TestCase):
         group_channel_set = threading.Event()
         errors = []
 
-        def interleaved_chat(text, _img, trace_out=None, src=None):
+        def interleaved_chat(text, _img, trace_out=None, src=None, conversation_id=None):
             with server._chat_lock():
-                self.brain.use_src(src)
+                self.brain.use_src(src, conversation_id)
                 self.brain.hist.extend([
                     {"role": "user", "content": text},
                     {"role": "assistant", "content": "reply-" + src},

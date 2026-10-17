@@ -14,16 +14,50 @@
   const { esc, icon, fmtTime, fmtAgo, bytes, toast, empty, fmtNum } = U;
   const { get, post, pick, state } = API;
 
+  function confirmDialog(message) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'vigil-confirm-backdrop';
+      overlay.innerHTML = '<section class="vigil-confirm" role="dialog" aria-modal="true" aria-labelledby="vigilConfirmTitle">' +
+        '<h3 id="vigilConfirmTitle">确认操作</h3><p></p><div class="vigil-confirm-actions">' +
+        '<button type="button" class="btn" data-choice="cancel">取消</button>' +
+        '<button type="button" class="btn fill" data-choice="ok">继续</button></div></section>';
+      overlay.querySelector('p').textContent = String(message || '');
+      const finish = (value) => { overlay.remove(); resolve(value); };
+      overlay.querySelector('[data-choice="cancel"]').onclick = () => finish(false);
+      overlay.querySelector('[data-choice="ok"]').onclick = () => finish(true);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+      document.addEventListener('keydown', function onKey(e) {
+        if (e.key === 'Escape' && overlay.isConnected) { document.removeEventListener('keydown', onKey); finish(false); }
+      });
+      document.body.appendChild(overlay);
+      overlay.querySelector('[data-choice="ok"]').focus();
+    });
+  }
+  function inputDialog(message, initialValue) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div'); overlay.className = 'vigil-confirm-backdrop';
+      overlay.innerHTML = '<section class="vigil-confirm" role="dialog" aria-modal="true"><h3>编辑内容</h3><p></p><textarea class="input" rows="5"></textarea><div class="vigil-confirm-actions"><button type="button" class="btn" data-choice="cancel">取消</button><button type="button" class="btn fill" data-choice="ok">保存</button></div></section>';
+      overlay.querySelector('p').textContent = String(message || '');
+      const input = overlay.querySelector('textarea'); input.value = String(initialValue || '');
+      const finish = (value) => { overlay.remove(); resolve(value); };
+      overlay.querySelector('[data-choice="cancel"]').onclick = () => finish(null);
+      overlay.querySelector('[data-choice="ok"]').onclick = () => finish(input.value);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(null); });
+      document.body.appendChild(overlay); input.focus();
+    });
+  }
+
   // ── 通用零件 ────────────────────────────────────────────────
   const UI_RECORD_LIMITS = { count: 100, chars: 16384, days: 30 };
   function recordKey() {
     const cfg = state.cfg || {};
     return 'vigil.display.v1:' + JSON.stringify([state.base || cfg.base || '', cfg.device_id || '',
-      cfg.token_kind || '', state.src || 'pc', 'main']);
+      cfg.token_kind || '', state.src || 'pc', state.chatConversationId || 'main']);
   }
   async function loadRecordScope() {
     try { await API.loadCfg(); return true; }
-    catch (_) { toast('无法读取当前连接身份，暂不加载或提交会话记录'); return false; }
+    catch (error) { state.recordScopeError = String(error && error.message || '无法读取连接身份'); toast('无法读取当前连接身份，暂不加载或提交会话记录'); return false; }
   }
   function localRecords(key = recordKey()) {
     try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; }
@@ -298,7 +332,7 @@
     // 所以正在用的那个模型不会因为"从列表里删掉"就悄悄被换走。
     async function forget(m) {
       if (!m) return;
-      if (!confirm('从模型清单里移除「' + nameOf(m) + '」？\n\n只影响这个下拉列表，'
+      if (!await confirmDialog('从模型清单里移除「' + nameOf(m) + '」？只影响这个下拉列表，'
         + '当前设置和聊天记录都不动。')) return;
       say('正在移除…');
       try {
@@ -416,31 +450,37 @@
       '<button class="ibtn" id="clearBtn" title="清空本机（pc）会话历史">' + icon('dots', 'sm') + '</button>' +
       '</div>';
 
-    // 左栏照会话列表的样子来：顶部一个动作项，下面按天分组的真实记录，
-    // 点一条跳到消息流里那句。不放说明文字 —— 面板里摆的都是能点的东西。
+    // 会话由 Brain 持久化；本地只记当前选中 ID，不用日期或时间标记切历史。
     panel.innerHTML =
-      '<div class="phead"><h2>会话</h2><button class="ibtn" id="newTopicBtn" title="新话题：重置上下文，保留记录" aria-label="新话题">' + icon('plus', 'sm') + '</button></div>' +
+      '<div class="phead"><h2>会话</h2><button class="ibtn" id="newTopicBtn" title="新建空白会话" aria-label="新建会话">' + icon('plus', 'sm') + '</button></div>' +
       '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>';
     const sessList = panel.querySelector('#sessList');
 
-    // ── 会话分段 ─────────────────────────────────────────────
-    // 后端历史是按渠道的扁平消息流（没有会话边界），边界只能在客户端定。
-    // 规则：你点一次「新话题」→ 之后算新的一段；跨天也算新的一段。
-    // 这样左栏是「一段对话一行」，而不是每一条消息都占一行。
-    const SESS_KEY = 'vigil.sessions.pc.v1';
-    function loadMarkers() {
-      try {
-        const a = JSON.parse(localStorage.getItem(SESS_KEY) || '[]');
-        return Array.isArray(a) ? a.filter((x) => typeof x === 'number').sort((x, y) => x - y) : [];
-      } catch (e) { return []; }
+    const SESS_KEY = 'vigil.chat.active.v2:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
+    let sessionItems = [];
+    let activeConversationId = '';
+    async function refreshConversations() {
+      if (API.runtime.preview) {
+        const id = '00000000-0000-4000-8000-000000000001';
+        sessionItems = [{id,title:'预览对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false}];
+        activeConversationId = id; state.chatConversationId = id; drawSessions(); return id;
+      }
+      const r = pick(await get('/api/conversations?src=pc'));
+      if (!r.ok || !Array.isArray(r.items)) throw new Error(r._err || '会话列表加载失败');
+      sessionItems = r.items;
+      let saved = '';
+      try { saved = localStorage.getItem(SESS_KEY) || ''; } catch (_) {}
+      if (!sessionItems.some((x) => x.id === saved)) saved = sessionItems[0] && sessionItems[0].id || '';
+      activeConversationId = saved;
+      state.chatConversationId = saved;
+      if (saved) { try { localStorage.setItem(SESS_KEY, saved); } catch (_) {} }
+      drawSessions();
+      return saved;
     }
-    function saveMarkers(a) { try { localStorage.setItem(SESS_KEY, JSON.stringify(a.slice(-200))); } catch (e) {} }
     const tsOf = (t) => {
       const n = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(String(t).replace(/-/g, '/'));
       return isNaN(n) ? Date.now() : n;
     };
-    const minuteOf = (ms) => Math.floor(ms / 60000) * 60000;
-    const dayStrOf = (ms) => { const d = new Date(ms); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
     const relative = (ms) => {
       const m = Math.floor((Date.now() - ms) / 60000);
       if (m < 1) return '刚刚';
@@ -452,61 +492,52 @@
       return fmtTime(ms, 'day');
     };
 
-    function drawSessions(items) {
-      if (!items.length) {
-        sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">还没有聊过。说点什么试试。</div>';
+    function drawSessions() {
+      if (!sessionItems.length) {
+        sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">还没有会话</div>';
         return;
       }
-      const rows = items.map((m, i) => ({ m, i, ts: tsOf(m.t) }));
-      const markers = loadMarkers().map(minuteOf);
-      const order = [];
-      const byKey = new Map();
-      rows.forEach(({ m, i, ts }) => {
-        const mmin = minuteOf(ts);
-        let mk = 0;
-        for (const x of markers) { if (x <= mmin) mk = x; else break; }
-        const key = mk + '@' + dayStrOf(ts);
-        let s = byKey.get(key);
-        if (!s) { s = { key, startIdx: i, endIdx: i, firstTs: ts, lastTs: ts, n: 0 }; byKey.set(key, s); order.push(s); }
-        s.endIdx = i; s.lastTs = ts; s.n += 1;
-      });
-      const titleOf = (s) => {
-        for (let i = s.startIdx; i <= s.endIdx; i++) {
-          const mm = rows[i];
-          const mine = ['me', 'user', 'self'].includes(String(mm.m.role || '').toLowerCase());
-          const tx = String(mm.m.text || '').replace(/\s+/g, ' ').trim();
-          if (mine && tx) return tx;
-        }
-        return String(rows[s.startIdx].m.text || '').replace(/\s+/g, ' ').trim();
+      sessList.innerHTML = sessionItems.map((s) => {
+        const updated = Number(s.updated_at || s.created_at || 0) * 1000;
+        return '<div class="li session-row' + (s.id === activeConversationId ? ' on' : '') + '">' +
+          '<button class="session-open" data-session="' + esc(s.id) + '" title="切换会话">' +
+          '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(s.title) + '</b>' +
+          '<span>' + esc(relative(updated)) + '</span></span></button>' +
+          '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button></div>';
+      }).join('');
+      sessList.querySelectorAll('[data-session]').forEach((n) => n.addEventListener('click', () => activateConversation(n.dataset.session)));
+      sessList.querySelectorAll('[data-rename]').forEach((n) => n.addEventListener('click', () => renameConversation(n.dataset.rename)));
+    }
+    async function activateConversation(id) {
+      if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
+      activeConversationId = id;
+      state.chatConversationId = id;
+      try { localStorage.setItem(SESS_KEY, id); } catch (_) {}
+      lastCount = -1;
+      drawSessions();
+      await loadMsgs(true);
+    }
+    async function renameConversation(id) {
+      const item = sessionItems.find((s) => s.id === id);
+      if (!item) return;
+      const row = sessList.querySelector('[data-rename="' + CSS.escape(id) + '"]')?.closest('.session-row');
+      if (!row) return;
+      row.innerHTML = '<input class="input session-title-edit" maxlength="80" value="' + esc(item.title) + '"><button class="ibtn" aria-label="保存标题">✓</button>';
+      const input = row.querySelector('input'); input.focus(); input.select();
+      const save = async () => {
+        const title = input.value.trim(); if (!title) { drawSessions(); return; }
+        const r = pick(await post('/api/conversations/' + encodeURIComponent(id), {src:'pc', title}));
+        if (!r.ok) { toast(r._err || '标题保存失败'); drawSessions(); return; }
+        sessionItems = sessionItems.map((s) => s.id === id ? r.item : s); drawSessions();
       };
-      const parts = [];
-      order.slice().reverse().forEach((s) => {
-        const title = titleOf(s) || '（空）';
-        parts.push(
-          '<button class="li' + (s === order[order.length - 1] ? ' on' : '') + '" data-goto="' + s.startIdx + '"' +
-          ' title="' + esc(s.n + ' 条 · ' + fmtTime(s.firstTs, 'time') + ' – ' + fmtTime(s.lastTs, 'time')) + '">' +
-          '<span class="ic">' + icon('chat', 'sm') + '</span>' +
-          '<div class="tx"><b>' + esc(title.slice(0, 26)) + '</b>' +
-          '<span>' + esc(relative(s.lastTs)) + ' · ' + s.n + ' 条</span></div>' +
-          '</button>');
-      });
-      sessList.innerHTML = parts.join('');
-
-      sessList.querySelectorAll('[data-goto]').forEach((n) => n.addEventListener('click', () => {
-        const node = msgs.children[Number(n.dataset.goto)];
-        if (!node) return;
-        sessList.querySelectorAll('[data-goto]').forEach((row) => row.classList.toggle('on', row === n));
-        node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        node.classList.add('flash');
-        setTimeout(() => node.classList.remove('flash'), 1400);
-      }));
+      row.querySelector('button').onclick = save;
+      input.onkeydown = (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') drawSessions(); };
     }
     panel.querySelector('#newTopicBtn').addEventListener('click', async () => {
-        if (!confirm('重开一段话题？当前上下文清掉，聊天记录保留。')) return;
-        const r = pick(await post('/api/reset', {}));
-        if (r.ok) { const a = loadMarkers(); a.push(Date.now()); saveMarkers(a); }
-        toast(r.ok ? '新话题开始了' : '重置失败：' + (r._err || ''));
-        if (r.ok) setTimeout(() => loadMsgs(true), 200);
+        const r = pick(await post('/api/conversations', {src:'pc'}));
+        if (!r.ok || !r.item) { toast('新建会话失败：' + (r._err || '')); return; }
+        sessionItems.unshift(r.item);
+        await activateConversation(r.item.id);
     });
 
     view.innerHTML =
@@ -746,13 +777,27 @@
       if (attachment.kind === 'image' && preview) media = '<img class="athumb" src="' + esc(preview) + '" alt="">';
       if (attachment.kind === 'video' && preview) media = '<video class="avideo" controls preload="metadata" src="' + esc(preview) + '"></video>';
       const pct = Math.max(0, Math.min(100, Number(attachment.progress || 0)));
+      let target = '当前 Brain';
+      try {
+        const host = new URL(state.base || (state.cfg || {}).base || '').hostname;
+        if (host) target = ['127.0.0.1','localhost','::1'].includes(host) ? '本机 Brain' : '远端 Brain · ' + host;
+      } catch (_) {}
+      const videoOptions = attachment.kind === 'video' && attachment.videoUnsupported
+        ? '<div class="video-limit">当前模型不支持直接理解完整视频<div class="video-choice">' +
+          '<button type="button" class="chip' + (attachment.videoChoice === 'frames' ? ' on' : '') + '" data-video-choice="frames">提取关键帧</button>' +
+          '<button type="button" class="chip' + (attachment.videoChoice === 'original' ? ' on' : '') + '" data-video-choice="original">仅发送原视频</button></div></div>' : '';
       attachBox.innerHTML = '<div class="attachment-row">' + media +
         '<div class="attachment-info"><b class="aname" title="' + esc(f.name) + '">' + esc(f.name) + '</b>' +
         '<span class="muted">' + esc(bytes(f.size)) + ' · ' + esc(f.type || '未知类型') + '</span>' +
         '<progress class="aupload" max="100" value="' + pct + '"></progress>' +
         '<span class="muted attachment-status' + (attachment.failed ? ' failed' : '') + '" role="status">' + esc(attachment.status || '待发送') + '</span></div>' +
-        '<button class="ibtn" id="atClr" title="移除附件" aria-label="移除附件">' + icon('x', 'sm') + '</button></div>';
+        '<button class="ibtn" id="atClr" title="移除附件" aria-label="移除附件">' + icon('x', 'sm') + '</button></div>' +
+        videoOptions + '<div class="attachment-target">发送目标：' + esc(target) +
+        (target.startsWith('远端') ? ' · 文件将上传到该服务端，请确认这是预期目标。' : '') + '</div>';
       attachBox.querySelector('#atClr').addEventListener('click', clearAttachment);
+      attachBox.querySelectorAll('[data-video-choice]').forEach((b) => b.addEventListener('click', () => {
+        attachment.videoChoice = b.dataset.videoChoice; renderAttachment();
+      }));
     }
 
     function chooseFile(file) {
@@ -762,6 +807,7 @@
         ? 'video' : /^image\//i.test(file.type) || /\.(jpe?g|png|gif|webp)$/i.test(file.name)
           ? 'image' : 'file';
       attachment = { file, kind, progress: 0, status: '待发送', previewUrl: '' };
+      const selected = attachment;
       let validationError = '';
       if (file.size <= 0) validationError = '附件不能为空';
       else if (file.size > ATTACH_MAX) validationError = '附件超过 256 MB 上限';
@@ -771,13 +817,11 @@
         attachment.failed = true;
         attachment.status = '上传失败：' + validationError;
         renderAttachment();
-        toast(validationError);
         updateComposer();
         return;
       }
       if (kind === 'image') {
         const fr = new FileReader();
-        const selected = attachment;
         fr.onload = () => {
           if (attachment !== selected) return;
           attachment.preview = String(fr.result || '');
@@ -801,6 +845,21 @@
         fr.readAsDataURL(file);
       } else {
         attachment.previewUrl = URL.createObjectURL(file);
+        if (kind === 'video') {
+          attachment.status = '检查当前模型视频能力…';
+          attachment.capabilityCheck = get('/api/attachments/capabilities').then((raw) => {
+            if (attachment !== selected) return;
+            const cap = pick(raw);
+            attachment.videoCapabilities = cap || {};
+            attachment.videoUnsupported = !cap || cap.video !== true;
+            attachment.videoChoice = 'frames';
+            attachment.status = '待发送'; renderAttachment();
+          }).catch(() => {
+            if (attachment !== selected) return;
+            attachment.videoUnsupported = true; attachment.videoChoice = 'frames';
+            attachment.status = '能力检查失败；发送前可选择处理方式'; renderAttachment();
+          });
+        }
         renderAttachment();
       }
       updateComposer();
@@ -948,7 +1007,7 @@
       chooseFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
     });
     // 原生右键菜单的“粘贴”会触发这里；图片或从资源管理器复制的文件
-    // 进入同一套类型、大小和用户确认流程，普通文本仍由 textarea 默认粘贴。
+    // 进入同一套类型和大小校验流程；点击发送即表示发送附件。
     dropTarget.addEventListener('paste', (e) => {
       const files = e.clipboardData && e.clipboardData.files;
       if (files && files.length) {
@@ -977,18 +1036,24 @@
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
-      if (!await loadRecordScope()) return;
-      const r = pick(await get('/api/history?limit=300'));
-      const creatorHistory = pick(await get('/api/creator/jobs'));
-      if (!msgs.isConnected || busy) return;
       const loadState = view.querySelector('#chatLoadState');
+      const showRetry = (message) => {
+        heroEl.hidden = true; chat.classList.remove('is-empty'); loadState.hidden = false;
+        loadState.innerHTML = '<b>暂时无法加载会话</b><p>' + esc(message || '检查连接设置') + '</p><button class="btn oline" id="retryHistory">重新加载</button>';
+        loadState.querySelector('button').onclick = () => loadMsgs(true);
+      };
+      if (!await loadRecordScope()) { if (force || lastCount < 0) showRetry(state.recordScopeError || '无法读取当前连接身份'); return; }
+      if (!activeConversationId) {
+        try { await refreshConversations(); }
+        catch (e) { showRetry(e.message || '会话服务暂不可用'); return; }
+      }
+      state.chatConversationId = activeConversationId;
+      const r = pick(await get('/api/history?limit=300&src=pc&conversation_id=' + encodeURIComponent(activeConversationId)));
+      const creatorHistory = pick(await get('/api/creator/jobs'));
+      if (!msgs.isConnected) return;
       if (!r.ok && !localRecords().length && !(creatorHistory.items || []).length) {
         if (force || lastCount < 0) {
-          heroEl.hidden = true;
-          chat.classList.remove('is-empty');
-          loadState.hidden = false;
-          loadState.innerHTML = '<b>暂时无法加载会话</b><p>' + esc(r._err || '检查连接设置') + '</p><button class="btn oline" id="retryHistory">重新加载</button>';
-          loadState.querySelector('button').onclick = () => loadMsgs(true);
+          showRetry(r._err || '检查连接设置');
         }
         return;
       }
@@ -1030,10 +1095,10 @@
           if (ta) { ta.value = b.dataset.hint; ta.dispatchEvent(new Event('input')); ta.focus(); }
         }));
         msgs.innerHTML = '';
-        drawSessions(items);
+        drawSessions();
         return;
       }
-      drawSessions(items);
+      drawSessions();
       heroEl.hidden = true;
       chat.classList.remove('is-empty');
       // 草稿卡不在聊天历史里（草稿在独立工作区，不走 /api/chat）。重绘消息流
@@ -1087,23 +1152,19 @@
       // 创作模式：同一条输入框，发给 creator 而不是聊天历史
       if (creatorMode !== 'off' && text) { creatorSend(text); return; }
       const pending = attachment;
-      if (pending && !confirm('确认把「' + pending.file.name + '」上传到当前 Brain 并发送吗？')) return;
       const uploadedAttachments = [];
       if (pending && pending.kind !== 'image') {
         busy = true;
         pending.status = '准备上传';
         updateComposer();
         try {
+          if (pending.kind === 'video' && pending.capabilityCheck) await pending.capabilityCheck;
           // 原视频先独立保存。后续元数据/关键帧分析失败时，不能丢弃
           // 这份已经上传完成的原文件。
           const original = await uploadAttachment(pending);
           uploadedAttachments.push(original);
           if (pending.kind === 'video') {
-            let cap = null;
-            try { cap = pick(await get('/api/attachments/capabilities')); } catch (_) {}
-            if (!cap || cap.video !== true) {
-              const wantFrames = confirm('当前模型不能直接分析完整视频。是否仅额外提取最多 3 个关键帧供视觉模型参考？');
-              if (wantFrames) {
+            if (pending.videoUnsupported && pending.videoChoice === 'frames') {
                 pending.status = '提取关键帧…';
                 renderAttachment();
                 try {
@@ -1111,7 +1172,7 @@
                   try {
                     frameFiles = await extractVideoFrames(pending.file, 3);
                   } catch (browserError) {
-                    if (!cap || cap.video_frames !== true) throw browserError;
+                    if (!pending.videoCapabilities || pending.videoCapabilities.video_frames !== true) throw browserError;
                     pending.status = '浏览器解析失败，改用本机 FFmpeg…';
                     renderAttachment();
                     uploadedAttachments.push(...await extractVideoFramesViaBrain(original.id, 3));
@@ -1132,7 +1193,6 @@
                   renderAttachment();
                   toast('原视频已保存，但关键帧提取失败：' + String(frameError.message || frameError).slice(0, 100));
                 }
-              }
             }
           }
         } catch (e) {
@@ -1286,6 +1346,7 @@
           statusEl.textContent = fmtTime(Date.now(), 'time');
           busy = false;
           updateComposer();
+          refreshConversations().catch(() => {});
         } else if (evt.type === 'error') {
           streamDone = true;
           stopListening();
@@ -1296,6 +1357,7 @@
           statusEl.textContent = ({cancelled:'已取消',paused_budget:'预算已用尽',interrupted:'执行中断'})[evt.status] || '失败';
           busy = false;
           updateComposer();
+          refreshConversations().catch(() => {});
         }
       };
 
@@ -1309,7 +1371,8 @@
       }
 
       try {
-        const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId };
+      const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId,
+        conversation_id: activeConversationId, session_id: activeConversationId };
         if (sendingImg) chatPayload.img = sendingImg;
         if (sendingAttachments.length) chatPayload.attachments = sendingAttachments;
         // 附件走普通 JSON 元数据请求；二进制已经在此前分块上传，
@@ -1326,6 +1389,7 @@
           statusEl.textContent = fmtTime(Date.now(), 'time');
           busy = false;
           updateComposer();
+          refreshConversations().catch(() => {});
         } else if (global.vigil && global.vigil.apiStream) {
           // 开始流式请求
           console.log('[stream] starting apiStream...');
@@ -1366,6 +1430,7 @@
           updateComposer();
           streamDone = true;
           stopListening();
+          refreshConversations().catch(() => {});
         }
       } catch (e) {
         remember({content:textBuf,status:'interrupted',error:{message:'连接中断，结果不完整；未自动重发'}});
@@ -1375,6 +1440,7 @@
         statusEl.textContent = '失败';
         busy = false;
         updateComposer();
+        refreshConversations().catch(() => {});
       }
     }
 
@@ -1458,9 +1524,9 @@
       view.querySelector('.split').classList.toggle('no-right');
       ctx.topbar.querySelector('#rpBtn').setAttribute('aria-expanded', String(!rp.classList.contains('no')));
     });
-    ctx.topbar.querySelector('#clearBtn').addEventListener('click', () => {
-      if (confirm('清空当前渠道的聊天历史？不可恢复。')) {
-        post('/api/history/clear', { src: state.src }).then(r => {
+    ctx.topbar.querySelector('#clearBtn').addEventListener('click', async () => {
+      if (await confirmDialog('清空当前会话的聊天历史？此操作不可恢复。')) {
+        post('/api/history/clear', { src: state.src || 'pc', conversation_id: activeConversationId }).then(r => {
           if (r.ok) {
             const scope = recordKey();
             const cleared = JSON.parse(localStorage.getItem(scope + ':cleared') || '[]');
@@ -1604,7 +1670,7 @@
           await save({ localOff: [], localRisky: danger.slice(), localAuto: false, allowAllPaths: false, allowAllCmds: false });
           toast('已切换至默认模式');
         } else {
-          if (!confirm('将开放全部文件系统与命令执行权限，操作自动执行无需确认（系统关键目录仍受保护，修改自动备份可撤销）。确定吗？')) return;
+          if (!await confirmDialog('将开放全部文件系统与命令执行权限，操作自动执行无需确认（系统关键目录仍受保护，修改自动备份可撤销）。确定吗？')) return;
           await save({ localOff: [], localRisky: danger.slice(), localAuto: true, allowAllPaths: true, allowAllCmds: true });
           toast('已切换至全部允许模式');
         }
@@ -2029,7 +2095,7 @@
         : empty(all.length ? '没有匹配的条目' : '这个分区还没有记忆', all.length ? '换个搜法' : '聊几句她就开始记了');
       box.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', async () => {
         const it = all.find((x) => x.id === b.dataset.edit);
-        const nv = prompt('改这条记忆（改动会上云）：', it ? it.text : '');
+        const nv = await inputDialog('改这条记忆（改动会上云）：', it ? it.text : '');
         if (nv == null) return;                     // 取消
         const r = pick(await post('/api/memory/edit',
           { store: curStore, id: b.dataset.edit, text: nv }));
@@ -2037,7 +2103,7 @@
         else toast('没改成：' + (r.err || r._err || ''));
       }));
       box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-        if (!confirm('删掉这条记忆？会同步到云端（墓碑账本，不会被增量拉取复活）。')) return;
+        if (!await confirmDialog('删掉这条记忆？会同步到云端（墓碑账本，不会被增量拉取复活）。')) return;
         const r = pick(await post('/api/memory/delete',
           { store: curStore, id: b.dataset.del }));
         if (r.ok) { toast('已删除'); load(); }
@@ -2107,7 +2173,7 @@
           : '<tr><td colspan="4">' + empty('知识库是空的') + '</td></tr>') +
         '</table></div>';
       v.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-        if (!confirm('删除「' + b.dataset.del + '」的全部块？')) return;
+        if (!await confirmDialog('删除「' + b.dataset.del + '」的全部块？')) return;
         await post('/api/plugin/kb/delete', { name: b.dataset.del });
         docs();
       }));
@@ -2381,7 +2447,7 @@
         plugins();
       });
       v.querySelectorAll('[data-un]').forEach((b) => b.addEventListener('click', async () => {
-        if (!confirm('卸载插件 ' + b.dataset.un + '？')) return;
+        if (!await confirmDialog('卸载插件 ' + b.dataset.un + '？')) return;
         // C2：卸载接口会回 restart_needed，必须消费。文件删掉只代表磁盘上
         // 没了，已经 import 的那份（连同它 start() 起的线程）还在跑 ——
         // 不告诉用户"要重启才真正停"，他就会以为线程也跟着没了。
@@ -2455,7 +2521,7 @@
         setTimeout(skills, 1200);
       });
       v.querySelectorAll('[data-sun]').forEach((b) => b.addEventListener('click', async () => {
-        if (!confirm('卸载技能 ' + b.dataset.sun + '？')) return;
+        if (!await confirmDialog('卸载技能 ' + b.dataset.sun + '？')) return;
         // C2（技能侧同理）：文件删了不等于宿主里那份也没了。
         const rr = pick(await post('/api/skill/uninstall', { skill: b.dataset.sun }));
         if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
@@ -2816,7 +2882,7 @@
           '<div class="lb"><span class="mono" style="font-size:12px">' + esc(String(x.msg || '').slice(0, 160)) + '</span></div>' +
           '</div>').join('') : empty('没有日志')) + '</div>';
       v.querySelector('#lgClear')?.addEventListener('click', async () => {
-        if (!confirm('清空服务端日志？')) return;
+        if (!await confirmDialog('清空服务端日志？此操作不可恢复。')) return;
         await dpost('/api/logs/clear', { src: 'server' });
         lg();
       });
@@ -3170,7 +3236,7 @@
         savedHost.querySelectorAll('[data-model-remove]').forEach((b) => b.addEventListener('click', async () => {
           const model = savedModels[Number(b.dataset.modelRemove)];
           if (!model) return;
-          if (!confirm('从已添加模型中移除「' + (model.name || model.model) + '」？')) return;
+          if (!await confirmDialog('从已添加模型中移除「' + (model.name || model.model) + '」？')) return;
           b.disabled = true;
           const rr = pick(await mpost('/api/models/forget', {
             provider: model.provider, base: model.base, model: model.model,
@@ -3365,7 +3431,7 @@
       v.querySelector('#mDeleteKey').addEventListener('click', async () => {
         const pk = provSel.value;
         if (!hasKey(pk)) { mRes.textContent = '当前服务商没有已保存的密钥'; return; }
-        if (!confirm('删除「' + provName(pk) + '」的已保存密钥？')) return;
+        if (!await confirmDialog('删除「' + provName(pk) + '」的已保存密钥？')) return;
         const rr = pick(await mpost('/api/models/key/delete', { provider: pk }));
         if (!rr.ok) { mRes.textContent = '✗ ' + modelErr(rr); return; }
         toast('已删除该服务商密钥');
@@ -3434,7 +3500,7 @@
           if (payload.model_mode === 'local' || payload.model_mode === 'hybrid') {
             const olModel = (v.querySelector('#olModel') || {}).value || '';
             if (!olModel.trim()) {
-              alert('本地/混合模式要先选或填一个已安装的 Ollama 模型（点「测试连接」可自动拉取）');
+              toast('本地/混合模式要先选或填一个已安装的 Ollama 模型（点「测试连接」可自动拉取）');
               return;
             }
             payload.ollama = {
@@ -3453,7 +3519,7 @@
             };
             if (payload.delegation.enabled &&
                 !payload.delegation.allowed_roots.trim()) {
-              alert('开了委派但没填授权工作区：空名单是 fail-closed，任何委派都会被拒绝。先填一个目录（每行一个绝对路径）');
+              toast('开了委派但没填授权工作区：空名单会拒绝所有委派。先填授权目录。');
               return;
             }
           }
@@ -3491,7 +3557,7 @@
         '<div class="row"><div class="lb"><b>' + esc(t) + '</b><span>' + esc(d) + '</span></div>' +
         '<button class="btn" data-p="' + p + '" data-t="' + esc(t) + '">执行</button></div>').join('') + '</div>';
       v.querySelectorAll('[data-p]').forEach((b) => b.addEventListener('click', async () => {
-        if (!confirm(b.dataset.t + '？')) return;
+        if (!await confirmDialog(b.dataset.t + '？')) return;
         const body = b.dataset.p.includes('history') ? { src: state.src } : {};
         const r = pick(await post(b.dataset.p, body));
         toast(r.ok ? b.dataset.t + '：已执行' : '失败：' + (r._err || ''));
@@ -4120,7 +4186,7 @@
         const installButton = e.target.closest('#crInstallNow');
         const aid = installButton.dataset.approval || '';
         if (!aid) { toast('请先点击“明确批准”生成一次性审批'); return; }
-        if (!confirm('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
+        if (!await confirmDialog('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
         const approvalState = root.querySelector('#crApprovalState');
         installButton.disabled = true;
         installButton.textContent = '安装中…';
@@ -4194,7 +4260,7 @@
         return;
       }
       if (e.target.closest('#crDel')) {
-        if (!confirm('删除草稿 ' + d.id + '？此操作不可恢复。')) return;
+        if (!await confirmDialog('删除草稿 ' + d.id + '？此操作不可恢复。')) return;
         const r = pick(await API.post('/api/creator/delete', { id: d.id }));
         if (!r || !r.ok) { toast('删不掉：' + ((r && r.err) || '未知错误')); return; }
         root.remove();
@@ -4304,12 +4370,12 @@
             if (r && r.ok && r.json && r.json.ok) {
               await load();
             } else {
-              alert((r && r.json && r.json.err) || '操作失败');
+              toast((r && r.json && r.json.err) || '操作失败');
               btn.disabled = false;
               btn.textContent = action === 'install' ? '安装' : '卸载';
             }
           } catch (e) {
-            alert('操作失败：' + e.message);
+            toast('操作失败：' + e.message);
             btn.disabled = false;
             btn.textContent = action === 'install' ? '安装' : '卸载';
           }
