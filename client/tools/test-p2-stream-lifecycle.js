@@ -207,7 +207,7 @@ test('Creator approval and install clicks consume the returned one-time approval
   const p = pages({post:async (path, body) => {
     calls.push({path, body});
     if (path === '/api/creator/approve') return {ok:true, approval:{version:2, approval_id:'ca_fixture_approval'}};
-    if (path === '/api/creator/install') return {ok:true, install:{restart_needed:false}};
+    if (path === '/api/creator/install') return {ok:true, approval:{target_name:'fixture_plugin'}, install:{restart_needed:true,dynamic_loaded:false,package:'fixture_plugin'}};
     return {ok:false, _status:404, _err:'unexpected route'};
   }});
   const r = draftRoot();
@@ -224,7 +224,12 @@ test('Creator approval and install clicks consume the returned one-time approval
   assert.equal(calls[1].body.approval_id, 'ca_fixture_approval');
   assert.equal(r.nodes['#crInstallNow'].textContent, '已安装');
   assert.equal(r.nodes['#crInstallNow'].disabled, true);
-  assert.match(r.nodes['#crApprovalState'].textContent, /已安装/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /安装成功/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /fixture_plugin\.py/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /Brain 插件目录/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /重启 Brain 后/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /TOOLS \/ TOOL_SPECS/);
+  assert.match(r.nodes['#crInstallNow'].textContent, /待重启/);
 });
 
 test('Creator approval transport failure displays destination and error, then re-enables approval', async () => {
