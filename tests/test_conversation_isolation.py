@@ -131,22 +131,29 @@ class ConversationIsolationTests(unittest.TestCase):
 
     def test_legacy_migration_is_idempotent_and_ids_cannot_escape_data_directory(self):
         owner = 'test-owner'
+        brain = Brain(None, {'persona_file':'base'}, mode='api')
+        legacy_path = brain._log_for('pc')
+        payload = '{"t":"2026-10-17 10:00","role":"user","text":"LEGACY_ROW"}' + "\\n"
+        Path(legacy_path).write_text(payload, encoding='utf-8')
+        before = Path(legacy_path).read_bytes()
+        self.assertEqual(brain.read_history(src='pc'), [{'t':'2026-10-17 10:00','role':'user','text':'LEGACY_ROW'}])
+
+        # The API only migrates the old transcript when it exists. Model that
+        # migration explicitly, then verify repeated calls preserve one ID.
+        migrated_ids = [conversations.ensure_legacy(owner, 'pc', 'default') for _ in range(3)]
+        self.assertEqual(len(set(migrated_ids)), 1)
         lists = [conversations.list_for(owner, 'pc', 'default') for _ in range(3)]
         legacy = [item for item in lists[-1] if item['legacy']]
         self.assertEqual(len(legacy), 1)
+        self.assertEqual(legacy[0]['id'], migrated_ids[0])
         self.assertIsNone(conversations.get('different-owner', 'pc', 'default', legacy[0]['id']))
         self.assertIsNone(conversations.get(owner, 'wechat_group', 'default', legacy[0]['id']))
         self.assertIsNone(conversations.get(owner, 'pc', 'other-persona', legacy[0]['id']))
+
         created = conversations.create(owner, 'pc', 'default')
         listed = conversations.list_for(owner, 'pc', 'default')
         self.assertIn(created['id'], {item['id'] for item in listed})
         self.assertEqual(sum(1 for item in listed if item['legacy']), 1)
-        brain = Brain(None, {'persona_file':'base'}, mode='api')
-        legacy_path = brain._log_for('pc')
-        payload = '{"t":"2026-10-17 10:00","role":"user","text":"LEGACY_ROW"}' + "\n"
-        Path(legacy_path).write_text(payload, encoding='utf-8')
-        before = Path(legacy_path).read_bytes()
-        self.assertEqual(brain.read_history(src='pc'), [{'t':'2026-10-17 10:00','role':'user','text':'LEGACY_ROW'}])
         conversations.list_for(owner, 'pc', 'default')
         self.assertEqual(Path(legacy_path).read_bytes(), before)
         self.assertIsNone(conversations.get('different-owner', 'pc', 'default', legacy[0]['id']))
