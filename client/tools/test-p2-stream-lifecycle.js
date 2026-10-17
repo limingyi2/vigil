@@ -162,6 +162,46 @@ test('API pick preserves transport status and safe destination without trusting 
   assert.equal(r.ok,false);assert.equal(r._status,404);assert.equal(r._target,'http://127.0.0.1:61285');
 });
 
+test('Creator files render compact previews and lazy-render independent source panels', async () => {
+  const p = pages();
+  const content = Array.from({length:80}, (_,i)=>'line '+(i+1)).join('\n');
+  const html = p.draftCardHtml({id:'cr_files', kind:'plugin', version:1, files:[
+    {name:'large.py', content}, {name:'small.json', content:'{"ok":true}'},
+  ]});
+  assert.ok(html.includes('data-cr-file-toggle="0" aria-expanded="false">展开源码'));
+  assert.ok(html.includes('data-copy-file="0">复制完整源码'));
+  assert.ok(html.includes('预览前 6 行 · 还有 74 行'));
+  assert.ok(!html.includes('line 80'), 'full file should not be emitted into initial preview HTML');
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_files', kind:'plugin', version:1, files:[
+    {name:'large.py', content}, {name:'small.json', content:'{"ok":true}'},
+  ]});
+  await r.click('[data-cr-file-toggle="0"]');
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, false);
+  assert.equal(r.nodes['[data-cr-file-preview="0"]'].hidden, true);
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].dataset.rendered, 'true');
+  assert.ok(r.nodes['[data-cr-file-body="0"]'].innerHTML.includes('line 80'));
+  assert.equal(r.nodes['[data-cr-file-body="1"]'].hidden, true, 'other file remains collapsed');
+  assert.equal(r.nodes['[data-cr-file-toggle="0"]'].textContent, '收起源码');
+  await r.click('[data-cr-file-toggle="0"]');
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, true);
+  assert.equal(r.nodes['[data-cr-file-preview="0"]'].hidden, false);
+  assert.equal(r.nodes['[data-cr-file-toggle="0"]'].attrs['aria-expanded'], 'false');
+});
+
+test('Creator full source can be copied without expanding its preview', async () => {
+  let copied = '';
+  const p = pages({writeClipboard:async value=>{copied=value;}});
+  const content = 'line 1\nline 2\nline 3';
+  const r = draftRoot();
+  p.bindDraftCard(r, {id:'cr_copy', kind:'plugin', version:1, files:[{name:'demo.py', content}]});
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, true);
+  await r.click('[data-copy-file="0"]');
+  assert.equal(copied, content);
+  assert.equal(r.nodes['[data-cr-file-body="0"]'].hidden, true);
+  assert.equal(r.nodes['[data-copy-file="0"]'].textContent, '已复制');
+});
+
 test('Creator approval and install clicks consume the returned one-time approval', async () => {
   const calls = [];
   const p = pages({post:async (path, body) => {
