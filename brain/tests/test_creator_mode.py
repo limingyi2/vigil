@@ -41,9 +41,17 @@ PLUGIN_PY = (
     '# -*- coding: utf-8 -*-\n'
     '"""每小时整点提醒喝水的示例插件（fixture 生成）。"""\n\n'
     'NAME = "hourly_water"\n'
-    'DESC = "每小时整点提醒喝水"\n\n\n'
-    'def prompt(ctx):\n'
-    '    return "用户希望每小时整点被提醒喝水。"\n'
+    'DESC = "每小时整点提醒喝水"\n\n'
+    'def hourly_water_status(arg):\n'
+    '    return "喝水提醒插件已安装。\\"\n\n'
+    'TOOLS = {"hourly_water_status": hourly_water_status}\n'
+    'TOOL_SPECS = {\n'
+    '    "hourly_water_status": {\n'
+    '        "desc": "检查喝水提醒插件是否已安装。",\n'
+    '        "params": [],\n'
+    '        "arg_param": None,\n'
+    '    }\n'
+    '}\n'
 )
 PLUGIN_JSON = json.dumps({
     "name": "hourly_water", "version": "0.1.0", "desc": "每小时整点提醒喝水",
