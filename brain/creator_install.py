@@ -183,7 +183,7 @@ def _valid_for_install(snap):
                     stream.write(item["data"])
             if snap["kind"] == "plugin":
                 from plugin_structure import check_plugin_directory
-                report = check_plugin_directory(stage)
+                report = check_plugin_directory(stage, require_chat_tools=True)
             else:
                 from skill_structure import check_skill_directory
                 report = check_skill_directory(stage, package_name=snap["target_name"])
