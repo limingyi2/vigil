@@ -84,15 +84,15 @@ def main(installer, expected_commit, output):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
     config_file = user_data_root / 'config.json'
-    chat_history = brain_home / 'data/chat_history.jsonl'
+    chat_history = brain_home / f'data/pc.chat_history.conversation.{conversation_id}.jsonl'
     conversations_db = brain_home / 'data/conversations.sqlite3'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
-    assert chat_history.is_file(), 'Fresh chat did not persist chat_history.jsonl'
+    assert chat_history.is_file(), 'Fresh PC conversation did not persist its isolated JSONL history'
     chat_text = chat_history.read_text(encoding='utf-8')
     assert 'P8_FRESH_CHAT_SENTINEL' in chat_text and 'FRESH_INSTALL_CHAT_OK' in chat_text
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
-        assert db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0] >= 1
+        assert db.execute('SELECT COUNT(*) FROM conversations WHERE id=?', (conversation_id,)).fetchone()[0] == 1
     retained_files = [*sentinels, config_file, chat_history, conversations_db]
     retained_before = {str(path): sha256(path) for path in retained_files}
     outside = root / 'outside-data' / 'do-not-delete.txt'
@@ -150,4 +150,27 @@ if __name__ == '__main__':
     parser.add_argument('--expected-source-commit', required=True)
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
-    main(args.installer, args.expected_source_commit, args.output)
+    try:
+        main(args.installer, args.expected_source_commit, args.output)
+    except Exception as error:
+        output = Path(args.output).resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        logs_dir = output.parent / 'lifecycle-logs'
+        logs_dir.mkdir(exist_ok=True)
+        root_candidates = sorted(Path(tempfile.gettempdir()).glob('Vigil candidate lifecycle *'),
+                                 key=lambda item: item.stat().st_mtime, reverse=True)
+        logs = {}
+        if root_candidates:
+            root = root_candidates[0]
+            for name, filename in (('install', 'installer-install.json'),
+                                   ('first_launch', 'runtime-first-launch.json'),
+                                   ('restart', 'runtime-restart.json'),
+                                   ('uninstall', 'installer-uninstall.json')):
+                source = root / filename
+                if source.is_file():
+                    shutil.copy2(source, logs_dir / f'{name}.json')
+                    logs[name] = f'lifecycle-logs/{name}.json'
+        failure = {'result': 'failed', 'source_commit_expected': args.expected_source_commit,
+                   'error': f'{type(error).__name__}: {error}', 'logs': logs}
+        output.write_text(json.dumps(failure, indent=2), encoding='utf-8')
+        raise

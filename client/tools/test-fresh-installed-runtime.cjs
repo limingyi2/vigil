@@ -67,7 +67,10 @@ async function start() {
     const item = pending.get(message.id);
     if (!item) return;
     pending.delete(message.id);
-    if (message.error || message.result?.exceptionDetails) item.reject(Error(message.error?.message || message.result.exceptionDetails.text));
+    if (message.error || message.result?.exceptionDetails) {
+      const exception = message.result?.exceptionDetails?.exception;
+      item.reject(Error(message.error?.message || exception?.description || message.result?.exceptionDetails?.text || 'renderer evaluation failed'));
+    }
     else item.resolve(message.result?.result?.value);
   });
   let bridge = false;
@@ -114,6 +117,13 @@ async function start() {
     const found = sessions.json.items[0];
     assert.ok(found, 'Chat history did not survive an Electron restart');
     conversationId = found.id;
+    let rowReady = false;
+    for (let i = 0; i < 100; i++) {
+      rowReady = await evaluate(`Boolean(document.querySelector('[data-session="${conversationId}"]'))`);
+      if (rowReady) break;
+      await sleep(100);
+    }
+    assert.ok(rowReady, 'Persisted conversation was not rendered in the restarted session list');
     await evaluate(`document.querySelector('[data-session="${conversationId}"]').click();true`);
     let restored = false;
     for (let i = 0; i < 100; i++) {
