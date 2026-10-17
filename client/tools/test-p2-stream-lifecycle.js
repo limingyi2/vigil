@@ -72,7 +72,7 @@ function pages(options={}) {
     MutationObserver:class {constructor(fn){this.fn=fn;} observe(){observers.add(this);} disconnect(){observers.delete(this);}},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,v)=>storage.set(key,v)},
     U:{esc:String,icon:()=>'',md:source=>'<rendered>'+source+'</rendered>',toast:msg=>{toasts.push(String(msg));}},
-    API:{state:{cfg:{},src:'pc'},get:async()=>({ok:false}),post:options.post || (async()=>({ok:false})),pick:x=>x},
+    API:{state:{cfg:{},src:'pc'},get:options.get || (async()=>({ok:true,plugins:[],pending_restart:{pending:true,reasons:[]}})),post:options.post || (async()=>({ok:false})),pick:x=>x},
   };
   let source=fs.readFileSync(path.join(client,'src/js/pages.js'),'utf8');
   // Expose existing functions only in this isolated VM, without a production test API.
@@ -245,7 +245,7 @@ test('Creator approval and install clicks consume the returned one-time approval
   assert.equal(r.nodes['#crInstallNow'].textContent, '已安装 · 待重启');
   assert.equal(r.nodes['#crInstallNow'].disabled, true);
   assert.match(r.nodes['#crApprovalState'].textContent, /安装成功/);
-  assert.match(r.nodes['#crApprovalState'].textContent, /fixture_plugin\.py/);
+  assert.match(r.nodes['#crApprovalState'].textContent, /单文件插件/);
   assert.match(r.nodes['#crApprovalState'].textContent, /Brain 插件目录/);
   assert.match(r.nodes['#crApprovalState'].textContent, /重启 Brain 后/);
   assert.match(r.nodes['#crApprovalState'].textContent, /TOOLS \/ TOOL_SPECS/);

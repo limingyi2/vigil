@@ -132,16 +132,25 @@ def _draft_snapshot(draft_id):
     manifest = {}
     if kind == "plugin":
         for f in files:
-            if f["name"].lower() == "zxplugin.json":
+            if f["name"].lower() == "zxplugin.json" or f["name"].lower().endswith("/zxplugin.json"):
                 try:
                     manifest = json.loads(f["data"].decode("utf-8"))
                 except (ValueError, UnicodeError):
                     manifest = {}
                 break
         entries = [f["name"] for f in files if f["name"].lower().endswith(".py")]
-        target = os.path.splitext(entries[0])[0] if entries else ""
+        directory_entry = next((name for name in entries
+                                if name.lower().endswith("/__init__.py")), "")
+        layout = "directory" if directory_entry else "single"
+        target = (directory_entry.split("/", 1)[0] if directory_entry else
+                  (os.path.splitext(entries[0])[0] if entries else ""))
         if isinstance(manifest, dict) and manifest.get("name"):
             target = str(manifest.get("name"))
+        if layout == "directory" and any(
+                not f["name"].startswith(target + "/") or
+                "/" in f["name"].split("/", 1)[1]
+                for f in files):
+            raise ValueError("目录插件文件必须位于同一个目录且不得嵌套")
     else:
         for f in files:
             if f["name"] == "skill.json":
@@ -157,6 +166,7 @@ def _draft_snapshot(draft_id):
     return {
         "draft_id": str(draft_id), "version": int(meta.get("version") or 0),
         "kind": kind, "target_name": target,
+        "layout": layout if kind == "plugin" else "skill",
         "digest": digest,
         "files": [{k: f[k] for k in ("name", "sha256", "bytes")} for f in files],
         "_data": files,
@@ -183,7 +193,9 @@ def _valid_for_install(snap):
                     stream.write(item["data"])
             if snap["kind"] == "plugin":
                 from plugin_structure import check_plugin_directory
-                report = check_plugin_directory(stage, require_chat_tools=True)
+                plugin_root = (os.path.join(stage, snap["target_name"])
+                               if snap.get("layout") == "directory" else stage)
+                report = check_plugin_directory(plugin_root, require_chat_tools=True)
             else:
                 from skill_structure import check_skill_directory
                 report = check_skill_directory(stage, package_name=snap["target_name"])

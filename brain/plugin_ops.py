@@ -6,18 +6,14 @@
 
 ## 包形状
 
-一个 zip **只接受一种形状**：
+zip 接受两种形状：
 
     xxx.zip
     ├── xxx.py                # 插件本体
     └──（可选）zxplugin.json  # 作者/版本等元信息
 
-**只能有一个 .py**。塞多个能装上（取第一个），第二个被静默丢掉 ——
-"装上了但少了一半"比直接拒绝难查，所以明确拒。
-
-只收单文件是因为加载器扫的是 `plugins/*.py`，目录一律看不见。
-**装得上但跑不起来是最坏的失败方式**：界面显示"已安装"，功能永远不出现。
-要放开目录支持，得先让加载器支持扫目录（见 `docs/插件系统.md`）。
+单文件插件保留原格式。目录插件必须在单一插件目录内包含 `__init__.py`，
+可以附带 `frontend.js`、`frontend.css` 和 Manifest；加载器按目录读取这些资源。
 """
 import io
 import json
@@ -43,7 +39,7 @@ MAX_ZIP_BYTES = 4 * 1024 * 1024# 压缩包上限
 MAX_UNPACKED = 16 * 1024 * 1024    # 解开后总大小上限（防 zip 炸弹）
 MAX_FILE_BYTES = 2 * 1024 * 1024   # 单文件上限
 MAX_FILES = 64                     # 条目数上限
-ALLOWED_EXT = (".py", ".json", ".md", ".txt")
+ALLOWED_EXT = (".py", ".json", ".md", ".txt", ".js", ".css")
 
 _PY_NAME_OK = re.compile(r"^[A-Za-z0-9_-]+\.py$")
 
@@ -118,6 +114,14 @@ def _feature_of(py_path):
     大不了渠道开关的键留在配置里，那只是多一个没人用的条目，
     比猜错了把别人的开关摘掉安全得多。
     """
+    if not os.path.isfile(py_path):
+        directory_entry = os.path.join(
+            os.path.dirname(py_path),
+            os.path.splitext(os.path.basename(py_path))[0],
+            "__init__.py",
+        )
+        if os.path.isfile(directory_entry):
+            py_path = directory_entry
     try:
         with open(py_path, encoding="utf-8", errors="ignore") as fh:
             txt = fh.read()
@@ -236,29 +240,31 @@ def inspect_zip(path):
         if not names:
             return False, [], "包里是空的"
 
-        # 形状：要么全是 .py 平铺，要么全是同一个目录
-        tops = {n.split("/")[0] for n in names}
-        if len(tops) == 1 and "/" in names[0]:
-            top = list(tops)[0]
-            # 单文件插件
-            if _PY_NAME_OK.match(top):
-                return True, names, ""
-            # 目录插件**目前装不了**。
-            # 看着"支持一下"只是一行判断的事，但真去实现要动 plugin_host.load()
-            # 的扫描逻辑 —— 那是聊天链路每轮都在走的地方。
-            # 与其在这里放一个"装得上、跑不起来"的承诺，不如现在就说清楚。
-            # 解锁条件：加载器支持扫目录（见 docs/插件系统.md 的 TODO）。
-            if not any(n.lower().endswith("/__init__.py") for n in names):
-                return False, [], ("目录包里必须有 __init__.py：%s" % top[:40])
-            return False, [], (
-                "%s 是目录形式，但加载器当前只认单文件 .py（plugin_host.load "
-                "只扫 *.py），装了不会生效。请把插件压成单个 .py 再上传。" % top[:40])
+        # 目录插件只能有一层包目录，入口必须是 __init__.py；这和
+        # plugin_host.load() 的扫描及 frontend.js/css 的读取布局一致。
+        if any("/" in n for n in names):
+            tops = {n.split("/", 1)[0] for n in names}
+            if len(tops) != 1:
+                return False, [], "目录插件只能包含一个顶层插件目录"
+            top = next(iter(tops))
+            reserved = top.split(".", 1)[0].rstrip(" .").upper() in {
+                "CON", "PRN", "AUX", "NUL",
+                *("COM%d" % i for i in range(1, 10)),
+                *("LPT%d" % i for i in range(1, 10)),
+            }
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", top) or reserved:
+                return False, [], "插件目录名不合法：%s" % top[:40]
+            children = [n.split("/", 1)[1] for n in names]
+            if any("/" in n for n in children):
+                return False, [], "目录插件不支持嵌套子目录"
+            py_files = [n for n in children if n.lower().endswith(".py")]
+            if py_files != ["__init__.py"]:
+                return False, [], "目录插件必须且只能包含 __init__.py 作为 Python 入口"
+            if len({n.casefold() for n in names}) != len(names):
+                return False, [], "包里存在重复或仅大小写不同的文件名"
+            return True, names, ""
         # 平铺：.py 走插件名校验，.json/.md/.txt 是附属文件（原样接受）
         for n in names:
-            if "/" in n:
-                return False, [], ("这个 zip 看起来是个目录包（%s）；"
-                                   "加载器只认单文件 .py，请压成单个 .py 再上传。"
-                                   % n[:40])
             base = os.path.basename(n)
             if base.lower().endswith(".py") and not _PY_NAME_OK.match(base):
                 return False, [], "插件文件名不合法（只准英文/数字/下划线/短横线）：%s" % base[:40]
@@ -316,29 +322,43 @@ def install(zip_path, note=""):
         stage = tempfile.mkdtemp(prefix="_tmp_install_", dir=_PLUG_DIR)
         source = os.path.join(stage, pname)
         os.mkdir(source)
+        is_directory = any("/" in name for name in names)
         with zipfile.ZipFile(zip_path) as zf:
             for name in names:
-                with zf.open(name) as src, open(os.path.join(source, name), "wb") as dst:
+                relative = name.split("/", 1)[1] if is_directory else name
+                dst_path = os.path.join(source, *relative.split("/"))
+                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                with zf.open(name) as src, open(dst_path, "wb") as dst:
                     shutil.copyfileobj(src, dst)
         from plugin_structure import check_plugin_directory
         report = check_plugin_directory(source)
         if not report["ok"]:
             return False, {"err": "; ".join(e["message"] for e in report["errors"]),
                            "static_validated": False}
-        main = report["entry"]
-        replacements = {pname + ".py": os.path.join(source, main)}
-        for name in names:
-            if name != main:
-                replacements["_%s_%s" % (pname, name)] = os.path.join(source, name)
-        if os.path.lexists(os.path.join(_PLUG_DIR, pname)):
-            raise ValueError("同名目录插件已存在，拒绝跨布局覆盖")
-        old = [n for n in os.listdir(_PLUG_DIR)
-               if n == pname + ".py" or n.startswith("_" + pname + "_")]
+        if report["layout"] == "directory":
+            if os.path.lexists(os.path.join(_PLUG_DIR, pname + ".py")):
+                raise ValueError("同名单文件插件已存在，拒绝跨布局覆盖")
+            replacements = {pname: source}
+            old = [pname]
+        else:
+            if os.path.lexists(os.path.join(_PLUG_DIR, pname)):
+                raise ValueError("同名目录插件已存在，拒绝跨布局覆盖")
+            main = report["entry"]
+            replacements = {pname + ".py": os.path.join(source, main)}
+            for name in names:
+                if name != main:
+                    replacements["_%s_%s" % (pname, name)] = os.path.join(source, name)
+            old = [n for n in os.listdir(_PLUG_DIR)
+                   if n == pname + ".py" or n.startswith("_" + pname + "_")]
         ok, result = _commit_install(stage, pname, replacements, old,
                                      report["manifest"], note)
         keep = result.get("rollback") == "failed"
         if ok:
-            result.update(files=[os.path.join(_PLUG_DIR, n) for n in replacements])
+            result.update(files=[os.path.join(_PLUG_DIR, n) for n in replacements],
+                          layout=report["layout"],
+                          frontend_assets=any(
+                              n.lower().endswith(("/frontend.js", "/frontend.css"))
+                              for n in names))
         return ok, result
     except Exception as exc:
         return False, {"err": str(exc), "static_validated": False}

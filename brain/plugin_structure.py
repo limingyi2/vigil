@@ -20,7 +20,7 @@ _WINDOWS_RESERVED = {
     "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 }
 _DIRECTORY_EXTRAS = {".json", ".md", ".txt", ".js", ".css"}
-_SINGLE_EXTRAS = set(plugin_ops.ALLOWED_EXT)
+_SINGLE_EXTRAS = set(plugin_ops.ALLOWED_EXT) - {".js", ".css"}
 
 
 def _issue(code, message):
@@ -420,6 +420,9 @@ def check_plugin_directory(path, require_chat_tools=False):
             report["errors"].append(_issue("invalid_directory_name",
                                            "目录名只能使用英文/数字/下划线/短横线：%s" %
                                            package_name))
+        if package_name.startswith(("_", ".")):
+            report["errors"].append(_issue("hidden_directory_name",
+                                           "插件目录名不能以 _ 或 . 开头：%s" % package_name))
         allowed = _DIRECTORY_EXTRAS
     else:
         report["layout"] = "single"
@@ -439,6 +442,9 @@ def check_plugin_directory(path, require_chat_tools=False):
     for name in names:
         if name == entry_name:
             continue
+        if name.lower() in ("frontend.js", "frontend.css") and name not in ("frontend.js", "frontend.css"):
+            report["errors"].append(_issue("frontend_filename_case",
+                                           "前端资源必须准确命名为 frontend.js 或 frontend.css：%s" % name))
         ext = os.path.splitext(name)[1].lower()
         if ext not in allowed:
             report["errors"].append(_issue("unsupported_file",

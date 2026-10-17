@@ -49,6 +49,37 @@ class PluginStructureTests(unittest.TestCase):
             self.assertTrue(report["ok"], report)
             self.assertEqual(report["layout"], "directory")
 
+    def test_frontend_resources_are_only_valid_in_directory_plugin(self):
+        with tempfile.TemporaryDirectory(prefix="vigil-plugin-frontend-") as tmp:
+            root = Path(tmp) / "frontend_demo"
+            root.mkdir()
+            (root / "__init__.py").write_text(
+                'NAME="frontend_demo"\nDESC="fixture"\n'
+                'def ping(arg): return "ok"\n'
+                'TOOLS={"ping":ping}\n'
+                'TOOL_SPECS={"ping":{"desc":"ping","params":[],"arg_param":None}}\n',
+                encoding="utf-8")
+            (root / "frontend.js").write_text("window.VigilPlugin = {};\n", encoding="utf-8")
+            (root / "frontend.css").write_text(".demo {}\n", encoding="utf-8")
+            self.assertTrue(check_plugin_directory(root, require_chat_tools=True)["ok"])
+
+            flat = Path(tmp) / "flat"
+            flat.mkdir()
+            (flat / "flat.py").write_text('NAME="flat"\nDESC="fixture"\n', encoding="utf-8")
+            (flat / "frontend.js").write_text("window.VigilPlugin = {};\n", encoding="utf-8")
+            rejected = check_plugin_directory(flat)
+            self.assertFalse(rejected["ok"], rejected)
+            self.assertTrue(any(item["code"] == "unsupported_file" for item in rejected["errors"]))
+
+            wrong_case = Path(tmp) / "wrong_case"
+            wrong_case.mkdir()
+            (wrong_case / "__init__.py").write_text(
+                'NAME="wrong_case"\nDESC="fixture"\n', encoding="utf-8")
+            (wrong_case / "Frontend.js").write_text("window.VigilPlugin = {};\n", encoding="utf-8")
+            rejected = check_plugin_directory(wrong_case)
+            self.assertFalse(rejected["ok"], rejected)
+            self.assertTrue(any(item["code"] == "frontend_filename_case" for item in rejected["errors"]))
+
     def test_windows_reserved_entry_names_are_rejected(self):
         for filename in ("CON.py", "nul.py", "COM1.py", "LPT9.py"):
             with self.subTest(filename=filename):

@@ -44,7 +44,32 @@ class CreatorPluginContractTests(unittest.TestCase):
         self.assertIn("TOOL_SPECS", system)
         self.assertIn("TOOLS", system)
         self.assertIn("on_message(text, ctx) 不是当前插件宿主支持的钩子", system)
-        self.assertIn("不支持自定义前端页面", system)
+        self.assertIn("<NAME>/frontend.js", system)
+        self.assertIn("静态验证不是安全沙箱", system)
+
+    def test_directory_plugin_frontend_passes_static_validation_and_host_reads_assets(self):
+        with tempfile.TemporaryDirectory(prefix="vigil-directory-plugin-") as tmp:
+            root = Path(tmp) / "creator_panel"
+            root.mkdir()
+            entry = root / "__init__.py"
+            entry.write_text(
+                'NAME = "creator_panel"\nDESC = "A directory chat tool"\n'
+                'def run(arg): return str(arg)\n'
+                'TOOLS = {"panel_tool": run}\n'
+                'TOOL_SPECS = {"panel_tool": {"desc": "Run panel tool", "params": [], "arg_param": None}}\n',
+                encoding="utf-8")
+            (root / "frontend.js").write_text(
+                "window.VigilPlugin.registerPage({id:'creator-panel'});\n", encoding="utf-8")
+            (root / "frontend.css").write_text(".creator-panel {}\n", encoding="utf-8")
+            report = check_plugin_directory(root, require_chat_tools=True)
+            self.assertTrue(report["ok"], report)
+            self.assertEqual(report["layout"], "directory")
+
+            loaded = plugin_host._load_one(str(entry))
+            self.assertIsNotNone(loaded)
+            self.assertIn("registerPage", loaded.frontend_js)
+            self.assertIn("creator-panel", loaded.frontend_css)
+            self.assertIn("panel_tool", loaded.info()["tools"])
 
     def test_valid_chat_tool_contract_passes(self):
         report = self.check_source(VALID)

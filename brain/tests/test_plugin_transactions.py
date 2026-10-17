@@ -86,6 +86,34 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), self.config_before)
         self.assertTrue((self.plugins / '_demo_notes.txt').is_file())
 
+    def test_directory_zip_installs_frontend_assets_transactionally(self):
+        archive = self.home / 'directory.zip'
+        with zipfile.ZipFile(archive, 'w') as z:
+            z.writestr('demo/__init__.py', 'NAME="demo"\nDESC="demo"\n')
+            z.writestr('demo/frontend.js', 'window.VigilPlugin = {};\n')
+            z.writestr('demo/frontend.css', '.demo {}\n')
+            z.writestr('demo/zxplugin.json', json.dumps({'name': 'demo', 'version': '1.0.0'}))
+        ok, result = ops.install(str(archive))
+        self.assertTrue(ok, result)
+        self.assertEqual(result['layout'], 'directory')
+        self.assertTrue(result['frontend_assets'])
+        self.assertTrue(result['restart_needed'])
+        self.assertEqual((self.plugins / 'demo' / 'frontend.js').read_text(),
+                         'window.VigilPlugin = {};\n')
+
+    def test_directory_zip_registry_failure_restores_exact_old_package(self):
+        old = self.old(directory=True)
+        before = self.state()
+        archive = self.home / 'directory.zip'
+        with zipfile.ZipFile(archive, 'w') as z:
+            z.writestr('demo/__init__.py', 'NAME="demo"\nDESC="demo"\nVALUE="new"\n')
+            z.writestr('demo/frontend.js', 'window.newVersion = true;\n')
+        with patch.object(ops, 'write_registry', return_value=False):
+            ok, result = ops.install(str(archive))
+        self.assertFalse(ok)
+        self.assertEqual(result['rollback'], 'restored')
+        self.assertEqual(self.state(), before)
+
     def test_top_level_side_effect_never_runs(self):
         marker = self.home / 'executed'
         archive = self.archive()
