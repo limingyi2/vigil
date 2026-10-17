@@ -37,7 +37,7 @@ class LegacyConversationTitleTests(unittest.TestCase):
                                ("owner", "pc", "default", cid, "旧版对话", 1, 1))
                 items = conversations.list_for("owner", "pc", "default")
                 legacy = next(item for item in items if item["id"] == cid)
-                self.assertEqual(legacy["title"], "旧对话")
+                self.assertEqual(legacy["title"], "之前的聊天")
                 self.assertTrue(legacy["legacy"])
                 with conversations._db() as db:
                     stored = db.execute("SELECT id,title,legacy FROM conversations WHERE id=?", (cid,)).fetchone()
