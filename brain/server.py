@@ -276,7 +276,7 @@ def _log_history_error(src, exc, action):
     import re
     safe_action = re.sub(r"[^A-Za-z0-9_.-]", "_", str(action))[:48] or "unknown"
     safe_persona = re.sub(r"[^A-Za-z0-9_.-]", "_", str(persona or "default"))[:64]
-    safe_path = str(path or "<unavailable>").replace("\\r", "_").replace("\\n", "_")[:512]
+    safe_path = str(path or "<unavailable>").replace("\r", "_").replace("\n", "_")[:512]
     print("[history] action=%s src=%s persona=%s path=%s error_code=%s" %
           (safe_action, channel, safe_persona, safe_path,
            type(exc).__name__), flush=True)
