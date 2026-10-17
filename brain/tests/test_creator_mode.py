@@ -43,7 +43,7 @@ PLUGIN_PY = (
     'NAME = "hourly_water"\n'
     'DESC = "每小时整点提醒喝水"\n\n'
     'def hourly_water_status(arg):\n'
-    '    return "喝水提醒插件已安装。\\"\n\n'
+    '    return "喝水提醒插件已安装。"\n\n'
     'TOOLS = {"hourly_water_status": hourly_water_status}\n'
     'TOOL_SPECS = {\n'
     '    "hourly_water_status": {\n'
