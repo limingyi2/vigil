@@ -56,9 +56,11 @@ def main(installer, expected_commit, output):
     env = dict(os.environ, VIGIL_USER_DATA=str(isolated_user_data), APPDATA=str(profile), LOCALAPPDATA=str(localappdata),
                VIGIL_SIDECAR_DISABLE='1')
     env.pop('ELECTRON_RUN_AS_NODE', None)
-    install_result = run_logged([str(installer), '/S', '/D=' + str(install)], env=env,
+    nsis_install_log = root / 'nsis-install.log'
+    install_result = run_logged([str(installer), '/S', '/LOG=' + str(nsis_install_log), '/D=' + str(install)], env=env,
                                 log_path=root / 'installer-install.json', timeout=300)
     assert install_result.returncode == 0, f'Candidate installer exited {install_result.returncode}'
+    assert nsis_install_log.is_file() and nsis_install_log.stat().st_size > 0, 'NSIS install log was not created'
     assert (install / 'Vigil.exe').is_file(), 'Fresh installation did not create Vigil.exe'
     for relative, expected in json.loads(contents_path.read_text(encoding='utf-8')).items():
         file = install / Path(relative)
@@ -107,9 +109,11 @@ def main(installer, expected_commit, output):
 
     uninstallers = list(install.glob('Uninstall*.exe'))
     assert uninstallers, 'NSIS uninstaller was not installed'
-    uninstall_result = run_logged([str(uninstallers[0]), '/S'], env=env,
+    nsis_uninstall_log = root / 'nsis-uninstall.log'
+    uninstall_result = run_logged([str(uninstallers[0]), '/S', '/LOG=' + str(nsis_uninstall_log)], env=env,
                                   log_path=root / 'installer-uninstall.json', timeout=300)
     assert uninstall_result.returncode == 0, f'NSIS uninstaller exited {uninstall_result.returncode}'
+    assert nsis_uninstall_log.is_file() and nsis_uninstall_log.stat().st_size > 0, 'NSIS uninstall log was not created'
     time.sleep(1)
     remaining_app_files = [str(path.relative_to(install)) for path in install.rglob('*') if path.is_file()] if install.exists() else []
     assert not remaining_app_files, f'Program files remain after uninstall: {remaining_app_files[:10]}'
@@ -124,9 +128,11 @@ def main(installer, expected_commit, output):
     logs_dir.mkdir(exist_ok=True)
     log_files = {
         'install': root / 'installer-install.json',
+        'nsis_install': nsis_install_log,
         'first_launch': root / 'runtime-first-launch.json',
         'restart': root / 'runtime-restart.json',
         'uninstall': root / 'installer-uninstall.json',
+        'nsis_uninstall': nsis_uninstall_log,
     }
     for name, source in log_files.items():
         shutil.copy2(source, logs_dir / f'{name}.json')
@@ -173,9 +179,11 @@ if __name__ == '__main__':
         if root_candidates:
             root = root_candidates[0]
             for name, filename in (('install', 'installer-install.json'),
+                                   ('nsis_install', 'nsis-install.log'),
                                    ('first_launch', 'runtime-first-launch.json'),
                                    ('restart', 'runtime-restart.json'),
-                                   ('uninstall', 'installer-uninstall.json')):
+                                   ('uninstall', 'installer-uninstall.json'),
+                                   ('nsis_uninstall', 'nsis-uninstall.log')):
                 source = root / filename
                 if source.is_file():
                     shutil.copy2(source, logs_dir / f'{name}.json')
