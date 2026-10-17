@@ -71,6 +71,13 @@ function draftRoot() {
     '#crApproveNow': {disabled:false, textContent:'明确批准', style:{}},
     '#crInstallNow': {disabled:false, textContent:'仅本次安装', style:{display:'none'}, dataset:{}},
     '#crApprovalState': {textContent:'尚未批准'},
+    '[data-cr-file-toggle="0"]': {textContent:'展开源码', dataset:{crFileToggle:'0'}, attrs:{}, setAttribute(k,v){this.attrs[k]=v;}},
+    '[data-cr-file-toggle="1"]': {textContent:'展开源码', dataset:{crFileToggle:'1'}, attrs:{}, setAttribute(k,v){this.attrs[k]=v;}},
+    '[data-copy-file="0"]': {textContent:'复制完整源码', dataset:{copyFile:'0'}, isConnected:true},
+    '[data-cr-file-preview="0"]': {hidden:false},
+    '[data-cr-file-preview="1"]': {hidden:false},
+    '[data-cr-file-body="0"]': {hidden:true, innerHTML:'', dataset:{}},
+    '[data-cr-file-body="1"]': {hidden:true, innerHTML:'', dataset:{}},
   };
   const listeners = {};
   return {
@@ -79,7 +86,13 @@ function draftRoot() {
     querySelector(selector) { return nodes[selector] || null; },
     click(selector) {
       const button = nodes[selector];
-      return listeners.click({target:{closest: candidate => candidate === selector ? button : null}});
+      const closest = candidate => {
+        if (candidate === selector) return button;
+        if (candidate === '[data-cr-file-toggle]' && selector.startsWith('[data-cr-file-toggle=')) return button;
+        if (candidate === '[data-copy-file]' && selector.startsWith('[data-copy-file=')) return button;
+        return null;
+      };
+      return listeners.click({target:{closest}});
     },
   };
 }
