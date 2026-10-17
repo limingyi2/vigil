@@ -153,6 +153,23 @@ jobs:
           "Isolated scene exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           $global:LASTEXITCODE = 0
 
+      - name: Isolated scene after window resize only
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-resize-only.jsonl'
+          $log = Join-Path $env:RUNNER_TEMP 'p8-wallpaper-resize-only.log'
+          $env:P8_WALLPAPER_DIAG = '1'
+          $env:P8_WALLPAPER_DIAG_FILE = $diag
+          $env:P8_WALLPAPER_RESIZE_ONLY = '1'
+          Push-Location client
+          try { npm exec -- electron tools/test-chat-v2-electron.js *> $log; $code = $LASTEXITCODE }
+          finally { Pop-Location }
+          Remove-Item Env:P8_WALLPAPER_RESIZE_ONLY -ErrorAction SilentlyContinue
+          @{test='window-resize-only-then-scene';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-resize-only-result.json')
+          Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-resize-only-shots -Recurse -Force -ErrorAction SilentlyContinue
+          "Resize-only sequence exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
+
       - name: Isolated scene after Wallpaper layout setup only
         shell: pwsh
         run: |

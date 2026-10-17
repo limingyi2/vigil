@@ -305,6 +305,13 @@ async function main() {
     await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
     await wallpaperSettingsChecks(); await wallpaperSceneRun(); console.log('PASS: Wallpaper layout/setup checks followed by scene first frame'); return;
   }
+  if (process.env.P8_WALLPAPER_RESIZE_ONLY === '1') {
+    await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
+    const initialSize=await ev(`({width:innerWidth,height:innerHeight})`); wallpaperTrace('resize-control-before',{initialSize,bounds:win.getBounds()});
+    win.setSize(1280,800); await wait(180); win.setSize(1400,900); await wait(180);
+    wallpaperTrace('resize-control-after',{measure:await ev(`({width:innerWidth,height:innerHeight})`),bounds:win.getBounds()});
+    await wallpaperSceneRun(); console.log('PASS: window resize only followed by Wallpaper scene first frame'); return;
+  }
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   assert.equal(await ev(`document.querySelector('#rpBtn').getAttribute('aria-expanded')`),'false');
   assert.equal((await measure()).context,'none');
