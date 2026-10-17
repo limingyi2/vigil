@@ -2,7 +2,7 @@ name: Windows unified installer acceptance
 on:
   workflow_dispatch:
   push:
-    branches: ['codex/unified-client-brain']
+    branches: ['master', 'codex/unified-client-brain']
 jobs:
   windows-installer:
     runs-on: windows-latest
@@ -32,7 +32,7 @@ jobs:
       - name: Build isolated acceptance installer
         run: python scripts/build_windows_acceptance.py
       - name: Real 1.0.2 install, 1.1.0 upgrade, migration and rollback
-        run: python scripts/test_windows_install.py client/dist-release/Vigil.Setup.1.1.0.exe --baseline "$env:RUNNER_TEMP\Vigil.Setup.1.0.2.exe"
+        run: python scripts/test_windows_install.py client/dist-release/Vigil.Setup.1.1.0.exe --baseline "$env:RUNNER_TEMP\\Vigil.Setup.1.0.2.exe"
       - name: Creator renderer diagnostics acceptance
         working-directory: client
         run: npm exec -- electron tools/test-p2-creator-electron.js
