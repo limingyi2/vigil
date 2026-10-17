@@ -28,6 +28,14 @@ class ModelFixture(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == '/__fixture/status':
+            payload = json.dumps({'conversation_checks': ModelFixture.conversation_checks}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()

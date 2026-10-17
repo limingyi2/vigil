@@ -84,10 +84,13 @@ async function run(){
   await sendUiMessage('A_CONTINUE','A_CONTEXT_OK');
   await evaluate(`document.querySelector('[data-session="${conversationB}"]').click();true`);
   await sendUiMessage('B_CONTINUE','B_CONTEXT_OK');
-  assert.deepEqual(ModelFixture.conversation_checks.filter(x=>x.conversation==='A').map(x=>x.ok),[true],
-    'Fake Provider saw another session in A context: '+JSON.stringify(ModelFixture.conversation_checks));
-  assert.deepEqual(ModelFixture.conversation_checks.filter(x=>x.conversation==='B').map(x=>x.ok),[true],
-    'Fake Provider saw another session in B context: '+JSON.stringify(ModelFixture.conversation_checks));
+  const providerStatus=await(await fetch(modelBase.replace(/\/v1\/?$/,'/__fixture/status'))).json();
+  const contextChecks=providerStatus.conversation_checks||[];
+  for(const id of ['A','B']){
+    const checks=contextChecks.filter(x=>x.conversation===id);
+    assert.ok(checks.length&&checks.every(x=>x.ok),
+      `Fake Provider saw another session in ${id} context: ${JSON.stringify(contextChecks)}`);
+  }
   await evaluate('location.reload();true');
   let restored=false;
   for(let i=0;i<120;i++){
