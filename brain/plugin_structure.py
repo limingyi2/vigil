@@ -92,34 +92,35 @@ def _literal_dict_keys(node):
     return keys if len(keys) == len(set(keys)) else None
 
 
-def _check_chat_tool_contract(tree, module_functions, errors):
-    """Creator plugins must expose matching, statically inspectable chat tools."""
+def _check_chat_tool_contract(tree, module_functions, errors, warnings, required=False):
+    """Check statically inspectable chat tools; optionally make them mandatory."""
+    issues = errors if required else warnings
     tools_node = _module_assignment_value(tree, "TOOLS")
     specs_node = _module_assignment_value(tree, "TOOL_SPECS")
     tool_names = _literal_dict_keys(tools_node)
     spec_names = _literal_dict_keys(specs_node)
 
     if tools_node is None:
-        errors.append(_issue(
+        issues.append(_issue(
             "missing_tool_implementation",
             "插件必须声明模块级 TOOLS 字典，提供至少一个可由聊天调用的工具实现"
         ))
     elif tool_names is None:
-        errors.append(_issue(
+        issues.append(_issue(
             "invalid_tool_implementation",
             "TOOLS 必须是键为工具名、值为模块级函数名的字典"
         ))
     else:
         for name, value in zip(tool_names, tools_node.values):
             if not isinstance(value, ast.Name) or value.id not in module_functions:
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_implementation",
                     "工具 %s 必须指向同一文件中定义的模块级函数" % name
                 ))
                 break
 
     if specs_node is None:
-        errors.append(_issue(
+        issues.append(_issue(
             "missing_tool_specs",
             "插件必须声明 TOOL_SPECS；否则原生聊天模型看不到工具"
         ))
@@ -130,7 +131,7 @@ def _check_chat_tool_contract(tree, module_functions, errors):
         except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
             specs = None
         if not isinstance(specs, dict) or not specs or spec_names is None:
-            errors.append(_issue(
+            issues.append(_issue(
                 "invalid_tool_specs",
                 "TOOL_SPECS 必须是包含至少一个工具规格的字面量字典"
             ))
@@ -139,13 +140,13 @@ def _check_chat_tool_contract(tree, module_functions, errors):
     if specs is not None:
         for name, spec in specs.items():
             if not isinstance(name, str) or not name.strip() or not isinstance(spec, dict):
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_specs",
                     "每个 TOOL_SPECS 项都必须以非空工具名映射到规格字典"
                 ))
                 continue
             if not isinstance(spec.get("desc"), str) or not spec["desc"].strip():
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_specs",
                     "工具 %s 缺少非空 desc" % name
                 ))
@@ -174,7 +175,7 @@ def _check_chat_tool_contract(tree, module_functions, errors):
                 continue
             arg_param = spec.get("arg_param")
             if len(param_names) > 1:
-                errors.append(_issue(
+                issues.append(_issue(
                     "unsupported_tool_params",
                     "Creator 当前每个工具最多支持一个字符串参数；工具 %s 定义了多个参数" % name
                 ))
@@ -190,13 +191,13 @@ def _check_chat_tool_contract(tree, module_functions, errors):
                 ))
 
     if tool_names is not None and spec_names is not None and set(tool_names) != set(spec_names):
-        errors.append(_issue(
+        issues.append(_issue(
             "tool_name_mismatch",
             "TOOLS 与 TOOL_SPECS 的工具名称必须完全一致"
         ))
 
 
-def _check_python(path, package_name, errors, warnings, layout="single"):
+def _check_python(path, package_name, errors, warnings, layout="single", require_chat_tools=False):
     try:
         with open(path, encoding="utf-8") as fh:
             source = fh.read()
@@ -227,7 +228,7 @@ def _check_python(path, package_name, errors, warnings, layout="single"):
             "unsupported_on_message_hook",
             "当前插件宿主不会调用 on_message；请使用 TOOLS 与 TOOL_SPECS 实现聊天功能"
         ))
-    _check_chat_tool_contract(tree, module_functions, errors)
+    _check_chat_tool_contract(tree, module_functions, errors, warnings, required=require_chat_tools)
     if layout == "single" and any(
         isinstance(node, ast.Constant) and isinstance(node.value, str)
         and ("<!doctype html" in node.value.lower() or "<html" in node.value.lower())
@@ -278,7 +279,7 @@ def _read_manifest(root, package_name, names, errors):
     return manifest
 
 
-def check_plugin_directory(path):
+def check_plugin_directory(path, require_chat_tools=False):
     """静态检查一个插件开发目录，返回可序列化的报告字典。
 
     ``ok`` 只表示结构和 Manifest 通过；warnings 不会触碰旧插件的兼容性，
@@ -365,7 +366,7 @@ def check_plugin_directory(path):
         return report
     if entry_name:
         _check_python(os.path.join(root, entry_name), package_name,
-                      report["errors"], report["warnings"], report["layout"])
+                      report["errors"], report["warnings"], report["layout"],\n                      require_chat_tools=require_chat_tools)
     report["manifest"] = _read_manifest(root, package_name, names, report["errors"])
     report["ok"] = not report["errors"]
     return report
