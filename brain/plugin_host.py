@@ -572,6 +572,9 @@ def tool_specs(src=None):
             if isinstance(got, dict):
                 entries = list(got.items())
             elif isinstance(got, (list, tuple)):
+                # List schemas are only paired with the generic call_tool dispatcher.
+                if not getattr(p, "generic_tool_names", set()):
+                    continue
                 # Compatibility for earlier Creator output:
                 # [{"name": "...", "description": "...", "parameters": {...}}]
                 entries = []
