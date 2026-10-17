@@ -4,7 +4,7 @@ const WS=require('ws');
 const [install,profile,modelBase,mode='normal',pluginZip]=process.argv.slice(2);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let child,ws,next=0;const waiting=new Map();
-async function evaluate(expression){return new Promise((resolve,reject)=>{const id=++next;waiting.set(id,{resolve,reject});ws.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});}
+async function evaluate(expression){return new Promise((resolve,reject)=>{const id=++next;waiting.set(id,{resolve,reject,expression});ws.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});}
 async function run(){
   const env={...process.env,VIGIL_USER_DATA:profile,VIGIL_BRAIN_EXE:'Z:/old/missing-brain.exe',
     PATH:process.env.SystemRoot+'\\System32',VIGIL_SIDECAR_DISABLE:'1'};
@@ -18,7 +18,7 @@ async function run(){
     }catch(_){}await sleep(250);
   }
   assert.ok(ws,'Installed renderer unavailable');
-  ws.on('message',raw=>{const r=JSON.parse(raw);const w=waiting.get(r.id);if(!w)return;waiting.delete(r.id);if(r.error||r.result?.exceptionDetails)w.reject(Error('Installed renderer evaluation failed'));else w.resolve(r.result?.result?.value);});
+  ws.on('message',raw=>{const r=JSON.parse(raw);const w=waiting.get(r.id);if(!w)return;waiting.delete(r.id);if(r.error||r.result?.exceptionDetails){const detail=r.error?.message||r.result?.exceptionDetails?.text||'unknown renderer error';w.reject(Error(`Installed renderer evaluation failed: ${detail}; expression=${String(w.expression).slice(0,180)}`));}else w.resolve(r.result?.result?.value);});
   let bridge=false;
   for(let i=0;i<100;i++){try{bridge=await evaluate('!!window.vigil?.sidecar');if(bridge)break;}catch(_){}await sleep(100);}
   assert.ok(bridge,'Installed preload unavailable');
@@ -87,14 +87,14 @@ async function run(){
   const providerStatus=await(await fetch(modelBase.replace(/\/v1\/?$/,'/__fixture/status'))).json();
   const contextChecks=providerStatus.conversation_checks||[];
   for(const id of ['A','B']){
-    const checks=contextChecks.filter(x=>x.conversation===id);
+    const checks=contextChecks.filter(x=>x.conversation===id&&x.chat_request);
     assert.ok(checks.length&&checks.every(x=>x.ok),
-      `Fake Provider saw another session in ${id} context: ${JSON.stringify(contextChecks)}`);
+      `Fake Provider chat request saw another session in ${id} context: ${JSON.stringify(contextChecks)}`);
   }
   await evaluate('location.reload();true');
   let restored=false;
   for(let i=0;i<120;i++){
-    restored=await evaluate(`API.state.chatConversationId===${JSON.stringify(conversationB)}&&document.querySelector('#msgs')?.innerText.includes('B_CONTEXT_OK')`);
+    restored=await evaluate(`typeof API!=='undefined'&&API.state.chatConversationId===${JSON.stringify(conversationB)}&&document.querySelector('#msgs')?.innerText.includes('B_CONTEXT_OK')`);
     if(restored)break;await sleep(100);
   }
   assert.ok(restored,'Installed renderer restart did not restore the selected conversation and its messages');
