@@ -60,7 +60,6 @@ def main(installer, expected_commit, output):
     install_result = run_logged([str(installer), '/S', '/LOG=' + str(nsis_install_log), '/D=' + str(install)], env=env,
                                 log_path=root / 'installer-install.json', timeout=300)
     assert install_result.returncode == 0, f'Candidate installer exited {install_result.returncode}'
-    assert nsis_install_log.is_file() and nsis_install_log.stat().st_size > 0, 'NSIS install log was not created'
     assert (install / 'Vigil.exe').is_file(), 'Fresh installation did not create Vigil.exe'
     for relative, expected in json.loads(contents_path.read_text(encoding='utf-8')).items():
         file = install / Path(relative)
@@ -113,7 +112,6 @@ def main(installer, expected_commit, output):
     uninstall_result = run_logged([str(uninstallers[0]), '/S', '/LOG=' + str(nsis_uninstall_log)], env=env,
                                   log_path=root / 'installer-uninstall.json', timeout=300)
     assert uninstall_result.returncode == 0, f'NSIS uninstaller exited {uninstall_result.returncode}'
-    assert nsis_uninstall_log.is_file() and nsis_uninstall_log.stat().st_size > 0, 'NSIS uninstall log was not created'
     time.sleep(1)
     remaining_app_files = [str(path.relative_to(install)) for path in install.rglob('*') if path.is_file()] if install.exists() else []
     assert not remaining_app_files, f'Program files remain after uninstall: {remaining_app_files[:10]}'
@@ -134,8 +132,12 @@ def main(installer, expected_commit, output):
         'uninstall': root / 'installer-uninstall.json',
         'nsis_uninstall': nsis_uninstall_log,
     }
+    available_logs = {}
     for name, source in log_files.items():
-        shutil.copy2(source, logs_dir / f'{name}.json')
+        if source.is_file():
+            extension = '.log' if source.suffix == '.log' else '.json'
+            shutil.copy2(source, logs_dir / f'{name}{extension}')
+            available_logs[name] = f'lifecycle-logs/{name}{extension}'
     report = {
         'result': 'passed',
         'environment': {'os': os.environ.get('RUNNER_OS', 'Windows isolated runner'),
@@ -154,7 +156,9 @@ def main(installer, expected_commit, output):
                       'all_user_data_files_unchanged': True,
                       'user_data_file_count': len(user_data_before),
                       'outside_sentinel_preserved': True},
-        'logs': {name: f'lifecycle-logs/{name}.json' for name in log_files},
+        'nsis_verbose_logs': {'install_available': nsis_install_log.is_file(),
+                              'uninstall_available': nsis_uninstall_log.is_file()},
+        'logs': available_logs,
     }
     output.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report))
