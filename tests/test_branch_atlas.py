@@ -92,6 +92,10 @@ def test_non_repository_and_unavailable_local_path_return_actionable_errors(tmp_
     assert not missing["ok"]
     assert "无法访问" in missing["err"]
 
+    relative = branch_atlas.inspect_repo({"path": "relative/repo"}, {})
+    assert not relative["ok"]
+    assert "绝对路径" in relative["err"]
+
 
 def test_chat_tool_is_registered_and_returns_read_only_summary(tmp_path):
     repo = make_repo(tmp_path / "chat-repo")
