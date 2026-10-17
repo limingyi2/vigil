@@ -1616,19 +1616,29 @@ def start_remote_api(brain):
                 try:
                     if method == 'POST' and path == '/api/creator/jobs':
                         if (body or {}).get('conversation_id'):
-                            conv, _, src, _ = self._conversation_context('pc', body.get('conversation_id'))
+                            import conversations
+                            conv, conv_owner, src, persona = self._conversation_context('pc', body.get('conversation_id'))
                             if src != 'pc' or not conv:
                                 self._json(404, {'ok': False, 'err': '会话不存在'})
                                 return True
                         item = jobs.create(body, API_CFG, owner)
+                        if (body or {}).get('conversation_id'):
+                            conversations.touch(conv_owner, src, str(persona), body.get('conversation_id'), body.get('requirement'))
                         self._json(200, {'ok': True, **item})
                     elif method == 'GET' and path == '/api/creator/jobs':
+                        conv = None
                         if conversation_id:
                             conv, _, src, _ = self._conversation_context('pc', conversation_id)
                             if src != 'pc' or not conv:
                                 self._json(404, {'ok': False, 'err': '会话不存在'})
                                 return True
-                        self._json(200, {'ok': True, 'items': jobs.listing(owner, conversation_id=conversation_id)})
+                        if conv and conv.get('legacy'):
+                            items = jobs.listing_legacy_unassigned(self._display_owner({'src':'pc'}))
+                            for item in items:
+                                item['legacy_unassigned'] = True
+                        else:
+                            items = jobs.listing(owner, conversation_id=conversation_id)
+                        self._json(200, {'ok': True, 'items': items})
                     elif len(parts) >= 4:
                         jid = parts[3]
                         item = jobs.snapshot(jid, owner)
@@ -1890,6 +1900,24 @@ def start_remote_api(brain):
                 if path == '/api/conversations':
                     item = conversations.create(owner, src, str(persona))
                     self._json(201, {"ok": True, "item": item})
+                    return
+                if path.endswith('/delete'):
+                    cid = path.rsplit('/', 2)[-2]
+                    item = conversations.delete(owner, src, str(persona), cid)
+                    if not item:
+                        self._json(404, {"ok": False, "err": "会话不存在"})
+                        return
+                    try:
+                        import display_turns, agent_runs
+                        _turn_owner = self._display_owner({'src':src, 'conversation_id':cid})
+                        display_turns.clear(_turn_owner)
+                        agent_runs.hide(_turn_owner)
+                        # The transcript is the chat history; Creator draft files remain available globally.
+                        brain.clear_history(src, cid) if not item['legacy'] else brain.clear_history(src)
+                    except Exception as exc:
+                        self._json(500, {"ok": False, "err": "会话已移除，但部分历史清理失败：" + type(exc).__name__})
+                        return
+                    self._json(200, {"ok": True, "item": item})
                     return
                 cid = path.rsplit('/', 1)[-1]
                 item = conversations.rename(owner, src, str(persona), cid, body.get('title'))
@@ -3165,6 +3193,23 @@ def start_remote_api(brain):
                 if old_history:
                     conversations.ensure_legacy(owner, src, str(persona))
                     items = conversations.list_for(owner, src, str(persona))
+                import creator_jobs as _creator_jobs, display_turns as _display_turns, agent_runs as _agent_runs
+                visible = []
+                for item in items:
+                    if item.get('legacy'):
+                        item['has_content'] = True
+                    else:
+                        _cid = item['id']
+                        _turn_owner = self._display_owner({'src':src, 'conversation_id':_cid})
+                        _job_owner = self._display_owner({'src':src, 'conversation_id':_cid})
+                        item['has_content'] = bool(
+                            brain.read_history(1, src, _cid)
+                            or _creator_jobs.listing(_job_owner, _cid)
+                            or _display_turns.listing(_turn_owner)
+                            or _agent_runs.display_records(_turn_owner))
+                    if item['has_content']:
+                        visible.append(item)
+                items = visible
                 legacy = next((item for item in items if item.get('legacy')), None)
                 if legacy:
                     # The historical transcript is one continuous record. Use

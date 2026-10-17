@@ -37,11 +37,22 @@ class LegacyConversationTitleTests(unittest.TestCase):
                                ("owner", "pc", "default", cid, "旧版对话", 1, 1))
                 items = conversations.list_for("owner", "pc", "default")
                 legacy = next(item for item in items if item["id"] == cid)
-                self.assertEqual(legacy["title"], "之前的聊天")
+                self.assertEqual(legacy["title"], "旧版历史")
                 self.assertTrue(legacy["legacy"])
                 with conversations._db() as db:
                     stored = db.execute("SELECT id,title,legacy FROM conversations WHERE id=?", (cid,)).fetchone()
                 self.assertEqual(stored, (cid, "旧版对话", 1))
+
+    def test_delete_removes_only_the_requested_scoped_entry(self):
+        with tempfile.TemporaryDirectory(prefix="vigil-delete-conversation-") as temp:
+            with patch.object(paths, "DATA_DIR", temp):
+                a = conversations.create("owner", "pc", "default")
+                b = conversations.create("owner", "pc", "other-persona")
+                deleted = conversations.delete("owner", "pc", "default", a["id"])
+                self.assertEqual(deleted["id"], a["id"])
+                self.assertIsNone(conversations.get("owner", "pc", "default", a["id"]))
+                self.assertIsNotNone(conversations.get("owner", "pc", "other-persona", b["id"]))
+                self.assertIsNone(conversations.delete("owner", "pc", "default", "not-an-id"))
 
 
 if __name__ == "__main__":

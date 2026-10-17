@@ -207,13 +207,8 @@
   }
 
   function heroHtml() {
-    return '<div class="welcome-brand" aria-hidden="true">V</div>' +
-      '<h1>有什么可以帮你？</h1>' +
-      '<p>与 Vigil 一起思考、编程和执行任务</p>' +
-      '<div class="hero-hints">' +
-      ['帮我看看今天的日程', '把刚才那段整理成清单', '看看下载文件夹里有什么']
-        .map((x) => '<button class="chip" data-hint="' + x + '">' + esc(x) + '</button>').join('') +
-      '</div>';
+    return '<h1 class="welcome-brand">Vigil</h1>' +
+      '<p>与更强大的 AI，一起探索无限可能</p>';
   }
 
   /** 左栏：分组标题 + 列表项 */
@@ -458,25 +453,21 @@
     let st = { ok: false, model: '—', tok_in: 0, tok_out: 0, turns: 0, avg_ms: 0, mem_hit_turns: 0, agenda: {} };
     const statsPromise = get('/api/stats', { timeoutMs: 3000 }).then(pick).catch(() => st);
     const model = (typeof st.model === 'object' && st.model ? st.model.id || st.model.name : st.model) || '—';
-    topbar.innerHTML =
-      '<button class="ibtn" id="sessionsBtn" title="折叠或展开会话列表" aria-label="会话列表" aria-controls="panel">' + icon('sidebar', 'sm') + '</button>' +
-      '<span class="chat-title">工作台</span><span class="chat-model" id="chatModel" title="' + esc(model) + '">' + esc(model) + '</span>' +
-      '<div class="sp"></div><span class="chat-connection"><span class="led ' + (state.conn.ok ? 'on' : '') + '"></span>' + (API.runtime.preview ? '浏览器预览 · 未连接 Agent' : state.conn.ok ? 'Agent 已连接' : 'Agent 未连接') + '</span>' +
-      '<div class="tr">' +
-      '<button class="btn" id="rpBtn" aria-expanded="false" aria-controls="rp">上下文</button>' +
-      '<button class="ibtn" id="clearBtn" title="清空本机（pc）会话历史">' + icon('dots', 'sm') + '</button>' +
-      '</div>';
+    topbar.innerHTML = '';
 
     // 会话由 Brain 持久化。localStorage 保留作旧版本兼容，但不会用于冷启动自动选中。
     panel.innerHTML =
-      '<div class="phead"><h2>会话</h2><button class="ibtn" id="newTopicBtn" title="新建空白会话" aria-label="新建会话">' + icon('plus', 'sm') + '</button></div>' +
-      '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>';
+      '<div class="phead"><div class="session-brand">Vigil</div></div>' +
+      '<div class="session-new"><button class="session-new-button" id="newTopicBtn" title="新建空白会话" aria-label="新对话">' + icon('chat', 'sm') + '<span>新对话</span></button></div>' +
+      '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>' +
+      '<div class="panel-footer"><button class="panel-settings" id="settingsOpen" title="设置" aria-label="打开设置">' + icon('set', 'sm') + '<span>设置</span></button></div>';
     const sessList = panel.querySelector('#sessList');
 
     const SESS_KEY = 'vigil.chat.active.v2:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
     const RENDERER_SESSION_KEY = 'vigil.chat.renderer-session.v1';
     let sessionItems = [];
     let activeConversationId = '';
+    let draftActive = false;
     state.chatConversationId = '';
     let appInstanceId = '';
     let createConversationPromise = null;
@@ -494,7 +485,7 @@
       }
       const r = pick(await get('/api/conversations?src=pc'));
       if (!r.ok || !Array.isArray(r.items)) throw new Error(r._err || '会话列表加载失败');
-      sessionItems = r.items;
+      sessionItems = r.items.filter((item) => item.legacy || item.has_content !== false);
       if (activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
       state.chatConversationId = activeConversationId;
       drawSessions();
@@ -516,24 +507,36 @@
     };
 
     function drawSessions() {
-      if (!sessionItems.length) {
-        sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">还没有会话</div>';
-        return;
-      }
-      sessList.innerHTML = sessionItems.map((s) => {
+      const renderRow = (s) => {
         const updated = Number(s.updated_at || s.created_at || 0) * 1000;
         return '<div class="li session-row' + (s.id === activeConversationId ? ' on' : '') + '">' +
           '<button class="session-open" data-session="' + esc(s.id) + '" title="切换会话">' +
           '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(String(s.title || '').slice(0, 7)) + '</b>' +
           '<span>' + esc(relative(updated)) + '</span></span></button>' +
-          '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button></div>';
-      }).join('');
+          '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button>' +
+          '<button class="ibtn session-delete" data-delete="' + esc(s.id) + '" aria-label="删除会话" title="删除会话">' + icon('x', 'sm') + '</button></div>';
+      };
+      const active = sessionItems.find((s) => s.id === activeConversationId);
+      const remaining = sessionItems.filter((s) => s.id !== activeConversationId);
+      const pinned = active || draftActive;
+      const empty = '<div class="empty" style="text-align:left;padding:10px 8px">还没有会话</div>';
+      const workspaceSection = pinned
+        ? '<section class="session-group session-workspace"><div class="session-group-title">工作区</div>' +
+          (active ? renderRow(active) : '<div class="li session-row on session-draft" aria-current="page"><span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>新对话</b></span></div>') + '</section>'
+        : '';
+      const chatsSection = remaining.length || !pinned
+        ? '<section class="session-group session-chats">' + (pinned ? '<div class="session-group-title">聊天</div>' : '') +
+          (remaining.length ? remaining.map(renderRow).join('') : (pinned ? '' : empty)) + '</section>'
+        : '';
+      sessList.innerHTML = workspaceSection + chatsSection;
       sessList.querySelectorAll('[data-session]').forEach((n) => n.addEventListener('click', () => activateConversation(n.dataset.session)));
       sessList.querySelectorAll('[data-rename]').forEach((n) => n.addEventListener('click', () => renameConversation(n.dataset.rename)));
+      sessList.querySelectorAll('[data-delete]').forEach((n) => n.addEventListener('click', (e) => { e.stopPropagation(); deleteConversation(n.dataset.delete); }));
     }
     async function activateConversation(id, options = {}) {
       if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
       activeConversationId = id;
+      draftActive = false;
       state.chatConversationId = id;
       if (options.persist !== false) {
         try { localStorage.setItem(SESS_KEY, id); } catch (_) {}
@@ -546,9 +549,10 @@
       // Its persistent request continues in Brain and is restored when this
       // conversation is selected again.
       msgs.innerHTML = '';
-      heroEl.hidden = false;
-      heroEl.innerHTML = heroHtml();
-      chat.classList.add('is-empty');
+      heroEl.hidden = true;
+      heroEl.innerHTML = '';
+      chat.classList.remove('is-empty');
+      chat.classList.add('is-draft');
       view.querySelector('#chatLoadState').hidden = true;
       busy = false;
       busyScope = null;
@@ -577,7 +581,21 @@
       row.querySelector('button').onclick = save;
       input.onkeydown = (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') drawSessions(); };
     }
-    panel.querySelector('#newTopicBtn').addEventListener('click', () => showWelcomeHome(true));
+    async function deleteConversation(id) {
+      const item = sessionItems.find((s) => s.id === id);
+      if (!item || (busy && id === activeConversationId)) return;
+      if (!await confirmDialog('删除「' + String(item.title || '这段聊天').slice(0, 40) + '」？该会话的聊天记录将被删除，插件草稿仍会保留。')) return;
+      const r = pick(await post('/api/conversations/' + encodeURIComponent(id) + '/delete', {src:'pc'}));
+      if (!r.ok) { toast(r._err || '删除失败'); return; }
+      sessionItems = sessionItems.filter((s) => s.id !== id);
+      if (activeConversationId === id) {
+        const next = sessionItems[0];
+        if (next) await activateConversation(next.id); else showWelcomeHome(true);
+      } else drawSessions();
+      toast('会话已删除');
+    }
+    panel.querySelector('#newTopicBtn').addEventListener('click', () => { if (!busy) showWelcomeHome(true, true); });
+    panel.querySelector('#settingsOpen').addEventListener('click', () => ctx.navigate('settings'));
 
     view.innerHTML =
       '<div class="split no-right">' +
@@ -627,24 +645,7 @@
     const heroEl = view.querySelector('#hero');
     const rp = view.querySelector('#rp');
     const chat = view.querySelector('.chat');
-    const sessionsBtn = topbar.querySelector('#sessionsBtn');
-    let sessionsCollapsed = false;
-    let narrowSessionsOpen = false;
-    try { sessionsCollapsed = localStorage.getItem('vigil.chat.sessionsCollapsed') === 'true'; } catch (_) {}
-    function applySessions() {
-      const collapsed = window.matchMedia('(max-width:860px)').matches ? !narrowSessionsOpen : sessionsCollapsed;
-      document.body.classList.toggle('chat-sessions-collapsed', collapsed);
-      sessionsBtn.setAttribute('aria-expanded', String(!collapsed));
-    }
-    applySessions();
-    sessionsBtn.addEventListener('click', () => {
-      if (window.matchMedia('(max-width:860px)').matches) narrowSessionsOpen = !narrowSessionsOpen;
-      else {
-        sessionsCollapsed = !sessionsCollapsed;
-        try { localStorage.setItem('vigil.chat.sessionsCollapsed', String(sessionsCollapsed)); } catch (_) {}
-      }
-      applySessions();
-    });
+    const applySessions = () => {};
     // 模型快速切换：点左上角那个模型名弹出已保存的模型清单，点一条即切。
     // 数据来自 /api/models/saved（不带密钥），切换走 /api/models/quick-switch。
     // 生成过程中禁用（busy）：不让"正在跑的这轮"和"刚选的模型"对不上。
@@ -709,8 +710,6 @@
       if (!fresh || !fresh.ok || state.page !== 'chat') return;
       st = fresh;
       const m = (typeof st.model === 'object' && st.model ? st.model.id || st.model.name : st.model) || '—';
-      const modelEl = topbar.querySelector('#chatModel');
-      if (modelEl) { modelEl.textContent = m; modelEl.title = m; }
       const put = (key, value) => { const el = rp.querySelector('[data-chat-stat="' + key + '"]'); if (el) el.textContent = value; };
       const inTok = Number(st.tok_in) || 0, outTok = Number(st.tok_out) || 0;
       put('name', st.name || '—'); put('model', m); put('turns', fmtNum(st.turns == null ? '—' : st.turns));
@@ -772,8 +771,9 @@
       busyScope = null;
       updateComposer();
     }
-    function showWelcomeHome(persist = false) {
+    function showWelcomeHome(persist = false, focusComposer = false) {
       activeConversationId = '';
+      draftActive = false;
       state.chatConversationId = '';
       lastCount = -1;
       conversationLoadSeq++;
@@ -781,11 +781,8 @@
       msgs.innerHTML = '';
       heroEl.hidden = false;
       heroEl.innerHTML = heroHtml();
-      heroEl.querySelectorAll('[data-hint]').forEach((button) => button.addEventListener('click', () => {
-        const input = view.querySelector('#ta');
-        if (input) { input.value = button.dataset.hint; input.dispatchEvent(new Event('input')); input.focus(); }
-      }));
       chat.classList.add('is-empty');
+      chat.classList.remove('is-draft');
       view.querySelector('#chatLoadState').hidden = true;
       busy = false;
       busyScope = null;
@@ -793,6 +790,28 @@
       if (typeof clearAttachment === 'function') clearAttachment();
       if (persist) rememberRendererSelection('', 'welcome');
       drawSessions();
+      if (focusComposer) requestAnimationFrame(() => { if (taEl.isConnected) taEl.focus(); });
+    }
+    function showDraftConversation(persist = false) {
+      activeConversationId = '';
+      draftActive = true;
+      state.chatConversationId = '';
+      lastCount = -1;
+      conversationLoadSeq++;
+      renderedDraftConversationId = '';
+      msgs.innerHTML = '';
+      heroEl.hidden = true;
+      heroEl.innerHTML = '';
+      chat.classList.remove('is-empty');
+      chat.classList.add('is-draft');
+      view.querySelector('#chatLoadState').hidden = true;
+      busy = false;
+      busyScope = null;
+      taEl.value = '';
+      if (typeof clearAttachment === 'function') clearAttachment();
+      if (persist) rememberRendererSelection('', 'draft');
+      drawSessions();
+      requestAnimationFrame(() => { if (taEl.isConnected) taEl.focus(); });
     }
     async function ensureConversation() {
       if (activeConversationId) return activeConversationId;
@@ -810,6 +829,7 @@
           activeConversationId = result.item.id;
         }
         if (!activeConversationId) return '';
+        draftActive = false;
         state.chatConversationId = activeConversationId;
         try { localStorage.setItem(SESS_KEY, activeConversationId); } catch (_) {}
         rememberRendererSelection(activeConversationId, 'conversation');
@@ -829,6 +849,8 @@
       } catch (_) { rendererSelection = null; }
       const restoreId = rendererSelection && rendererSelection.app_instance === appInstanceId
         && rendererSelection.mode === 'conversation' ? rendererSelection.conversation_id : '';
+      const restoreDraft = rendererSelection && rendererSelection.app_instance === appInstanceId
+        && rendererSelection.mode === 'draft';
       if (!await loadRecordScope()) { showWelcomeHome(false); return; }
       try { await refreshConversations(); }
       catch (error) {
@@ -839,6 +861,8 @@
       if (!msgs.isConnected) return;
       if (restoreId && sessionItems.some((item) => item.id === restoreId)) {
         await activateConversation(restoreId, {persist:false});
+      } else if (restoreDraft) {
+        showDraftConversation(false);
       } else {
         showWelcomeHome(false);
       }
@@ -1163,7 +1187,7 @@
       let loadConversationId = activeConversationId;
       const loadState = view.querySelector('#chatLoadState');
       const showRetry = (message) => {
-        heroEl.hidden = true; chat.classList.remove('is-empty'); loadState.hidden = false;
+        heroEl.hidden = true; chat.classList.remove('is-empty', 'is-draft'); loadState.hidden = false;
         loadState.innerHTML = '<b>暂时无法加载会话</b><p>' + esc(message || '检查连接设置') + '</p><button class="btn oline" id="retryHistory">重新加载</button>';
         loadState.querySelector('button').onclick = () => loadMsgs(true);
       };
@@ -1189,7 +1213,8 @@
       const records = new Map(localRecords().map(item=>[item.request_id,item]));
       for (const item of r.display_turns || []) records.set(item.request_id, {...item,kind:'chat'});
       for (const job of creatorHistory.items || []) {
-        if (job.conversation_id === loadConversationId) records.set(job.request_id, {...job,input:job.feedback || job.requirement});
+        if (job.conversation_id === loadConversationId || (r.conversation && r.conversation.legacy && job.legacy_unassigned))
+          records.set(job.request_id, {...job,input:job.feedback || job.requirement});
       }
       const jobsToWatch = [];
       for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
@@ -1215,14 +1240,11 @@
       if (!force && renderKey === lastCount) return;
       lastCount = renderKey;
       if (!items.length) {
-        // Empty history: centered welcome and the existing quick questions.
-        heroEl.hidden = false;
-        chat.classList.add('is-empty');
-        heroEl.innerHTML = heroHtml();
-        heroEl.querySelectorAll('[data-hint]').forEach((b) => b.addEventListener('click', () => {
-          const ta = view.querySelector('#ta');
-          if (ta) { ta.value = b.dataset.hint; ta.dispatchEvent(new Event('input')); ta.focus(); }
-        }));
+        // A selected session is an empty chat; welcome is only for no active session.
+        heroEl.hidden = true;
+        chat.classList.remove('is-empty');
+        chat.classList.add('is-draft');
+        heroEl.innerHTML = '';
         msgs.innerHTML = '';
         drawSessions();
         return;
@@ -1230,6 +1252,7 @@
       drawSessions();
       heroEl.hidden = true;
       chat.classList.remove('is-empty');
+      chat.classList.remove('is-draft');
       // Preserve live draft nodes only while refreshing this same conversation.
       // Switching sessions detaches these nodes; scoped Creator jobs restore
       // that conversation's cards from durable Brain state.
@@ -1663,29 +1686,6 @@
     const resizeComposer = () => { if (taEl.isConnected) { updateComposer(); applySessions(); } };
     window.addEventListener('resize', resizeComposer);
     updateComposer();
-    // 🔴 这两个按钮在**顶栏**里，不在 view 里 —— 用 view.querySelector 会拿到 null，
-    // 报的错又是异步的（不进 app.js 那个 try），表现就是"消息区永远空白"。
-    ctx.topbar.querySelector('#rpBtn').addEventListener('click', () => {
-      view.querySelector('.rp').classList.toggle('no');
-      view.querySelector('.split').classList.toggle('no-right');
-      ctx.topbar.querySelector('#rpBtn').setAttribute('aria-expanded', String(!rp.classList.contains('no')));
-    });
-    ctx.topbar.querySelector('#clearBtn').addEventListener('click', async () => {
-      if (await confirmDialog('清空当前会话的聊天历史？此操作不可恢复。')) {
-        post('/api/history/clear', { src: state.src || 'pc', conversation_id: activeConversationId }).then(r => {
-          if (r.ok) {
-            const scope = recordKey();
-            const cleared = JSON.parse(localStorage.getItem(scope + ':cleared') || '[]');
-            localStorage.setItem(scope + ':cleared', JSON.stringify([...new Set([...cleared,...localRecords().map(x=>x.request_id)])].slice(-200)));
-            localStorage.removeItem(scope);
-            msgs.innerHTML = '';
-          }
-          else toast('清除失败，记录仍保留');
-          return loadMsgs(true);
-        });
-      }
-    });
-
     // 她调本地工具时，把每一步打在这轮消息下面。
     // 这个监听挂在 window 上（一次），但只往当前页面的 #liveSteps 里塞东西 ——
     // 换页之后那个节点没了，addStep 会自己跳过。
@@ -3941,7 +3941,8 @@
   function makeGroupPage(group) {
     return async function (ctx) {
       const items = group.items;
-      let cur = items[0].k;
+      let cur = items.find((it) => it.k === state.settingsGroup) ? state.settingsGroup : items[0].k;
+      state.settingsGroup = '';
 
       // 左栏：本组功能清单（§ 编号 + 图标 + 等宽路径尾标）
       ctx.panel.innerHTML = '<div class="phead"><h2>' + esc(group.name) + '</h2></div><div class="plist">' +
@@ -3989,6 +3990,37 @@
         n.addEventListener('click', () => drawSub(n.dataset.k)));
       await drawSub(cur);
     };
+  }
+
+  async function renderSettingsHome(ctx) {
+    ctx.panel.innerHTML = '';
+    ctx.topbar.className = 'topbar settings-home-topbar';
+    ctx.topbar.innerHTML = '<h1>设置</h1><div class="sp"></div><button class="btn oline" id="settingsBackChat">返回聊天</button>';
+    ctx.topbar.querySelector('#settingsBackChat').addEventListener('click', () => {
+      state.settingsDetail = false;
+      ctx.navigate('chat');
+    });
+    const cards = [
+      {title:'插件与技能', desc:'查看已启用能力与插件市场', icon:'puzzle', page:'ability', group:'plugin_market'},
+      {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
+      {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
+      {title:'连接与系统', desc:'Brain 连接、同步和权限设置', icon:'set', page:'system', sub:'conn'},
+      {title:'壁纸与外观', desc:'壁纸、主题与显示效果', icon:'img', page:'wallpaper'},
+      {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
+      {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
+      {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
+    ];
+    ctx.view.className = 'scroll settings-home-view';
+    ctx.view.innerHTML = '<div class="settings-home"><div class="settings-intro"><span class="eyebrow">VIGIL</span><h2>设置</h2><p>常用功能与应用配置</p></div><div class="settings-grid">' +
+      cards.map((c,i) => '<button class="settings-tile" data-setting-index="' + i + '"><span class="settings-tile-icon">' + icon(c.icon,'md') + '</span><span><b>' + esc(c.title) + '</b><small>' + esc(c.desc) + '</small></span><span class="settings-tile-arrow">›</span></button>').join('') +
+      '</div></div>';
+    ctx.view.querySelectorAll('[data-setting-index]').forEach((b) => b.addEventListener('click', () => {
+      const item = cards[Number(b.dataset.settingIndex)];
+      state.settingsDetail = true;
+      state.settingsGroup = item.group || '';
+      state.settingsSub = item.sub || '';
+      ctx.navigate(item.page);
+    }));
   }
 
   // ═══ 统一管理 ═══════════════════════════════════════════════
@@ -4556,6 +4588,7 @@
 
   global.PAGES = [
     { id: 'chat', name: '工作台', icon: 'chat', render: renderChat },
+    { id: 'settings', name: '设置', icon: 'set', render: renderSettingsHome },
     ...FUNC_GROUPS.map((g) => ({ id: g.id, name: g.name, icon: g.icon, render: makeGroupPage(g) })),
     { id: 'management', name: '统一管理', icon: 'mon', render: renderManagement },
     { id: 'data', name: '数据', icon: 'chart', render: renderData },

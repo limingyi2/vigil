@@ -81,6 +81,7 @@
     const page = PAGES.find((p) => p.id === id) || PAGES[0];
     state.page = page.id;
     document.body.dataset.vigilPage = page.id;
+    document.body.classList.toggle('settings-detail', !!state.settingsDetail && page.id !== 'chat' && page.id !== 'settings');
     if (gnavEl) gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.classList.toggle('on', b.dataset.page === page.id));
     // 每次切页把三块都清干净，页面自己负责填
@@ -106,6 +107,14 @@
       console.error('渲染失败:', e);
       if (viewEl) viewEl.innerHTML = '<div class="wrap"><div class="card err"><b>这一页画不出来</b>' +
         '<div class="mono" style="font-size:11.5px;color:var(--err);margin-top:6px">' + esc(e.message) + '</div></div></div>';
+    }
+    if (state.settingsDetail && page.id !== 'chat' && page.id !== 'settings' && topbarEl) {
+      const back = document.createElement('button');
+      back.className = 'btn oline settings-detail-back';
+      back.type = 'button';
+      back.textContent = '返回设置';
+      back.addEventListener('click', () => { state.settingsDetail = false; go('settings'); });
+      topbarEl.appendChild(back);
     }
     // § 章节编号：页号 = 导航序号（01–08）。子页换名不动编号，
     // 所以渲染完再补；子页只改 h1 文本，编号插在最前不受影响。
