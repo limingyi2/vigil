@@ -24,7 +24,7 @@ class CreatorPluginContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="vigil-creator-contract-") as tmp:
             root = Path(tmp)
             (root / "demo.py").write_text(source, encoding="utf-8")
-            return check_plugin_directory(root)
+            return check_plugin_directory(root, require_chat_tools=True)
 
     def test_generator_teaches_supported_chat_tool_contract(self):
         system, _user = creator._build_messages("plugin", "一个可在聊天中调用的插件")
