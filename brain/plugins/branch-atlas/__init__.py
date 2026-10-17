@@ -48,6 +48,10 @@ def _inspect_repo(body, query=None):
         return {"ok": False, "err": "请先选择一个本地 Git 仓库文件夹"}
     if len(raw) > _MAX_PATH_CHARS:
         return {"ok": False, "err": "文件夹路径过长"}
+    if any(ord(char) < 32 for char in raw):
+        return {"ok": False, "err": "文件夹路径不能包含控制字符"}
+    if not os.path.isabs(raw):
+        return {"ok": False, "err": "请提供绝对路径，或通过“选择仓库”按钮选择本地文件夹"}
     root = os.path.abspath(os.path.expanduser(raw))
     if not os.path.isdir(root):
         return {"ok": False, "err": "当前 Brain 无法访问这个文件夹；请在运行本地 Brain 的设备上选择本地仓库"}
