@@ -49,6 +49,7 @@ class CreatorPluginContractTests(unittest.TestCase):
         codes = {item["code"] for item in report["errors"] + report["warnings"]}
         self.assertIn("unsupported_on_message_hook", codes)
         self.assertIn("html_string_not_ui", codes)
+        self.assertIn("html_string_not_ui", {item["code"] for item in report["errors"]})
         self.assertIn("missing_tool_implementation", codes)
         self.assertIn("missing_tool_specs", codes)
 
@@ -70,6 +71,12 @@ class CreatorPluginContractTests(unittest.TestCase):
                 report = self.check_source(source.replace("\\n", "\n"))
                 self.assertFalse(report["ok"], report)
                 self.assertIn(expected, {item["code"] for item in report["errors"]})
+
+    def test_creator_blocks_html_return_even_when_chat_tool_contract_is_valid(self):
+        source = VALID + '\\nHTML_DEMO = "<!DOCTYPE html><html><body>demo</body></html>"\\n'
+        report = self.check_source(source.replace("\\\\n", "\\n"))
+        self.assertFalse(report["ok"], report)
+        self.assertIn("html_string_not_ui", {item["code"] for item in report["errors"]})
 
     def test_tool_names_must_match(self):
         source = VALID.replace('"demo_tool": run', '"other_tool": run', 1)
