@@ -341,6 +341,10 @@ def main(installer, baseline):
                                      'context_isolated': all(x['ok'] for x in ModelFixture.conversation_checks
                                                              if x.get('chat_request')),
                                      'renderer_reload_restored': True},
+            'chat_ui_dialogs_and_video': {'destructive_confirmation_themed': True,
+                                          'native_confirm_not_used': True,
+                                          'video_choices_inline': True,
+                                          'attachment_cancellation': True},
             'plugin_chat': {'installed_and_loaded': ModelFixture.smoke_schema_seen,
                             'tool_schema_sent': ModelFixture.smoke_schema_seen,
                             'model_requested_tool': ModelFixture.smoke_tool_call_requested,

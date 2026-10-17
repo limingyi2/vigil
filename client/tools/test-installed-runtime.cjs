@@ -99,6 +99,31 @@ async function run(){
   }
   assert.ok(restored,'Installed renderer restart did not restore the selected conversation and its messages');
   console.log('PASS installed chat UI creates, switches, continues and restores isolated A/B conversations');
+  await evaluate("window.confirm=()=>{throw Error('native confirm forbidden')};document.querySelector('#clearBtn').click();true");
+  let confirmReady=false;
+  for(let i=0;i<50;i++){
+    confirmReady=await evaluate("Boolean(document.querySelector('.vigil-confirm [data-choice=cancel]'))");
+    if(confirmReady)break;await sleep(50);
+  }
+  assert.ok(confirmReady,'Installed destructive action did not show the themed in-app confirmation');
+  await evaluate("document.querySelector('.vigil-confirm [data-choice=cancel]').click();true");
+  assert.ok(await evaluate("document.querySelector('#msgs').innerText.includes('B_CONTEXT_OK')"),
+    'Canceling the in-app confirmation changed the conversation');
+  await evaluate(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();document.createElement=original;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange();true})()`);
+  let videoReady=false;
+  for(let i=0;i<100;i++){
+    videoReady=await evaluate("Boolean(document.querySelector('[data-video-choice=frames]')&&document.querySelector('[data-video-choice=original]'))");
+    if(videoReady)break;await sleep(50);
+  }
+  assert.ok(videoReady,'Installed video attachment did not show inline keyframe/original choices');
+  assert.ok(await evaluate("document.querySelector('#attach').textContent.includes('当前模型不支持直接理解完整视频')"),
+    'Installed video attachment omitted the unsupported-model explanation');
+  await evaluate("document.querySelector('[data-video-choice=original]').click();true");
+  assert.ok(await evaluate("document.querySelector('[data-video-choice=original]').classList.contains('on')"),
+    'Installed original-video option did not activate');
+  await evaluate("document.querySelector('#atClr').click();true");
+  assert.ok(await evaluate("document.querySelector('#attach').hidden"),'Installed attachment removal did not clear the video');
+  console.log('PASS installed UI keeps destructive confirmation themed and video choices inline without native dialogs');
   const created=await evaluate(`vigil.api('POST','/api/creator/jobs',{kind:'plugin',requirement:'Create a minimal isolated fixture plugin. Do not install.',request_id:'creator_fixture_'+crypto.randomUUID()})`);
   assert.equal(created.status,200);const jid=created.json.job_id;
   const streamed=await evaluate(`(async()=>{const events=[];const off=vigil.onCreatorEvent(e=>{if(e.job_id===${JSON.stringify(jid)})events.push(e);});try{return {result:await vigil.apiStream('/api/creator/jobs/${jid}/events?after=0',null),events};}finally{off();}})()`);
