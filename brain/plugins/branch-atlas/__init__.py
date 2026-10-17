@@ -6,7 +6,6 @@ import subprocess
 
 NAME = "branch-atlas"
 DESC = "只读查看本地 Git 仓库的分支、提交拓扑和工作区状态"
-FEATURE = "branch_atlas"
 
 _MAX_PATH_CHARS = 4096
 _MAX_BRANCHES = 100
