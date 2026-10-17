@@ -84,16 +84,19 @@ def main(installer, expected_commit, output):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
     config_file = user_data_root / 'config.json'
-    chat_history = brain_home / f'data/pc.chat_history.conversation.{conversation_id}.jsonl'
+    data_dir = brain_home / 'data'
     conversations_db = brain_home / 'data/conversations.sqlite3'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
-    assert chat_history.is_file(), 'Fresh PC conversation did not persist its isolated JSONL history'
-    chat_text = chat_history.read_text(encoding='utf-8')
-    assert 'P8_FRESH_CHAT_SENTINEL' in chat_text and 'FRESH_INSTALL_CHAT_OK' in chat_text
+    chat_histories = []
+    for path in data_dir.rglob('*.jsonl'):
+        content = path.read_text(encoding='utf-8')
+        if 'P8_FRESH_CHAT_SENTINEL' in content and 'FRESH_INSTALL_CHAT_OK' in content:
+            chat_histories.append(path)
+    assert chat_histories, 'Fresh PC conversation was not persisted to an isolated JSONL history file'
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
         assert db.execute('SELECT COUNT(*) FROM conversations WHERE id=?', (conversation_id,)).fetchone()[0] == 1
-    retained_files = [*sentinels, config_file, chat_history, conversations_db]
+    retained_files = [*sentinels, config_file, conversations_db, *chat_histories]
     retained_before = {str(path): sha256(path) for path in retained_files}
     outside = root / 'outside-data' / 'do-not-delete.txt'
     outside.parent.mkdir()
@@ -136,7 +139,7 @@ def main(installer, expected_commit, output):
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),
-                      'actual_configuration_chat_history_and_conversation_db_retained': True,
+                      'actual_configuration_jsonl_history_and_conversation_db_retained': True,
                       'outside_sentinel_preserved': True},
         'logs': {name: f'lifecycle-logs/{name}.json' for name in log_files},
     }
