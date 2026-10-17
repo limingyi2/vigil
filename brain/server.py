@@ -94,7 +94,6 @@ def build_local_brain(verbose=True):
     只在 --standalone 时用（云端没有桌面，开不了桌宠）。两台进程各养一个"她"
     会互相覆盖记忆，所以同一时间只允许一个进程养她。
     """
-    from memory_store_v2 import get_default_store
     from brain import Brain
 
     # 插件必须在 Brain() **之前**装载：人设里的"工具"清单在构造时拼进
@@ -102,16 +101,10 @@ def build_local_brain(verbose=True):
     # 她就少了新插件的工具说明 —— 提示词不会自己补，得重跑 reload_persona
     load_plugins(verbose=verbose)
 
-    # self.mem 只是**兜底**（brain._mem_for 异常时才用），但它得指向一份
-    # 分区过的库。传空会让 get_default_store() 落回无分区名的公共库
-    # memory.json —— 那份装着旧人设的旧账，于是换人设后她照样带着上一段的
-    # 记忆开口（分区建了、文件也有，只有内容是错的）。
-    # 走默认人设 + app 渠道：老数据在那儿，不用搬。
-    try:
-        from persona_store import key_from_config
-        mem = get_default_store(key_from_config(api_config), "app")
-    except Exception:
-        mem = get_default_store()
+    # Memory is resolved from the request's (persona, channel) pair inside
+    # Brain. Do not pre-open a shared default store here: if partition lookup
+    # later fails, it could leak another channel's memory into the prompt.
+    mem = None
     mode = api_config.get("chat_mode", "api")
     b = Brain(mem, api_config, mode=mode)
     if verbose:
@@ -691,11 +684,20 @@ def _late_to_history(src, display, reply):
     她事后翻聊天记录能看到自己真正回了什么，微信端却不会冒出一条迟到的
     复读。挂到 ws_forward.HUB.on_late_result（run_server 装配完大脑后接上）。"""
     try:
-        _LOCAL["brain"].use_src(_norm_src(src))
-        _LOCAL["brain"]._log_turn(display, reply, img=None)
+        b = _LOCAL["brain"]
+        channel = _norm_src(src)
+        b._log_turn(display, reply, img=None, src=channel)
         print("[转发] 迟到答案已入历史（src=%s）" % src, flush=True)
     except Exception as e:
-        print("[转发] 迟到答案写历史失败：%s" % e, flush=True)
+        channel = _norm_src(src)
+        try:
+            b = _LOCAL.get("brain")
+            persona = b._persona_key_for(channel) if b else "default"
+            path = b._log_for(channel) if b else "<unavailable>"
+        except Exception:
+            persona, path = "default", "<unavailable>"
+        print("[history] src=%s persona=%s path=%s error_code=%s" %
+              (channel, persona, path, type(e).__name__), flush=True)
 
 
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
@@ -778,7 +780,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                         ans = _selfie_caption(place) + "\n[img:" + name + "]"
                         if not dry_run:          # 探测轮不写存档（见 ask_with_retry）
                             try:
-                                _b._log_turn(orig_text, ans, img=None)
+                                _b._log_turn(orig_text, ans, img=None, src=_norm_src(src))
                             except Exception as e:
                                 print(f"[大脑] 自拍存档失败（不影响回复）：{e}",
                                       flush=True)
@@ -813,7 +815,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             if not dry_run:
                 try:
                     _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None,
-                                               attachments=attachments)
+                                               attachments=attachments,
+                                               src=_norm_src(src))
                 except Exception as e:
                     print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
             return ans, mode, ""

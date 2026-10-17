@@ -8,6 +8,7 @@ import os, re, json
 import datetime
 import time
 import threading
+import contextvars
 import httpx
 from html.parser import HTMLParser
 
@@ -47,6 +48,17 @@ def norm_src(src):
     也别因为一个拼错的字段名开出一份空历史（那边她会失忆，且没有任何提示）。"""
     s = str(src or "").strip().lower()
     return s or DEFAULT_SRC
+
+
+def _log_memory_partition_error(src, persona, partition_path, exc):
+    """Log only partition metadata and a stable error code, never exception text."""
+    import re
+    code = getattr(exc, "errno", None) or type(exc).__name__ or "unknown"
+    safe_code = re.sub(r"[^A-Za-z0-9_.-]", "_", str(code))[:64] or "unknown"
+    safe_persona = re.sub(r"[^A-Za-z0-9_.-]", "_", str(persona or "default"))[:64]
+    print("[memory] src=%s persona=%s path=%s error_code=%s" %
+          (norm_src(src), safe_persona, str(partition_path or "<unavailable>"),
+           safe_code), flush=True)
 
 
 def _day_segment(hour):
@@ -457,7 +469,11 @@ class Brain:
         # 键是渠道名（app / wechat / 以后加什么都行），代码里不针对具体渠道写规则。
         # 必须在 reload_persona 之前建好：reload_persona 会往 self.hist 里写 system 段。
         self._hists = {}
-        self._cur_src = DEFAULT_SRC
+        # The Brain instance is shared by server threads. Keep the active
+        # channel local to the request context so work after the chat lock
+        # cannot observe another request's channel.
+        self._src_context = contextvars.ContextVar(
+            "vigil_brain_src_%x" % id(self), default=DEFAULT_SRC)
         # 每个渠道的内存历史**是按哪个人设载入的**。
         # 换人设时靠它判断"这份 hist 能不能留" —— 换了人就不能接着上一段的话说。
         self._hist_persona = {}
@@ -530,6 +546,14 @@ class Brain:
     def hist(self, value):
         self._hists[norm_src(self._cur_src)] = value
 
+    @property
+    def _cur_src(self):
+        return self._src_context.get()
+
+    @_cur_src.setter
+    def _cur_src(self, value):
+        self._src_context.set(norm_src(value))
+
     # --- 渠道：对话历史按渠道分份 ---
     def _hist(self, src):
         """取（必要时建）某个渠道的对话历史。每份第一条固定是 system。"""
@@ -541,13 +565,13 @@ class Brain:
         return h
 
     def use_src(self, src):
-        """把「当前渠道」切过去。聊天全程串行加锁，所以这里不需要线程局部变量。
+        """把当前请求的渠道切到 src。
 
         记忆检索也跟着切 —— 这是隔离的关键：她在微信里认得的人和 App 里
         认得的人若是同一个，记忆反而该共用；配了独立人设时该隔开。
         现在统一按渠道隔，代价是微信里学到的事不会出现在 App 里。
         """
-        self._cur_src = norm_src(src)
+        self._cur_src = src
         return self._cur_src
 
     def hist_for(self, src):
@@ -670,16 +694,17 @@ class Brain:
         用记忆库自己的 persona/src 分区（见 memory_store_v2.get_default_store）。
         """
         s = norm_src(src or self._cur_src)
+        persona = self._persona_key_for(s)
+        partition_path = "<unavailable>"
         try:
             import memory_store_v2
-            return memory_store_v2.get_default_store(self._persona_key_for(s), s)
+            partition_path = memory_store_v2.default_store_path(persona, s)
+            return memory_store_v2.get_default_store(persona, s)
         except Exception as e:
-            # 🔴 兜底不能回 self.mem —— 那是构造时传进来的单实例，
-            # 换人设后仍指着**默认人设 + app** 那份。她在群里说话时一旦走到
-            # 这里，就会读到你的私人记忆库（分区建了、文件也有，只有内容是错的）。
-            print("[记忆] 分区库打不开，这一轮退回默认人设库：%s"
-                  % str(e)[:100], flush=True)
-            return self.mem
+            _log_memory_partition_error(s, persona, partition_path, e)
+            # Fail closed: the constructor's legacy store may belong to another
+            # channel/persona, so a failed partition means no memory this turn.
+            return None
 
     def _log_for(self, src=None):
         """这个渠道 + 当前人设的聊天存档路径。
@@ -1361,7 +1386,7 @@ class Brain:
 
         # 存进历史（和 chat 方法一致）
         try:
-            self._log_turn(user_text, full_text, img=None)
+            self._log_turn(user_text, full_text, img=None, src=self._cur_src)
         except Exception:
             pass
 
@@ -1425,7 +1450,10 @@ class Brain:
                     memory_block = _m.render(query=q, top_k=5,
                                                   chan=self._cur_src)
                     print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
-                except Exception:
+                except Exception as e:
+                    _log_memory_partition_error(
+                        self._cur_src, self._persona_key_for(self._cur_src),
+                        getattr(_m, "path", "<unavailable>"), e)
                     memory_block = ""
 
         draft = None
@@ -1486,6 +1514,12 @@ class Brain:
         # 把当前渠道切到别处去了 —— 于是记忆被打上别的渠道的标记，
         # 串得比不隔离还糟（微信侧抽出来的东西进了 App 的记忆库）。
         _chan = norm_src(self._cur_src)
+        _persona = self._persona_key_for(_chan)
+        try:
+            import memory_store_v2 as _memstore
+            _partition_path = _memstore.default_store_path(_persona, _chan)
+        except Exception:
+            _partition_path = "<unavailable>"
 
         _mw = self._mem_for()
         if _mw is not None:
@@ -1513,7 +1547,8 @@ class Brain:
                         for ln in [x.strip() for x in her_text.splitlines() if x.strip()]:
                             ok, why = classify_her_speech(ln)
                             if not ok:
-                                print(f"[记忆] 她这句不记（{why}）：{ln[:30]}",
+                                print(f"[记忆] src={_chan} persona={_persona} "
+                                      f"path={_partition_path} error_code=skip_{why}",
                                       flush=True)
                                 continue
                             ev, _f, _m = MemoryStore.extract_her_promise(ln, self.api)
@@ -1529,12 +1564,14 @@ class Brain:
                             # 后者常见（"打算先把高数对付过去"是回顾自己，不是承诺），
                             # 混在一起看日志会以为抽取坏了。
                             if ok and not ev:
-                                print(f"[记忆] 不是约定，不记：{ln[:30]}",
-                                      flush=True)
+                                print(f"[记忆] src={_chan} persona={_persona} "
+                                      f"path={_partition_path} "
+                                      "error_code=not_a_promise", flush=True)
                     print(f"[perf] 后台记忆抽取+写入 {time.time()-_t:.1f}s "
                           f"(facts={nf}, events={ne}, hers={saved})", flush=True)
                 except Exception as e:
-                    print(f"[perf] 后台记忆抽取失败：{str(e)[:80]}", flush=True)
+                    _log_memory_partition_error(_chan, _persona,
+                                                _partition_path, e)
             threading.Thread(target=_extract_bg,
                              args=(her_speech,), daemon=True).start()
 
@@ -1561,11 +1598,11 @@ class Brain:
             self.life.log_chat("assistant", ans)
         # 聊天记录存档，重启后聊天窗能接着看。摘要这类内部调用不进
         if log and not _failed:
-            self._log_turn(user_text, ans, img=img)
+            self._log_turn(user_text, ans, img=img, src=self._cur_src)
         return ans, self.last_mode
 
     # --- 聊天记录存档（跨重启） ---
-    def _log_turn(self, user_text, ans, img=None, attachments=None):
+    def _log_turn(self, user_text, ans, img=None, attachments=None, src=None):
         """把这一轮存进 chat_history.jsonl。写不进去也不能影响聊天。
 
         img 是可选的图片路径 —— 手机/App 靠它把图显示出来，只加在 user 那条上。
@@ -1586,10 +1623,11 @@ class Brain:
                      if item.get(k) is not None}
                     for item in attachments if isinstance(item, dict) and item.get("id")
                 ]
-            with open(self._log_for(self._cur_src), "a", encoding="utf-8") as f:
+            channel = norm_src(src or self._cur_src)
+            with open(self._log_for(channel), "a", encoding="utf-8") as f:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
                 # pc 渠道不拆分；微信等渠道按 split_messages 拆
-                if self._cur_src == "pc":
+                if channel == "pc":
                     pieces = [ans] if (ans or "").strip() else []
                 else:
                     pieces = split_messages(ans)

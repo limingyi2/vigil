@@ -644,7 +644,7 @@ def embed_texts(texts):
                 return vecs
         except Exception as e:
             _cloud_dead_until = time.time() + CLOUD_RETRY_SEC
-            print(f"[记忆] 云端 embedding 失败，降级本地：{type(e).__name__} {e}", flush=True)
+            print(f"[记忆] error_code=cloud_embedding_{type(e).__name__}", flush=True)
     # 2) 本地 fastembed（要能连 HuggingFace）
     try:
         vecs = list(get_embedder().embed(texts))
@@ -653,8 +653,7 @@ def embed_texts(texts):
         _embed_model_used = LOCAL_EMBED_MODEL
         return [np.asarray(v, dtype=np.float32) for v in vecs]
     except Exception as e:
-        print(f"[记忆] 本地 embedding 也不可用，本次放弃向量检索："
-              f"{type(e).__name__} {e}", flush=True)
+        print(f"[记忆] error_code=local_embedding_{type(e).__name__}", flush=True)
         _embed_dead_until = time.time() + EMBED_RETRY_SEC
         return []
 
@@ -677,6 +676,15 @@ def configured_mem_dir():
     return FALLBACK_MEM_DIR
 
 
+def default_store_path(persona_key=None, src="app"):
+    """Return the configured memory file path for a persona/channel partition."""
+    d = configured_mem_dir()
+    if persona_key is None:
+        return os.path.join(d, "memory.json")
+    import paths
+    return paths.scoped(os.path.join(d, "memory.json"), persona_key, src)
+
+
 def get_default_store(persona_key=None, src="app"):
     """按 config.json 打开默认记忆库。
 
@@ -685,12 +693,7 @@ def get_default_store(persona_key=None, src="app"):
     可她还记得你说过的所有事，说话方式自然还是老的）。
     两者都为空时沿用老路径，老数据不用搬。
     """
-    d = configured_mem_dir()
-    if persona_key is None:
-        return _cached_store(os.path.join(d, "memory.json"))
-    import paths
-    p = paths.scoped(os.path.join(d, "memory.json"), persona_key, src)
-    return _cached_store(p)
+    return _cached_store(default_store_path(persona_key, src))
 
 
 def list_store_names():
@@ -850,13 +853,13 @@ class MemoryStore:
                 bad = "%s.bad_%s" % (self.path, time.strftime("%Y%m%d_%H%M%S"))
                 try:
                     os.replace(self.path, bad)
-                    print("[记忆] %s 解析失败（%s），已留档到 %s，本次以空库启动"
-                          % (self.path, str(e)[:80], bad), flush=True)
+                    print("[记忆] path=%s error_code=%s" %
+                          (self.path, type(e).__name__), flush=True)
                 except OSError as e2:
                     # 留档都失败就别写盘了：再写下去就是拿空库覆盖唯一的一份数据
                     self._readonly = True
-                    print("[记忆] %s 解析失败且留档失败（%s）—— 为避免覆盖原文件，"
-                          "本次运行不落盘" % (self.path, e2), flush=True)
+                    print("[记忆] path=%s error_code=%s" %
+                          (self.path, type(e2).__name__), flush=True)
                 self.data = {"items": [],
                              "meta": {"created": time.strftime("%Y-%m-%d %H:%M")}}
         # 兼容 v1 格式：facts/events -> items
@@ -933,7 +936,7 @@ class MemoryStore:
                 json.dump({"model": model, "dim": int(dim)},
                           f, ensure_ascii=False)
         except Exception as e:
-            print(f"[记忆] 写 embed_meta.json 失败：{e}", flush=True)
+            print(f"[记忆] path={self.path} error_code={type(e).__name__}", flush=True)
 
     def _reset_index(self):
         """清空内存索引（维度变了或模型换了时用）"""
@@ -1072,7 +1075,6 @@ class MemoryStore:
         skip = _memory_should_skip(text)
         if skip:
             _MEM_SKIPPED.append({"text": text[:80], "why": skip})
-            print(f"[记忆] 不入库（{skip}）：{text[:40]}", flush=True)
             return
         with self._lock:
             for it in self.data["items"]:
@@ -1088,7 +1090,6 @@ class MemoryStore:
             dup = self._near_dup(vs[0] if vs else None, mtype, chan)
             if dup:
                 _MEM_SKIPPED.append({"text": text[:80], "why": "近义重复"})
-                print(f"[记忆] 不入库（近义重复 ≈「{dup[:30]}」）：{text[:40]}", flush=True)
                 return
                         # id 必须全局唯一（跨分区也唯一）。时间戳加随机数即可，
             # f"m{毫秒}{len(items)}" —— 同一毫秒内、又恰好长度相同的两条会撞号，
