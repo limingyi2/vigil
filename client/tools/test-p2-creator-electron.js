@@ -14,7 +14,7 @@ fs.mkdirSync(evidenceDir,{recursive:true});
 const fullSource=Array.from({length:10},(_,i)=>`# vigil_smoke.py line ${i+1}`).join('\n');
 const fixtureDraft={id:'draft_fold_ui',kind:'plugin',summary:'折叠交互验收',version:1,model:'fixture',
   requirement:'UI-only Creator file preview fixture',risks:'fixture only',validation:{ok:true,errors:[],warnings:[]},
-  files:[{name:'vigil_smoke.py',content:fullSource},{name:'README.md',content:'fixture readme'}]};
+  files:[{name:'vigil_smoke/__init__.py',content:fullSource},{name:'vigil_smoke/frontend.js',content:'window.VigilPlugin = { registerPage() {} };'}]};
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const ev=s=>win.webContents.executeJavaScript(s,true);
 async function until(s){for(let i=0;i<250;i++){if(await ev(s))return;await wait(40);}throw Error('Timed out: '+s);}
@@ -30,6 +30,7 @@ function fixture(method,raw,body){
   if(p==='/api/persona')json={key:'default',name:'fixture',templates:[]};
   if(p==='/api/models/saved')json={current:{model:'fixture'},models:[]};
   if(p==='/api/plugins/frontend')json={version:1,plugins:[]};
+  if(p==='/api/plugins' && method==='GET')json={ok:true,plugins:[],manage:{items:[]},pending_restart:{pending:true,reasons:['plugins directory changed']}};
   if(p==='/api/creator/drafts')json={ok:true,drafts:[]};
   if(p==='/api/creator/draft')json={ok:true,draft:fixtureDraft};
   if(p==='/api/creator/approve' && method==='POST'){
@@ -38,7 +39,7 @@ function fixture(method,raw,body){
   }
   if(p==='/api/creator/install' && method==='POST'){
     approvalCalls.push({path:p,body});
-    json={ok:true,install:{package:'vigil_smoke',restart_needed:true,dynamic_loaded:false}};
+    json={ok:true,install:{package:'vigil_smoke',layout:'directory',frontend_assets:true,restart_needed:true,dynamic_loaded:false}};
   }
   if(p==='/api/creator/jobs' && method==='POST'){
     creatorRequests++;
@@ -144,6 +145,8 @@ async function run(){
   await until(`document.querySelector('${card} #crInstallNow').textContent.includes('已安装')`);
   assert.deepEqual(approvalCalls[1],{path:'/api/creator/install',body:{approval_id:'fixture_once_123456789'}});
   assert.ok(await ev(`document.querySelector('${card} #crApprovalState').textContent.includes('审批已消费')`));
+  const installText=await ev(`document.querySelector('${card} #crApprovalState').textContent`);
+  assert.ok(installText.includes('目录插件包') && installText.includes('插件界面资源') && installText.includes('待重启 Brain'),installText);
   console.log('PASS drawer preserves explicit approval, one-time install confirmation, and consumed-approval result');
   await ev("document.querySelector('#gnav [data-page=\"agent-center\"]').click()");
   await until("!!document.querySelector('#ac-agent-grid')");

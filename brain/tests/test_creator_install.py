@@ -179,6 +179,57 @@ def test_valid_plugin_is_installed_by_existing_transaction_without_import(isolat
     assert not marker.exists(), "approval install must not import generated code"
 
 
+def test_creator_directory_plugin_installs_then_loads_tools_and_frontend(isolated, monkeypatch):
+    _, drafts, plugins = isolated
+    did = "cr_directory_frontend"
+    root = drafts / did
+    package = root / "creator_panel"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        'NAME="creator_panel"\nDESC="approved directory fixture"\nFEATURE="creator_panel_fixture"\n'
+        'def panel_status(arg): return "PANEL_TOOL_OK:" + str(arg)\n'
+        'TOOLS={"panel_status": panel_status}\n'
+        'TOOL_SPECS={"panel_status":{"desc":"panel status","params":[],"arg_param":None}}\n',
+        encoding="utf-8")
+    (package / "frontend.js").write_text(
+        "window.VigilPlugin.registerPage({id:'creator_panel'});\n", encoding="utf-8")
+    (package / "frontend.css").write_text(".creator-panel { color: #fff; }\n", encoding="utf-8")
+    (package / "zxplugin.json").write_text(json.dumps({
+        "name": "creator_panel", "version": "0.1.0", "desc": "approved directory fixture"}),
+        encoding="utf-8")
+    (root / "meta.json").write_text(json.dumps({
+        "id": did, "kind": "plugin", "version": 1, "files": [], "validation": {}}),
+        encoding="utf-8")
+
+    report, validation_error = creator.validate_draft(did)
+    assert not validation_error, validation_error
+    assert report["ok"], report
+    approval = _approve(did)
+    result = ci.install(approval["approval_id"], ADMIN)
+    assert result["ok"] is True, result
+    assert result["install"]["layout"] == "directory"
+    assert result["install"]["frontend_assets"] is True
+    assert result["install"]["restart_needed"] is True
+    assert (plugins / "creator_panel" / "frontend.js").is_file()
+    assert (plugins / "creator_panel" / "frontend.css").is_file()
+
+    import plugin_host
+    monkeypatch.setattr(plugin_host, "_DIR", str(plugins))
+    monkeypatch.setattr(plugin_host, "_registry", {})
+    monkeypatch.setattr(plugin_host, "_TOOL_INDEX", {})
+    plugin_host.load(force=True)
+    import features
+    monkeypatch.setattr(features, "on", lambda name, src=None: src == "pc")
+    assert "panel_status" in plugin_host.tool_specs("pc")
+    assert "panel_status" not in plugin_host.tool_specs("wechat")
+    assert plugin_host.run_tool("panel_status", "ready", src="pc") == "PANEL_TOOL_OK:ready"
+    assert plugin_host.run_tool("panel_status", "ready", src="wechat") is None
+    assets = plugin_host.frontend_assets()
+    installed = next(item for item in assets["plugins"] if item["name"] == "creator_panel")
+    assert "registerPage" in installed["js"]
+    assert ".creator-panel" in installed["css"]
+
+
 def test_skill_archive_uses_existing_skill_transaction_boundary(isolated, monkeypatch):
     root, drafts, _ = isolated
     did = _draft(drafts, kind="skill", name="creator_skill")

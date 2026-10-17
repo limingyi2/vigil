@@ -68,7 +68,7 @@ _WINDOWS_RESERVED = {
     "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
     "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 }
-_PLUGIN_EXTS = (".py", ".json", ".md", ".txt")
+_PLUGIN_EXTS = (".py", ".json", ".md", ".txt", ".js", ".css")
 _SKILL_EXTS = (".js", ".mjs", ".cjs", ".json", ".md")
 
 
@@ -150,7 +150,7 @@ def _extract_json(text):
 
 # ── 提示词 ───────────────────────────────────────────────────
 
-_PLUGIN_CONTRACT = """Vigil 插件契约（当前 Creator 生成单文件 Python 插件）：
+_PLUGIN_CONTRACT = """Vigil 插件契约（Creator 生成可审查的 Python 插件）：
 - 必须有模块级字符串 NAME（英文/数字/下划线/短横线，唯一）和 DESC（一句话描述）。
 - 想让模型在聊天中真正调用插件，必须同时提供 TOOLS 与 TOOL_SPECS；只有 prompt(ctx) 只是补充提示，不会执行功能。
 - 工具的标准形状如下，名称必须在 TOOLS 与 TOOL_SPECS 中完全一致：
@@ -168,7 +168,9 @@ _PLUGIN_CONTRACT = """Vigil 插件契约（当前 Creator 生成单文件 Python
 - 可选钩子：prompt(ctx) -> str（补充模型提示）；start(brain)（启动后台任务，只有确实需要时才写）。
 - on_message(text, ctx) 不是当前插件宿主支持的钩子，禁止用它实现聊天功能。不要只写 TOOLS 而漏掉 TOOL_SPECS，否则模型看不到工具。
 - 可选 zxplugin.json（{"name": 与 NAME 一致, "version": "x.y.z", "desc": "..."}）。
-- 当前 Creator 这条路径不支持自定义前端页面；禁止把完整 HTML 塞进 Python 文档字符串或把 HTML 返回值伪装成可显示的插件界面。也不得用演示数据冒充真实本地/GitHub 仓库内容；需求依赖自定义 UI、真实 Git 读取或网络访问时，必须在 summary/risks 中明确说明能力边界。
+- 需要自定义插件界面时使用目录包：<NAME>/__init__.py、<NAME>/frontend.js，可选 <NAME>/frontend.css 与 <NAME>/zxplugin.json。目录中不得再嵌套子目录；入口仍须声明同名 NAME、DESC、TOOLS 与 TOOL_SPECS。
+- frontend.js 会在明确批准并安装后由 Electron 客户端执行。静态验证不是安全沙箱；必须在审批前逐文件审查完整源码和权限，风险说明需明确前端代码可执行。
+- 不得把完整 HTML 塞进 Python 文档字符串或把 HTML 返回值伪装成可显示的插件界面。也不得用演示数据冒充真实本地/GitHub 仓库内容；需求依赖自定义 UI、真实 Git 读取或网络访问时，必须在 summary/risks 中明确说明能力边界。
 - 禁止：import 第三方库、未经需求授权的联网、读写插件目录之外的文件、弹系统对话框、自启动安装。
 - 目标是"最小可审查"：只做需求要求的那一件事，并确保聊天能力使用宿主实际支持的工具协议。"""
 
@@ -182,7 +184,7 @@ _SKILL_CONTRACT = """Vigil Skill 契约（Node 宿主，ES 模块）：
 _OUTPUT_CONTRACT = """输出契约（硬性，违反即生成失败）：
 只输出一个 JSON 对象本身 —— 不要 markdown 代码围栏、不要解释、不要思考段：
 {"files": {"相对路径": "文件内容", ...}, "summary": "一句话说明这个草稿做了什么", "risks": "用户须知的风险或限制；没有就写\"无\""}
-files 的键是文件名：插件用 "<name>.py"（name=NAME）+ 可选 "zxplugin.json"；
+files 的键是相对路径：无自定义 UI 的插件用 "<name>.py"（name=NAME）+ 可选 "zxplugin.json"；有自定义 UI 的插件用 "<name>/__init__.py"、可选 "<name>/frontend.js"、"<name>/frontend.css"、"<name>/zxplugin.json"；
 技能用 "index.js" + "skill.json"。文件内容必须是完整可用的源码字符串。"""
 
 _TEMPLATE_DIR = {}
@@ -380,7 +382,21 @@ def validate_draft(draft_id):
     try:
         if kind == "plugin":
             import plugin_structure
-            rep = plugin_structure.check_plugin_directory(d, require_chat_tools=True)
+            plugin_root = d
+            try:
+                with os.scandir(d) as scanned:
+                    entries = list(scanned)
+                dirs = [entry for entry in entries if entry.is_dir(follow_symlinks=False)]
+                direct_files = [entry for entry in entries
+                                if entry.is_file(follow_symlinks=False)
+                                and entry.name != "meta.json"]
+                if (len(dirs) == 1 and not direct_files
+                        and not dirs[0].is_symlink()
+                        and not getattr(os.path, "isjunction", lambda p: False)(dirs[0].path)):
+                    plugin_root = dirs[0].path
+            except OSError:
+                pass
+            rep = plugin_structure.check_plugin_directory(plugin_root, require_chat_tools=True)
         else:
             import skill_structure
             pkg = ""

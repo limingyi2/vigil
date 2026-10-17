@@ -4119,7 +4119,7 @@
   }
   function creatorTargetOf(d) {
     const fs = d.files || [];
-    const mf = fs.find((f) => f.name === 'skill.json' || f.name.toLowerCase() === 'zxplugin.json');
+    const mf = fs.find((f) => f.name.toLowerCase() === 'skill.json' || f.name.toLowerCase().endsWith('/zxplugin.json') || f.name.toLowerCase() === 'zxplugin.json');
     if (mf) {
       try {
         const j = JSON.parse(mf.content || '{}');
@@ -4128,6 +4128,7 @@
       } catch (_) { /* validation result carries malformed manifest details */ }
     }
     const py = fs.find((f) => /\.py$/i.test(f.name));
+    if (py && /\/__init__\.py$/i.test(py.name)) return py.name.split('/')[0];
     return py ? py.name.replace(/\.py$/i, '') : (d.kind === 'skill' ? '（由 skill.json 决定）' : '（由插件文件名决定）');
   }
   // Keep transport failures visible: API.pick stores non-JSON failures in _err,
@@ -4380,10 +4381,13 @@
         const restartNeeded = installResult.restart_needed === true ||
           (isPlugin && installResult.dynamic_loaded === false);
         let installStatus;
+        const layout = String(installResult.layout || ((d.files || []).some((f) => /\/__init__\.py$/i.test(f.name)) ? 'directory' : 'single'));
+        const packageLabel = layout === 'directory' ? '目录插件包' : '单文件插件';
+        const frontendAssets = installResult.frontend_assets === true || (d.files || []).some((f) => /\/frontend\.(js|css)$/i.test(f.name));
         if (isPlugin && restartNeeded) {
-          installStatus = '安装成功：' + installedName + '.py 已写入 Brain 插件目录。当前运行中的 Brain 尚未加载它；重启 Brain 后，Agent 才能调用插件声明的 TOOLS / TOOL_SPECS。审批已消费，不能重复使用。';
+          installStatus = '安装成功：' + installedName + '（' + packageLabel + '）已写入 Brain 插件目录。当前 Brain 尚未加载新代码；重启 Brain 后，Agent 才能调用 TOOLS / TOOL_SPECS。' + (frontendAssets ? '插件界面资源也已安装，客户端会在 Brain 重启后检测并加载。' : '') + '审批已消费，不能重复使用。';
         } else if (isPlugin) {
-          installStatus = '安装成功：' + installedName + '.py 已写入 Brain 插件目录。请到插件管理页确认运行状态和工具清单，再在聊天中描述要执行的任务。审批已消费，不能重复使用。';
+          installStatus = '安装成功：' + installedName + '（' + packageLabel + '）已写入 Brain 插件目录。请到插件管理页确认运行状态和工具清单，再在聊天中描述要执行的任务。审批已消费，不能重复使用。';
         } else if (restartNeeded) {
           installStatus = '安装成功：' + installedName + ' 已写入技能目录，但需要重启技能宿主后才能完全生效。审批已消费，不能重复使用。';
         } else {
@@ -4392,7 +4396,27 @@
         if (approvalState) approvalState.textContent = installStatus;
         installButton.textContent = restartNeeded ? '已安装 · 待重启' : '已安装';
         installButton.disabled = true;
+        // Refresh the extension view and check the persisted server state even
+        // when installation was started from chat. A failed refresh must not
+        // hide the already committed installation result.
         if (typeof window.__vigilRefreshExtensions === 'function') window.__vigilRefreshExtensions();
+        if (isPlugin) {
+          try {
+            const state = pick(await API.get('/api/plugins'));
+            if (!state.ok) throw new Error(creatorActionError(state, '插件状态刷新失败'));
+            const loaded = (state.plugins || []).some((p) => p.name === installedName);
+            if (state.pending_restart && state.pending_restart.pending) {
+              installStatus += ' 已确认磁盘安装完成，插件状态显示待重启 Brain。';
+            } else if (!loaded) {
+              installStatus += ' 安装事务已完成，但当前插件清单尚未确认加载；请检查插件管理页和 Brain 日志。';
+            } else {
+              installStatus += ' 已从当前插件清单确认。';
+            }
+          } catch (error) {
+            installStatus += ' 插件状态暂时无法刷新：' + String(error && error.message || error);
+          }
+          if (approvalState) approvalState.textContent = installStatus;
+        }
         toast(installStatus);
         return;
       }

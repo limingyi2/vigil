@@ -134,7 +134,9 @@ function writeFixtures(modelBase, brainPort) {
     persona_file: 'personas/default.json',
   };
   fs.writeFileSync(path.join(home, 'config', 'config.json'), JSON.stringify(brainConfig), 'utf8');
-  fs.writeFileSync(path.join(home, 'plugins', 'vigil_smoke.py'), [
+  const pluginDir = path.join(home, 'plugins', 'vigil_smoke');
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, '__init__.py'), [
     'import json, os',
     'from pathlib import Path',
     'NAME = "vigil_smoke"',
@@ -148,6 +150,13 @@ function writeFixtures(modelBase, brainPort) {
     'TOOL_SPECS = {"smoke_ping": {"desc":"E2E plugin call", "params":[{"name":"mode","type":"string","desc":"test mode"}], "arg_param":"mode"}}',
     '',
   ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(pluginDir, 'frontend.js'), [
+    'window.VigilPlugin.registerPage({',
+    '  id: "e2e-plugin-page", name: "E2E Plugin", icon: "plug",',
+    '  render(ctx) { ctx.panel.innerHTML = "<section id=\\"e2e-plugin-visible\\">Directory plugin frontend loaded</section>"; }',
+    '});',
+  ].join('\n'), 'utf8');
+  fs.writeFileSync(path.join(pluginDir, 'frontend.css'), '#e2e-plugin-visible { color: rgb(1, 2, 3); }', 'utf8');
   const clientConfig = {
     wizard_done: true, connection_mode: 'remote', remote_base: 'http://127.0.0.1:' + brainPort,
     base: 'http://127.0.0.1:' + brainPort, src: 'pc', token_kind: 'brain',
@@ -315,6 +324,13 @@ async function run() {
   const modelBase = await startModel();
   const { base: brainBase, pluginTrace } = await startBrain(modelBase);
   await startElectron(brainBase);
+  await waitFor("!!document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]')", 'directory plugin page registration');
+  await evaluate("document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]').click()");
+  await waitFor("!!document.querySelector('#e2e-plugin-visible')", 'directory plugin page render');
+  assert.equal(await evaluate("document.querySelector('#e2e-plugin-visible').textContent"), 'Directory plugin frontend loaded');
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#e2e-plugin-visible')).color"), 'rgb(1, 2, 3)');
+  pass('directory plugin frontend.js registers a page and frontend.css is applied in real Electron');
+  await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
 
   // A new Electron process always opens the welcome page. Listing sessions on
   // an empty Brain must not create the legacy placeholder or select a chat.

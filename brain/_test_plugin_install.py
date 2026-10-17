@@ -79,18 +79,24 @@ def main():
         z("good3.zip", {"demo2.py": GOOD, "zxplugin.json": "{}"}))
     check("带 zxplugin.json 的单文件包被接受", ok, err)
 
-    #🔴 目录包：加载器只扫 *.py，装了不会生效 —— 必须明确拒绝
-    ok, _, err = po.inspect_zip(
-        z("good2.zip", {"mypkg/__init__.py": GOOD, "mypkg/helper.py": "X=1\n"}))
-    check("拒绝：目录包（加载器只认单文件）", not ok, "竟然通过了")
-    check("  理由告诉用户怎么改（压成单个 .py）", "单个 .py" in err, err)
+    # 目录包由加载器支持；只允许入口与同目录前端资源，不允许嵌套 Python 模块。
+    ok, names, err = po.inspect_zip(z("good2.zip", {
+        "mypkg/__init__.py": GOOD,
+        "mypkg/frontend.js": "window.VigilPlugin = {};\n",
+        "mypkg/frontend.css": ".demo {}\n",
+    }))
+    check("接受：目录插件和前端资源", ok, err)
+    check("  保留目录包内全部文件", len(names) == 3, names)
 
     ok, _, err = po.inspect_zip(z("t3.zip", {"pkg/helper.py": "X=1"}))
     check("拒绝：目录里连 __init__.py 都没有", not ok)
+    ok, _, err = po.inspect_zip(z("t3b.zip", {
+        "pkg/__init__.py": GOOD, "pkg/nested/helper.py": "X=1"}))
+    check("拒绝：目录插件含嵌套子目录", not ok)
     ok, _, err = po.inspect_zip(z("t4.zip", {"a/b/c.py": GOOD}))
     check("拒绝：多了一层目录", not ok, "通过了")
     ok, _, err = po.inspect_zip(z("t5.zip", {"demo.js": "console.log(1)"}))
-    check("拒绝：.js 不在白名单", not ok, "通过了")
+    check("拒绝：平铺 .js 不是插件入口", not ok, "通过了")
     ok, _, err = po.inspect_zip(z("t6.zip", {"demo.exe": "MZ"}))
     check("拒绝：.exe 不在白名单", not ok, "通过了")
     ok, _, err = po.inspect_zip(z("t7.zip", {}))
