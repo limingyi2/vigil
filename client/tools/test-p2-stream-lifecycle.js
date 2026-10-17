@@ -222,7 +222,7 @@ test('Creator approval and install clicks consume the returned one-time approval
   await r.click('#crInstallNow');
   assert.equal(calls[1].path, '/api/creator/install');
   assert.equal(calls[1].body.approval_id, 'ca_fixture_approval');
-  assert.equal(r.nodes['#crInstallNow'].textContent, '已安装');
+  assert.equal(r.nodes['#crInstallNow'].textContent, '已安装 · 待重启');
   assert.equal(r.nodes['#crInstallNow'].disabled, true);
   assert.match(r.nodes['#crApprovalState'].textContent, /安装成功/);
   assert.match(r.nodes['#crApprovalState'].textContent, /fixture_plugin\.py/);
