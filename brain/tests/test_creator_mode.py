@@ -127,6 +127,18 @@ class ModelFixture:
                         "summary": "fixture 第 %d 版：按需求生成的草稿" % owner.requests,
                         "risks": " fixture 固定风险说明 ",
                     }, ensure_ascii=False)
+                if body.get('stream'):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/event-stream')
+                    self.end_headers()
+                    chunks = [
+                        {'choices': [{'delta': {'reasoning_content': 'fixture reasoning'}}]},
+                        {'choices': [{'delta': {'content': content}, 'finish_reason': getattr(owner, 'finish_override', None) or ('length' if 'ZXFIX_LENGTH' in blob else 'stop')}]},
+                    ]
+                    for chunk in chunks:
+                        self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
+                    self.wfile.write(b'data: [DONE]\n\n')
+                    return
                 out = json.dumps({
                     "choices": [{"message": {"role": "assistant",
                                              "content": content}}],
@@ -365,6 +377,61 @@ class CreatorHttpTests(unittest.TestCase):
 
     # ── 场景 ──
 
+    def test_p1_job_stream_snapshot_and_dedupe(self):
+        before = self.fx.requests
+        body = {'request_id': 'p1_http_dedupe', 'kind': 'plugin', 'requirement': '生成插件'}
+        code, item = _http('POST', self.base + '/api/creator/jobs', body, token=self.token)
+        self.assertEqual(code, 200, item)
+        jid = item['job_id']
+        _, duplicate = _http('POST', self.base + '/api/creator/jobs', body, token=self.token)
+        self.assertEqual(jid, duplicate['job_id'])
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            _, item = _http('GET', self.base + '/api/creator/jobs/' + jid, token=self.token)
+            if item['status'] in ('succeeded', 'failed'):
+                break
+            time.sleep(.05)
+        self.assertEqual(item['status'], 'succeeded', item)
+        req = urllib.request.Request(self.base + '/api/creator/jobs/' + jid + '/events?after=0',
+            headers={'Authorization': 'Bearer ' + self.token})
+        with urllib.request.urlopen(req, timeout=5) as stream:
+            text = stream.read().decode()
+        self.assertIn('snapshot', text)
+        self.assertEqual(self.fx.requests, before + 1)
+        code, _ = _http('GET', self.base + '/api/creator/jobs/' + jid + '?session_id=other', token=self.token)
+        self.assertEqual(code, 404)
+
+    def test_p1_length_is_not_json_error(self):
+        _, item = _http('POST', self.base + '/api/creator/jobs',
+            {'request_id': 'p1_http_length', 'kind': 'plugin', 'requirement': 'ZXFIX_LENGTH'}, token=self.token)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            _, current = _http('GET', self.base + '/api/creator/jobs/' + item['job_id'], token=self.token)
+            if current['status'] == 'failed':
+                break
+            time.sleep(.05)
+        self.assertEqual(current['error']['class'], 'length')
+        self.assertNotIn('draft_id', current)
+
+    def test_p1_chat_failure_display_does_not_pollute_history(self):
+        self.fx.finish_override = 'length'
+        before = self.fx.requests
+        body = {'request_id': 'p1_chat_failure', 'text': '你好', 'src': 'pc'}
+        try:
+            for _ in range(2):
+                req = urllib.request.Request(self.base + '/api/chat/stream',
+                    data=json.dumps(body).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + self.token})
+                with urllib.request.urlopen(req, timeout=10) as stream:
+                    self.assertIn('error', stream.read().decode())
+        finally:
+            self.fx.finish_override = None
+        self.assertEqual(self.fx.requests, before + 1)
+        _, history = _http('GET', self.base + '/api/history?src=pc', token=self.token)
+        record = next(item for item in history['display_turns'] if item['request_id'] == body['request_id'])
+        self.assertEqual(record['status'], 'failed')
+        self.assertTrue(record['content'])
+        self.assertFalse(any(item.get('text') == '你好' for item in history['items']))
+
     def test_01_generate_plugin_draft_end_to_end(self):
         code, r = _http("POST", self.base + "/api/creator/draft",
                         {"kind": "plugin", "requirement": "每小时整点提醒我喝水"},
@@ -407,7 +474,8 @@ class CreatorHttpTests(unittest.TestCase):
                         token=self.token)
         self.assertEqual(code, 400, r)
         self.assertFalse(r.get("ok"))
-        self.assertIn("模型调用失败", r.get("err", ""))
+        _, diagnostics = _http('GET', self.base + '/api/creator/jobs', token=self.token)
+        self.assertIn("模型调用失败", r.get("err", ""), [item.get('error') for item in diagnostics.get('items', []) if 'ZXFIX_FAILURE' in item.get('requirement', '')])
         _, after = _http("GET", self.base + "/api/creator/drafts",
                          token=self.token)
         self.assertEqual(len(after["drafts"]), len(before["drafts"]))

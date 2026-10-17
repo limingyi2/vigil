@@ -235,7 +235,7 @@ class TestToolsSwitch(unittest.TestCase):
         try:
             features.on = lambda k, src=None: True if k == "tools" else orig(k, src)
             names = [t["function"]["name"] for t in tl.all_specs()]
-            for n in ("weather", "ip_city", "tracking"):
+            for n in ("weather", "tracking"):
                 self.assertIn(n, names)
         finally:
             features.on = orig

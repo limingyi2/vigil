@@ -38,8 +38,11 @@ class CloudProvider(ModelProvider):
 
     def __init__(self, cfg=None):
         cfg = cfg or {}
+        self._cap_cfg = cfg
+        self.supports_stream = cfg.get('model_stream', True) is not False
         self.api_base = str(cfg.get("api_base") or "").rstrip("/")
-        self.api_key = str(cfg.get("api_key") or "")
+        from model_hub import current
+        self.api_key = current(cfg)['api_key']
         self.model = str(cfg.get("model") or "")
         self.provider = str(cfg.get("provider") or "").strip().lower()
         if (not self.provider
@@ -88,6 +91,8 @@ class CloudProvider(ModelProvider):
 
     def stream(self, payload, timeout=120):
         """直通 httpx.stream；调用方用法与改造前完全相同。"""
+        if not self.api_base or not self.api_key:
+            raise ProviderUnavailable('当前服务商和 API Base URL 未配置密钥')
         return _active_http().stream("POST", self._url(),
                                      headers=self._headers(),
                                      json=payload, timeout=timeout)
@@ -95,6 +100,8 @@ class CloudProvider(ModelProvider):
     def health(self, timeout=4):
         if not self.api_base:
             return False, {"err": "没配接口地址"}
+        if not self.api_key:
+            return False, {'err': '当前服务商和 API Base URL 未配置密钥'}
         try:
             r = _active_http().get(self.api_base.rstrip("/v1") + "/models",
                                    headers=self._headers(), timeout=timeout)

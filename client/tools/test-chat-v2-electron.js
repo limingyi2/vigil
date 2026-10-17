@@ -93,6 +93,7 @@ async function setup() {
   ipcMain.handle('app:version',()=> 'UI V2 round 2');
   ipcMain.handle('cfg:get',()=>cfg);
   ipcMain.handle('cfg:set',(_,patch)=> (cfg={...cfg,...patch}));
+  ipcMain.handle('settings:open',(_,body)=>{requests.push({method:'IPC',path:'settings:open',body});return {ok:true};});
   ipcMain.handle('plugins:load',()=>({ok:true}));
   ipcMain.handle('local:defaults',()=>({roots:['C:/fixture'],commands:[],danger:['delete']}));
   ipcMain.handle('local:caps',()=>[]);
@@ -113,7 +114,12 @@ async function setup() {
 const ev = s => win.webContents.executeJavaScript(s, true);
 async function until(s, ms=15000) { const end=Date.now()+ms; while(Date.now()<end) { if(await ev('Boolean('+s+')'))return; await wait(60); } throw Error('Timeout: '+s); }
 async function shot(name) { await wait(100); fs.writeFileSync(path.join(shots,name+'.png'),(await win.webContents.capturePage()).toPNG()); }
-async function chat() { await ev(`document.querySelector('#gnav [data-page="chat"]').click()`); await until(`document.querySelector('#ta') && document.querySelector('#hero') && !document.querySelector('#hero').hidden`); await wait(100); }
+async function chat() {
+  // Independent legacy layout scenarios start with empty fixture storage.
+  // Refresh/reopen retention is covered by test-p1-electron.js.
+  await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k));document.querySelector('#gnav [data-page="chat"]').click()`);
+  await until(`document.querySelector('#ta') && document.querySelector('#hero') && !document.querySelector('#hero').hidden`); await wait(100);
+}
 async function measure() {
   return ev(`(()=>{const rect=s=>{let r=document.querySelector(s).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}};return{viewport:{width:innerWidth,height:innerHeight},input:rect('.cbox'),composer:rect('.composer'),chat:rect('.chat'),hero:rect('#hero'),scroll:rect('#msgs'),context:getComputedStyle(document.querySelector('#rp')).display,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
 }
@@ -237,11 +243,13 @@ async function main() {
   assert.equal(await ev(`document.querySelector('#modelBtn').disabled`),true);
   await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
   assert.equal(requests.filter(r=>r.method==='STREAM').length,count+1);
-  assert.deepEqual(requests.filter(r=>r.method==='STREAM').at(-1).body,{text:'检查界面',src:'pc'});
+  const sent = requests.filter(r=>r.method==='STREAM').at(-1).body;
+  assert.match(sent.request_id, /^req_[a-z0-9-]+$/);
+  assert.deepEqual({text:sent.text,src:sent.src},{text:'检查界面',src:'pc'});
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   assert.equal(await ev(`document.querySelector('.codehead span').textContent`),'js');
   assert.ok(await ev(`U.md(${JSON.stringify('```\nfirst\nsecond\n```')},{codeActions:true}).includes('<code>first\\nsecond\\n</code>')`));
-  result('Enter, Shift+Enter, IME, stream state and unchanged IPC payload');
+  result('Enter, Shift+Enter, IME, stream state and deduplicated IPC payload');
   // Clipboard write executes in the real Electron renderer, not a mocked copy handler.
   savedClipboard = Object.fromEntries(require('electron').clipboard.availableFormats().map(format => [format,require('electron').clipboard.readBuffer(format)]));
   win.show(); win.focus(); await wait(150);
@@ -285,12 +293,22 @@ async function main() {
   await ev(`document.querySelector('#atClr').click()`); assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   result('attachment FileReader, preview, removal and image-only send eligibility');
   await ev(`window.__fixtureFileInput.onchange()`); await until(`!document.querySelector('#attach').hidden`);
-  await ev(`document.querySelector('#sendBtn').click()`); await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
-  assert.deepEqual(requests.filter(r=>r.method==='STREAM').at(-1).body,{text:'',img:pngBase64,src:'pc'});
+  await until(`!document.querySelector('#sendBtn').disabled`);
+  await ev(`document.querySelector('#sendBtn').click()`);
+  await until(`document.querySelector('#sendBtn').classList.contains('is-sending')`);
+  await until(`!document.querySelector('#sendBtn').classList.contains('is-sending')`);
+  const imageSent = requests.filter(r=>r.method==='STREAM').at(-1).body;
+  assert.match(imageSent.request_id, /^req_[a-z0-9-]+$/);
+  assert.deepEqual({text:imageSent.text,img:imageSent.img,src:imageSent.src},{text:'',img:pngBase64,src:'pc'});
   result('image-only send through original stream IPC');
-  // Existing settings route is used; no new model-request contract is introduced.
-  await ev(`document.querySelector('#modelBtn').click()`); await until(`API.state.page==='system'`);
-  await until(`document.querySelector('#olModel')`);
+  // Current dev opens the model picker and delegates management to the
+  // dedicated settings window via production IPC.
+  await ev(`document.querySelector('#modelBtn').click()`);
+  await until(`!document.querySelector('#modelPop').hidden`);
+  await ev(`document.querySelector('#mqManage').click()`); await wait(80);
+  assert.ok(requests.some(r=>r.path==='settings:open'&&r.body.section==='model'));
+  await ev(`document.querySelector('#gnav [data-page="persona"]').click()`);
+  await until(`API.state.page==='persona'`);
   assert.equal(await ev(`getComputedStyle(document.body).getPropertyValue('--chat-width').trim()`),'');
   assert.equal(await ev(`document.querySelector('.main').classList.contains('chatwrap')`),false);
   result('existing model settings navigation and non-chat scope');

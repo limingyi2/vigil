@@ -788,6 +788,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             # 锁在 _chat_with_tools 的每轮 chat 里拿（带超时），别抱着锁等网络
             ans, mode = _chat_with_tools(text, img_path or None,
                                          trace_out=trace_out, src=src)
+            if getattr(_LOCAL.get('brain'), 'last_err', ''):
+                return ans, mode, '模型请求未完成，未自动重试'
             # 剥掉学出来的「说」标记；[gen:xxx] 换成 [img:名字]
             look = _her_look()
             ans = resolve_gen_tags(strip_say_marker(ans), look)
@@ -1412,6 +1414,124 @@ def start_remote_api(brain):
 
             return False
 
+        def _display_owner(self, body=None):
+            import display_turns
+            display_turns.configure((API_CFG or {}).get('display_records'))
+            body = body or {}
+            src = body.get('src') or _query_param(self.path, 'src')
+            src = _norm_src(src if src else ('pc' if self.path.startswith(('/api/creator', '/api/agent/')) else None))
+            session = body.get('session_id') or _query_param(self.path, 'session_id') or 'main'
+            return display_turns.owner(getattr(self, '_who', ('', '')), src, session)
+
+        def _new_agent_run(self, body):
+            import agent_runs
+            import copy
+            src = _norm_src(body.get('src') or _query_param(self.path, 'src') or 'pc')
+            body = dict(body, src=src)
+            if not isinstance(body.get('intent', body.get('text')), str):
+                raise ValueError('任务内容无效')
+            messages = None
+            # Snapshot the existing persona/context under its existing lock, then
+            # release it: the run never mutates shared Brain history/last_* fields.
+            if brain is not None:
+                with _chat_lock():
+                    brain.use_src(src)
+                    text = body.get('intent', body.get('text', ''))
+                    parts, _ = brain._build_system_parts(text, '')
+                    messages = [{'role': 'system', 'content': ''.join(parts)}]
+                    messages.extend(copy.deepcopy(brain.recent_hist()))
+                    # Completed runs can inform the next request in this owner/session.
+                    # Partial/error/tool transcripts stay outside model history.
+                    for previous in reversed(agent_runs.listing(self._display_owner(body))[:8]):
+                        if previous['status'] == 'succeeded' and previous.get('result'):
+                            messages.extend([{'role': 'user', 'content': previous['intent']},
+                                             {'role': 'assistant', 'content': previous['result']}])
+                    messages.append({'role': 'user', 'content': brain._user_msg_with_rules(text)})
+            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body),
+                                     brain=brain, messages=messages)
+
+        def _agent_api(self, method, path, body=None):
+            if path != '/api/agent/runs' and not path.startswith('/api/agent/runs/'):
+                return False
+            if not self._is_admin():
+                self._json(403, {'ok': False, 'err': '需要管理员权限'})
+                return True
+            import agent_runs
+            if body is not None and not isinstance(body, dict):
+                self._json(400, {'ok': False, 'err': '请求必须为 JSON 对象'})
+                return True
+            owner = self._display_owner(body)
+            parts = path.strip('/').split('/')
+            streaming = False
+            try:
+                if path == '/api/agent/runs' and method == 'POST':
+                    self._json(200, {'ok': True, **self._new_agent_run(body)})
+                elif path == '/api/agent/runs' and method == 'GET':
+                    self._json(200, {'ok': True, 'items': agent_runs.listing(owner)})
+                elif len(parts) in (4, 5):
+                    rid = parts[3]
+                    item = agent_runs.snapshot(rid, owner)
+                    if not item:
+                        self._json(404, {'ok': False, 'err': '任务不存在'})
+                    elif method == 'GET' and len(parts) == 4:
+                        self._json(200, {'ok': True, **item})
+                    elif method == 'POST' and parts[4:] == ['cancel']:
+                        self._json(200, {'ok': True, **agent_runs.cancel(rid, owner)})
+                    elif method == 'GET' and parts[4:] == ['events']:
+                        after = int(_query_param(self.path, 'after') or 0)
+                        if after < 0 or after > item['event_cursor']:
+                            raise ValueError('游标无效')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.send_header('Connection', 'close')
+                        self.end_headers()
+                        self.close_connection = True
+                        streaming = True
+                        for event in agent_runs.stream(rid, owner, after):
+                            self.wfile.write(('data: ' + json.dumps(event, ensure_ascii=False) + '\n\n').encode())
+                            self.wfile.flush()
+                    else:
+                        self._json(405, {'ok': False, 'err': '操作不支持'})
+                else:
+                    self._json(404, {'ok': False, 'err': '接口不存在'})
+            except ValueError:
+                self._json(400, {'ok': False, 'err': '任务参数、预算或 request_id 无效'})
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # subscriptions never own the executor
+            except Exception:
+                if not streaming:
+                    self._json(500, {'ok': False, 'err': '执行服务暂不可用，请查询原 request_id；未自动重发'})
+            return True
+
+        def _agent_chat_events(self, item, owner):
+            """Project read-only run events onto the existing Electron SSE shape."""
+            import agent_runs
+            rid, cursor = item['run_id'], 0
+            yield {'type': 'agent_run', 'run_id': rid, 'request_id': item['request_id']}
+            while True:
+                for event in agent_runs.stream(rid, owner, cursor):
+                    cursor = event['seq']
+                    kind, payload = event['type'], event['payload']
+                    if kind in ('text_delta', 'think_delta'):
+                        yield {'type': 'text' if kind == 'text_delta' else 'think', 'text': payload['text'],
+                               'run_id': rid, 'request_id': item['request_id']}
+                    elif kind == 'step_started':
+                        yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid}
+                    elif kind == 'snapshot':
+                        if payload['status'] not in agent_runs.STOPPED:
+                            # A buffer gap must replace the preview, never append it twice.
+                            yield {'type': 'run_snapshot', 'text': payload['content'], 'run_id': rid}
+                current = agent_runs.snapshot(rid, owner)
+                if current['status'] in agent_runs.STOPPED:
+                    if current['status'] == 'succeeded':
+                        yield {'type': 'done', 'text': current['content'], 'run_id': rid}
+                    else:
+                        err = current['error'] or {}
+                        yield {'type': 'error', 'text': current['content'], 'class': err.get('reason'),
+                               'msg': err.get('message'), 'status': current['status'], 'run_id': rid}
+                    return
+
         def _creator_admin(self, method, path, body):
             """Creator Mode 草稿面：生成 / 修改 / 验证 / 审批安装 / 查看 / 删除。
 
@@ -1438,6 +1558,61 @@ def start_remote_api(brain):
                 who, who_id = getattr(self, "_who", ("", ""))
                 return {"is_admin": self._is_admin(),
                         "token_kind": who, "device_id": who_id}
+
+            if path == '/api/creator/jobs' or path.startswith('/api/creator/jobs/'):
+                import creator_jobs as jobs
+                from urllib.parse import parse_qs, urlparse
+                query = parse_qs(urlparse(self.path).query)
+                owner = self._display_owner(body)
+                parts = path.strip('/').split('/')
+                try:
+                    if method == 'POST' and path == '/api/creator/jobs':
+                        item = jobs.create(body, API_CFG, owner)
+                        self._json(200, {'ok': True, **item})
+                    elif method == 'GET' and path == '/api/creator/jobs':
+                        self._json(200, {'ok': True, 'items': jobs.listing(owner)})
+                    elif len(parts) >= 4:
+                        jid = parts[3]
+                        item = jobs.snapshot(jid, owner)
+                        if not item:
+                            self._json(404, {'ok': False, 'err': '作业不存在'})
+                        elif method == 'GET' and len(parts) == 4:
+                            self._json(200, {'ok': True, **item})
+                        elif method == 'POST' and parts[4:] == ['cancel']:
+                            self._json(200, {'ok': True, **jobs.cancel(jid, owner)})
+                        elif method == 'GET' and parts[4:] == ['events']:
+                            cursor = max(0, int((query.get('after') or ['0'])[0]))
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                            self.send_header('Cache-Control', 'no-cache')
+                            self.send_header('Connection', 'close')
+                            self.end_headers()
+                            self.close_connection = True
+                            # Bounded subscription; reconnect is explicitly read-only.
+                            until = time.monotonic() + 25
+                            while time.monotonic() < until:
+                                page = jobs.events(jid, owner, cursor)
+                                outgoing = page['events']
+                                if page['gap'] or page['snapshot']['status'] in jobs.TERMINAL:
+                                    outgoing = [{'job_id': jid, 'type': 'snapshot', 'payload': page['snapshot']}]
+                                for event in outgoing:
+                                    self.wfile.write(('data: ' + json.dumps(event, ensure_ascii=False) + '\n\n').encode())
+                                    self.wfile.flush()
+                                    cursor = max(cursor, event.get('seq', cursor))
+                                if page['snapshot']['status'] in jobs.TERMINAL:
+                                    break
+                                if page['gap']:
+                                    cursor = page['snapshot']['event_cursor']
+                                time.sleep(0.1)
+                        else:
+                            self._json(405, {'ok': False, 'err': '此操作在 P1 不支持'})
+                    else:
+                        self._json(404, {'ok': False, 'err': '接口不存在'})
+                except ValueError:
+                    self._json(400, {'ok': False, 'err': '请求参数无效或 request_id 冲突'})
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
+                return True
 
             if method == "GET":
                 if path == "/api/creator/drafts":
@@ -1476,18 +1651,24 @@ def start_remote_api(brain):
                 return False
 
             if path == "/api/creator/draft":
-                meta, err = _cr.generate_draft(str(body.get("kind") or ""),
-                                               str(body.get("requirement") or ""),
-                                               API_CFG)
+                import creator_jobs
+                owner = self._display_owner(body)
+                try:
+                    meta, err = creator_jobs.legacy(body, API_CFG, owner)
+                except ValueError as exc:
+                    meta, err = None, str(exc)
                 if err:
                     self._json(400, {"ok": False, "err": err})
                 else:
                     self._json(200, {"ok": True, "draft": meta})
                 return True
             if path == "/api/creator/revise":
-                meta, err = _cr.revise_draft(str(body.get("id") or ""),
-                                             str(body.get("feedback") or ""),
-                                             API_CFG)
+                import creator_jobs
+                owner = self._display_owner(body)
+                try:
+                    meta, err = creator_jobs.legacy(dict(body, draft_id=body.get('id')), API_CFG, owner)
+                except ValueError as exc:
+                    meta, err = None, str(exc)
                 if err:
                     self._json(400, {"ok": False, "err": err})
                 else:
@@ -1636,6 +1817,8 @@ def start_remote_api(brain):
                 body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception:
                 body = {}
+            if self._agent_api('POST', path, body):
+                return
             # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
             # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
             # 会全写进 app 覆盖 —— 渠道错乱。
@@ -2111,6 +2294,15 @@ def start_remote_api(brain):
                         # 钩子链自己炸了不能连累聊天 —— 当没否决，照常问大脑
                         pass
                     _snap = {}
+                    import display_turns as _display
+                    _rid = body.get('request_id') if not body.get('dry_run') else None
+                    _display_owner = self._display_owner(body)
+                    if _rid:
+                        _turn, _fresh = _display.begin(_display_owner, _rid, _disp)
+                        if not _fresh:
+                            self._json(200, {'reply': _turn['content'], 'mode': _turn['status'],
+                                'err': (_turn.get('error') or {}).get('message') or ('' if _turn['status'] == 'succeeded' else '原请求未完成，未自动重发')})
+                            return
                     ans, mode, err = ask_with_retry(
                         _in_text, body.get("img") or None, display=_disp,
                         trace_out=_snap, src=_src, attachments=_att_meta,
@@ -2118,6 +2310,10 @@ def start_remote_api(brain):
                         # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
                         # 她会开始答那些测试句（症状："她回复一点都不对"）。
                         dry_run=bool(body.get("dry_run")))
+                    if _rid:
+                        _display.update(_display_owner, _rid, content=ans or '',
+                            status='failed' if err else 'succeeded',
+                            error={'class': 'service_error', 'message': '模型请求失败，请检查连接或配置'} if err else None)
                     # 出错就留一行（欠费 402、模型名写错、地址变了都在这儿现形）
                     if err:
                         try:
@@ -2216,37 +2412,60 @@ def start_remote_api(brain):
                         _lt.set_context(_src, str(body.get("sender_id") or ""))
                     except Exception:
                         pass
+                    _agent_item = None
+                    import tools as _run_tools
+                    import agent_runs as _runs
+                    import display_turns as _display
+                    _agent_cfg = API_CFG.get('agent_execution') or {}
+                    _owner = self._display_owner(body)
+                    _existing_run = _runs.find_request(body.get('request_id'), _owner) if body.get('request_id') else None
+                    _existing_legacy = _display.find_request(_owner, body.get('request_id')) if body.get('request_id') else None
+                    # A rollout switch can change only NEW requests. Lost responses
+                    # must keep their original executor, including legacy tombstones.
+                    if (self._is_admin() and _src == 'pc' and body.get('request_id') and
+                            (_existing_run or (not _existing_legacy and not body.get('img')
+                             and _run_tools.schema_needed(_in_text) and isinstance(_agent_cfg, dict)
+                             and _agent_cfg.get('enabled', True)))):
+                        try:
+                            _agent_item = self._new_agent_run(dict(body, src=_src))
+                        except ValueError:
+                            self._json(400, {'ok': False, 'err': '任务参数、预算或 request_id 无效'})
+                            return
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                     self.send_header("Cache-Control", "no-cache")
-                    self.send_header("Connection", "keep-alive")
+                    self.send_header("Connection", "close")
                     self.send_header("X-Accel-Buffering", "no")
                     self.end_headers()
-                    try:
+                    self.close_connection = True
+                    import display_turns as _display
+                    def _factory():
                         with _chat_lock():
-                            # The streaming provider path does not carry a tools
-                            # schema.  Route requests that may need tools through
-                            # the native non-streaming ReAct loop, so a provider
-                            # cannot leak XML-like tool text into the chat UI.
-                            # This only changes transport for tool-shaped prompts;
-                            # ordinary chat keeps the existing SSE path.
                             import tools as _chat_tools
                             if _chat_tools.schema_needed(_in_text):
-                                _ans, _mode = _LOCAL["brain"].chat(
-                                    _in_text, src=_src)
-                                _evt = {"type": "done", "text": _ans or "",
-                                        "mode": _mode or ""}
-                                self.wfile.write(("data: " + json.dumps(
-                                    _evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
-                                self.wfile.flush()
+                                _ans, _mode = _LOCAL['brain'].chat(_in_text, src=_src)
+                                if getattr(_LOCAL['brain'], 'last_err', ''):
+                                    yield {'type': 'error', 'class': 'service_error', 'msg': '模型请求未完成'}
+                                else:
+                                    yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
-                                for evt in _LOCAL["brain"].stream_chat(_in_text, src=_src):
-                                    self.wfile.write(("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode("utf-8"))
-                                    self.wfile.flush()
+                                yield from _LOCAL['brain'].stream_chat(_in_text, src=_src)
+                    if _agent_item:
+                        _events = self._agent_chat_events(_agent_item, self._display_owner(body))
+                    else:
+                        _events = _display.stream(_factory, self._display_owner(body), body['request_id'], _in_text) if body.get('request_id') else _factory()
+                    try:
+                        for evt in _events:
+                            self.wfile.write(('data: ' + json.dumps(evt, ensure_ascii=False) + '\n\n').encode())
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        pass
                     except _Busy:
                         self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "她正忙着，等会儿再说"}, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     except Exception as e:
-                        self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "%s: %s" % (type(e).__name__, str(e)[:120])}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                        self.wfile.write(("data: " + json.dumps({"type": "error", "msg": "请求失败，请检查连接或配置"}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    finally:
+                        _events.close()
                     return
                 elif path == "/api/packages/del":
                     # 删掉就移出监控，她的提醒跟着停（poll 只扫这份存档）
@@ -2282,6 +2501,10 @@ def start_remote_api(brain):
                     # 删的是本机文件，云上那份一动不动，看着清了其实没清。
                     # 分渠道后只清请求里指定的那份（不传=App），清微信的不影响手机。
                     _csrc = _norm_src(body.get("src") if body else None)
+                    import display_turns, creator_jobs, agent_runs
+                    display_turns.clear(self._display_owner(body))
+                    creator_jobs.hide(self._display_owner(body))
+                    agent_runs.hide(self._display_owner(body))
                     ok = False
                     try:
                         from brain import Brain
@@ -2807,6 +3030,12 @@ def start_remote_api(brain):
             # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
             if self._deny_if_limited_device("GET", path):
                 return
+            if path == '/api/runtime':
+                import build_identity
+                self._json(200, dict(ok=True, **build_identity.runtime()))
+                return
+            if self._agent_api('GET', path):
+                return
             if path.startswith("/api/agent-center/"):
                 import codex_adapter as _codex_center
                 from urllib.parse import parse_qs, urlparse
@@ -3145,8 +3374,13 @@ def start_remote_api(brain):
                 lim = _query_param(self.path, "limit") or 60
                 # 缺省渠道是主渠道 wechat（app 已退役；老的 PollService 不带
                 # src，给它微信这份才是她真正的对话历史）。
+                import display_turns
+                import agent_runs
+                _records = {i['request_id']: i for i in display_turns.listing(self._display_owner())}
+                _records.update({i['request_id']: i for i in agent_runs.display_records(self._display_owner())})
                 self._json(200, {"items": _cloud_history(
-                    lim, _norm_src(_query_param(self.path, "src")))})
+                    lim, _norm_src(_query_param(self.path, "src"))),
+                    'display_turns': list(_records.values())})
             elif path == "/api/features":
                 # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。
                 import features as _feat
@@ -3339,7 +3573,7 @@ def start_remote_api(brain):
     # 默认只绑 127.0.0.1（公网碰不到）。要让手机 App 直接连，必须配
     # `bind_host: "0.0.0.0"`，靠 token 兜底鉴权；旧配置里这个值在
     # mobile.remote_host，继续认
-    host = str(api_config.get("bind_host")
+    host = str(os.environ.get('VIGIL_BIND_HOST') or api_config.get("bind_host")
                or MOB_CFG.get("remote_host") or "127.0.0.1")
     # 没配 token 就别往外绑：那等于开了一个谁都能用的接口（以前 _check 是空 token
     # 全放行，忘填 token 很常见，配上 0.0.0.0 就是公网裸奔）。宁可不开这个口。

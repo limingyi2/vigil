@@ -1,17 +1,8 @@
 @echo off
-echo ========================================
-echo   Vigil Client 打包脚本
-echo ========================================
-echo.
-
-cd /d F:\Vigil\client
-
-echo [1/1] electron-builder 打包...
-call npm run dist
-
-echo.
-echo ========================================
-echo   打包完成！
-echo   产物: client\dist\
-echo ========================================
-pause
+setlocal
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+set "BUILD_PYTHON=python"
+if exist "%ROOT%\venv\Scripts\python.exe" set "BUILD_PYTHON=%ROOT%\venv\Scripts\python.exe"
+if exist "%ROOT%\.venv\Scripts\python.exe" set "BUILD_PYTHON=%ROOT%\.venv\Scripts\python.exe"
+"%BUILD_PYTHON%" "%ROOT%\scripts\build_release.py"  %*
+exit /b %errorlevel%

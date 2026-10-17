@@ -43,8 +43,8 @@ class TestProviderKeyStore(unittest.TestCase):
         c2, _ = M.apply_cfg(c1, {"provider": "xiaomi",
                                  "api_key": XIAOMI, "chat": "mimo-v2.6-flash"})
         bag = c2.get("api_keys") or {}
-        self.assertEqual(bag.get("siliconflow"), SILICON)
-        self.assertEqual(bag.get("xiaomi"), XIAOMI)
+        self.assertEqual(M.provider_key(c2, "siliconflow", M.PROVIDERS["siliconflow"]["base"]), SILICON)
+        self.assertEqual(M.provider_key(c2, "xiaomi", M.PROVIDERS["xiaomi"]["base"]), XIAOMI)
 
     def test_切回去自动换上那家的key(self):
         """这是"点一下就切换"能成立的前提：不换key 切过去她调不动。"""
@@ -78,10 +78,10 @@ class TestProviderKeyStore(unittest.TestCase):
         """`api_keys` 是后来才有的。老配置里只有一把 api_key，
         不迁移的话界面把每一家都显示成"还没存密钥"。"""
         c = _cfg()                       # 没有 api_keys
-        self.assertFalse(M.has_provider_key(c, "xiaomi"))
-        self.assertTrue(M.adopt_current_key(c))
-        self.assertEqual(c["api_keys"]["xiaomi"], XIAOMI)
-        self.assertTrue(M.has_provider_key(c, "xiaomi"))
+        # Active legacy keys are usable at their original endpoint only.
+        self.assertTrue(M.has_provider_key(c, "xiaomi", c['api_base']))
+        self.assertEqual(M.provider_key(c, 'xiaomi', 'https://other.invalid/v1'), '')
+        self.assertFalse(M.adopt_current_key(c))
         self.assertTrue(M.public_current(c).get("keys_by_provider", {}).get("xiaomi"))
 
     def test_迁移是幂等的(self):

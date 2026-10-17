@@ -237,10 +237,13 @@ def _call_model(api_cfg, system, user):
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "temperature": 0.2,
-        "max_tokens": 4096,
     }
     try:
-        j = mp.chat(payload, timeout=180)
+        from model_providers.execution import prepare, normalize, ERROR_MESSAGES
+        j = mp.chat(prepare(payload, cfg), timeout=180)
+        result = normalize(j)
+        if not result['complete']:
+            return None, ERROR_MESSAGES.get(result['reason'], '模型响应不完整')
     except ProviderUnavailable as e:
         return None, "模型调用失败（连不上/超时）：%s" % str(e)[:140]
     except ProviderHTTPError as e:
@@ -384,16 +387,32 @@ def validate_draft(draft_id):
     return rep, ""
 
 
+class DraftFailure(str):
+    """Keep the legacy (draft, error-string) API while carrying safe diagnostics."""
+    def __new__(cls, message, code, stage='parse', **fields):
+        value = super().__new__(cls, message)
+        value.diagnostic = dict(message=message, code=code, stage=stage, **fields)
+        return value
+
+
 def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
     """公共落盘流程：解析 JSON → 写文件 → 验证 → 存 meta。返回 (meta, err)。"""
     obj = _extract_json(text)
     if not isinstance(obj, dict):
-        return None, ("模型没按契约返回 JSON（生成失败，没有落地任何文件）"
-                      if not str(text).strip() else
-                      "模型没按契约返回 JSON；原文前 200 字：%s" % str(text)[:200])
+        probe = _json_probe(text)
+        status = probe.get("status")
+        if status == "empty":
+            return None, DraftFailure("模型没按契约返回 JSON：本次没有返回任何内容（未落地文件）", 'json_empty')
+        if status == "no_object":
+            return None, DraftFailure("模型没按契约返回 JSON：输出里找不到 JSON 对象（未落地文件）", 'json_object_missing')
+        if status == "unterminated":
+            return None, DraftFailure("模型没按契约返回 JSON：对象未闭合，疑似在第 %s 个字符附近被截断（未落地文件）" % probe.get("position"), 'json_unterminated', position=probe.get('position'))
+        if status == "parse_error":
+            return None, DraftFailure("JSON 解析失败：%s（第 %s 行，第 %s 列，字符 %s；未落地文件）" % (probe['detail'], probe['line'], probe['column'], probe['position']), 'json_parse_error', **{k: probe[k] for k in ('position', 'line', 'column')})
+        return None, DraftFailure("模型没按契约返回 JSON（未落地文件）", 'json_invalid')
     files = obj.get("files")
     if not isinstance(files, dict) or not files:
-        return None, "模型返回的 JSON 里没有 files"
+        return None, DraftFailure("模型没按契约返回 JSON：缺少 files 字段或 files 为空（未落地文件）", 'files_missing', missing=['files'])
     summary = str(obj.get("summary") or "").strip()[:300]
     risks = str(obj.get("risks") or "").strip()[:500] or "无"
 
@@ -419,7 +438,7 @@ def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
             pass
     written, errs = _write_files(d, files, kind)
     if not written:
-        return None, "生成的文件全部被拒绝：" + "；".join(errs[:3])
+        return None, DraftFailure("生成的文件全部被拒绝，请检查文件名和内容", 'files_rejected', 'codegen')
 
     meta = {
         "id": os.path.basename(d),
@@ -546,3 +565,46 @@ def delete_draft(draft_id):
     except OSError as e:
         return False, "删不掉：%s" % str(e)[:100]
     return True, ""
+
+
+def _json_probe(text):
+    """只做诊断：判断 JSON 缺失/截断/解析失败的大致位置，绝不回显模型原文。"""
+    t = str(text or "").strip()
+    if not t:
+        return {"status": "empty"}
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t.strip())
+    start = t.find("{")
+    if start < 0:
+        return {"status": "no_object"}
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(t)):
+        ch = t[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                blob = t[start:i + 1]
+                try:
+                    json.loads(blob)
+                    return {"status": "parsed"}
+                except json.JSONDecodeError as e:
+                    return {"status": "parse_error", "position": start + e.pos,
+                            "line": t[:start + e.pos].count('\n') + 1,
+                            "column": start + e.pos - t.rfind('\n', 0, start + e.pos),
+                            "detail": e.msg}
+    return {"status": "unterminated", "position": len(t)}

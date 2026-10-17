@@ -1,0 +1,18 @@
+{
+  "release": "1.0.2",
+  "code": 19,
+  "build_commit": "b75bd82878a41f3a9f8a9f56cadf6c9950e84438",
+  "verified_on": "2026-10-16",
+  "installer_sha256": "6ea65b226b11ee685ee190a9f0bd760f00bb35e515818a492f2f36ecc6970971",
+  "installer_size": 100523853,
+  "previous_version": "1.0.1",
+  "previous_code": 18,
+  "ssh_authenticated": true,
+  "previous_installer_backed_up": true,
+  "previous_metadata_backed_up": true,
+  "atomic_file_replacement": true,
+  "http_version_verified": true,
+  "http_installer_sha256_verified": true,
+  "cloud_brain_source_changed": false,
+  "original_private_key_file_changed": false
+}

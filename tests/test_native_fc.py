@@ -207,15 +207,9 @@ class TestNativeFunctionCalling(unittest.TestCase):
                          "收尾那次还挂着工具，模型只会继续要工具")
         self.assertTrue(ans, "收尾没逼出正文 → 用户会看到'脑子转不动'")
 
-    # --- 6. 上游不认 tools 时要降级，不能让她哑掉 ---
-    def test_tools_rejection_retries_without_tools(self):
-        """上游对带 tools 的请求报错时，去掉工具表重试一次。
-
-        这一条抄的是 router 模式唯一真正比 native 强的地方：
-        上游换了模型/供应商、或者参数被拒，native 直接 return None 的话
-        chat() 判"API失败"，用户看到"……我脑子有点转不动" —— 她一句都说不出。
-        "能说话、只是这次没查"要好得多。
-        """
+    # --- 6. 未确认的错误不得去掉工具表盲目重试 ---
+    def test_tools_rejection_does_not_blindly_retry(self):
+        """未知异常不能推断为 tools 不兼容并自动重新计费。"""
         seen = self.seen
 
         class _Boom(Exception):
@@ -231,13 +225,12 @@ class TestNativeFunctionCalling(unittest.TestCase):
         B.httpx = type("H", (), {"post": staticmethod(_post)})
         br = self._brain()
         ans = br.draft_native("帮我查天气", "")
-        self.assertEqual(len(seen), 2, "应该在失败后重试一次")
+        self.assertEqual(len(seen), 1, "未知错误不得重发模型请求")
         self.assertIn("tools", seen[0])
-        self.assertNotIn("tools", seen[1], "重试那次不该再带工具表")
         self.assertTrue(ans, "降级之后她还是说不了话")
 
     def test_retry_does_not_loop_forever(self):
-        """不带工具那次也失败 → 老老实实返回 None，不能无限递归。"""
+        """一次失败就停止，不递归或重新派发请求。"""
         seen = self.seen
 
         def _post(url, headers=None, json=None, timeout=None):
@@ -247,8 +240,8 @@ class TestNativeFunctionCalling(unittest.TestCase):
 
         B.httpx = type("H", (), {"post": staticmethod(_post)})
         ans = self._brain().draft_native("帮我查天气", "")
-        self.assertIsNone(ans)
-        self.assertEqual(len(seen), 2, "最多两次：带工具的 + 降级的")
+        self.assertIn('未自动重试', ans)
+        self.assertEqual(len(seen), 1, "异常后不得盲目重试")
 
     # --- 7. 寒暄不挂工具表（省 ~1100 token）---
     def test_smalltalk_does_not_attach_schema(self):

@@ -68,7 +68,7 @@ def _files():
 
 def _tree(path):
     """读文件并解析成 AST。用 with 关句柄 —— 裸 open().read() 会漏 ResourceWarning。"""
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         return ast.parse(f.read(), filename=path)
 
 
@@ -128,7 +128,8 @@ class TestTestFilesAreNotEmpty(unittest.TestCase):
                 and any(isinstance(b, ast.Attribute) and b.attr == "TestCase"
                         for b in n.bases)
                 for n in tree.body)
-            if not has_case:
+            has_pytest = any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith('test_') for n in tree.body)
+            if not has_case and not has_pytest:
                 offenders.append(os.path.basename(p))
         self.assertEqual(offenders, [], "这些测试文件里一个 TestCase 都没有")
 

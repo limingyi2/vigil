@@ -48,7 +48,7 @@ a = Analysis(
     [os.path.join(BLOCK, "server_launch.py")],
     pathex=[BLOCK],
     binaries=[],
-    datas=plugin_data + skill_host_data,
+    datas=plugin_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
     hiddenimports=[
         "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",
         "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",

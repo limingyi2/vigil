@@ -27,6 +27,7 @@
 （比如手机没有"打开桌面文件"这个能力）。
 """
 import contextvars
+from contextlib import contextmanager
 import threading
 import time
 import uuid
@@ -267,6 +268,31 @@ _LAST_POLL = 0.0     # 最近一次 take() 的时间戳（本地内存，重启�
 #   执行，读到的就是这一轮设置的值。
 _CTX = contextvars.ContextVar(
     "localtools_ctx", default={"src": "", "sender_id": ""})
+_RECEIPTS = contextvars.ContextVar('localtools_receipts', default=None)
+_RUN_STOP = contextvars.ContextVar('localtools_run_stop', default=None)
+
+
+@contextmanager
+def capture_receipts(stopped=None):
+    """Internal structured evidence alongside the unchanged legacy text result."""
+    receipts = []
+    token = _RECEIPTS.set(receipts)
+    stop_token = _RUN_STOP.set(stopped)
+    try:
+        yield receipts
+    finally:
+        _RECEIPTS.reset(token)
+        _RUN_STOP.reset(stop_token)
+
+
+def _run_stopped(check=None):
+    check = check or _RUN_STOP.get()
+    if check is None:
+        return False
+    try:
+        return bool(check())
+    except Exception:
+        return True  # cannot verify run eligibility -> do not dispatch
 
 AUDIT_MAX = 200
 _AUDIT = []          # 最近 N 条操作日志：谁在哪个渠道动了什么、结果如何
@@ -362,9 +388,10 @@ def audit():
 class _Call(object):
     __slots__ = ("id", "name", "args", "danger", "risk", "device_id",
                  "created", "claimed_at", "done", "result", "err", "refused",
-                 "src", "sender_id", "cancel")
+                 "src", "sender_id", "cancel", "stop_check")
 
     def __init__(self, name, args):
+        self.stop_check = _RUN_STOP.get()
         self.id = "c_" + uuid.uuid4().hex[:10]
         self.name = name
         self.args = args or {}
@@ -446,12 +473,18 @@ def call(name, args, wait=None):
     #   _CANCEL 会变成局部变量，419 行的 `if _CANCEL:` 永远读到刚赋的 False
     #   —— cancel()（用户点"停止"）对这个调用就完全失效了。
     global _CANCEL
+    receipt = {'tool': name, 'state': 'not_dispatched'}
+    if _RECEIPTS.get() is not None:
+        _RECEIPTS.get().append(receipt)
+    if _run_stopped():
+        return '任务已停止，未派发本机工具。【别重试】'
     if name not in REMOTE_TOOLS:
         return "没有这个本地工具：%s" % name
     spec = REMOTE_TOOLS[name]
     risk = spec.get("risk") or ("dangerous" if spec.get("danger") else "safe")
     ok, why = clearance(risk)
     if not ok:
+        receipt['state'] = 'denied'
         _audit("denied", name, args, why)
         _STATS["denied"] = _STATS.get("denied", 0) + 1
         _ctx = _CTX.get()
@@ -471,6 +504,7 @@ def call(name, args, wait=None):
                 "【别重试】跟他说一声，让他把电脑上的 Vigil 客户端打开再试。"
                 % name)
     c = _Call(name, args)
+    receipt['call_id'] = c.id
     _audit("queued", name, args)
     with _COND:
         # 每次新的工具调用开始时，清掉上一次的取消标志
@@ -481,23 +515,29 @@ def call(name, args, wait=None):
         # 上一步刚结束、下一步紧接着来，差个一两秒很正常。
         waited = 0.0
         while (_QUEUE or _ACTIVE) and waited < 30:
+            if _run_stopped():
+                return '任务已停止，未派发本机工具。【别重试】'
             _COND.wait(1.0)
             waited += 1.0
         if _QUEUE or _ACTIVE:
             _STATS["busy"] = _STATS.get("busy", 0) + 1
             return ("上一件本地操作还在进行中，这个先排队了但 30 秒没排上。"
                     "【可重试】等几秒再试一次，或者先做别的。")
+        if _run_stopped():
+            return '任务已停止，未派发本机工具。【别重试】'
         _QUEUE[c.id] = c
+        receipt['state'] = 'unknown'
         _STATS["calls"] += 1
         _COND.notify_all()
         deadline = time.time() + w
         while not c.done and time.time() < deadline:
-            if _CANCEL or c.cancel:
+            if _CANCEL or c.cancel or _run_stopped(c.stop_check):
                 # 用户点了"停止"（全局）或归属方定向取消这一单：
                 # 把当前调用放掉，提前返回
                 _QUEUE.pop(c.id, None)
                 _ACTIVE.pop(c.id, None)
                 _STATS["cancelled"] = _STATS.get("cancelled", 0) + 1
+                receipt['state'] = 'unknown' if c.claimed_at else 'not_dispatched'
                 return "你停止了当前操作。【别重试】这是你主动取消的，不是出错。"
             _COND.wait(0.5)
         if not c.done:
@@ -508,9 +548,11 @@ def call(name, args, wait=None):
                 return ("本机那边的「%s」执行超时了（等了 %d 秒还没回）。"
                         "【别重试】这台电脑可能卡住了或断了，跟他说一声，"
                         "别当它做完了。" % (name, w))
+            receipt['state'] = 'not_dispatched'
             return ("没有在线的电脑能执行「%s」—— 客户端没连着，或者没开这个能力。"
                     "【别重试】先确认客户端在线，别当成已经做完了。" % name)
         if c.refused:
+            receipt['state'] = 'denied'
             # 拒绝不是"出错"：说成出错，她会以为可以重试，或者自己换个办法绕过去。
             _STATS["refused"] += 1
             return c.result
@@ -524,6 +566,7 @@ def call(name, args, wait=None):
             tag = "【可重试】" if retryable else "【别重试】"
             return "本机执行「%s」出错：%s %s" % (name, c.err, tag)
         _STATS["ok"] += 1
+        receipt['state'] = 'returned'
         return c.result or "（%s 执行完了，但没有输出）" % name
 
 
@@ -535,6 +578,11 @@ def take(device_id, capabilities=None):
     with _COND:
         _LAST_POLL = now                # 这台大脑刚被客户端看过：在线证据
         for cid, c in list(_QUEUE.items()):
+            if c.cancel or _run_stopped(c.stop_check):
+                _QUEUE.pop(cid, None)
+                c.cancel = True
+                _COND.notify_all()
+                continue
             if caps and c.name not in caps:
                 continue                      # 这台设备没声明这个能力，别派给它
             if now - c.created > DEFAULT_WAIT + 30:

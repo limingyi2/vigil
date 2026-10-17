@@ -63,42 +63,17 @@ class TestServerHonorsPreviewParams(unittest.TestCase):
     def setUp(self):
         self.seg = _models_route()
 
-    def test_认_base_和_key_两个查询参数(self):
-        self.assertIn("_query_param(self.path, \"base\")", self.seg,
-                      "服务端不认 base 参数 —— 前端传了也白传")
-        self.assertIn("_query_param(self.path, \"key\")", self.seg,
-                      "服务端不认 key 参数")
+    def test_get_preview_ignores_url_credentials(self):
+        self.assertIn('_query_param(self.path, "base")', self.seg)
+        self.assertNotIn('_query_param(self.path, "key")', self.seg)
+        self.assertIn('p_key = ""', self.seg)
+        self.assertIn('"/api/models/list"', _server_src())
 
-    def test_传了_base_就_用_它_而不是读配置(self):
-        """🔴 这条是本文件的核心。只判"认参数"是不够的 ——
-        认了但没用，测试照样绿而 bug 还在。"""
-        # 传了 base 之后，list_models 用的 base 必须是那个变量
-        # （中间允许插入"按家解析密钥"那几行，2026-10-09 起）
-        m = re.search(r"if p_base:\s*\n(.*?)api_base=p_base", self.seg, re.S)
-        self.assertIsNotNone(m,
-                             "传了 base 却没有拿它覆盖 cur.api_base —— "
-                             "这就是「界面选了新服务商、列表还是旧的」的直接原因")
-        self.assertIn('api_key=k or cur.get("api_key")', self.seg,
-                      "key 没跟着走 —— 换了地址但还用上一家的密钥去拉")
-
-    def test_预拉优先用_这一家自己存的_密钥(self):
-        """2026-10-09：provider 参数。切回存过密钥的老家时不用重填 key ——
-        服务端按 base+provider 优先取那家自己的存钥，取不到才回落当前那把。
-        没有这层的话，"切回老家"也要重填，且更容易拿别家的 key 去试拉吃 401。"""
-        self.assertIn('_query_param(self.path, "provider")', self.seg,
-                      "服务端不认 provider 参数 —— 切回存过密钥的老家没法免填 key")
-        self.assertIn("has_provider_key(api_config, p_prov)", self.seg,
-                      "预拉没有优先用这一家自己存的密钥 —— 拿别家的 key 去试必然 401")
-        self.assertIn("provider_key(api_config, p_prov)", self.seg,
-                      "认了这家存过钥匙，取的时候却没用按家那份")
-
-    def test_key_留空时沿用已保存那把(self):
-        """用户可能只想换地址、key 沿用现有的。这时候不能把 key 传空
-        （= 拉不到任何东西），也不能直接报错。"""
-        self.assertRegex(self.seg, r'api_key=k\s*or\s*cur\.get\("api_key"\)',
-                         "key 留空时没沿用（显式传入或按家解析后的）那把")
-        self.assertIn("k = p_key", self.seg,
-                      "显式传入的 key 没有第一优先")
+    def test_preview_uses_selected_base_without_cross_endpoint_fallback(self):
+        self.assertIn('api_base=p_base', self.seg)
+        self.assertIn('provider_key(api_config, p_prov, p_base)', self.seg)
+        self.assertIn('api_key=k or ""', self.seg)
+        self.assertNotIn('api_key=k or cur.get("api_key")', self.seg)
 
     def test_回给客户端的仍然是脱敏版(self):
         """加了 preview 之后最容易犯的错：为了方便把 cur 直接回出去，

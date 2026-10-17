@@ -1,0 +1,47 @@
+name: Windows unified installer acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/unified-client-brain']
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install build dependencies
+        run: |
+          python -m pip install -r brain/requirements.txt pyinstaller pypdf
+          npm ci --prefix client
+      - name: Download and verify the official Vigil 1.0.2 baseline
+        shell: pwsh
+        run: |
+          $baseline = Join-Path $env:RUNNER_TEMP 'Vigil.Setup.1.0.2.exe'
+          Invoke-WebRequest -Uri 'https://github.com/limingyi2/vigil/releases/download/v1.0.2/Vigil.Setup.1.0.2.exe' -OutFile $baseline
+          $actual = (Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = (Get-Item -LiteralPath $baseline).Length
+          if ($actual -ne '6ea65b226b11ee685ee190a9f0bd760f00bb35e515818a492f2f36ecc6970971' -or $size -ne 100523853) {
+            throw "Official v1.0.2 installer integrity mismatch: sha256=$actual size=$size"
+          }
+      - name: Build isolated acceptance installer
+        run: python scripts/build_windows_acceptance.py
+      - name: Real 1.0.2 install, 1.1.0 upgrade, migration and rollback
+        run: python scripts/test_windows_install.py client/dist-release/Vigil.Setup.1.1.0.exe --baseline "$env:RUNNER_TEMP\Vigil.Setup.1.0.2.exe"
+      - name: Creator renderer diagnostics acceptance
+        working-directory: client
+        run: npm exec -- electron tools/test-p2-creator-electron.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vigil-1.1.0-windows-acceptance-candidate
+          path: |
+            client/dist-release/Vigil.Setup.1.1.0.exe
+            client/dist-release/Vigil.Setup.1.1.0.contents.json
+            client/dist-release/release-manifest.json
+            client/dist-release/windows-acceptance.json

@@ -48,7 +48,7 @@ class TestPublicCurrentMasksKey(unittest.TestCase):
         """要能认出是哪一把，不然用户不知道当前用的是哪个。"""
         got = model_hub.public_current(cfg_with_key())["api_key"]
         self.assertIn(FAKE[:6], got)
-        self.assertIn(FAKE[-4:], got)
+        self.assertIn(FAKE[-3:], got)
 
     def test_short_key_is_fully_hidden(self):
         """短 key 没有"前后各几位"可言，全盖掉。"""
@@ -201,7 +201,7 @@ class TestMaskedKeyNotWrittenBack(unittest.TestCase):
         # 加 api_key_set 之后别忘了脱敏本身 —— 两条断言都要在
         d = model_hub.public_current(self._cfg())
         self.assertNotEqual(d["api_key"], self.REAL)
-        self.assertIn("…", d["api_key"])
+        self.assertIn("****", d["api_key"])
 
 
 if __name__ == "__main__":

@@ -262,6 +262,7 @@ brain/config/persona_sync.json
 # 正式报告与脱敏后的原始数据归档在 测试/ 下；results/ 里是每次跑批的工作区
 # 副本与逐轮事件，体积大且含本机绝对路径，重新跑即可生成。
 results/
+.pytest_cache/
 
 # Private runtime material: never publish real conversations or credentials.
 brain/archive/*chat_history*
@@ -272,3 +273,8 @@ brain/config/management_agent_tokens.json
 ssh.txt
 .env
 !.env.example
+client/build-info.json
+brain/build-info.json
+brain/plugins/_pending_restart.json
+
+.vigil-dev/

@@ -184,6 +184,7 @@ class ModelHubUnitTests(unittest.TestCase):
             "provider": "siliconflow", "api_base": self.A.base,
             "api_key": self.A.secret, "model": "shared-model",
             "api_keys": {"siliconflow": self.A.secret, "xiaomi": self.B.secret},
+            "api_key_bases": {"siliconflow": self.A.base, "xiaomi": self.B.base},
             "model_mode": "cloud",
         }
 
@@ -298,7 +299,7 @@ class ModelHubUnitTests(unittest.TestCase):
         cfg, _ = model_hub.remember_current(self._cfg())
         dead = "http://127.0.0.1:%d/v1" % _free_port()
         cfg, _ = model_hub.remember_model(cfg, "custom", dead, "local-model")
-        cfg = dict(cfg, api_keys=dict(cfg["api_keys"], custom="whatever"))
+        cfg = model_hub.remember_provider_key(cfg, 'custom', dead, 'whatever')
         new, changed, err, warn = model_hub.quick_switch(cfg, "custom", "local-model")
         self.assertEqual(err, "")
         self.assertTrue(changed)
