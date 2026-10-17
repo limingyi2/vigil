@@ -132,6 +132,7 @@ jobs:
           @{test='full-chat-v2-electron';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-full-result.json')
           Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-full-shots -Recurse -Force -ErrorAction SilentlyContinue
           "Full test exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
 
       - name: Isolated scene in chat harness, no preceding scenarios
         shell: pwsh
@@ -148,6 +149,7 @@ jobs:
           @{test='isolated-chat-harness-wallpaper-scene';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-isolated-result.json')
           Copy-Item client/_shots/ui-v2 $env:RUNNER_TEMP/p8-wallpaper-isolated-shots -Recurse -Force -ErrorAction SilentlyContinue
           "Isolated scene exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
 
       - name: Standalone Wallpaper Electron flow
         shell: pwsh
@@ -163,6 +165,7 @@ jobs:
           finally { Pop-Location }
           @{test='standalone-wallpaper-v2-electron';exit_code=$code;source_commit='${{ inputs.candidate_source_commit }}';diagnostic_commit='${{ github.sha }}';hardware_acceleration='enabled';chat_material_probe='skipped only to proceed past known unrelated paint assertion'} | ConvertTo-Json | Set-Content (Join-Path $env:RUNNER_TEMP 'p8-wallpaper-standalone-result.json')
           "Standalone Wallpaper exit code: $code" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
 
       - name: Preserve all diagnostics and raw results
         if: always()
