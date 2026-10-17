@@ -54,7 +54,7 @@ a = Analysis(
         "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",
         # 插件按文件路径动态加载（不在静态分析图里），它们 import 的
         # 顶层模块必须手动带进包 —— localtools 只被 remote 插件用
-        "localtools", "devices",
+        "localtools", "devices", "agent_runs",
     ],
     excludes=[
         "fastembed", "onnxruntime", "onnx", "torch", "tkinter",
