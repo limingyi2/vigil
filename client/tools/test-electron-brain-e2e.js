@@ -104,6 +104,10 @@ async function startModel() {
       return json(res, 500, { error: { message: 'unexpected tool result' } });
     }
 
+    if (userText.startsWith('E2E_SEED_HISTORY_')) {
+      return json(res, 200, { choices: [{ message: { role: 'assistant', content: 'SEEDED_HISTORY_OK' } }] });
+    }
+
     if (!call.toolNames.includes('smoke_ping')) {
       return json(res, 500, { error: { message: 'smoke_ping schema missing' } });
     }
@@ -343,24 +347,25 @@ async function run() {
   assert.deepEqual(listed.items, [], 'opening the welcome page must not create an empty Brain conversation');
   pass('cold start with no history opens a clean welcome page without creating a conversation');
 
-  // Seed an old transcript and nine independent chats after the first-start
-  // check, then refresh the renderer to verify ten saved rows stay on the home.
+  // Seed an old transcript, then create nine real chats through the renderer.
+  // Empty conversation rows are intentionally hidden until their first turn.
   fs.writeFileSync(path.join(home, 'data', 'pc.chat_history.jsonl'), [
     {t:'2026-10-17 18:00',role:'user',text:'LEGACY_FIRST_PROMPT'},
     {t:'2026-10-17 18:00',role:'assistant',text:'legacy response'},
   ].map(row => JSON.stringify(row)).join('\n') + '\n', 'utf8');
   for (let i = 0; i < 9; i++) {
-    const response = await fetch(brainBase + '/api/conversations', {
-      method:'POST', headers:{Authorization:'Bearer ' + token,'Content-Type':'application/json'},
-      body:JSON.stringify({src:'pc'}),
-    });
-    assert.equal(response.status, 201, 'fixture history conversation should be created');
+    await evaluate("document.querySelector('#newTopicBtn').click()");
+    await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'seed chat welcome state');
+    await submit('E2E_SEED_HISTORY_' + i);
+    await waitFor("API.state.chatConversationId && document.querySelector('#msgs').innerText.includes('SEEDED_HISTORY_OK') && !document.querySelector('#sendBtn').classList.contains('is-sending')", 'seeded chat first turn ' + i);
   }
   listResponse = await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}});
   listed = await listResponse.json();
   assert.equal(listed.items.length, 10, 'legacy transcript plus nine saved sessions should be listed');
   const legacyId = listed.items.find(item => item.legacy).id;
   const legacyFirstPrompt = 'LEGACY_FIRST_PROMPT';
+  await evaluate("document.querySelector('#newTopicBtn').click()");
+  await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'return to welcome before renderer refresh');
   await evaluate("document.querySelector('#reloadBtn').click()");
   await waitFor("document.querySelectorAll('[data-session]').length===10 && !document.querySelector('#hero').hidden", 'ten saved sessions on welcome page');
   assert.equal(await evaluate('API.state.chatConversationId'), '', 'ten saved sessions must not auto-select the last chat');
@@ -374,6 +379,7 @@ async function run() {
   await evaluate("document.querySelector('#newTopicBtn').click()");
   await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'new conversation welcome state');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'new conversation must clear old messages and cards');
+  await evaluate('window.__vigilE2EEvents=[]');
   if (captureScreenshots) await screenshot('p6.3-new-conversation-home');
   await submit('E2E_TOOL_SUCCESS 请调用 smoke_ping');
   await waitFor("[...document.querySelectorAll('#msgs .turn:not(.me) .txt')].some(x=>x.innerText.includes('VIGIL_PLUGIN_CALL_OK'))", 'successful plugin reply');

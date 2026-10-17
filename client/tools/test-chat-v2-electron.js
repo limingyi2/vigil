@@ -737,10 +737,12 @@ async function main() {
     win=new BrowserWindow({show:true,width:1280,height:800,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
     if(preview)win.webContents.setUserAgent('Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36');
     await win.loadFile(path.join(src,'index.html'));
-    await until(preview ? `document.querySelector('#hero') && !document.querySelector('#hero').hidden` : `document.querySelector('#retryHistory')`);
+    await until(preview
+      ? `document.querySelector('#hero') && !document.querySelector('#hero').hidden`
+      : `document.querySelector('#sessList .empty')?.textContent.includes('会话列表暂不可用')`);
     assert.equal(await ev(`API.runtime.kind`),preview?'browser-preview':'electron-missing-preload');
-    if(preview)assert.ok(await ev(`document.querySelector('.chat-connection').textContent.includes('浏览器预览')`));
-    else assert.ok(await ev(`document.querySelector('#chatLoadState').textContent.includes('preload 未加载')`));
+    if(preview)assert.equal(await ev(`getComputedStyle(document.querySelector('.chat-topbar')).display`),'none');
+    else assert.ok(await ev(`document.querySelector('#sessList').textContent.includes('会话列表暂不可用')`));
     await ev(`document.querySelector('#ta').value='禁止发送';document.querySelector('#ta').dispatchEvent(new Event('input'))`);
     assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
     const n=requests.length;
