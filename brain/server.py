@@ -264,6 +264,24 @@ def _norm_src(src):
     return s if s in allowed else "wechat"
 
 
+def _log_history_error(src, exc, action):
+    """Log history failures without printing exception text or chat contents."""
+    channel = _norm_src(src)
+    try:
+        brain = _LOCAL.get("brain")
+        persona = brain._persona_key_for(channel) if brain is not None else "default"
+        path = brain._log_for(channel) if brain is not None else "<unavailable>"
+    except Exception:
+        persona, path = "default", "<unavailable>"
+    import re
+    safe_action = re.sub(r"[^A-Za-z0-9_.-]", "_", str(action))[:48] or "unknown"
+    safe_persona = re.sub(r"[^A-Za-z0-9_.-]", "_", str(persona or "default"))[:64]
+    safe_path = str(path or "<unavailable>").replace("\\r", "_").replace("\\n", "_")[:512]
+    print("[history] action=%s src=%s persona=%s path=%s error_code=%s" %
+          (safe_action, channel, safe_persona, safe_path,
+           type(exc).__name__), flush=True)
+
+
 def _persona_for_src(src, default_key=""):
     """这个渠道该用哪个人设（读 config.json 的 persona_by_src）。
 
@@ -765,7 +783,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                     except Exception:
                         pass
                 except Exception as e:
-                    print(f"[大脑] 图片存档失败（不影响回复）：{e}", flush=True)
+                    _log_history_error(src, e, "image_write")
             # 他要自拍：不指望模型"只打字不发图"，直接按她此刻的时间和地点
             # 现场生成一张，正文用第一人称短句
             try:
@@ -782,8 +800,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                             try:
                                 _b._log_turn(orig_text, ans, img=None, src=_norm_src(src))
                             except Exception as e:
-                                print(f"[大脑] 自拍存档失败（不影响回复）：{e}",
-                                      flush=True)
+                                _log_history_error(src, e, "selfie_write")
                         return ans, "本地自拍", ""
             except Exception as e:
                 print(f"[大脑] 自拍生成失败，回退正常对话：{e}", flush=True)
@@ -818,7 +835,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                                                attachments=attachments,
                                                src=_norm_src(src))
                 except Exception as e:
-                    print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
+                    _log_history_error(src, e, "write")
             return ans, mode, ""
         except _Busy:
             # 排队超时：明确说出来，别让调用方无限期等
@@ -2513,7 +2530,7 @@ def start_remote_api(brain):
                         from brain import Brain
                         ok = bool(Brain.clear_history(_csrc))
                     except Exception as e:
-                        print(f"[大脑] 清空聊天存档失败：{e}", flush=True)
+                        _log_history_error(_csrc, e, "clear_disk")
                     try:
                         with _chat_lock():
                             _bl = _LOCAL.get("brain")
@@ -2522,7 +2539,7 @@ def start_remote_api(brain):
                     except _Busy:
                         pass
                     except Exception as e:
-                        print(f"[大脑] 清内存历史失败：{e}", flush=True)
+                        _log_history_error(_csrc, e, "clear_memory")
                     self._json(200, {"ok": ok})
                 elif path == "/api/reload_persona":
                     try:
