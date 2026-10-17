@@ -19,6 +19,12 @@ const evidenceDir = path.resolve(client, '..', 'reports', 'p6.1-evidence');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-chat-v2-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+const wallpaperDiag = process.env.P8_WALLPAPER_DIAG === '1';
+const wallpaperDiagFile = process.env.P8_WALLPAPER_DIAG_FILE || path.join(tmp, 'wallpaper-webgl-diagnostic.jsonl');
+function wallpaperTrace(kind, data={}) {
+  if (!wallpaperDiag) return;
+  fs.appendFileSync(wallpaperDiagFile, JSON.stringify({t:Date.now(), monotonic:process.hrtime.bigint().toString(), kind, ...data})+'\n');
+}
 const results = [], errors = [], requests = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win, host, history = [], failure = false, historyError = false, personaEmpty = false;
@@ -108,7 +114,11 @@ async function setup() {
   await host.request('PUT','/settings',{settingsVersion:7,pauseOnHidden:false,pauseOnBlur:false});
   // Production bridge and production channel names; only the service responses
   // are fixtures. No synthetic window.vigil or extra test bridge is injected.
-  ipcMain.handle('wallpaper:request', async (_, {method,resource,body}) => { try { return {ok:true,...await host.request(method,resource,body)}; } catch(e) { return {ok:false,err:e.message}; } });
+  ipcMain.handle('wallpaper:request', async (_, {method,resource,body}) => {
+    const started=Date.now(); wallpaperTrace('wallpaper-host-request',{method,resource});
+    try { const result={ok:true,...await host.request(method,resource,body)}; wallpaperTrace('wallpaper-host-response',{method,resource,status:'ok',elapsedMs:Date.now()-started}); return result; }
+    catch(e) { wallpaperTrace('wallpaper-host-response',{method,resource,status:'error',error:e.message,elapsedMs:Date.now()-started}); return {ok:false,err:e.message}; }
+  });
   ipcMain.handle('api', (_, {method,path:p,body,base}) => fixtureApi(method,p,body,base));
   ipcMain.handle('app:instance-id',()=> 'ui-v2-test-process');
   ipcMain.handle('api:stream', async (event,{path:p,body}) => {
@@ -152,11 +162,59 @@ async function setup() {
   ipcMain.on('win:close',()=>win && win.close());
   win = new BrowserWindow({show:true,frame:false,width:1400,height:900,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
   win.webContents.on('preload-error',(_,file,error)=>errors.push('preload: '+file+' '+error.message));
-  win.webContents.on('console-message',(_,level,message)=>{ if(level>=3) errors.push(message); });
+  win.webContents.on('console-message',(_,level,message,line,sourceId)=>{
+    if(level>=3) errors.push(message);
+    wallpaperTrace('renderer-console',{level,message,line,sourceId});
+  });
+  for (const event of ['did-start-navigation','did-frame-finish-load','did-fail-load','render-process-gone','dom-ready','frame-created']) {
+    win.webContents.on(event,(...args)=>wallpaperTrace('electron-'+event,{args:args.map(v=>v && typeof v==='object' ? (v.url||v.reason||v.errorCode||v.frame?.url||String(v)) : v)}));
+  }
+  win.webContents.on('destroyed',()=>wallpaperTrace('webcontents-destroyed'));
+  if (wallpaperDiag) {
+    try {
+      win.webContents.debugger.attach('1.3');
+      win.webContents.debugger.on('message',(_,method,params)=>{
+        if (method.startsWith('Network.') || method.startsWith('Page.frame') || method==='Runtime.exceptionThrown' || method==='Log.entryAdded') {
+          if (method.startsWith('Network.') && !/wallpaper|scene|project\.json|\.js(?:\?|$)|\.wasm(?:\?|$)/i.test(JSON.stringify(params))) return;
+          wallpaperTrace('cdp-'+method,params);
+        }
+      });
+      for (const method of ['Network.enable','Page.enable','Runtime.enable','Log.enable']) await win.webContents.debugger.sendCommand(method);
+      await win.webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{const log=(kind,data={})=>{try{console.info('[P8-WALLPAPER-DIAG]',JSON.stringify({kind,url:location.href,t:Date.now(),...data}))}catch(_){}};addEventListener('error',e=>log('page-error',{message:e.message,source:e.filename,line:e.lineno,column:e.colno}));addEventListener('unhandledrejection',e=>log('unhandled-rejection',{reason:String(e.reason)}));const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){const result=get.call(this,type,...args);if(/webgl/i.test(String(type)))log('webgl-context',{type,created:!!result,width:this.width,height:this.height,renderer:result&&(()=>{try{return result.getParameter(result.RENDERER)}catch(_){return ''}})()});return result};const raf=requestAnimationFrame;let first=true;window.requestAnimationFrame=function(cb){return raf.call(this,(ts)=>{if(first){first=false;log('first-animation-frame',{ts})}return cb(ts)})};let lastStatus;const seen=new WeakSet();const inspect=()=>{for(const f of document.querySelectorAll('iframe'))if(!seen.has(f)){seen.add(f);f.addEventListener('load',()=>log('iframe-load',{src:f.src}));f.addEventListener('error',()=>log('iframe-error',{src:f.src}));log('iframe-created',{src:f.src,connected:f.isConnected})}const s=document.querySelector('[data-status]');if(s&&s.textContent!==lastStatus){lastStatus=s.textContent;log('status-transition',{status:lastStatus,iframe:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,connected:f.isConnected}))})}};new MutationObserver(inspect).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});addEventListener('pagehide',()=>log('pagehide'));addEventListener('beforeunload',()=>log('beforeunload'));inspect()})();`});
+      wallpaperTrace('cdp-attached');
+    } catch (e) { wallpaperTrace('cdp-attach-error',{error:e.message}); }
+  }
   await win.loadFile(path.join(src,'index.html'));
 }
 const ev = async s => { try { return await win.webContents.executeJavaScript(s, true); } catch (e) { console.error('Renderer eval failed:', s, e.message); throw e; } };
 async function until(s, ms=15000) { const end=Date.now()+ms; while(Date.now()<end) { if(await ev('Boolean('+s+')'))return; await wait(60); } throw Error('Timeout: '+s); }
+async function wallpaperDiagnosticSnapshot(stage) {
+  if (!wallpaperDiag) return;
+  wallpaperTrace('wallpaper-snapshot', {stage,requests:requests.filter(r=>String(r.path||'').includes('wallpaper')||String(r.path||'').includes('scene')).slice(-30)});
+  try { wallpaperTrace('renderer-snapshot',{stage,detail:await ev(`(()=>({url:location.href,hidden:document.hidden,focused:document.hasFocus(),page:document.body.dataset.vigilPage,bodyClass:document.body.className,status:document.querySelector('[data-status]')?.textContent,iframes:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,loading:f.loading,connected:f.isConnected,rect:(()=>{const r=f.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height}})()})),resources:performance.getEntriesByType('resource').slice(-35).map(r=>({name:r.name,duration:r.duration,transferSize:r.transferSize})),scroll:{height:document.documentElement.scrollHeight,client:document.documentElement.clientHeight}}))()`) }); }
+  catch(e) { wallpaperTrace('renderer-snapshot-error',{stage,error:e.message}); }
+  for (const frame of win.webContents.mainFrame.frames) {
+    try { wallpaperTrace('frame-snapshot',{stage,url:frame.url,detail:await frame.executeJavaScript(`(()=>({url:location.href,hidden:document.hidden,state:window.__wp?.getState?.(),stats:window.__wpStats?.frame?.(),canvases:[...document.querySelectorAll('canvas')].map(c=>({w:c.width,h:c.height,rect:(()=>{const r=c.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height}})()}))}))()`) }); }
+    catch(e) { wallpaperTrace('frame-snapshot-error',{stage,url:frame.url,error:e.message}); }
+  }
+}
+async function wallpaperSceneRun() {
+  await wallpaperDiagnosticSnapshot('before-fixture-selection');
+  wallpaperTrace('fixture-select',{id:'990003',title:'Isolated UI scene'});
+  let polling=false;
+  const poll = wallpaperDiag ? setInterval(()=>{if(polling)return;polling=true;wallpaperDiagnosticSnapshot('during-first-frame').catch(e=>wallpaperTrace('poll-error',{error:e.message})).finally(()=>polling=false)},1000) : null;
+  await ev(`document.querySelector('[data-id="990003"]').click()`);
+  try { await until(`document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'`,30000); }
+  catch(e) {
+    await wallpaperDiagnosticSnapshot('first-frame-timeout');
+    console.log('Scene diagnostics: '+await ev(`JSON.stringify({status:document.querySelector('[data-status]')?.textContent,error:document.querySelector('[data-error]')?.textContent,hidden:document.hidden,focused:document.hasFocus(),iframe:document.querySelector('.vwp-media iframe')?.src})`));
+    for(const frame of win.webContents.mainFrame.frames) {
+      try { console.log('Frame diagnostics: '+await frame.executeJavaScript(`JSON.stringify({hidden:document.hidden,state:window.__wp?.getState?.(),stats:window.__wpStats?.frame?.()})`)); } catch(_) {}
+    }
+    throw e;
+  } finally { if(poll)clearInterval(poll); }
+  await wallpaperDiagnosticSnapshot('first-frame-reached');
+}
 async function shot(name) { await wait(100); fs.writeFileSync(path.join(shots,name+'.png'),(await win.webContents.capturePage()).toPNG()); }
 async function chat() {
   // Independent legacy layout scenarios start with empty fixture storage.
@@ -229,7 +287,12 @@ async function main() {
   await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
   await wait(400);
   gpu = { features:app.getGPUFeatureStatus(), webgl:await ev(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`) };
+  wallpaperTrace('environment',{electron:process.versions.electron,chrome:process.versions.chrome,platform:process.platform,gpu,predecessorState:{fixtureSelection:'not-started',visibleFrames:await ev(`document.querySelectorAll('iframe').length`),page:await ev(`document.body.dataset.vigilPage`),classes:await ev(`document.body.className`),resourceEntries:await ev(`performance.getEntriesByType('resource').length`)}});
   if(baseline) { await shot('before-light'); await ev(`document.querySelector('#themeBtn').click()`); await shot('before-dark'); return; }
+  if (process.env.P8_WALLPAPER_ONLY === '1') {
+    await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
+    await wallpaperSceneRun(); console.log('PASS: isolated chat harness Wallpaper scene first frame'); return;
+  }
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   assert.equal(await ev(`document.querySelector('#rpBtn').getAttribute('aria-expanded')`),'false');
   assert.equal((await measure()).context,'none');
@@ -491,15 +554,7 @@ async function main() {
   // Exercise settings UI and the unmodified renderer/host with local fixtures.
   await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
   await wallpaperSettingsChecks();
-  await ev(`document.querySelector('[data-id="990003"]').click()`);
-  try { await until(`document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'`,30000); }
-  catch(e) {
-    console.log('Scene diagnostics: '+await ev(`JSON.stringify({status:document.querySelector('[data-status]')?.textContent,error:document.querySelector('[data-error]')?.textContent,hidden:document.hidden,focused:document.hasFocus(),iframe:document.querySelector('.vwp-media iframe')?.src})`));
-    for(const frame of win.webContents.mainFrame.frames) {
-      try { console.log('Frame diagnostics: '+await frame.executeJavaScript(`JSON.stringify({hidden:document.hidden,state:window.__wp?.getState?.(),stats:window.__wpStats?.frame?.()})`)); } catch(_) {}
-    }
-    throw e;
-  }
+  await wallpaperSceneRun();
   assert.equal(await ev(`document.body.classList.contains('vwp-active')`),true);
   const wallpaperMaterial=await wallpaperLayout();
   assert.equal(wallpaperMaterial.text,'rgb(239, 243, 248)');
