@@ -17,7 +17,18 @@ function preload() {
   return {api,ipc};
 }
 
-test('native project picker exposes only the directory-selection IPC', async () => {\n  const {api,ipc} = preload();\n  const calls = [];\n  ipc.invoke = async (...args) => { calls.push(args); return {ok:true, path:'C:\\\\Projects\\\\demo'}; };\n  const result = await api.projectPicker.pickDirectory();\n  assert.equal(result.ok, true);\n  assert.equal(result.path, 'C:\\\\Projects\\\\demo');\n  assert.equal(calls.length, 1);\n  assert.equal(calls[0][0], 'project-picker:directory');\n});\ntest('100 shared chat/Creator rounds release IPC and subscriber callbacks', () => {
+test('native project picker exposes only the directory-selection IPC', async () => {
+  const {api,ipc} = preload();
+  const calls = [];
+  ipc.invoke = async (...args) => { calls.push(args); return {ok:true, path:'C:/Projects/demo'}; };
+  const result = await api.projectPicker.pickDirectory();
+  assert.equal(result.ok, true);
+  assert.equal(result.path, 'C:/Projects/demo');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'project-picker:directory');
+});
+
+test('100 shared chat/Creator rounds release IPC and subscriber callbacks', () => {
   const {api,ipc} = preload();
   let calls = 0;
   for (let i=0;i<100;i++) {
