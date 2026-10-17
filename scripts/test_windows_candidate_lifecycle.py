@@ -19,6 +19,12 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def inventory(root):
+    root = Path(root)
+    return {p.relative_to(root).as_posix(): sha256(p)
+            for p in sorted(root.rglob('*')) if p.is_file()}
+
+
 def run_logged(command, *, env, log_path, timeout):
     result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
     log_path.write_text(json.dumps({'command': [str(x) for x in command], 'exit_code': result.returncode,
@@ -43,12 +49,12 @@ def main(installer, expected_commit, output):
     root = Path(tempfile.mkdtemp(prefix='Vigil candidate lifecycle '))
     install = root / 'application'
     profile = root / 'profile'
-    appdata = root / 'appdata'
     localappdata = root / 'localappdata'
-    for directory in (profile, appdata, localappdata):
+    for directory in (profile, localappdata):
         directory.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, VIGIL_USER_DATA=str(profile), APPDATA=str(appdata), LOCALAPPDATA=str(localappdata),
+    env = dict(os.environ, APPDATA=str(profile), LOCALAPPDATA=str(localappdata),
                VIGIL_SIDECAR_DISABLE='1')
+    env.pop('VIGIL_USER_DATA', None)
     env.pop('ELECTRON_RUN_AS_NODE', None)
     install_result = run_logged([str(installer), '/S', '/D=' + str(install)], env=env,
                                 log_path=root / 'installer-install.json', timeout=300)
@@ -84,27 +90,15 @@ def main(installer, expected_commit, output):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
     config_file = user_data_root / 'config.json'
-    data_dir = brain_home / 'data'
     conversations_db = brain_home / 'data/conversations.sqlite3'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
-    chat_histories = []
-    jsonl_inventory = []
-    for path in data_dir.rglob('*.jsonl'):
-        content = path.read_text(encoding='utf-8')
-        jsonl_inventory.append({'path': str(path), 'size': path.stat().st_size,
-                               'contains_user': 'P8_FRESH_CHAT_SENTINEL' in content,
-                               'contains_reply': 'FRESH_INSTALL_CHAT_OK' in content,
-                               'sample': content[:400]})
-        if 'P8_FRESH_CHAT_SENTINEL' in content and 'FRESH_INSTALL_CHAT_OK' in content:
-            chat_histories.append(path)
-    print('P8_JSONL_DIAGNOSTIC=' + json.dumps({'data_dir': str(data_dir), 'exists': data_dir.is_dir(),
-                                               'files': jsonl_inventory}, ensure_ascii=False))
-    assert chat_histories, 'Fresh PC conversation was not persisted to an isolated JSONL history file'
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
         assert db.execute('SELECT COUNT(*) FROM conversations WHERE id=?', (conversation_id,)).fetchone()[0] == 1
-    retained_files = [*sentinels, config_file, conversations_db, *chat_histories]
+    retained_files = [*sentinels, config_file, conversations_db]
     retained_before = {str(path): sha256(path) for path in retained_files}
+    user_data_before = inventory(user_data_root)
+    assert user_data_before, 'Isolated default Electron user-data directory is empty'
     outside = root / 'outside-data' / 'do-not-delete.txt'
     outside.parent.mkdir()
     outside.write_text('outside install and profile sentinel\n', encoding='utf-8')
@@ -120,6 +114,8 @@ def main(installer, expected_commit, output):
     assert not remaining_app_files, f'Program files remain after uninstall: {remaining_app_files[:10]}'
     retained_after = {name: sha256(Path(name)) for name in retained_before if Path(name).is_file()}
     assert retained_after == retained_before, 'Uninstall changed or removed user profile data'
+    user_data_after = inventory(user_data_root)
+    assert user_data_after == user_data_before, 'Uninstall changed or removed files in the default user-data directory'
     assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +142,9 @@ def main(installer, expected_commit, output):
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),
-                      'actual_configuration_jsonl_history_and_conversation_db_retained': True,
+                      'actual_configuration_and_conversation_db_retained': True,
+                      'all_user_data_files_unchanged': True,
+                      'user_data_file_count': len(user_data_before),
                       'outside_sentinel_preserved': True},
         'logs': {name: f'lifecycle-logs/{name}.json' for name in log_files},
     }

@@ -49,7 +49,7 @@ async function start() {
   for (let i = 0; i < 360; i++) {
     if (app.exitCode != null) throw Error(`Installed Electron exited ${app.exitCode}`);
     try {
-      const activePort = Number(fs.readFileSync(path.join(process.env.VIGIL_USER_DATA, 'DevToolsActivePort'), 'utf8').split('\n')[0]);
+      const activePort = Number(fs.readFileSync(path.join(process.env.APPDATA, 'vigil-client', 'DevToolsActivePort'), 'utf8').split('\n')[0]);
       const tabs = await (await fetch(`http://127.0.0.1:${activePort}/json/list`)).json();
       const tab = tabs.find(item => item.type === 'page' && item.url.includes('index.html') && !item.url.includes('settings'));
       if (tab) {
