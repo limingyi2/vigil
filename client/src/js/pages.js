@@ -3935,7 +3935,7 @@
           '<span class="muted" style="font-size:12px">模型：' + esc(d.model || '?') + '</span>' +
           '<div style="flex:1"></div>' +
           '<button class="btn ghost" id="crReval">重新验证</button>' +
-          (v.ok ? '<button class="btn" id="crReview">审核并安装</button>' : '') +
+          (v.ok ? '<button class="btn" id="crReview">查看安装步骤</button>' : '') +
           '<button class="btn danger" id="crDel">删除草稿</button>' +
         '</div>' +
         '<p class="muted" style="font-size:12px;margin:8px 0 0">需求：' + esc(d.requirement || '') + '</p>' +
@@ -4000,7 +4000,15 @@
       }
       if (e.target.closest('#crReview')) {
         const box = root.querySelector('#crReviewBox');
-        if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        if (!box) { toast('当前草稿未通过静态验证，不能安装'); return; }
+        const opening = box.style.display === 'none';
+        box.style.display = opening ? 'block' : 'none';
+        const reviewButton = root.querySelector('#crReview');
+        if (reviewButton) reviewButton.textContent = opening ? '收起安装步骤' : '查看安装步骤';
+        if (opening) {
+          box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          toast('安装需要两步确认：先点击“明确批准”，再点击“仅本次安装”');
+        }
         return;
       }
       if (e.target.closest('#crCancel')) {
@@ -4011,7 +4019,15 @@
       if (e.target.closest('#crApproveNow')) {
         const approveButton = e.target.closest('#crApproveNow');
         approveButton.disabled = true;
-        const r = pick(await API.post('/api/creator/approve', { id: d.id }));
+        let r;
+        try {
+          r = pick(await API.post('/api/creator/approve', { id: d.id }));
+        } catch (error) {
+          approveButton.disabled = false;
+          const detail = error && error.message ? error.message : 'Brain 连接失败或请求超时';
+          toast('审批请求失败：' + String(detail).slice(0, 120));
+          return;
+        }
         if (!r || !r.ok || !r.approval) {
           approveButton.disabled = false;
           toast('审批失败：' + ((r && r.err) || '未知错误'));
@@ -4028,9 +4044,18 @@
       if (e.target.closest('#crInstallNow')) {
         const installButton = e.target.closest('#crInstallNow');
         const aid = installButton.dataset.approval || '';
-        if (!aid || !confirm('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
+        if (!aid) { toast('请先点击“明确批准”生成一次性审批'); return; }
+        if (!confirm('确认仅本次安装到“' + creatorTargetOf(d) + '”？安装可能触发 Skill Host 热重载。')) return;
         installButton.disabled = true;
-        const r = pick(await API.post('/api/creator/install', { approval_id: aid }));
+        let r;
+        try {
+          r = pick(await API.post('/api/creator/install', { approval_id: aid }));
+        } catch (error) {
+          installButton.disabled = false;
+          const detail = error && error.message ? error.message : 'Brain 连接失败或请求超时';
+          toast('安装请求失败：' + String(detail).slice(0, 120));
+          return;
+        }
         if (!r || !r.ok) {
           installButton.disabled = false;
           toast('安装失败：' + ((r && (r.err || r.install?.err)) || '事务已回滚或审批已失效'));
