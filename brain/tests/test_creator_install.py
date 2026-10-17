@@ -164,7 +164,12 @@ def test_valid_plugin_is_installed_by_existing_transaction_without_import(isolat
     did = _draft(drafts, name="no_exec")
     marker = plugins / "executed.txt"
     (drafts / did / "no_exec.py").write_text(
-        'from pathlib import Path\nPath(%r).write_text("bad")\nNAME="no_exec"\nDESC="safe"\n' % str(marker), encoding="utf-8")
+        'from pathlib import Path\nPath(%r).write_text("bad")\n'
+        'NAME="no_exec"\nDESC="safe"\n'
+        'def no_exec_status(_arg): return "safe"\n'
+        'TOOLS={"no_exec_status": no_exec_status}\n'
+        'TOOL_SPECS={"no_exec_status":{"desc":"safe","params":[],"arg_param":None}}\n'
+        % str(marker), encoding="utf-8")
     import plugin_ops
     approval = _approve(did)
     result = ci.install(approval["approval_id"], ADMIN)

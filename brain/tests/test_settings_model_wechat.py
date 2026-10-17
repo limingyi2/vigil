@@ -1,4 +1,5 @@
 import json
+import contextvars
 import threading
 import time
 from pathlib import Path
@@ -113,6 +114,7 @@ def test_xml_tool_text_is_rejected_without_execution(monkeypatch):
                 "</function></tool_call>"}}]}
 
     brain = Brain.__new__(Brain)
+    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
     brain.api = {"api_key": "unit", "model": "unit-model"}
     brain._cur_src = "app"
     brain.draft_rules = ""
@@ -146,6 +148,7 @@ def test_unsupported_xml_file_tool_is_rejected_without_touching_temp_dir(monkeyp
                 + "</parameter></function></tool_call>"}}]}
 
     brain = Brain.__new__(Brain)
+    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
     brain.api = {"provider": "custom", "api_key": "unit", "api_base": "https://example.test/v1",
                  "model": "text-model"}
     brain._cur_src = "pc"
@@ -198,6 +201,7 @@ def test_mimo_structured_file_tool_reads_isolated_directory(monkeypatch, tmp_pat
 
     provider = FakeProvider()
     brain = Brain.__new__(Brain)
+    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
@@ -272,6 +276,7 @@ def test_mimo_xml_file_tool_uses_existing_authorized_queue(monkeypatch, tmp_path
 
     provider = FakeProvider()
     brain = Brain.__new__(Brain)
+    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
@@ -336,3 +341,74 @@ def test_missing_models_endpoint_is_reported_separately(monkeypatch):
     assert state == "unknown"
     assert "404" in detail
     assert "/models" in detail
+
+
+def test_fake_provider_calls_plugin_tool_and_receives_result_in_followup(monkeypatch):
+    """The model sees plugin schema, host dispatches it, and tool output is replayed."""
+    marker = "VIGIL_PLUGIN_CALL_OK"
+
+    class FakeProvider:
+        kind = "cloud"
+        supports_tools = True
+        supports_xml_tools = False
+
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, payload, timeout=90):
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                schemas = [x["function"]["name"] for x in payload.get("tools", [])]
+                assert "smoke_ping" in schemas
+                return {"choices": [{"message": {"content": None, "tool_calls": [{
+                    "id": "plugin-call-1", "type": "function",
+                    "function": {"name": "smoke_ping", "arguments": "{}"}}]}}]}
+            tool_message = payload["messages"][-1]
+            assert tool_message["role"] == "tool"
+            assert tool_message["tool_call_id"] == "plugin-call-1"
+            assert tool_message["content"] == marker
+            return {"choices": [{"message": {"content": marker}}]}
+
+    provider = FakeProvider()
+    brain = Brain.__new__(Brain)
+    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
+    brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
+                 "model": "mimo-v2.6-flash"}
+    brain._cur_src = "pc"
+    brain.draft_rules = ""
+    brain.last_err = ""
+    brain.last_tools_used = []
+    brain._api_snapshot = lambda: dict(brain.api)
+    brain._provider = lambda cfg: provider
+    brain._provider_ready = lambda p, cfg: True
+    brain._build_system_parts = lambda text, memory: (["system"], "")
+    brain.recent_hist = lambda: []
+    brain._user_msg_with_rules = lambda text: text
+
+    from types import SimpleNamespace
+    import features
+    import plugin_host
+    import tools
+    monkeypatch.setattr(features, "on", lambda name, src=None: True)
+    calls = []
+    module = SimpleNamespace(
+        NAME="vigil_smoke", DESC="isolated test plugin",
+        TOOLS={"smoke_ping": lambda arg: calls.append(arg) or marker},
+        TOOL_SPECS={"smoke_ping": {"desc": "isolated plugin test",
+                                    "params": [], "arg_param": None}},
+    )
+    plugin = plugin_host.Plugin(module, "vigil_smoke.py")
+    monkeypatch.setattr(plugin_host, "_registry", {"vigil_smoke": plugin})
+    monkeypatch.setattr(plugin_host, "_TOOL_INDEX", {"smoke_ping": plugin})
+    dispatch = []
+    actual_dispatch = plugin_host.run_tool
+    def track_dispatch(name, arg, src=None, arg_dict=None):
+        dispatch.append((name, src))
+        return actual_dispatch(name, arg, src, arg_dict)
+    monkeypatch.setattr(plugin_host, "run_tool", track_dispatch)
+
+    result = brain.draft_native("请调用 smoke_ping 工具验证插件", "", ctx_src="pc")
+    assert result == marker
+    assert dispatch == [("smoke_ping", "pc")]
+    assert calls == [""]
+    assert brain.last_tools_used == ["smoke_ping"]

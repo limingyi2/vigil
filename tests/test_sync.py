@@ -5,9 +5,12 @@
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
+from types import ModuleType
 
 import pytest
 
@@ -17,22 +20,58 @@ BRAIN = os.path.normpath(BRAIN)
 sys.path.insert(0, BRAIN)
 
 
+_HOME_MODULES = ("paths", "memory_store_v2", "persona_store",
+                 "sync_outbox", "sync_client", "features", "chatty")
+_MISSING = object()
+
+
+@contextmanager
+def _fresh_home_modules():
+    """Restore path-bound Brain imports after a temporary VIGIL_HOME scope."""
+    previous = {name: sys.modules.get(name, _MISSING) for name in _HOME_MODULES}
+    for name in _HOME_MODULES:
+        sys.modules.pop(name, None)
+    try:
+        yield
+    finally:
+        for name, module in previous.items():
+            if module is _MISSING:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
 @pytest.fixture()
 def home(monkeypatch):
     """一个全新的临时家，import 前设好 VIGIL_HOME（paths 模块级读它）。"""
     d = tempfile.mkdtemp(prefix="vigil_sync_")
     monkeypatch.setenv("VIGIL_HOME", d)
-    for m in [m for m in list(sys.modules)
-              if m in ("paths", "memory_store_v2", "persona_store",
-                       "sync_outbox", "sync_client", "features", "chatty")]:
-        sys.modules.pop(m, None)
-    import paths as _p
-    _p.ensure()
-    yield d
-    for m in [m for m in list(sys.modules)
-              if m in ("memory_store_v2", "persona_store",
-                       "sync_outbox", "sync_client")]:
-        sys.modules.pop(m, None)
+    try:
+        with _fresh_home_modules():
+            import paths as _p
+            _p.ensure()
+            yield d
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_fresh_home_module_scope_restores_previous_imports():
+    """A temporary VIGIL_HOME must not replace module objects for later tests."""
+    previous = {name: sys.modules.get(name, _MISSING) for name in _HOME_MODULES}
+    sentinels = {name: ModuleType("sentinel_" + name) for name in _HOME_MODULES}
+    try:
+        sys.modules.update(sentinels)
+        with _fresh_home_modules():
+            assert all(name not in sys.modules for name in _HOME_MODULES)
+            sys.modules.update({name: ModuleType("temporary_" + name)
+                                for name in _HOME_MODULES})
+        assert all(sys.modules[name] is sentinels[name] for name in _HOME_MODULES)
+    finally:
+        for name, module in previous.items():
+            if module is _MISSING:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 def _ms():

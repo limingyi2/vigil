@@ -69,11 +69,17 @@ class TestNativeFunctionCalling(unittest.TestCase):
         plugin_host.load(force=True)
         self.seen = []
         self._real_httpx = B.httpx
+        self._real_features_on = features.on
+        # This contract test is about native tool dispatch, independent of the
+        # developer's local per-channel feature preferences.
+        features.on = lambda key, src=None: (
+            True if key == "calc" else self._real_features_on(key, src))
         # 模型出口虽收口到 model_providers，但 CloudProvider 经 brain.httpx
         # 取传输层（见 cloud._active_http），所以桩 B.httpx 一处即可。
 
     def tearDown(self):
         B.httpx = self._real_httpx
+        features.on = self._real_features_on
 
     def _stub(self, payloads):
         """按顺序返回响应；用完之后一直重复最后一个。
