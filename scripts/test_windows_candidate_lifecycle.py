@@ -52,9 +52,9 @@ def main(installer, expected_commit, output):
     localappdata = root / 'localappdata'
     for directory in (profile, localappdata):
         directory.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, APPDATA=str(profile), LOCALAPPDATA=str(localappdata),
+    isolated_user_data = profile / 'vigil-client'
+    env = dict(os.environ, VIGIL_USER_DATA=str(isolated_user_data), APPDATA=str(profile), LOCALAPPDATA=str(localappdata),
                VIGIL_SIDECAR_DISABLE='1')
-    env.pop('VIGIL_USER_DATA', None)
     env.pop('ELECTRON_RUN_AS_NODE', None)
     install_result = run_logged([str(installer), '/S', '/D=' + str(install)], env=env,
                                 log_path=root / 'installer-install.json', timeout=300)
