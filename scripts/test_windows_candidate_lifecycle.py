@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -74,7 +75,6 @@ def main(installer, expected_commit, output):
     brain_home = Path(first_record['brain_home'])
     user_data_root = brain_home.parent
     sentinels = {
-        user_data_root / 'config.json': '{"user_data":"preserve"}\n',
         brain_home / 'plugins/p8-retention-plugin.py': 'NAME="p8_retention"\n',
         brain_home / 'skill_host/skills/p8-retention/skill.json': '{"id":"p8-retention"}\n',
         brain_home / 'data/creator_drafts/p8-retention/meta.json': '{"id":"p8-retention","status":"generated"}\n',
@@ -83,7 +83,18 @@ def main(installer, expected_commit, output):
     for path, content in sentinels.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
-    retained_before = {str(path): sha256(path) for path in sentinels}
+    config_file = user_data_root / 'config.json'
+    chat_history = brain_home / 'data/chat_history.jsonl'
+    conversations_db = brain_home / 'data/conversations.sqlite3'
+    assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
+    assert chat_history.is_file(), 'Fresh chat did not persist chat_history.jsonl'
+    chat_text = chat_history.read_text(encoding='utf-8')
+    assert 'P8_FRESH_CHAT_SENTINEL' in chat_text and 'FRESH_INSTALL_CHAT_OK' in chat_text
+    assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
+    with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
+        assert db.execute('SELECT COUNT(*) FROM conversations').fetchone()[0] >= 1
+    retained_files = [*sentinels, config_file, chat_history, conversations_db]
+    retained_before = {str(path): sha256(path) for path in retained_files}
     outside = root / 'outside-data' / 'do-not-delete.txt'
     outside.parent.mkdir()
     outside.write_text('outside install and profile sentinel\n', encoding='utf-8')
@@ -124,7 +135,9 @@ def main(installer, expected_commit, output):
         'restart_recovery': {'electron_restarted': True, 'chat_history_restored': True},
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
-                      'retained_test_data': list(retained_before), 'outside_sentinel_preserved': True},
+                      'retained_test_data': list(retained_before),
+                      'actual_configuration_chat_history_and_conversation_db_retained': True,
+                      'outside_sentinel_preserved': True},
         'logs': {name: f'lifecycle-logs/{name}.json' for name in log_files},
     }
     output.write_text(json.dumps(report, indent=2), encoding='utf-8')
