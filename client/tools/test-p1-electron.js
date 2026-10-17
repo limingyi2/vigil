@@ -10,9 +10,19 @@ app.setPath('userData', path.join(tmp, 'userdata'));
 let win, mode = 'length', created = 0, streams = 0, offline = false;
 const jobs = new Map(), requests = [], results = [];
 const conversations = [];
+const historyClearCalls = [];
 let conversationCounter = 0;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-const ev = source => win.webContents.executeJavaScript(source, true);
+const ev = async source => {
+  try { return await win.webContents.executeJavaScript(source, true); }
+  catch (error) { console.error('Renderer evaluation failed:', source, error && error.message || error); throw error; }
+};
+function traceRenderer(candidate) {
+  candidate.webContents.on('console-message', (_event, level, message, line, source) =>
+    console.log(`Renderer console [${level}] ${source}:${line}: ${message}`));
+  candidate.webContents.on('render-process-gone', (_event, details) =>
+    console.error('Renderer process exited:', details));
+}
 async function until(source) {
   const end = Date.now() + 12000;
   while (Date.now() < end) { if (await ev('Boolean(' + source + ')')) return; await wait(40); }
@@ -32,7 +42,13 @@ function response(method, raw, body) {
   }
   if (p === '/api/persona') data = {name:'Fixture', key:'default', templates:[]};
   if (p === '/api/history') data = {items:[]};
-  if (p === '/api/history/clear') jobs.clear();
+  if (p === '/api/history/clear') {
+    const clearedSessions = ['main','welcome',...conversations.map(item=>item.id)];
+    historyClearCalls.push({body, src:body && body.src, clearedSessions});
+    jobs.clear();
+    for (let i = conversations.length - 1; i >= 0; i--) conversations.splice(i, 1);
+    data = {ok:true,cleared_sessions:clearedSessions};
+  }
   if (p === '/api/display/turns') data = {ok:true, items:[]};
   if (p === '/api/stats') data = {model:'fixture'};
   if (p === '/api/models') data = {current:{model:'fixture'}, models:[],providers:[]};
@@ -95,6 +111,7 @@ async function main() {
   ipcMain.handle('cfg:set',(_,patch)=>(cfg={...cfg,...patch}));
   win = new BrowserWindow({show:false,width:1300,height:900,webPreferences:{
     preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  traceRenderer(win);
   await win.loadFile(path.join(client,'src/index.html'));
   await until('document.querySelector("#creatorBtn")');
   await ev('document.querySelector("#creatorBtn").click()');
@@ -151,6 +168,7 @@ async function main() {
   // client reopen without ever touching production userData.
   const previousWindow = win;
   win = new BrowserWindow({show:false,width:1300,height:900,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  traceRenderer(win);
   previousWindow.destroy();
   await win.loadFile(path.join(client,'src/index.html'));
   await until('document.querySelector("#msgs")?.textContent.includes("未送达请求恢复")');
@@ -167,7 +185,29 @@ async function main() {
   await ev('window.vigil.cfg.set({device_id:"fixture",src:"pc"})');
   await win.loadFile(path.join(client,'src/index.html'));
   await until('document.querySelector("#msgs")?.textContent.includes("未送达请求恢复")');
-  await ev('document.querySelector("#clearBtn").click();document.querySelector(".vigil-confirm [data-choice=ok]").click()');
+  await ev(`localStorage.setItem('vigil.display.v1:'+JSON.stringify(['http://fixture','fixture','brain','wechat','main']),JSON.stringify([{request_id:'wechat_keep'}]));localStorage.setItem('vigil.display.v1:'+JSON.stringify(['http://fixture','other-account','brain','pc','other-session']),JSON.stringify([{request_id:'identity_keep'}]));localStorage.setItem('vigil.display.v1:'+JSON.stringify(['http://fixture','fixture','brain','pc','other-session']),JSON.stringify([{request_id:'other_conversation_keep'}]))`);
+  await ev('document.querySelector("#settingsOpen").click()');
+  await until('document.querySelector("#settingsBackChat")');
+  await ev('document.querySelectorAll(".settings-tile")[3].click()');
+  await until('document.querySelector("#cfgSubnav [data-k=danger]")');
+  await ev('document.querySelector("#cfgSubnav [data-k=danger]").click()');
+  await until('Array.from(document.querySelectorAll("[data-p]")).some(b=>b.dataset.p==="/api/history/clear")');
+  await ev('Array.from(document.querySelectorAll("[data-p]")).find(b=>b.dataset.p==="/api/history/clear").click()');
+  await until('document.querySelector(".vigil-confirm [data-choice=ok]")');
+  await ev('document.querySelector(".vigil-confirm [data-choice=ok]").click()');
+  await until('document.querySelector("#toast")?.textContent.includes("清空聊天历史：已执行")');
+  assert.equal(historyClearCalls.length,1);
+  assert.equal(historyClearCalls[0].src,'pc');
+  assert.equal(conversations.length,0);
+  const localDisplayState = await ev(`(()=>{
+    const keys=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:'));
+    const scoped=keys.map(k=>{try{return JSON.parse(k.slice('vigil.display.v1:'.length).replace(/:cleared$/,''))}catch(_){return null}}).filter(s=>Array.isArray(s));
+    const currentSessions=scoped.filter(s=>s[0]==='http://fixture'&&s[1]==='fixture'&&s[2]==='brain'&&s[3]==='pc').map(s=>s[4]).sort();
+    return {currentSessions,otherChannel:scoped.some(s=>s[3]==='wechat'),otherIdentity:scoped.some(s=>s[1]==='other-account')};
+  })()`);
+  assert.deepEqual(localDisplayState,{currentSessions:['other-session'],otherChannel:true,otherIdentity:true});
+  await ev('document.querySelector("#gnav [data-page=chat]").click()');
+  await until('document.querySelector("#msgs")');
   await until('document.querySelector("#msgs").textContent.trim()===""');
   await win.loadFile(path.join(client,'src/index.html'));
   await until('document.querySelector("#ta")');
@@ -175,7 +215,7 @@ async function main() {
   assert.equal(await ev('document.querySelector("#msgs").textContent.includes("未送达请求恢复")'),false);
   assert.equal(created,5);
   ok('Explicit clear removes persisted display records without replay');
-  fs.writeFileSync(path.join(tmp,'results.json'),JSON.stringify({results,created,streams,realModelCalls:0},null,2));
+  fs.writeFileSync(path.join(tmp,'results.json'),JSON.stringify({results,created,streams,historyClearCalls,realModelCalls:0},null,2));
   console.log('Evidence: ' + path.join(tmp,'results.json'));
   win.destroy(); app.exit(0);
 }

@@ -63,6 +63,23 @@
     try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; }
     catch (_) { return []; }
   }
+  function clearLocalDisplayRecordsForChannel(src = state.src || 'pc', sessionIds = []) {
+    const cfg = state.cfg || {};
+    const identity = [state.base || cfg.base || '', cfg.device_id || '', cfg.token_kind || '', src || 'pc'];
+    const sessions = new Set((Array.isArray(sessionIds) ? sessionIds : []).map(String));
+    const prefix = 'vigil.display.v1:';
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const scopeKey = key.endsWith(':cleared') ? key.slice(0, -8) : key;
+      try {
+        const scope = JSON.parse(scopeKey.slice(prefix.length));
+        if (Array.isArray(scope) && identity.every((part, index) => scope[index] === part) && sessions.has(String(scope[4] || ''))) keys.push(key);
+      } catch (_) { /* Ignore malformed or unrelated local records. */ }
+    }
+    keys.forEach((key) => localStorage.removeItem(key));
+  }
   function rememberTurn(rid, patch, scope = recordKey()) {
     if (!rid) return;
     try {
@@ -3707,6 +3724,7 @@
         if (!await confirmDialog(b.dataset.t + '？')) return;
         const body = b.dataset.p.includes('history') ? { src: state.src } : {};
         const r = pick(await post(b.dataset.p, body));
+        if (r.ok && b.dataset.p === '/api/history/clear') clearLocalDisplayRecordsForChannel(state.src, r.cleared_sessions);
         toast(r.ok ? b.dataset.t + '：已执行' : '失败：' + (r._err || ''));
       }));
     }

@@ -54,6 +54,23 @@ class LegacyConversationTitleTests(unittest.TestCase):
                 self.assertIsNotNone(conversations.get("owner", "pc", "other-persona", b["id"]))
                 self.assertIsNone(conversations.delete("owner", "pc", "default", "not-an-id"))
 
+    def test_clear_for_removes_only_the_requested_identity_channel_persona(self):
+        with tempfile.TemporaryDirectory(prefix="vigil-clear-conversations-") as temp:
+            with patch.object(paths, "DATA_DIR", temp):
+                a = conversations.create("owner", "pc", "default")
+                b = conversations.create("owner", "pc", "default")
+                other_channel = conversations.create("owner", "wechat", "default")
+                other_persona = conversations.create("owner", "pc", "other-persona")
+                other_owner = conversations.create("other-owner", "pc", "default")
+
+                cleared = conversations.clear_for("owner", "pc", "default")
+
+                self.assertEqual({item["id"] for item in cleared}, {a["id"], b["id"]})
+                self.assertEqual(conversations.list_for("owner", "pc", "default"), [])
+                self.assertIsNotNone(conversations.get("owner", "wechat", "default", other_channel["id"]))
+                self.assertIsNotNone(conversations.get("owner", "pc", "other-persona", other_persona["id"]))
+                self.assertIsNotNone(conversations.get("other-owner", "pc", "default", other_owner["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()

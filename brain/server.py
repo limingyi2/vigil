@@ -299,6 +299,35 @@ def _persona_for_src(src, default_key=""):
         return str(default_key or "")
 
 
+def _clear_brain_history_scope(brain, src, conversations, conversation_id=None):
+    """Clear legacy and indexed transcript files for one scoped history request."""
+    with _chat_lock():
+        previous_src, previous_conversation = brain._cur_src, brain._cur_conversation
+        try:
+            if conversation_id:
+                item = next((item for item in conversations if item.get('id') == conversation_id), None)
+                if not item:
+                    raise ValueError('会话不存在')
+                targets = [None if item.get('legacy') else conversation_id]
+            else:
+                # Current-channel clear includes the historical transcript and every
+                # indexed desktop conversation; channels/personas outside this list are untouched.
+                targets = [None] + [item['id'] for item in conversations if not item.get('legacy')]
+            # Resolve every path before removing any file; a broken persona/channel
+            # partition must fail closed rather than falling back to another log.
+            paths = list(dict.fromkeys(brain._log_for(src, cid) for cid in targets))
+            for path in paths:
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+            for cid in targets:
+                brain.use_src(src, cid)
+                brain.clear_src_history(src)
+        finally:
+            brain.use_src(previous_src, previous_conversation)
+
+
 @contextlib.contextmanager
 def _chat_lock(timeout=CHAT_LOCK_WAIT):
     """有上限地拿聊天锁（超时抛 _Busy，不无限期阻塞）。"""
@@ -2633,42 +2662,59 @@ def start_remote_api(brain):
                         return
                     self._json(200, {"ok": True})
                 elif path == "/api/history/clear":
-                    # 存档只有云上这一份。早先桌宠直接调本地 Brain.clear_history()
-                    # 删的是本机文件，云上那份一动不动，看着清了其实没清。
-                    # 分渠道后只清请求里指定的那份（不传=App），清微信的不影响手机。
+                    # Clear all history in the selected channel/persona scope. PC
+                    # transcripts are split per conversation, so clearing only the
+                    # legacy shared file leaves both session rows and chat logs behind.
                     _csrc = _norm_src(body.get("src") if body else None)
                     _cid = body.get('conversation_id') if isinstance(body, dict) else None
-                    _brain_cid = None
+                    _conv_rows = []
+                    _conv_owner = None
+                    _persona = None
                     if _cid:
                         _conv, _, _conv_src, _conv_persona = self._conversation_context(_csrc, _cid)
                         if _csrc != 'pc' or not _conv:
                             self._json(404, {"ok": False, "err": "会话不存在"})
                             return
-                        _brain_cid = None if _conv['legacy'] else _cid
+                        _conv_rows = [_conv]
+                    elif _csrc == 'pc':
+                        _, _conv_owner, _, _persona = self._conversation_context(_csrc)
+                        import conversations as _conversations
+                        _conv_rows = _conversations.list_for(_conv_owner, _csrc, str(_persona))
+
                     import display_turns, creator_jobs, agent_runs
-                    display_turns.clear(self._display_owner(body))
-                    creator_jobs.hide(self._display_owner(body))
-                    agent_runs.hide(self._display_owner(body))
-                    ok = False
+                    _owners = set() if _cid else {self._display_owner({'src': _csrc})}
+                    for _item in _conv_rows:
+                        _owners.add(self._display_owner({'src': _csrc, 'conversation_id': _item['id']}))
+
+                    _bl = _LOCAL.get("brain")
+                    if _bl is None:
+                        self._json(503, {"ok": False, "err": "Brain 尚未就绪，历史未清理"})
+                        return
                     try:
-                        if _cid:
-                            _LOCAL['brain'].use_src(_csrc, _brain_cid)
-                            ok = bool(_LOCAL['brain'].clear_src_history(_csrc))
-                        else:
-                            from brain import Brain
-                            ok = bool(Brain.clear_history(_csrc))
+                        _clear_brain_history_scope(_bl, _csrc, _conv_rows, _cid)
+                    except _Busy:
+                        self._json(200, {"ok": False, "err": "她正忙着，聊天历史未清理"})
+                        return
                     except Exception as e:
                         _log_history_error(_csrc, e, "clear_disk")
+                        self._json(500, {"ok": False, "err": "聊天历史清理失败"})
+                        return
+
                     try:
-                        with _chat_lock():
-                            _bl = _LOCAL.get("brain")
-                            if _bl is not None and not _cid:
-                                _bl.clear_src_history(_csrc)
-                    except _Busy:
-                        pass
+                        for _owner in _owners:
+                            display_turns.clear(_owner)
+                            creator_jobs.hide(_owner)
+                            agent_runs.hide(_owner)
+                        if not _cid and _csrc == 'pc':
+                            import conversations as _conversations
+                            _conversations.clear_for(_conv_owner, _csrc, str(_persona))
                     except Exception as e:
-                        _log_history_error(_csrc, e, "clear_memory")
-                    self._json(200, {"ok": ok})
+                        _log_history_error(_csrc, e, "clear_records")
+                        self._json(500, {"ok": False, "err": "服务端历史索引清理失败"})
+                        return
+                    _cleared_sessions = ([ _cid ] if _cid else ['main', 'welcome'] +
+                                         [item['id'] for item in _conv_rows])
+                    self._json(200, {"ok": True, "cleared_sessions": _cleared_sessions})
                 elif path == "/api/reload_persona":
                     try:
                         with _chat_lock():

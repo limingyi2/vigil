@@ -118,3 +118,14 @@ def delete(owner, src, persona, cid):
         db.execute("DELETE FROM conversations WHERE owner=? AND src=? AND persona=? AND id=?",
                    (owner, src, persona, cid))
         return item
+
+
+def clear_for(owner, src, persona):
+    """Remove all conversation index rows for one identity/channel/persona scope."""
+    with _LOCK, _db() as db:
+        _init(db)
+        rows = db.execute("SELECT id,title,created,updated,legacy FROM conversations WHERE owner=? AND src=? AND persona=?",
+                          (owner, src, persona)).fetchall()
+        db.execute("DELETE FROM conversations WHERE owner=? AND src=? AND persona=?",
+                   (owner, src, persona))
+        return [_row(row) for row in rows]
