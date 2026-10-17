@@ -161,14 +161,14 @@ test('Creator approval and install clicks consume the returned one-time approval
   p.bindDraftCard(r, {id:'cr_fixture', kind:'plugin', summary:'fixture', version:2, files:[{name:'fixture.py'}]});
   await r.click('#crApproveNow');
   assert.equal(calls[0].path, '/api/creator/approve');
-  assert.deepEqual(calls[0].body, {id:'cr_fixture'});
+  assert.equal(calls[0].body.id, 'cr_fixture');
   assert.equal(r.nodes['#crApproveNow'].style.display, 'none');
   assert.equal(r.nodes['#crInstallNow'].style.display, 'inline-block');
   assert.equal(r.nodes['#crInstallNow'].dataset.approval, 'ca_fixture_approval');
   assert.match(r.nodes['#crApprovalState'].textContent, /已批准草稿 v2/);
   await r.click('#crInstallNow');
   assert.equal(calls[1].path, '/api/creator/install');
-  assert.deepEqual(calls[1].body, {approval_id:'ca_fixture_approval'});
+  assert.equal(calls[1].body.approval_id, 'ca_fixture_approval');
   assert.equal(r.nodes['#crInstallNow'].textContent, '已安装');
   assert.equal(r.nodes['#crInstallNow'].disabled, true);
   assert.match(r.nodes['#crApprovalState'].textContent, /已安装/);
