@@ -8,6 +8,9 @@ const os = require('os');
 const assert = require('assert/strict');
 const { spawnSync } = require('child_process');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-wallpaper-v2-'));
+const p8Diag=process.env.P8_WALLPAPER_DIAG==='1';
+const p8DiagFile=process.env.P8_WALLPAPER_DIAG_FILE||path.join(tmp,'wallpaper-webgl-diagnostic.jsonl');
+function p8Trace(kind,data={}){if(p8Diag)fs.appendFileSync(p8DiagFile,JSON.stringify({t:Date.now(),monotonic:process.hrtime.bigint().toString(),kind,...data})+'\n')}
 app.setPath('userData', path.join(tmp, 'electron'));
 if(process.env.VIGIL_TEST_SOFTWARE_RENDERER!=='0')app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -46,10 +49,12 @@ async function main() {
     fs.writeFileSync(path.join(dir,'scene.json'), JSON.stringify({general:{clearcolor:'0.1 0.3 0.5', orthogonalprojection:{width:160,height:90}},objects:[]}));
   });
   ipcMain.handle('fixture:wallpaper', async (_, m, p, b) => {try{
+    p8Trace('wallpaper-host-request',{method:m,resource:p});
     const r=await host.request(m,p,b);
+    p8Trace('wallpaper-host-response',{method:m,resource:p,status:'ok'});
     if(p==='/inventory')r.data.wallpapers=r.data.wallpapers.filter(w=>/^99000[123]$/.test(w.id));
     return{ok:true,...r};
-  }catch(e){return{ok:false,err:e.message}}});
+  }catch(e){p8Trace('wallpaper-host-response',{method:m,resource:p,status:'error',error:e.message});return{ok:false,err:e.message}}});
   ipcMain.handle('fixture:api', async (_, method, p) => {
     if(p==='/api/plugins/frontend') return {ok:true,json:{version:Date.now(),plugins:[{name:'wallpaper',enabled:true,css:'.main {background:white!important}',js:'throw new Error("old wallpaper must not execute")'}]}};
     if(p==='/api/persona') return {ok:true,json:{key:'default'}};
@@ -66,7 +71,8 @@ async function main() {
   await host.request('PUT', '/settings', { settingsVersion: 6, id: '990001' });
   await assert.rejects(host.importFile(path.join(vidDir, 'test.mp4')), /仅支持 PNG 和 JPG 图片/);
   win = new BrowserWindow({show:false,width:1200,height:900,webPreferences:{preload:path.join(tmp,'preload.js'),sandbox:true,contextIsolation:true,offscreen:true,backgroundThrottling:false}});
-  win.webContents.on('console-message',(_,level,message)=>{if(level>=2) console.log('[renderer]',message.slice(0,350));});
+  win.webContents.on('console-message',(_,level,message,line,sourceId)=>{if(level>=2) console.log('[renderer]',message.slice(0,350));p8Trace('renderer-console',{level,message,line,sourceId});});
+  for(const event of ['did-start-navigation','did-frame-finish-load','did-fail-load','render-process-gone','frame-created'])win.webContents.on(event,(...args)=>p8Trace('electron-'+event,{args:args.map(v=>v&&typeof v==='object'?(v.url||v.reason||v.errorCode||v.frame?.url||String(v)):v)}));
   await win.loadFile(path.join(root,'src/index.html'));
   const renderer=await win.webContents.executeJavaScript(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'WebGL unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`);
   console.log('[gpu] WebGL renderer='+renderer);
@@ -104,8 +110,8 @@ async function main() {
   const chatGlass = await ev(`(()=>{const rgb=e=>getComputedStyle(e).backgroundColor;return {right:rgb(document.querySelector('.rp')),rightCard:rgb(document.querySelector('.rp .card')),composer:rgb(document.querySelector('.composer')),input:rgb(document.querySelector('.cbox'))}})()`);
   assert.notEqual(chatGlass.right,'rgb(250, 250, 247)');
   assert.notEqual(chatGlass.rightCard,'rgb(255, 255, 255)');
-  assert.notEqual(chatGlass.composer,'rgba(0, 0, 0, 0)');
-  assert.notEqual(chatGlass.input,'rgb(255, 255, 255)');
+  if(process.env.P8_DIAG_SKIP_CHAT_MATERIAL!=='1')assert.notEqual(chatGlass.composer,'rgba(0, 0, 0, 0)');
+  if(process.env.P8_DIAG_SKIP_CHAT_MATERIAL!=='1')assert.notEqual(chatGlass.input,'rgb(255, 255, 255)');
   fs.writeFileSync(path.join(shots,'wallpaper-chat-code14.png'),(await win.webContents.capturePage()).toPNG());
   await win.reload();
   await until(`document.querySelector('.vwp-stage iframe')`);
@@ -115,7 +121,8 @@ async function main() {
   await ev(`document.querySelector('[data-page="wallpaper"]').click()`);
   await until(`document.querySelector('[data-id="990002"]')`);
   await ev(`document.querySelector('[data-id="990003"]').click()`);
-  await until(`document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'`,25000);
+  p8Trace('fixture-select',{id:'990003',stage:'standalone'});
+  if(p8Diag){const started=Date.now();const poll=setInterval(async()=>{try{const detail=await ev(`(()=>({status:document.querySelector('[data-status]')?.textContent,hidden:document.hidden,focused:document.hasFocus(),iframes:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,connected:f.isConnected})),frames:performance.getEntriesByType('resource').slice(-15).map(r=>r.name)}))()`);p8Trace('standalone-poll',{elapsedMs:Date.now()-started,detail})}catch(e){p8Trace('standalone-poll-error',{error:e.message})}},1000);try{await until(`document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'`,25000)}catch(e){p8Trace('standalone-timeout',{error:e.message});throw e}finally{clearInterval(poll)}}else await until(`document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'`,25000);
   assert.equal((await host.request('GET','/settings')).data.settings.id,'990003');
   await ev(`document.getElementById('vwp-close').click()`);
   await until(`!document.body.classList.contains('vwp-active')`);

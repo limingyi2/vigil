@@ -9,6 +9,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-p1-electron-'));
 app.setPath('userData', path.join(tmp, 'userdata'));
 let win, mode = 'length', created = 0, streams = 0, offline = false;
 const jobs = new Map(), requests = [], results = [];
+const conversations = [];
+let conversationCounter = 0;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ev = source => win.webContents.executeJavaScript(source, true);
 async function until(source) {
@@ -22,6 +24,12 @@ function response(method, raw, body) {
   requests.push({method, path:p, body});
   let data = {};
   if (offline && ['/api/history','/api/creator/jobs'].includes(p)) return {ok:false,status:0,err:'fixture offline'};
+  if (p === '/api/conversations' && method === 'GET') data = {ok:true,items:conversations};
+  if (p === '/api/conversations' && method === 'POST') {
+    const suffix=(++conversationCounter).toString(16).padStart(12,'0');
+    const item={id:`00000000-0000-4000-8000-${suffix}`,title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000};
+    conversations.unshift(item);data={ok:true,item};
+  }
   if (p === '/api/persona') data = {name:'Fixture', key:'default', templates:[]};
   if (p === '/api/history') data = {items:[]};
   if (p === '/api/history/clear') jobs.clear();
@@ -53,7 +61,7 @@ async function main() {
     streams++;
     if (!p.startsWith('/api/creator/jobs/')) {
       event.sender.send('api:stream:event',{type:'text',text:'部分回答'});
-      event.sender.send('api:stream:event',{type:'error',msg:'模型连接中断或超时'});
+      event.sender.send('api:stream:event',{type:'error',msg:'连接中断，结果不完整'});
       return {ok:false};
     }
     const job = jobs.get(p.split('/')[4]);
@@ -77,6 +85,7 @@ async function main() {
   });
   let cfg = {wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'};
   for (const [name,value] of Object.entries({
+    'app:instance-id':'p1-test-process',
     'app:version':'P1 test','plugins:load':{ok:true},'local:defaults':{roots:[],commands:[],danger:[]},
     'local:caps':[],'sidecar:status':{status:'stopped'},'token:get':'已保存','auto:connect':{ok:false},
     'device:whoami':{device_id:'fixture',base:'http://fixture',token_kind:'brain'},
@@ -114,7 +123,7 @@ async function main() {
   ok('Refresh restores Creator request, partial output and safe error without generation');
   await ev('document.querySelector("#creatorBtn").click();document.querySelector("#creatorBtn").click()');
   await submit('普通聊天错误恢复');
-  await until('document.querySelector("#msgs").textContent.includes("模型连接中断或超时")');
+  await until('document.querySelector("#msgs").textContent.includes("连接中断，结果不完整")');
   assert.ok(await ev('document.querySelector("#msgs").textContent.includes("部分回答")'));
   const beforeRefresh = streams;
   await win.loadFile(path.join(client,'src/index.html'));
@@ -158,7 +167,7 @@ async function main() {
   await ev('window.vigil.cfg.set({device_id:"fixture",src:"pc"})');
   await win.loadFile(path.join(client,'src/index.html'));
   await until('document.querySelector("#msgs")?.textContent.includes("未送达请求恢复")');
-  await ev('window.confirm=()=>true;document.querySelector("#clearBtn").click()');
+  await ev('document.querySelector("#clearBtn").click();document.querySelector(".vigil-confirm [data-choice=ok]").click()');
   await until('document.querySelector("#msgs").textContent.trim()===""');
   await win.loadFile(path.join(client,'src/index.html'));
   await until('document.querySelector("#ta")');

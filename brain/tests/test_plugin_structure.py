@@ -27,7 +27,7 @@ class PluginStructureTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.name, "creator_example")
             self.assertEqual(loaded.hook("prompt")(None),
-                             "Creator example plugin is loaded.")
+                             "你有一个 Creator 示例插件状态工具，可在用户询问示例插件是否生效时调用。")
 
     def test_legacy_name_only_plugin_remains_compatible(self):
         with tempfile.TemporaryDirectory(prefix="vigil-plugin-structure-") as tmp:

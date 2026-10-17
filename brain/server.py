@@ -94,7 +94,6 @@ def build_local_brain(verbose=True):
     只在 --standalone 时用（云端没有桌面，开不了桌宠）。两台进程各养一个"她"
     会互相覆盖记忆，所以同一时间只允许一个进程养她。
     """
-    from memory_store_v2 import get_default_store
     from brain import Brain
 
     # 插件必须在 Brain() **之前**装载：人设里的"工具"清单在构造时拼进
@@ -102,16 +101,10 @@ def build_local_brain(verbose=True):
     # 她就少了新插件的工具说明 —— 提示词不会自己补，得重跑 reload_persona
     load_plugins(verbose=verbose)
 
-    # self.mem 只是**兜底**（brain._mem_for 异常时才用），但它得指向一份
-    # 分区过的库。传空会让 get_default_store() 落回无分区名的公共库
-    # memory.json —— 那份装着旧人设的旧账，于是换人设后她照样带着上一段的
-    # 记忆开口（分区建了、文件也有，只有内容是错的）。
-    # 走默认人设 + app 渠道：老数据在那儿，不用搬。
-    try:
-        from persona_store import key_from_config
-        mem = get_default_store(key_from_config(api_config), "app")
-    except Exception:
-        mem = get_default_store()
+    # Memory is resolved from the request's (persona, channel) pair inside
+    # Brain. Do not pre-open a shared default store here: if partition lookup
+    # later fails, it could leak another channel's memory into the prompt.
+    mem = None
     mode = api_config.get("chat_mode", "api")
     b = Brain(mem, api_config, mode=mode)
     if verbose:
@@ -271,6 +264,24 @@ def _norm_src(src):
     return s if s in allowed else "wechat"
 
 
+def _log_history_error(src, exc, action):
+    """Log history failures without printing exception text or chat contents."""
+    channel = _norm_src(src)
+    try:
+        brain = _LOCAL.get("brain")
+        persona = brain._persona_key_for(channel) if brain is not None else "default"
+        path = brain._log_for(channel) if brain is not None else "<unavailable>"
+    except Exception:
+        persona, path = "default", "<unavailable>"
+    import re
+    safe_action = re.sub(r"[^A-Za-z0-9_.-]", "_", str(action))[:48] or "unknown"
+    safe_persona = re.sub(r"[^A-Za-z0-9_.-]", "_", str(persona or "default"))[:64]
+    safe_path = str(path or "<unavailable>").replace("\r", "_").replace("\n", "_")[:512]
+    print("[history] action=%s src=%s persona=%s path=%s error_code=%s" %
+          (safe_action, channel, safe_persona, safe_path,
+           type(exc).__name__), flush=True)
+
+
 def _persona_for_src(src, default_key=""):
     """这个渠道该用哪个人设（读 config.json 的 persona_by_src）。
 
@@ -419,7 +430,8 @@ def _restore_hist(brain, text, ans, mode=None):
         print("[大脑] 历史修正失败（不影响回复）：%s" % str(e)[:60], flush=True)
 
 
-def _chat_with_tools(text, img_path, trace_out=None, src=None):
+def _chat_with_tools(text, img_path, trace_out=None, src=None,
+                    conversation_id=None):
     """聊一轮。工具调用走大脑**内部的原生 function calling 循环**（见
     brain.draft_native）：模型在响应的 tool_calls 字段请求工具，结果在同一
     条 messages 链上以 role:tool 回灌，直到她给出最终回复，不靠正文标签。
@@ -433,7 +445,11 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None):
     def _once(t, no_tools=False):
         with _chat_lock():
             b = _LOCAL["brain"]
+            b.use_src(src or 'wechat', conversation_id)
+            if len(b.hist) <= 1:
+                b.seed_history(src=src or 'wechat', conversation_id=conversation_id)
             ans, mode = b.chat(t, img=img_path, log=False, src=src,
+                               conversation_id=conversation_id,
                                no_tools=no_tools)
             # trace 字段长在共享的大脑对象上，得趁锁还在手里抄，出了锁并发
             # 那一轮会把它覆盖掉。
@@ -691,15 +707,24 @@ def _late_to_history(src, display, reply):
     她事后翻聊天记录能看到自己真正回了什么，微信端却不会冒出一条迟到的
     复读。挂到 ws_forward.HUB.on_late_result（run_server 装配完大脑后接上）。"""
     try:
-        _LOCAL["brain"].use_src(_norm_src(src))
-        _LOCAL["brain"]._log_turn(display, reply, img=None)
+        b = _LOCAL["brain"]
+        channel = _norm_src(src)
+        b._log_turn(display, reply, img=None, src=channel)
         print("[转发] 迟到答案已入历史（src=%s）" % src, flush=True)
     except Exception as e:
-        print("[转发] 迟到答案写历史失败：%s" % e, flush=True)
+        channel = _norm_src(src)
+        try:
+            b = _LOCAL.get("brain")
+            persona = b._persona_key_for(channel) if b else "default"
+            path = b._log_for(channel) if b else "<unavailable>"
+        except Exception:
+            persona, path = "default", "<unavailable>"
+        print("[history] src=%s persona=%s path=%s error_code=%s" %
+              (channel, persona, path, type(e).__name__), flush=True)
 
 
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
-                   dry_run=False, attachments=None):
+                   dry_run=False, attachments=None, conversation_id=None):
     """让她回一句话。
 
     img_b64：这一轮带的图片（base64），交给视觉模型让她"看见"。
@@ -763,13 +788,13 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                     except Exception:
                         pass
                 except Exception as e:
-                    print(f"[大脑] 图片存档失败（不影响回复）：{e}", flush=True)
+                    _log_history_error(src, e, "image_write")
             # 他要自拍：不指望模型"只打字不发图"，直接按她此刻的时间和地点
             # 现场生成一张，正文用第一人称短句
             try:
                 _b = _LOCAL["brain"]
                 if src:
-                    _b.use_src(src)     # 存档走哪份文件，取决于这轮是哪个渠道
+                    _b.use_src(src, conversation_id)     # 存档按渠道及会话隔离
                 if not img_b64 and _looks_like_selfie(text):
                     sp, place = _selfie_prompt()
                     name = _cloud_gen_selfie(sp, negative_prompt=GEN_NEGATIVE,
@@ -778,16 +803,17 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                         ans = _selfie_caption(place) + "\n[img:" + name + "]"
                         if not dry_run:          # 探测轮不写存档（见 ask_with_retry）
                             try:
-                                _b._log_turn(orig_text, ans, img=None)
+                                _b._log_turn(orig_text, ans, img=None, src=_norm_src(src),
+                                             conversation_id=conversation_id)
                             except Exception as e:
-                                print(f"[大脑] 自拍存档失败（不影响回复）：{e}",
-                                      flush=True)
+                                _log_history_error(src, e, "selfie_write")
                         return ans, "本地自拍", ""
             except Exception as e:
                 print(f"[大脑] 自拍生成失败，回退正常对话：{e}", flush=True)
             # 锁在 _chat_with_tools 的每轮 chat 里拿（带超时），别抱着锁等网络
             ans, mode = _chat_with_tools(text, img_path or None,
-                                         trace_out=trace_out, src=src)
+                                         trace_out=trace_out, src=src,
+                                         conversation_id=conversation_id)
             if getattr(_LOCAL.get('brain'), 'last_err', ''):
                 return ans, mode, '模型请求未完成，未自动重试'
             # 剥掉学出来的「说」标记；[gen:xxx] 换成 [img:名字]
@@ -813,9 +839,11 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             if not dry_run:
                 try:
                     _LOCAL["brain"]._log_turn(orig_text, ans, img=img_path or None,
-                                               attachments=attachments)
+                                               attachments=attachments,
+                                               src=_norm_src(src),
+                                               conversation_id=conversation_id)
                 except Exception as e:
-                    print(f"[大脑] 存档失败（不影响回复）：{e}", flush=True)
+                    _log_history_error(src, e, "write")
             return ans, mode, ""
         except _Busy:
             # 排队超时：明确说出来，别让调用方无限期等
@@ -931,6 +959,8 @@ def _cloud_history(limit=60, src="wechat"):
     #               连接直接断掉，**客户端收不到任何响应**（只有一个 traceback）
     #   limit=0   → items[-0:] 等于 items[0:]，**把整个存档全返回**
     #   负数      → 从开头切，同样不是调用方想要的
+    if limit is None:
+        return items
     try:
         n = int(limit)
     except (TypeError, ValueError):
@@ -1419,9 +1449,135 @@ def start_remote_api(brain):
             display_turns.configure((API_CFG or {}).get('display_records'))
             body = body or {}
             src = body.get('src') or _query_param(self.path, 'src')
-            src = _norm_src(src if src else ('pc' if self.path.startswith('/api/creator') else None))
-            session = body.get('session_id') or _query_param(self.path, 'session_id') or 'main'
+            src = _norm_src(src if src else ('pc' if self.path.startswith(('/api/creator', '/api/agent/')) else None))
+            session = (body.get('conversation_id') or body.get('session_id')
+                       or _query_param(self.path, 'conversation_id')
+                       or _query_param(self.path, 'session_id') or 'main')
             return display_turns.owner(getattr(self, '_who', ('', '')), src, session)
+
+        def _conversation_context(self, src='pc', cid=None):
+            """Resolve a desktop conversation only within the current identity/persona."""
+            import conversations
+            src = _norm_src(src)
+            persona = _persona_for_src(src)
+            import display_turns
+            owner = display_turns.owner(getattr(self, '_who', ('', '')), src,
+                                        'conversations:' + str(persona))
+            if not conversations.valid_id(cid):
+                return None, owner, src, persona
+            item = conversations.get(owner, src, str(persona), cid)
+            return item, owner, src, persona
+
+        def _new_agent_run(self, body):
+            import agent_runs
+            import copy
+            src = _norm_src(body.get('src') or _query_param(self.path, 'src') or 'pc')
+            body = dict(body, src=src)
+            if not isinstance(body.get('intent', body.get('text')), str):
+                raise ValueError('任务内容无效')
+            messages = None
+            # Snapshot the existing persona/context under its existing lock, then
+            # release it: the run never mutates shared Brain history/last_* fields.
+            if brain is not None:
+                with _chat_lock():
+                    brain.use_src(src, body.get('brain_conversation_id'))
+                    text = body.get('intent', body.get('text', ''))
+                    parts, _ = brain._build_system_parts(text, '')
+                    messages = [{'role': 'system', 'content': ''.join(parts)}]
+                    if len(brain.hist) <= 1:
+                        brain.seed_history(src=src, conversation_id=body.get('brain_conversation_id'))
+                    messages.extend(copy.deepcopy(brain.recent_hist()))
+                    # Completed runs can inform the next request in this owner/session.
+                    # Partial/error/tool transcripts stay outside model history.
+                    for previous in reversed(agent_runs.listing(self._display_owner(body))[:8]):
+                        if previous['status'] == 'succeeded' and previous.get('result'):
+                            messages.extend([{'role': 'user', 'content': previous['intent']},
+                                             {'role': 'assistant', 'content': previous['result']}])
+                    messages.append({'role': 'user', 'content': brain._user_msg_with_rules(text)})
+            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body),
+                                     brain=brain, messages=messages)
+
+        def _agent_api(self, method, path, body=None):
+            if path != '/api/agent/runs' and not path.startswith('/api/agent/runs/'):
+                return False
+            if not self._is_admin():
+                self._json(403, {'ok': False, 'err': '需要管理员权限'})
+                return True
+            import agent_runs
+            if body is not None and not isinstance(body, dict):
+                self._json(400, {'ok': False, 'err': '请求必须为 JSON 对象'})
+                return True
+            owner = self._display_owner(body)
+            parts = path.strip('/').split('/')
+            streaming = False
+            try:
+                if path == '/api/agent/runs' and method == 'POST':
+                    self._json(200, {'ok': True, **self._new_agent_run(body)})
+                elif path == '/api/agent/runs' and method == 'GET':
+                    self._json(200, {'ok': True, 'items': agent_runs.listing(owner)})
+                elif len(parts) in (4, 5):
+                    rid = parts[3]
+                    item = agent_runs.snapshot(rid, owner)
+                    if not item:
+                        self._json(404, {'ok': False, 'err': '任务不存在'})
+                    elif method == 'GET' and len(parts) == 4:
+                        self._json(200, {'ok': True, **item})
+                    elif method == 'POST' and parts[4:] == ['cancel']:
+                        self._json(200, {'ok': True, **agent_runs.cancel(rid, owner)})
+                    elif method == 'GET' and parts[4:] == ['events']:
+                        after = int(_query_param(self.path, 'after') or 0)
+                        if after < 0 or after > item['event_cursor']:
+                            raise ValueError('游标无效')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                        self.send_header('Cache-Control', 'no-cache')
+                        self.send_header('Connection', 'close')
+                        self.end_headers()
+                        self.close_connection = True
+                        streaming = True
+                        for event in agent_runs.stream(rid, owner, after):
+                            self.wfile.write(('data: ' + json.dumps(event, ensure_ascii=False) + '\n\n').encode())
+                            self.wfile.flush()
+                    else:
+                        self._json(405, {'ok': False, 'err': '操作不支持'})
+                else:
+                    self._json(404, {'ok': False, 'err': '接口不存在'})
+            except ValueError:
+                self._json(400, {'ok': False, 'err': '任务参数、预算或 request_id 无效'})
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # subscriptions never own the executor
+            except Exception:
+                if not streaming:
+                    self._json(500, {'ok': False, 'err': '执行服务暂不可用，请查询原 request_id；未自动重发'})
+            return True
+
+        def _agent_chat_events(self, item, owner):
+            """Project read-only run events onto the existing Electron SSE shape."""
+            import agent_runs
+            rid, cursor = item['run_id'], 0
+            yield {'type': 'agent_run', 'run_id': rid, 'request_id': item['request_id']}
+            while True:
+                for event in agent_runs.stream(rid, owner, cursor):
+                    cursor = event['seq']
+                    kind, payload = event['type'], event['payload']
+                    if kind in ('text_delta', 'think_delta'):
+                        yield {'type': 'text' if kind == 'text_delta' else 'think', 'text': payload['text'],
+                               'run_id': rid, 'request_id': item['request_id']}
+                    elif kind == 'step_started':
+                        yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid}
+                    elif kind == 'snapshot':
+                        if payload['status'] not in agent_runs.STOPPED:
+                            # A buffer gap must replace the preview, never append it twice.
+                            yield {'type': 'run_snapshot', 'text': payload['content'], 'run_id': rid}
+                current = agent_runs.snapshot(rid, owner)
+                if current['status'] in agent_runs.STOPPED:
+                    if current['status'] == 'succeeded':
+                        yield {'type': 'done', 'text': current['content'], 'run_id': rid}
+                    else:
+                        err = current['error'] or {}
+                        yield {'type': 'error', 'text': current['content'], 'class': err.get('reason'),
+                               'msg': err.get('message'), 'status': current['status'], 'run_id': rid}
+                    return
 
         def _creator_admin(self, method, path, body):
             """Creator Mode 草稿面：生成 / 修改 / 验证 / 审批安装 / 查看 / 删除。
@@ -1455,13 +1611,24 @@ def start_remote_api(brain):
                 from urllib.parse import parse_qs, urlparse
                 query = parse_qs(urlparse(self.path).query)
                 owner = self._display_owner(body)
+                conversation_id = (body or {}).get('conversation_id') or (query.get('conversation_id') or [None])[0]
                 parts = path.strip('/').split('/')
                 try:
                     if method == 'POST' and path == '/api/creator/jobs':
+                        if (body or {}).get('conversation_id'):
+                            conv, _, src, _ = self._conversation_context('pc', body.get('conversation_id'))
+                            if src != 'pc' or not conv:
+                                self._json(404, {'ok': False, 'err': '会话不存在'})
+                                return True
                         item = jobs.create(body, API_CFG, owner)
                         self._json(200, {'ok': True, **item})
                     elif method == 'GET' and path == '/api/creator/jobs':
-                        self._json(200, {'ok': True, 'items': jobs.listing(owner)})
+                        if conversation_id:
+                            conv, _, src, _ = self._conversation_context('pc', conversation_id)
+                            if src != 'pc' or not conv:
+                                self._json(404, {'ok': False, 'err': '会话不存在'})
+                                return True
+                        self._json(200, {'ok': True, 'items': jobs.listing(owner, conversation_id=conversation_id)})
                     elif len(parts) >= 4:
                         jid = parts[3]
                         item = jobs.snapshot(jid, owner)
@@ -1708,6 +1875,29 @@ def start_remote_api(brain):
                 body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception:
                 body = {}
+            if self._agent_api('POST', path, body):
+                return
+            if path == '/api/conversations' or path.startswith('/api/conversations/'):
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "只有管理员能管理桌面会话"})
+                    return
+                src = _norm_src(body.get('src') or 'pc')
+                if src != 'pc':
+                    self._json(400, {"ok": False, "err": "会话管理仅用于桌面渠道"})
+                    return
+                _, owner, src, persona = self._conversation_context(src)
+                import conversations
+                if path == '/api/conversations':
+                    item = conversations.create(owner, src, str(persona))
+                    self._json(201, {"ok": True, "item": item})
+                    return
+                cid = path.rsplit('/', 1)[-1]
+                item = conversations.rename(owner, src, str(persona), cid, body.get('title'))
+                if not item:
+                    self._json(404, {"ok": False, "err": "会话不存在或标题无效"})
+                    return
+                self._json(200, {"ok": True, "item": item})
+                return
             # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
             # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
             # 会全写进 app 覆盖 —— 渠道错乱。
@@ -1994,6 +2184,18 @@ def start_remote_api(brain):
                     # 缺省/认不出来的值归一到主渠道 wechat（app 已退役；
                     # 未知值同时也是防路径穿越，绝不能原样拼进存档文件名）。
                     _src = _norm_src(body.get("src"))
+                    _cid = body.get('conversation_id')
+                    _brain_cid = None
+                    if _cid:
+                        _conv, _conv_owner, _conv_src, _conv_persona = self._conversation_context(_src, _cid)
+                        if _src != 'pc' or not _conv:
+                            self._json(404, {"ok": False, "err": "会话不存在"})
+                            return
+                        _brain_cid = None if _conv['legacy'] else _cid
+                        body['session_id'] = _cid
+                        if not body.get('dry_run'):
+                            import conversations as _conversations
+                            _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _disp)
                     _att_meta = body.get("attachments")
                     if not isinstance(_att_meta, list):
                         _att_meta = []
@@ -2195,6 +2397,7 @@ def start_remote_api(brain):
                     ans, mode, err = ask_with_retry(
                         _in_text, body.get("img") or None, display=_disp,
                         trace_out=_snap, src=_src, attachments=_att_meta,
+                        conversation_id=_brain_cid,
                         # 带 dry_run=true 的一轮**不写聊天存档**。
                         # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
                         # 她会开始答那些测试句（症状："她回复一点都不对"）。
@@ -2294,6 +2497,19 @@ def start_remote_api(brain):
                         return
                     _in_text = str(body.get("text") or "")
                     _src = _norm_src(body.get("src"))
+                    _cid = body.get('conversation_id')
+                    _brain_cid = None
+                    if _cid:
+                        _conv, _conv_owner, _conv_src, _conv_persona = self._conversation_context(_src, _cid)
+                        if _src != 'pc' or not _conv:
+                            self._json(404, {"ok": False, "err": "会话不存在"})
+                            return
+                        _brain_cid = None if _conv['legacy'] else _cid
+                        body['session_id'] = _cid
+                        body['brain_conversation_id'] = _brain_cid
+                        if not body.get('dry_run'):
+                            import conversations as _conversations
+                            _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _in_text)
                     try:
                         import features as _feat
                         _feat.set_current_src(_src)
@@ -2301,6 +2517,25 @@ def start_remote_api(brain):
                         _lt.set_context(_src, str(body.get("sender_id") or ""))
                     except Exception:
                         pass
+                    _agent_item = None
+                    import tools as _run_tools
+                    import agent_runs as _runs
+                    import display_turns as _display
+                    _agent_cfg = API_CFG.get('agent_execution') or {}
+                    _owner = self._display_owner(body)
+                    _existing_run = _runs.find_request(body.get('request_id'), _owner) if body.get('request_id') else None
+                    _existing_legacy = _display.find_request(_owner, body.get('request_id')) if body.get('request_id') else None
+                    # A rollout switch can change only NEW requests. Lost responses
+                    # must keep their original executor, including legacy tombstones.
+                    if (self._is_admin() and _src == 'pc' and body.get('request_id') and
+                            (_existing_run or (not _existing_legacy and not body.get('img')
+                             and _run_tools.schema_needed(_in_text) and isinstance(_agent_cfg, dict)
+                             and _agent_cfg.get('enabled', True)))):
+                        try:
+                            _agent_item = self._new_agent_run(dict(body, src=_src))
+                        except ValueError:
+                            self._json(400, {'ok': False, 'err': '任务参数、预算或 request_id 无效'})
+                            return
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                     self.send_header("Cache-Control", "no-cache")
@@ -2312,15 +2547,21 @@ def start_remote_api(brain):
                     def _factory():
                         with _chat_lock():
                             import tools as _chat_tools
+                            _LOCAL['brain'].use_src(_src, _brain_cid)
+                            if len(_LOCAL['brain'].hist) <= 1:
+                                _LOCAL['brain'].seed_history(src=_src, conversation_id=_brain_cid)
                             if _chat_tools.schema_needed(_in_text):
-                                _ans, _mode = _LOCAL['brain'].chat(_in_text, src=_src)
+                                _ans, _mode = _LOCAL['brain'].chat(_in_text, src=_src, conversation_id=_brain_cid)
                                 if getattr(_LOCAL['brain'], 'last_err', ''):
                                     yield {'type': 'error', 'class': 'service_error', 'msg': '模型请求未完成'}
                                 else:
                                     yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
-                                yield from _LOCAL['brain'].stream_chat(_in_text, src=_src)
-                    _events = _display.stream(_factory, self._display_owner(body), body['request_id'], _in_text) if body.get('request_id') else _factory()
+                                yield from _LOCAL['brain'].stream_chat(_in_text, src=_src, conversation_id=_brain_cid)
+                    if _agent_item:
+                        _events = self._agent_chat_events(_agent_item, self._display_owner(body))
+                    else:
+                        _events = _display.stream(_factory, self._display_owner(body), body['request_id'], _in_text) if body.get('request_id') else _factory()
                     try:
                         for evt in _events:
                             self.wfile.write(('data: ' + json.dumps(evt, ensure_ascii=False) + '\n\n').encode())
@@ -2368,24 +2609,37 @@ def start_remote_api(brain):
                     # 删的是本机文件，云上那份一动不动，看着清了其实没清。
                     # 分渠道后只清请求里指定的那份（不传=App），清微信的不影响手机。
                     _csrc = _norm_src(body.get("src") if body else None)
-                    import display_turns, creator_jobs
+                    _cid = body.get('conversation_id') if isinstance(body, dict) else None
+                    _brain_cid = None
+                    if _cid:
+                        _conv, _, _conv_src, _conv_persona = self._conversation_context(_csrc, _cid)
+                        if _csrc != 'pc' or not _conv:
+                            self._json(404, {"ok": False, "err": "会话不存在"})
+                            return
+                        _brain_cid = None if _conv['legacy'] else _cid
+                    import display_turns, creator_jobs, agent_runs
                     display_turns.clear(self._display_owner(body))
                     creator_jobs.hide(self._display_owner(body))
+                    agent_runs.hide(self._display_owner(body))
                     ok = False
                     try:
-                        from brain import Brain
-                        ok = bool(Brain.clear_history(_csrc))
+                        if _cid:
+                            _LOCAL['brain'].use_src(_csrc, _brain_cid)
+                            ok = bool(_LOCAL['brain'].clear_src_history(_csrc))
+                        else:
+                            from brain import Brain
+                            ok = bool(Brain.clear_history(_csrc))
                     except Exception as e:
-                        print(f"[大脑] 清空聊天存档失败：{e}", flush=True)
+                        _log_history_error(_csrc, e, "clear_disk")
                     try:
                         with _chat_lock():
                             _bl = _LOCAL.get("brain")
-                            if _bl is not None:
+                            if _bl is not None and not _cid:
                                 _bl.clear_src_history(_csrc)
                     except _Busy:
                         pass
                     except Exception as e:
-                        print(f"[大脑] 清内存历史失败：{e}", flush=True)
+                        _log_history_error(_csrc, e, "clear_memory")
                     self._json(200, {"ok": ok})
                 elif path == "/api/reload_persona":
                     try:
@@ -2896,6 +3150,39 @@ def start_remote_api(brain):
             # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
             if self._deny_if_limited_device("GET", path):
                 return
+            if path == '/api/conversations':
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "只有管理员能读取桌面会话"})
+                    return
+                src = _norm_src(_query_param(self.path, 'src') or 'pc')
+                if src != 'pc':
+                    self._json(400, {"ok": False, "err": "会话管理仅用于桌面渠道"})
+                    return
+                _, owner, src, persona = self._conversation_context(src)
+                import conversations
+                items = conversations.list_for(owner, src, str(persona))
+                old_history = _cloud_history(None, src)
+                if old_history:
+                    conversations.ensure_legacy(owner, src, str(persona))
+                    items = conversations.list_for(owner, src, str(persona))
+                legacy = next((item for item in items if item.get('legacy')), None)
+                if legacy:
+                    # The historical transcript is one continuous record. Use
+                    # its first existing user prompt as the legacy row name;
+                    # this is a display title only and never rewrites history.
+                    first = next((str(item.get('text') or '').strip() for item in old_history
+                                  if str(item.get('role') or '').lower() in ('user', 'me', 'self')
+                                  and str(item.get('text') or '').strip()), '')
+                    if first:
+                        legacy['title'] = first[:48]
+                self._json(200, {"ok": True, "items": items})
+                return
+            if path == '/api/runtime':
+                import build_identity
+                self._json(200, dict(ok=True, **build_identity.runtime()))
+                return
+            if self._agent_api('GET', path):
+                return
             if path.startswith("/api/agent-center/"):
                 import codex_adapter as _codex_center
                 from urllib.parse import parse_qs, urlparse
@@ -3235,9 +3522,33 @@ def start_remote_api(brain):
                 # 缺省渠道是主渠道 wechat（app 已退役；老的 PollService 不带
                 # src，给它微信这份才是她真正的对话历史）。
                 import display_turns
-                self._json(200, {"items": _cloud_history(
-                    lim, _norm_src(_query_param(self.path, "src"))),
-                    'display_turns': display_turns.listing(self._display_owner())})
+                import agent_runs
+                _records = {i['request_id']: i for i in display_turns.listing(self._display_owner())}
+                _records.update({i['request_id']: i for i in agent_runs.display_records(self._display_owner())})
+                src = _norm_src(_query_param(self.path, "src"))
+                cid = _query_param(self.path, "conversation_id")
+                if cid:
+                    item, owner, src, persona = self._conversation_context(src, cid)
+                    if src != 'pc' or not item:
+                        self._json(404, {"ok": False, "err": "会话不存在"})
+                        return
+                    if item['legacy']:
+                        history_items = _cloud_history(lim, src)
+                    else:
+                        try:
+                            n = max(1, min(int(lim), 1000))
+                        except (TypeError, ValueError):
+                            n = 60
+                        history_items = brain.read_history(n, src, cid)
+                        for rec in history_items:
+                            img = rec.get('img') or ''
+                            rec['img'] = os.path.basename(img.replace('\\', '/')) if img else ''
+                    _records = {i['request_id']: i for i in display_turns.listing(self._display_owner({'src':src,'conversation_id':cid}))}
+                    _records.update({i['request_id']: i for i in agent_runs.display_records(self._display_owner({'src':src,'conversation_id':cid}))})
+                    self._json(200, {"items": history_items, 'display_turns': list(_records.values()), 'conversation': item})
+                    return
+                self._json(200, {"items": _cloud_history(lim, src),
+                    'display_turns': list(_records.values())})
             elif path == "/api/features":
                 # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。
                 import features as _feat
@@ -3430,7 +3741,7 @@ def start_remote_api(brain):
     # 默认只绑 127.0.0.1（公网碰不到）。要让手机 App 直接连，必须配
     # `bind_host: "0.0.0.0"`，靠 token 兜底鉴权；旧配置里这个值在
     # mobile.remote_host，继续认
-    host = str(api_config.get("bind_host")
+    host = str(os.environ.get('VIGIL_BIND_HOST') or api_config.get("bind_host")
                or MOB_CFG.get("remote_host") or "127.0.0.1")
     # 没配 token 就别往外绑：那等于开了一个谁都能用的接口（以前 _check 是空 token
     # 全放行，忘填 token 很常见，配上 0.0.0.0 就是公网裸奔）。宁可不开这个口。

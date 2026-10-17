@@ -137,6 +137,7 @@ async function run() {
     apiFixture(method, requestPath, body));
   ipcMain.handle('cfg:get', () => ({ wizard_done: true, base: 'http://127.0.0.1:18787', sync: {}, roots: [] }));
   ipcMain.handle('app:version', () => 'model-settings-fixture');
+  ipcMain.handle('app:instance-id', () => 'model-settings-test-process');
   ipcMain.handle('wallpaper:request', () => null);
   ipcMain.handle('auto:connect', () => ({ ok: false }));
   ipcMain.handle('updater:check', () => ({ ok: true, update: false }));
@@ -189,8 +190,35 @@ async function run() {
   await launchMain();
   await evalIn(mainWindow, "document.querySelector('#modelBtn').click()");
   await waitFor("document.querySelector('#mqList').textContent.includes('隔离测试模型')", 'model after client window restart');
+  assert.equal(await evalIn(mainWindow, "document.querySelector('#modelPop .lph').textContent.includes('选择模型')"), true);
+  assert.equal(await evalIn(mainWindow, "document.querySelectorAll('#mqList .mqrow').length"), 1);
+  assert.equal(await evalIn(mainWindow, "document.querySelector('#mqSearch').hidden"), true);
+  await evalIn(mainWindow, "document.querySelector('#mqSearchToggle').click()");
+  assert.equal(await evalIn(mainWindow, "document.querySelector('#mqSearch').hidden"), false);
+  await evalIn(mainWindow, "document.querySelector('#mqSearchToggle').click()");
   await evalIn(mainWindow, "document.querySelector('#mqList .mqrow').click()");
   await waitFor("document.querySelector('#modelBtn').textContent.includes('隔离测试模型')", 'model switch result');
+  assert.equal(await evalIn(mainWindow, "document.querySelectorAll('#mqList .mqrow.on').length"), 1);
+  assert.equal(await evalIn(mainWindow, "document.querySelector('#mqList .mqrow.on').getAttribute('aria-pressed')"), 'true');
+  assert.equal(await evalIn(mainWindow, "!!document.querySelector('#mqList .mqrow.on .mq-check svg')"), true);
+  await waitFor("!document.querySelector('#mqMsg').textContent.includes('正在切到')", 'model switch status completion');
+  const pickerAnchor = await evalIn(mainWindow, "(()=>{const p=document.querySelector('#modelPop').getBoundingClientRect(),b=document.querySelector('#modelBtn').getBoundingClientRect();return{viewport:{width:innerWidth,height:innerHeight},popup:{left:p.left,right:p.right,top:p.top,bottom:p.bottom,width:p.width},button:{left:b.left,right:b.right,top:b.top},searchHidden:document.querySelector('#mqSearch').hidden}})()");
+  assert.ok(pickerAnchor.popup.left<=pickerAnchor.button.left && pickerAnchor.popup.right>=pickerAnchor.button.right, JSON.stringify(pickerAnchor));
+  assert.ok(pickerAnchor.popup.width<=361, JSON.stringify(pickerAnchor));
+  assert.ok(pickerAnchor.popup.bottom<=pickerAnchor.button.top, JSON.stringify(pickerAnchor));
+  assert.equal(pickerAnchor.searchHidden,true);
+  await evalIn(mainWindow, "document.documentElement.dataset.theme='dark'");
+  const evidenceDir = path.resolve(client, '..', 'reports', 'p6.2-evidence');
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  mainWindow.show(); await delay(180);
+  await delay(2600);
+  fs.writeFileSync(path.join(evidenceDir, 'model-picker-dark.png'), (await mainWindow.webContents.capturePage()).toPNG());
+  mainWindow.hide();
+  await evalIn(mainWindow, "document.querySelector('#mqManage').click()");
+  await waitFor("!!document.querySelector('#mAddToggle')", 'model management from quick switch', () => settingsWindow);
+  console.log('PASS compact model picker shows one current marker and opens model management');
+  settingsWindow.destroy();
+  settingsWindow = null;
   const switchCall = calls.findLast(call => call.path === '/api/models/quick-switch');
   assert.deepEqual(switchCall.body, {
     provider: 'custom', base: 'http://127.0.0.1:19091/v1', model: 'fixture/chat-model',

@@ -37,6 +37,11 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { pathToFileURL } = require('node:url')
+// Managed desktop host cannot outlive its owning Brain after a crash.
+const managedParent = Number(process.env.VIGIL_PARENT_PID || 0)
+if (managedParent > 0 && managedParent === process.ppid) {
+  setInterval(() => { try { process.kill(managedParent, 0) } catch (_) { process.exit(0) } }, 2000).unref()
+}
 
 // --- 配置：环境变量给默认值，配置文件可覆盖 ---------------------------------
 const SKILL_DIR = process.env.ZX_SKILL_DIR || path.join(__dirname, 'skills')

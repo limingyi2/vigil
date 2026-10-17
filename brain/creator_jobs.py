@@ -53,13 +53,41 @@ def _save(db, item):
     db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(item, ensure_ascii=False), item['job_id']))
 
 
+def _log_detail(jid, text):
+    """Log metadata only; exception strings/provider bodies are never diagnostics."""
+    if not text:
+        return
+    try:
+        os.makedirs(paths.DATA_DIR, exist_ok=True)
+        with open(os.path.join(paths.DATA_DIR, 'creator_diagnostics.log'), 'a',
+                  encoding='utf-8') as fh:
+            record = {k: text[k] for k in ('stage', 'code', 'http_status', 'position', 'line', 'column')
+                      if isinstance(text, dict) and k in text}
+            fh.write(json.dumps(dict(log_id=jid, **record), ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+
+
+def _mirror_update(owner, jid, **changes):
+    """把 Creator 作业状态镜像进主对话记录库（display_turns）。
+
+    复用主聊天的持久化与去重：失败/中断也保留用户请求与部分输出，
+    刷新或重开后仍可见；该记录库明确不作为模型历史。
+    """
+    try:
+        import display_turns as _dt
+        _dt.update(owner, jid, **changes)
+    except Exception:
+        pass
+
+
 def snapshot(jid, owner):
     with LOCK, _db() as db:
         row = db.execute('SELECT data FROM jobs WHERE id=? AND owner=?', (jid, owner)).fetchone()
         return json.loads(row[0]) if row else None
 
 
-def listing(owner):
+def listing(owner, conversation_id=None):
     with LOCK, _db() as db:
         from display_turns import LIMITS
         # Compact old terminal snapshots, preserving idempotency fingerprints
@@ -70,8 +98,13 @@ def listing(owner):
             AND (json_extract(data,'$.created_at')<? OR rowid IN
                 (SELECT rowid FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT -1 OFFSET ?))''',
             (owner, time.time()-LIMITS['retention_days']*86400, owner, LIMITS['max_records']))
-        return [item for row in db.execute('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))
-                if not (item := json.loads(row[0])).get('hidden')]
+        items = [item for row in db.execute('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))
+                 if not (item := json.loads(row[0])).get('hidden')]
+        if conversation_id:
+            # Older jobs without an explicit conversation remain available in
+            # the global drafts view, but never leak into a chat transcript.
+            items = [item for item in items if item.get('conversation_id') == conversation_id]
+        return items
 
 
 def hide(owner):
@@ -110,7 +143,10 @@ def cancel(jid, owner):
             item['status'] = 'cancelled'
             _event(item, 'cancelled', {'status': 'cancelled'})
             _save(db, item)
-        return item
+    if item:
+        _mirror_update(owner, item['request_id'], status='cancelled',
+                       content=item.get('content') or '')
+    return item
 
 
 def create(body, cfg, owner, start=True):
@@ -134,16 +170,24 @@ def create(body, cfg, owner, start=True):
             return json.loads(row[1])
         item = dict(job_id='job_' + uuid.uuid4().hex, request_id=request, kind=kind,
             requirement=requirement, feedback=feedback, source_draft_id=draft_id,
+            conversation_id=str(body.get('conversation_id') or '') or None,
             status='queued', stage='queued', content='', event_cursor=0, error=None,
             created_at=time.time(), model_snapshot={'model': cfg.get('model') or (cfg.get('ollama') or {}).get('model'),
                 'provider': cfg.get('provider') or cfg.get('model_mode') or 'cloud'})
         db.execute('INSERT INTO jobs VALUES (?,?,?,?,?)', (item['job_id'], owner, request, fingerprint, json.dumps(item, ensure_ascii=False)))
+    try:
+        import display_turns as _dt
+        _dt.begin(owner, item['request_id'], requirement or ('修改草稿：%s' % draft_id))
+        _dt.update(owner, item['request_id'], status='running')
+    except Exception:
+        pass
     if start:
         threading.Thread(target=_run, args=(item['job_id'], owner, copy.deepcopy(cfg)), daemon=True).start()
     return item
 
 
 def _run(jid, owner, cfg):
+    item = {}
     try:
         with LOCK, _db() as db:
             item = snapshot(jid, owner)
@@ -188,11 +232,15 @@ def _run(jid, owner, cfg):
                         text.append(delta)
                         item['content'] = (item['content'] + delta)[-MAX_PREVIEW:]
                         item['preview_truncated'] = size > MAX_PREVIEW
+                        _mirror_update(owner, item['request_id'], content=item['content'])
                     _event(item, event['type'], {'text': delta})
                 _save(db, item)
         if not result or not result['complete']:
+            from model_providers.execution import stage_of
             reason = result['reason'] if result else 'connection_lost'
-            _fail(jid, owner, reason)
+            _fail(jid, owner, reason, stage=stage_of(reason),
+                  detail=('finish_reason=%s' % result.get('finish_reason')) if result else None,
+                  http_status=(result or {}).get('http_status'))
             return
         with LOCK, _db() as db:
             item = snapshot(jid, owner)
@@ -205,39 +253,81 @@ def _run(jid, owner, cfg):
             draft, err = creator._persist(item['kind'], item['requirement'], ''.join(text), cfg,
                 prev_meta=previous, feedback=item['feedback'])
             if err:
-                _fail(jid, owner, 'invalid_structure', 'invalid_format' if 'JSON' in err else 'validation_failed')
+                diagnostic = getattr(err, 'diagnostic', {})
+                _fail(jid, owner, 'invalid_structure', diagnostic.get('code', 'invalid_format'),
+                      stage=diagnostic.get('stage', 'parse'),
+                      message=diagnostic.get('message', '生成产物不符合契约（未落地文件）'),
+                      parse_fields={k: diagnostic[k] for k in ('position', 'line', 'column', 'missing') if k in diagnostic})
                 return
             item.update(status='succeeded', stage='assembling', draft_id=draft['id'])
             if draft.get('validation', {}).get('ok') is False:
-                item.update(status='failed', error={'class': 'invalid_structure', 'code': 'validation_failed', 'message': '草稿未通过静态检查，请审核问题'})
-                _event(item, 'error', item['error'])
+                verrs = (draft.get('validation') or {}).get('errors') or []
+                vcodes = [str(e.get('code')) for e in verrs if isinstance(e, dict) and e.get('code')][:5]
+                failed = _fail(jid, owner, 'static_validation', 'validation_failed', stage='static_validation')
+                failed['draft_id'] = draft['id']
+                _save(db, failed)
+                return
             else:
                 _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
+                _mirror_update(owner, item['request_id'], status='succeeded', content=''.join(text))
             _save(db, item)
     except Exception as exc:
-        reason = 'invalid_structure' if isinstance(exc, (ValueError, ProviderResponseError)) else (
-            'service_error' if isinstance(exc, ProviderHTTPError) else 'connection_lost')
-        _fail(jid, owner, reason, exception_type=type(exc).__name__)
+        if isinstance(exc, OSError) and item.get('stage') == 'validating':
+            reason, stage = 'draft_save', 'draft_save'
+        elif isinstance(exc, ProviderHTTPError):
+            reason, stage = 'service_error', 'model_request'
+        elif isinstance(exc, ProviderResponseError):
+            reason, stage = 'invalid_structure', 'parse'
+        elif isinstance(exc, ValueError):
+            reason, stage = 'invalid_structure', 'codegen'
+        else:
+            reason, stage = 'connection_lost', 'network'
+        status = (getattr(exc, 'status', None)
+                  or getattr(exc, 'status_code', None)
+                  or getattr(getattr(exc, 'response', None), 'status_code', None))
+        if status in (401, 403):
+            reason, stage = 'auth', 'auth'
+        elif status is not None:
+            # Streaming providers (including httpx) raise a raw HTTP status
+            # exception from response.raise_for_status(), unlike chat() which
+            # wraps it as ProviderHTTPError. Preserve the same safe HTTP
+            # diagnosis rather than misreporting a 5xx as a network outage.
+            reason, stage = 'service_error', 'model_request'
+        _fail(jid, owner, reason, exception_type=type(exc).__name__,
+              stage=stage, http_status=status)
 
 
-def _fail(jid, owner, reason, code=None, exception_type=None):
+def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,
+          detail=None, http_status=None, message=None, parse_fields=None):
     with LOCK, _db() as db:
         item = snapshot(jid, owner)
         if item['status'] in TERMINAL:
             return
         code = code or {'length': 'output_truncated', 'thinking_only': 'empty_content',
             'invalid_structure': 'invalid_format', 'service_error': 'provider_error',
-            'connection_lost': 'provider_error'}.get(reason, reason)
-        item.update(status='failed', error={'class': reason, 'code': code,
-            'message': ERROR_MESSAGES.get(reason, '生成失败，请检查输入或配置')})
+            'connection_lost': 'provider_error', 'auth': 'auth_failed'}.get(reason, reason)
+        try:
+            from model_providers.execution import diagnose
+            err = diagnose(reason, stage=stage, error_code=code,
+                           http_status=http_status, log_id=item.get('job_id'),
+                           message=message)
+            err['code'] = code
+        except Exception:
+            err = {'class': reason, 'stage': stage or 'model_request', 'code': code,
+                   'message': ERROR_MESSAGES.get(reason, '生成失败，请检查输入或配置')}
         if exception_type:
-            item['error']['exception_type'] = exception_type
-        if reason == 'invalid_structure':
-            item['error']['message'] = '模型没按契约返回 JSON，或生成文件未通过检查'
-        elif reason == 'service_error':
-            item['error']['message'] = '模型调用失败（服务返回错误）'
+            err['exception_type'] = exception_type if exception_type in ('ValueError', 'OSError', 'PermissionError', 'ProviderResponseError', 'ProviderHTTPError', 'ProviderUnavailable') else 'Exception'
+        err.update(parse_fields or {})
+        _log_detail(jid, err)
+        item.update(status='failed', stage=err['stage'], error=err)
         _event(item, 'error', item['error'])
         _save(db, item)
+    changes = {'status': 'failed', 'error': item['error']}
+    # 仅在有部分输出时覆盖 content，避免把流式过程中已镜像的正文清空。
+    if item.get('content'):
+        changes['content'] = item['content']
+    _mirror_update(owner, item['request_id'], **changes)
+    return item
 
 
 def legacy(body, cfg, owner):

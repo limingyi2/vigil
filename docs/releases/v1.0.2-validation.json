@@ -1,0 +1,58 @@
+{
+  "release": "1.0.2",
+  "code": 19,
+  "source_commit": "61fd5b0d076bb8c4f0a941d373b6f98a638b5995",
+  "artifacts": {
+    "Vigil.Setup.1.0.2.exe": {
+      "sha256": "6ea65b226b11ee685ee190a9f0bd760f00bb35e515818a492f2f36ecc6970971",
+      "size": 100523853
+    },
+    "Vigil.1.0.2.exe": {
+      "sha256": "8f2c023d02f81c07f64b6ca7a1423aa2014f0ed5d68e3e01574df997ef23d0b6",
+      "size": 100302855
+    }
+  },
+  "archive_checks": {
+    "installer": {
+      "selected_archive_contents_match": true,
+      "files": [
+        "resources\\app.asar",
+        "resources\\vigil-brain\\vigil-brain.exe",
+        "resources\\vigil-brain\\_internal\\skill_host\\server.js"
+      ]
+    },
+    "portable": {
+      "selected_archive_contents_match": true,
+      "files": [
+        "resources\\app.asar",
+        "resources\\vigil-brain\\vigil-brain.exe",
+        "resources\\vigil-brain\\_internal\\skill_host\\server.js"
+      ]
+    }
+  },
+  "packaged_brain_smoke": {
+    "version": "1.0.2",
+    "source_commit": "61fd5b0d076bb8c4f0a941d373b6f98a638b5995",
+    "bundled_source_modules_match": [
+      "agent_runs",
+      "creator_jobs",
+      "display_turns",
+      "model_providers.execution",
+      "server",
+      "localtools"
+    ],
+    "packaged_brain_health": "ready",
+    "run_status": "succeeded",
+    "model_calls": 2,
+    "tool_calls": 1,
+    "duplicate_request_reused_run": true,
+    "terminal_immutable": true,
+    "real_model_calls": 0,
+    "installed_on_user_machine": false
+  },
+  "asar_version_and_renderer_proxy_match": true,
+  "authenticode_status": "NotSigned",
+  "cloud_update_channel": "not_pushed_configured_ssh_key_missing",
+  "fresh_install_or_upgrade_tested": false,
+  "github_release_publication_requirement": "Uploaded GitHub asset SHA-256 digests must match local artifacts before publishing"
+}

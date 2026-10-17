@@ -173,12 +173,12 @@ class TestApiSurface(unittest.TestCase):
         这条踩过：接口写对了、内容也部署上去了，但前端GET 就是 404 ——
         查文件在、行号对、语法没问题，最后才发现它挂在 POST 那条链上。
         """
-        i = self.src.index('"/api/persona/full"')
+        i = self.src.index('if path == "/api/persona/full"')
         # 往前找最近的分支判断：GET 分支用 "if path =="，POST 用 "elif"
         head = self.src[max(0, i - 1200):i]
         last_if = head.rfind("if path ==")
         last_elif = head.rfind("elif path ==")
-        self.assertGreater(last_if, last_elif,
+        self.assertGreater(self.src.rfind("def do_GET", 0, i), self.src.rfind("def do_POST", 0, i),
                            "persona/full 挂在 elif（POST）链上，GET 会404")
 
     def test_save_validates_name(self):
@@ -188,7 +188,7 @@ class TestApiSurface(unittest.TestCase):
 
     def test_full_endpoint_guards_path_traversal(self):
         """key 来自查询串，必须 basename + isfile 双重校验。"""
-        i = self.src.index('"/api/persona/full"')
+        i = self.src.index('if path == "/api/persona/full"')
         seg = self.src[i:i + 1600]
         self.assertIn("os.path.basename", seg)
         self.assertIn("isfile", seg)

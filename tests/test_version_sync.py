@@ -54,12 +54,12 @@ class TestSingleSourceOfVersion(unittest.TestCase):
         self.assertEqual(m.group(1), "0",
                          "仓库版 APP_CODE 应该是 0（构建时注入），不是手写的号")
 
-    def test_打包脚本会注入版本号(self):
-        s = _read("deploy/rebuild_apk.py")
-        self.assertIn("APP_CODE", s, "打包时没注入 APP_CODE")
-        self.assertIn("version.json", s)
-        # 注入后必须还原：仓库那份要一直是空占位
-        self.assertIn("还原", s, "注入后没还原，仓库那份会脏")
+    def test_desktop_version_metadata_is_consistent(self):
+        # Android rebuild_apk.py was retired; desktop is the maintained release.
+        meta = json.loads(_read('client/version.json'))
+        package = json.loads(_read('client/package.json'))
+        self.assertEqual(meta['ver'], package['version'])
+        self.assertGreater(meta['code'], 0)
 
     def test_两份chat_html一致(self):
         # 版本号占位符改动如果只改了一份，打包出来的和仓库里的会对不上。

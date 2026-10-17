@@ -150,15 +150,27 @@ def _extract_json(text):
 
 # ── 提示词 ───────────────────────────────────────────────────
 
-_PLUGIN_CONTRACT = """Vigil 插件契约（单文件 Python）：
-- 一个 .py 文件：模块级字符串 NAME（英文/数字/下划线/短横线，唯一）和 DESC（一句话描述）。
-- 可选钩子（按需实现，不要的别写）：
-  prompt(ctx) -> str：给模型追加的静态提示；
-  start() / stop()：后台线程生命周期（会注册"需要重启"提示，慎用）；
-  on_message(text, ctx) -> str|None：消息处理。
+_PLUGIN_CONTRACT = """Vigil 插件契约（当前 Creator 生成单文件 Python 插件）：
+- 必须有模块级字符串 NAME（英文/数字/下划线/短横线，唯一）和 DESC（一句话描述）。
+- 想让模型在聊天中真正调用插件，必须同时提供 TOOLS 与 TOOL_SPECS；只有 prompt(ctx) 只是补充提示，不会执行功能。
+- 工具的标准形状如下，名称必须在 TOOLS 与 TOOL_SPECS 中完全一致：
+  def lookup_text(arg):
+      return "面向用户的真实结果文本"
+  TOOLS = {"lookup_text": lookup_text}
+  TOOL_SPECS = {
+      "lookup_text": {
+          "desc": "这个工具能做什么、适用于什么问题",
+          "params": [("query", "要查询的内容", True)],
+          "arg_param": "query"
+      }
+  }
+- TOOL_SPECS 的 params 使用 (参数名, 参数说明, 是否必填) 元组列表；arg_param 指定传给工具函数的单个字符串参数。工具函数返回可直接交给模型阅读的字符串。
+- 可选钩子：prompt(ctx) -> str（补充模型提示）；start(brain)（启动后台任务，只有确实需要时才写）。
+- on_message(text, ctx) 不是当前插件宿主支持的钩子，禁止用它实现聊天功能。不要只写 TOOLS 而漏掉 TOOL_SPECS，否则模型看不到工具。
 - 可选 zxplugin.json（{"name": 与 NAME 一致, "version": "x.y.z", "desc": "..."}）。
-- 禁止：import 第三方库、联网、读写插件目录之外的文件、弹系统对话框、自启动安装。
-- 目标是"最小可审查"：几十行、无副作用、只做需求要求的那一件事。"""
+- 当前 Creator 这条路径不支持自定义前端页面；禁止把完整 HTML 塞进 Python 文档字符串或把 HTML 返回值伪装成可显示的插件界面。也不得用演示数据冒充真实本地/GitHub 仓库内容；需求依赖自定义 UI、真实 Git 读取或网络访问时，必须在 summary/risks 中明确说明能力边界。
+- 禁止：import 第三方库、未经需求授权的联网、读写插件目录之外的文件、弹系统对话框、自启动安装。
+- 目标是"最小可审查"：只做需求要求的那一件事，并确保聊天能力使用宿主实际支持的工具协议。"""
 
 _SKILL_CONTRACT = """Vigil Skill 契约（Node 宿主，ES 模块）：
 - index.js：export function setup(api)，在 setup 里 api.registerTool({id, name, description, parameters, async execute(ctx, args)})。
@@ -368,7 +380,7 @@ def validate_draft(draft_id):
     try:
         if kind == "plugin":
             import plugin_structure
-            rep = plugin_structure.check_plugin_directory(d)
+            rep = plugin_structure.check_plugin_directory(d, require_chat_tools=True)
         else:
             import skill_structure
             pkg = ""
@@ -387,16 +399,32 @@ def validate_draft(draft_id):
     return rep, ""
 
 
+class DraftFailure(str):
+    """Keep the legacy (draft, error-string) API while carrying safe diagnostics."""
+    def __new__(cls, message, code, stage='parse', **fields):
+        value = super().__new__(cls, message)
+        value.diagnostic = dict(message=message, code=code, stage=stage, **fields)
+        return value
+
+
 def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
     """公共落盘流程：解析 JSON → 写文件 → 验证 → 存 meta。返回 (meta, err)。"""
     obj = _extract_json(text)
     if not isinstance(obj, dict):
-        return None, ("模型没按契约返回 JSON（生成失败，没有落地任何文件）"
-                      if not str(text).strip() else
-                      "模型没按契约返回 JSON；原文前 200 字：%s" % str(text)[:200])
+        probe = _json_probe(text)
+        status = probe.get("status")
+        if status == "empty":
+            return None, DraftFailure("模型没按契约返回 JSON：本次没有返回任何内容（未落地文件）", 'json_empty')
+        if status == "no_object":
+            return None, DraftFailure("模型没按契约返回 JSON：输出里找不到 JSON 对象（未落地文件）", 'json_object_missing')
+        if status == "unterminated":
+            return None, DraftFailure("模型没按契约返回 JSON：对象未闭合，疑似在第 %s 个字符附近被截断（未落地文件）" % probe.get("position"), 'json_unterminated', position=probe.get('position'))
+        if status == "parse_error":
+            return None, DraftFailure("JSON 解析失败：%s（第 %s 行，第 %s 列，字符 %s；未落地文件）" % (probe['detail'], probe['line'], probe['column'], probe['position']), 'json_parse_error', **{k: probe[k] for k in ('position', 'line', 'column')})
+        return None, DraftFailure("模型没按契约返回 JSON（未落地文件）", 'json_invalid')
     files = obj.get("files")
     if not isinstance(files, dict) or not files:
-        return None, "模型返回的 JSON 里没有 files"
+        return None, DraftFailure("模型没按契约返回 JSON：缺少 files 字段或 files 为空（未落地文件）", 'files_missing', missing=['files'])
     summary = str(obj.get("summary") or "").strip()[:300]
     risks = str(obj.get("risks") or "").strip()[:500] or "无"
 
@@ -422,7 +450,7 @@ def _persist(kind, requirement, text, api_cfg, prev_meta=None, feedback=""):
             pass
     written, errs = _write_files(d, files, kind)
     if not written:
-        return None, "生成的文件全部被拒绝：" + "；".join(errs[:3])
+        return None, DraftFailure("生成的文件全部被拒绝，请检查文件名和内容", 'files_rejected', 'codegen')
 
     meta = {
         "id": os.path.basename(d),
@@ -549,3 +577,46 @@ def delete_draft(draft_id):
     except OSError as e:
         return False, "删不掉：%s" % str(e)[:100]
     return True, ""
+
+
+def _json_probe(text):
+    """只做诊断：判断 JSON 缺失/截断/解析失败的大致位置，绝不回显模型原文。"""
+    t = str(text or "").strip()
+    if not t:
+        return {"status": "empty"}
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t.strip())
+    start = t.find("{")
+    if start < 0:
+        return {"status": "no_object"}
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(t)):
+        ch = t[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                blob = t[start:i + 1]
+                try:
+                    json.loads(blob)
+                    return {"status": "parsed"}
+                except json.JSONDecodeError as e:
+                    return {"status": "parse_error", "position": start + e.pos,
+                            "line": t[:start + e.pos].count('\n') + 1,
+                            "column": start + e.pos - t.rfind('\n', 0, start + e.pos),
+                            "detail": e.msg}
+    return {"status": "unterminated", "position": len(t)}

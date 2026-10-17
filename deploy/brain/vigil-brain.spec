@@ -48,13 +48,13 @@ a = Analysis(
     [os.path.join(BLOCK, "server_launch.py")],
     pathex=[BLOCK],
     binaries=[],
-    datas=plugin_data + skill_host_data,
+    datas=plugin_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
     hiddenimports=[
         "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",
         "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",
         # 插件按文件路径动态加载（不在静态分析图里），它们 import 的
         # 顶层模块必须手动带进包 —— localtools 只被 remote 插件用
-        "localtools", "devices",
+        "localtools", "devices", "agent_runs",
     ],
     excludes=[
         "fastembed", "onnxruntime", "onnx", "torch", "tkinter",

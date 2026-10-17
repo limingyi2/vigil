@@ -64,7 +64,7 @@ def _cfg():
 
 def _host():
     """宿主地址只允许 HTTP 回环 URL；不把认证流量发送到任意配置主机。"""
-    value = str(_cfg().get("host") or "http://127.0.0.1:8790").strip()
+    value = str(os.environ.get('VIGIL_SKILL_HOST') or _cfg().get("host") or "http://127.0.0.1:8790").strip()
     try:
         parsed = urlsplit(value)
         host = parsed.hostname or ""

@@ -84,6 +84,13 @@ def update(who, rid, **changes):
         return item
 
 
+def find_request(who, rid):
+    """Read a deduplication record, including hidden/cleared tombstones."""
+    with LOCK, database() as db:
+        row = db.execute('SELECT data FROM turns WHERE owner=? AND request_id=?', (who, rid)).fetchone()
+        return json.loads(row[0]) if row else None
+
+
 def listing(who):
     with LOCK, database() as db:
         db.execute('DELETE FROM turns WHERE owner=? AND created<? AND json_extract(data,"$.status")!="running"',

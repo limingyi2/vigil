@@ -1,0 +1,55 @@
+{
+  "baseline": {
+    "version": "1.0.2",
+    "official_release": true,
+    "size": 100523853,
+    "sha256": "6ea65b226b11ee685ee190a9f0bd760f00bb35e515818a492f2f36ecc6970971"
+  },
+  "target": {
+    "version": "1.1.0",
+    "commit": "05ba0c7544ddca2509c22e22d064bcb9745d9149",
+    "candidate": true,
+    "sha256": "89d187103c237a66df788f0bc45c0162a771428f969c30b4ee322eac5e90735c",
+    "size": 101661668
+  },
+  "fresh_install": true,
+  "real_version_upgrade": true,
+  "data_migration": {
+    "model_config": true,
+    "chat_history": true,
+    "creator_draft": true,
+    "plugins": true,
+    "skill": true,
+    "other_user_data": true
+  },
+  "electron_brain_pair": true,
+  "creator_jobs": {
+    "streamed_output": true,
+    "failed_record_saved": true,
+    "diagnostics": true,
+    "draft_generated": true,
+    "fixture_model_calls": 14
+  },
+  "chat_ui_multisession": {
+    "created_and_switched": true,
+    "context_isolated": true,
+    "renderer_reload_restored": true
+  },
+  "chat_ui_dialogs_and_video": {
+    "destructive_confirmation_themed": true,
+    "native_confirm_not_used": true,
+    "video_choices_inline": true,
+    "attachment_cancellation": true
+  },
+  "plugin_chat": {
+    "installed_and_loaded": true,
+    "tool_schema_sent": true,
+    "model_requested_tool": true,
+    "tool_result_returned": true
+  },
+  "brain_start_failure_blocked_and_rolled_back": true,
+  "install_checkpoint_failure_kept_previous_install": true,
+  "rollback_restored_exact_official_baseline": true,
+  "daily_install_touched": false,
+  "test_root": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\Vigil Windows acceptance z9cv88di"
+}

@@ -20,8 +20,8 @@ import urllib.request
 FROZEN = bool(getattr(sys, "frozen", False))
 CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
     os.path.abspath(__file__))
-HOME_DIR = (os.path.dirname(os.path.abspath(sys.executable))
-            if FROZEN else CODE_DIR)
+HOME_DIR = os.path.abspath(os.environ.get('VIGIL_HOME') or
+    (os.path.dirname(os.path.abspath(sys.executable)) if FROZEN else CODE_DIR))
 
 READY_TAG = "VIGIL_BRAIN_READY"
 
@@ -36,6 +36,11 @@ def _seed_plugins():
     if not FROZEN:
         return
     src = os.path.join(CODE_DIR, "plugins")
+    if os.environ.get('VIGIL_MANAGED') == '1':
+        import json
+        from home_migration import seed_plugins
+        seed_plugins(src, HOME_DIR, json.loads(os.environ.get('VIGIL_LEGACY_HOMES', '[]')))
+        return
     dst = os.path.join(HOME_DIR, "plugins")
     if not os.path.isdir(src):
         return
@@ -63,6 +68,35 @@ def _start_skill_host():
     start_host.bat 本身是幂等的（先查 8790 端口是否被占用），重复调用安全。
     启动失败不致命：少了技能功能，不影响聊天。
     """
+    if os.environ.get('VIGIL_MANAGED') == '1':
+        # Electron supplies its own Node runtime; a clean PC needs no Node install.
+        import secrets
+        os.environ['ZX_SKILL_AUTH_TOKEN'] = secrets.token_urlsafe(32)
+        os.environ['ZX_SKILL_HOST'] = '127.0.0.1'
+        os.environ['ZX_SKILL_PORT'] = str(_pick_port())
+        os.environ['VIGIL_SKILL_HOST'] = 'http://127.0.0.1:' + os.environ['ZX_SKILL_PORT']
+        skills = os.path.join(HOME_DIR, 'skill_host', 'skills')
+        os.makedirs(skills, exist_ok=True)
+        package = os.path.join(skills, 'package.json')
+        if not os.path.exists(package):
+            with open(package, 'w', encoding='utf-8') as f:
+                f.write('{"type":"module"}')
+        seeds = os.path.join(CODE_DIR, 'skill_host', 'skills')
+        if os.path.isdir(seeds):
+            for name in os.listdir(seeds):
+                dst = os.path.join(skills, name)
+                if not os.path.exists(dst):
+                    src = os.path.join(seeds, name)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+        os.environ['ZX_SKILL_DIR'] = skills
+        env = dict(os.environ, ELECTRON_RUN_AS_NODE='1', VIGIL_PARENT_PID=str(os.getpid()))
+        subprocess.Popen([os.environ['VIGIL_NODE_EXE'], os.path.join(CODE_DIR, 'skill_host', 'server.js')],
+            cwd=HOME_DIR, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        return
     # 开发环境：CODE_DIR/skill_host/start_host.bat
     # 打包环境：HOME_DIR/skill_host/start_host.bat
     candidates = [
@@ -93,24 +127,35 @@ def _start_skill_host():
         print("[sidecar] 技能宿主启动失败（不影响聊天）：%s" % e, flush=True)
 
 
-def _pick_port():
+def _pick_port(exclude=()):
     """--port 参数 > VIGIL_PORT 环境变量 > 让系统挑一个空闲端口。"""
     if "--port" in sys.argv:
         try:
-            return int(sys.argv[sys.argv.index("--port") + 1])
+            port = int(sys.argv[sys.argv.index("--port") + 1])
+            if port not in exclude:
+                return port
+            raise ValueError("Brain port conflicts with the managed Skill Host")
         except (ValueError, IndexError):
             pass
     try:
         env_port = int(os.environ.get("VIGIL_PORT") or 0)
         if env_port > 0:
+            if env_port in exclude:
+                raise ValueError("Brain port conflicts with the managed Skill Host")
             return env_port
     except ValueError:
         pass
     # 没给端口（或给了 0/非法值）就让系统挑一个空闲的
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+        for _ in range(20):
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            s.close()
+            if port not in exclude:
+                return port
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raise RuntimeError("Unable to select a port distinct from the managed Skill Host")
     finally:
         s.close()
 
@@ -131,10 +176,30 @@ def _wait_health(port, timeout=180):
 
 
 def main():
+    if os.environ.get('VIGIL_MANAGED') == '1':
+        import json
+        import secrets
+        from pathlib import Path
+        from home_migration import migrate
+        for legacy in json.loads(os.environ.get('VIGIL_LEGACY_HOMES', '[]')):
+            if Path(legacy, 'config', 'config.json').is_file():
+                migrate(legacy, HOME_DIR)
+        cfg = Path(HOME_DIR, 'config', 'config.json')
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        value = json.loads(cfg.read_text(encoding='utf-8-sig')) if cfg.exists() else {}
+        if not value.get('brain_token'):
+            value['brain_token'] = secrets.token_urlsafe(32)
+            tmp = cfg.with_suffix('.tmp')
+            tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(tmp, cfg)
+        os.environ['VIGIL_BIND_HOST'] = '127.0.0.1'
+    os.makedirs(HOME_DIR, exist_ok=True)
     os.chdir(HOME_DIR)          # 大脑里所有相对路径的家都在这儿
     _seed_plugins()
     _start_skill_host()         # 先起技能宿主，大脑加载插件时技能已可用
-    port = _pick_port()
+    managed = os.environ.get('VIGIL_MANAGED') == '1'
+    skill_port = int(os.environ.get('ZX_SKILL_PORT') or 0) if managed else 0
+    port = _pick_port(exclude={skill_port} if skill_port else ())
     os.environ["VIGIL_PORT"] = str(port)
 
     import server               # 大脑本体（导入即完成全部初始化的准备工作）
@@ -144,6 +209,13 @@ def main():
 
     def _announce():
         if _wait_health(port):
+            if os.environ.get('VIGIL_READY_FILE'):
+                import json
+                import build_identity
+                ready = os.environ['VIGIL_READY_FILE']
+                with open(ready + '.tmp', 'w', encoding='utf-8') as f:
+                    json.dump(dict(build_identity.runtime(), port=port), f)
+                os.replace(ready + '.tmp', ready)
             print("%s port=%d pid=%d" % (READY_TAG, port, os.getpid()),
                   flush=True)
         else:

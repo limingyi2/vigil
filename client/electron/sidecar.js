@@ -1,306 +1,107 @@
-// -*- coding: utf-8 -*-
-/**
- * sidecar 生命周期：把 vigil-brain.exe（PyInstaller 打包的本地大脑）当子进程养。
- *
- * 四件事，别的不碰：
- * 1. 找 exe（配置 > 环境变量 > 打包资源 > 开发仓 dist/）
- * 2. spawn 并从 stdout 抓就绪行（VIGIL_BRAIN_READY port=N，见 brain/server_launch.py）
- * 3. 崩了自动重启，最多 3 次；稳定跑 10 分钟后计数清零
- * 4. 应用退出时把子进程带走（Windows 用 taskkill /T，防止孤儿进程占着端口）
- *
- * 大脑的端口是它自己挑的（没传 --port 就让系统给个空闲的），
- * 所以"端口发现"只能靠读 stdout —— 这就是就绪行存在的意义。
- */
-const { spawn, execFile } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-const http = require('http');
-const net = require('net');
-
-const READY_RE = /VIGIL_BRAIN_READY\s+port=(\d+)/;
-const MAX_RESTARTS = 3;
-const STABLE_MS = 10 * 60 * 1000;   // 跑满 10 分钟算稳定，重启计数清零
-const PORT_SCAN_TIMEOUT = 10000;     // 10秒没抓到就绪行就主动扫端口
-const SCAN_RANGE = [49000, 65000];   // brain 通常在这个区间挑端口
-
-// 调试日志：写到用户目录，方便排坑
-function dbg(msg) {
-  try {
-    const logPath = path.join(require('os').homedir(), 'vigil-sidecar.log');
-    fs.appendFileSync(logPath, new Date().toISOString() + ' ' + msg + '\n');
-  } catch (e) { /* 写日志失败别影响主流程 */ }
+'use strict';
+// Managed local runtime: only the bundled EXE, exact build, exact spawned PID.
+const {spawn, execFile} = require('child_process');
+const fs = require('fs'), path = require('path'), http = require('http'), crypto = require('crypto');
+const contract = require('./build-contract');
+let app, getter = () => ({}), child = null, timer = null, generation = 0;
+let expected, readyFile = '', checking = false;
+let state = {enabled:false,status:'stopped',exe:'',home:'',port:0,pid:0,restarts:0,lastErr:'',logTail:[]};
+const listeners = new Set();
+const ready = () => state.status === 'ready' && !!state.port;
+const base = () => ready() ? 'http://127.0.0.1:' + state.port : '';
+function emit() { for (const fn of listeners) { try { fn({...state,base:base()}); } catch (_) {} } }
+function token() {
+  try { return String(contract.read(path.join(state.home,'config/config.json')).brain_token || ''); }
+  catch (_) { return ''; }
 }
-
-let app = null;          // electron app（init 注入，为了拿 resourcesPath）
-let child = null;
-let scanTimer = null;    // 端口扫描定时器
-let state = {
-  enabled: false,        // 找到了 exe 且允许启动
-  exe: '',
-  home: '',
-  status: 'stopped',     // stopped | starting | ready | failed
-  port: 0,
-  pid: 0,
-  restarts: 0,
-  lastErr: '',
-  startedAt: 0,
-  logTail: [],           // 最近几十行 stdout/stderr，给诊断面板用
-};
-const listeners = [];
-
-function emit() {
-  const snap = { ...state, base: base() };
-  listeners.forEach((fn) => { try { fn(snap); } catch (e) { /* 界面回调别连累主进程 */ } });
-}
-
-function log(line) {
-  const s = String(line || '').replace(/\s+$/, '');
-  if (!s) return;
-  state.logTail.push(s);
-  if (state.logTail.length > 60) state.logTail.shift();
-  console.log('[sidecar] ' + s);
-}
-
-function base() {
-  return state.port ? 'http://127.0.0.1:' + state.port : '';
-}
-
-/** exe 定位：一个入口，别处不许自己拼路径 */
-function locateExe(cfg) {
-  const cands = [];
-  if (cfg && cfg.sidecar_exe) cands.push(cfg.sidecar_exe);
-  if (process.env.VIGIL_BRAIN_EXE) cands.push(process.env.VIGIL_BRAIN_EXE);
-  if (app) {
-    if (app.isPackaged) {
-      cands.push(path.join(process.resourcesPath, 'vigil-brain', 'vigil-brain.exe'));
-    } else {
-      // 开发仓：vigil-client/electron/ 上一级是仓库根
-      cands.push(path.join(__dirname, '..', '..', 'dist', 'brain-release', 'vigil-brain', 'vigil-brain.exe'));
-      cands.push(path.join(__dirname, '..', '..', 'dist', 'vigil-brain', 'vigil-brain.exe'));
-    }
-  }
-  for (const p of cands) {
-    try {
-      if (p && fs.existsSync(p)) return path.resolve(p);
-    } catch (e) { /* 排下一个 */ }
-  }
-  return '';
-}
-
-function probeHealth(port, timeoutMs) {
-  return new Promise((resolve) => {
-    const req = http.get('http://127.0.0.1:' + port + '/api/health',
-      { timeout: timeoutMs || 3000 }, (res) => {
-        res.resume();
-        resolve(res.statusCode === 200);
-      });
-    req.on('timeout', () => { req.destroy(); resolve(false); });
-    req.on('error', () => resolve(false));
-  });
-}
-
-/** 备用机制：stdout 抓不到就绪行时，主动扫描本地端口找 brain */
-function scanForBrainPort() {
-  return new Promise((resolve) => {
-    const [start, end] = SCAN_RANGE;
-    let found = 0;
-    let pending = 0;
-    const batch = 200;  // 每批扫 200 个端口，避免 too many open files
-    let cursor = start;
-    const scanBatch = () => {
-      if (found) return resolve(found);
-      if (cursor > end) return resolve(0);
-      const batchEnd = Math.min(cursor + batch - 1, end);
-      pending = 0;
-      for (let p = cursor; p <= batchEnd; p++) {
-        pending++;
-        const socket = net.connect({ host: '127.0.0.1', port: p }, () => {
-          socket.destroy();
-          probeHealth(p, 1500).then((ok) => {
-            if (ok && !found) {
-              found = p;
-              dbg('端口扫描找到 brain: ' + p);
-            }
-          });
-        });
-        socket.setTimeout(800, () => socket.destroy());
-        socket.on('error', () => {});
-        socket.on('close', () => {
-          pending--;
-          if (pending === 0) {
-            cursor = batchEnd + 1;
-            setTimeout(scanBatch, 50);
-          }
-        });
-      }
-    };
-    scanBatch();
-  });
-}
-
-/** 云端同步（M5）：把云端地址 + 主人钥匙递给本地大脑。
- *  大脑的 sync_client.cloud() 认 VIGIL_CLOUD_URL / VIGIL_CLOUD_TOKEN，
- *  config 的 sync 段优先（设置页直接写大脑 config 也行），这里给没写
- *  config 的场景兜底 —— 客户端是唯一知道"云端在哪"的地方。 */
-function cloudEnv() {
-  let cfg = {};
-  try { cfg = readCfgSafe() || {}; } catch (e) { /* 没有配置就当没有 */ }
-  const s = cfg.sync || {};
-  const env = {};
-  if (s.cloud_url) env.VIGIL_CLOUD_URL = String(s.cloud_url);
-  if (s.cloud_token) env.VIGIL_CLOUD_TOKEN = String(s.cloud_token);
-  return env;
-}
-
-function spawnBrain() {
-  state.status = 'starting';
-  state.startedAt = Date.now();
-  emit();
-  dbg('spawnBrain start, exe=' + state.exe + ' home=' + state.home);
-  try {
-    child = spawn(state.exe, [], {
-      cwd: state.home,             // 大脑的家：config/ data/ 都落这儿
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: Object.assign({}, process.env, cloudEnv()),
+function probeHealth(port, timeout = 3000, route = '/api/health', auth = '') {
+  return new Promise(resolve => {
+    const req = http.get({host:'127.0.0.1',port,path:route,timeout,
+      headers:auth ? {Authorization:'Bearer ' + auth} : {}}, res => {
+      if(route!=='/api/runtime' && route!=='/api/health'){res.resume();resolve(res.statusCode===200 ? {} : null);return;}
+      let data = '';res.on('data', b => {data += b;if(data.length>65536)req.destroy();});
+      res.on('end', () => {try {resolve(res.statusCode===200 ? JSON.parse(data) : null);}catch(_){resolve(null);}});
+      res.on('error',()=>resolve(null));
     });
-  } catch (e) {
-    state.status = 'failed';
-    state.lastErr = 'spawn 失败：' + e.message;
-    dbg('spawn 失败: ' + e.message);
-    emit();
-    return;
-  }
-  state.pid = child.pid || 0;
-  log('spawn pid=' + state.pid);
-  dbg('spawn pid=' + state.pid);
-
-  // 备用：10秒没抓到就绪行就主动扫端口（PyInstaller console 模式下 stdout 可能丢）
-  clearTimeout(scanTimer);
-  scanTimer = setTimeout(() => {
-    if (state.status === 'ready') return;
-    dbg('10秒未抓到就绪行，启动端口扫描...');
-    scanForBrainPort().then((port) => {
-      if (port && state.status !== 'ready' && state.status !== 'stopped') {
-        state.port = port;
-        state.status = 'ready';
-        log('端口扫描发现 brain port=' + port);
-        dbg('端口扫描设置 ready port=' + port);
-        emit();
-      }
-    });
-  }, PORT_SCAN_TIMEOUT);
-
-  let buf = '';
-  const onData = (chunk) => {
-    buf += chunk.toString('utf8');
-    let idx;
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, idx);
-      buf = buf.slice(idx + 1);
-      log(line);
-      const m = line.match(READY_RE);
-      if (m && state.status !== 'ready') {
-        state.port = parseInt(m[1], 10);
-        state.status = 'ready';
-        emit();
-        // 就绪行只是"大脑说它好了"，再摸一次 /api/health 才算真的通
-        probeHealth(state.port).then((ok) => {
-          if (!ok) log('就绪行已收到但健康检查没过，等下一轮探测');
-        });
-      }
-    }
-  };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
-
-  child.on('exit', (code, signal) => {
-    log('exit code=' + code + ' signal=' + signal);
-    dbg('exit code=' + code + ' signal=' + signal);
-    clearTimeout(scanTimer);
-    child = null;
-    state.pid = 0;
-    state.port = 0;
-    if (state.status === 'stopped') { emit(); return; }   // 人为关停，别拉起
-    // 崩溃重启：跑满 STABLE_MS 后计数清零；超 3 次放弃并亮红灯
-    if (Date.now() - state.startedAt > STABLE_MS) state.restarts = 0;
-    if (state.restarts < MAX_RESTARTS) {
-      state.restarts += 1;
-      state.status = 'starting';
-      state.lastErr = '进程退出(code=' + code + ')，第 ' + state.restarts + ' 次重启';
-      emit();
-      log(state.lastErr);
-      setTimeout(() => {
-        if (state.status !== 'stopped') spawnBrain();
-      }, 2000);
-    } else {
-      state.status = 'failed';
-      state.lastErr = '连续退出 ' + MAX_RESTARTS + ' 次，放弃重启（看日志尾部）';
-      emit();
-    }
+    req.on('timeout',()=>req.destroy());req.on('error',()=>resolve(null));
   });
-  child.on('error', (e) => log('进程错误：' + e.message));
 }
-
-/** 找到 exe 就起；cfg.sidecar === false 或 VIGIL_SIDECAR_DISABLE=1 明确说"别用本地大脑" */
-function maybeStart(cfg) {
-  if (child) return;
-  const exe = locateExe(cfg);
-  state.enabled = !!exe && cfg.sidecar !== false &&
-    process.env.VIGIL_SIDECAR_DISABLE !== '1';
-  state.exe = exe;
-  state.home = exe ? path.dirname(exe) : '';
-  if (!state.enabled) {
-    state.status = 'stopped';
-    emit();
-    return;
-  }
-  spawnBrain();
+function fail(message) { clearInterval(timer);timer=null;state.status='failed';state.lastErr=message;emit(); }
+async function checkReady(epoch) {
+  if(checking || generation!==epoch)return;
+  checking=true;
+  try {
+    if(!fs.existsSync(readyFile))return;
+    const info=contract.read(readyFile);
+    if(info.pid!==state.pid || info.instance_id!==state.instanceId || !Number.isInteger(info.port) || info.port<1 || info.port>65535)
+      throw Error('Brain 启动身份验证失败');
+    contract.compatible(expected,info);
+    const auth=token();if(!auth)throw Error('本地 Brain 认证未初始化');
+    const runtime=await probeHealth(info.port,3000,'/api/runtime',auth);
+    if(generation!==epoch)return;
+    if(!runtime || runtime.pid!==state.pid || runtime.instance_id!==state.instanceId)throw Error('Brain 认证或进程身份不匹配');
+    contract.compatible(expected,runtime);
+    for(const route of ['/api/creator/jobs','/api/agent/runs']) {
+      if(!await probeHealth(info.port,3000,route,auth))throw Error('Brain 缺少关键接口：'+route);
+    }
+    if(generation!==epoch)return;
+    clearInterval(timer);timer=null;state.port=info.port;state.status='ready';state.build=runtime;state.lastErr='';emit();
+  } catch(e) { if(generation===epoch){fail(e.message);if(child)child.kill();} }
+  finally { checking=false; }
 }
-
+function maybeStart(cfg = getter()) {
+  if(child || cfg.connection_mode==='remote')return;
+  const epoch=++generation;
+  try {
+    const resources=app.isPackaged ? process.resourcesPath : path.resolve(__dirname,'../../dist/brain-release');
+    const root=path.join(resources,'vigil-brain');
+    expected=contract.read(path.join(__dirname,'../build-info.json'));
+    if(expected.version!==app.getVersion())throw Error('Electron 与本地 Brain 版本不匹配；请修复完整 Vigil 安装');
+    const manifest=contract.read(path.join(root,'brain-manifest.json'));
+    contract.compatible(expected,manifest);contract.verifyTree(root,manifest);
+    state={...state,enabled:true,status:'starting',exe:path.join(root,'vigil-brain.exe'),
+      home:path.join(app.getPath('userData'),'brain'),port:0,pid:0,lastErr:'',instanceId:crypto.randomUUID(),build:null};
+    const run=path.join(app.getPath('userData'),'runtime');fs.mkdirSync(run,{recursive:true});
+    readyFile=path.join(run,'ready-'+state.instanceId+'.json');
+    const previous=require('./update-transaction').pending(app.getPath('userData'));
+    const legacy=[cfg.sidecar_exe && path.dirname(cfg.sidecar_exe),previous && path.join(previous.backupDir,'resources/vigil-brain'),
+      path.join(process.resourcesPath || '', 'vigil-brain')].filter(Boolean);
+    const env={...process.env,VIGIL_MANAGED:'1',VIGIL_HOME:state.home,VIGIL_NODE_EXE:process.execPath,
+      VIGIL_READY_FILE:readyFile,VIGIL_INSTANCE_ID:state.instanceId,VIGIL_LEGACY_HOMES:JSON.stringify([...new Set(legacy)]),
+      BRAIN_MUTEX:'Local\\VigilBrain-'+crypto.createHash('sha256').update(state.home).digest('hex').slice(0,20)};
+    delete env.VIGIL_PORT;delete env.VIGIL_BRAIN_EXE;
+    const sync=cfg.sync || {};
+    if(sync.cloud_url)env.VIGIL_CLOUD_URL=String(sync.cloud_url);
+    if(sync.cloud_token)env.VIGIL_CLOUD_TOKEN=String(sync.cloud_token);
+    fs.mkdirSync(state.home,{recursive:true});
+    child=spawn(state.exe,[],{cwd:state.home,windowsHide:true,stdio:['ignore','ignore','ignore'],env});
+    state.pid=child.pid || 0;emit();
+    child.on('error',()=>{if(generation===epoch)fail('随包 Brain 启动失败，请修复 Vigil 安装');});
+    child.on('exit',()=>{
+      if(generation!==epoch)return;
+      child=null;clearInterval(timer);timer=null;
+      if(state.status==='stopped' || state.status==='failed')return;
+      state.port=0;
+      if(state.restarts<3){state.restarts++;state.status='starting';emit();setTimeout(()=>{if(generation===epoch)maybeStart(getter());},1500);}
+      else fail('本地 Brain 连续退出，请检查数据迁移与安装完整性');
+    });
+    const start=Date.now();timer=setInterval(()=>{
+      if(Date.now()-start>120000){fail('本地 Brain 启动超时；未回退到其他地址');if(child)child.kill();return;}
+      checkReady(epoch);
+    },250);
+  } catch(e) { state.enabled=true;fail(e.message); }
+}
 function stop() {
-  clearTimeout(scanTimer);
-  if (!child) { state.status = 'stopped'; emit(); return; }
-  state.status = 'stopped';        // 先定性，exit 回调看到它就不重启了
-  const pid = state.pid;
-  const c = child;
-  child = null;
-  state.pid = 0;
-  state.port = 0;
-  if (process.platform === 'win32' && pid) {
-    // /T 连子进程一起带走，不留孤儿占端口
-    execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {
-      try { c.kill(); } catch (e) { /* 已经死了 */ }
-    });
-  } else {
-    try { c.kill(); } catch (e) { /* 同上 */ }
+  generation++;clearInterval(timer);timer=null;checking=false;
+  const c=child;child=null;state.status='stopped';state.port=0;state.pid=0;
+  if(c && c.pid){
+    if(process.platform==='win32')execFile('taskkill',['/pid',String(c.pid),'/T','/F'],{windowsHide:true},()=>{});
+    else c.kill();
   }
+  if(readyFile){try{fs.unlinkSync(readyFile);}catch(_){}}
   emit();
 }
-
-function restart(cfg) {
-  stop();
-  // 给 taskkill 一点时间，否则新进程可能撞上还没释放的端口
-  setTimeout(() => maybeStart(cfg || readCfgSafe()), 1500);
-}
-
-let _cfgGetter = null;
-function readCfgSafe() {
-  try { return _cfgGetter ? _cfgGetter() : {}; } catch (e) { return {}; }
-}
-
-function init(electronApp, cfgGetter) {
-  app = electronApp;
-  _cfgGetter = cfgGetter;
-  app.on('before-quit', stop);
-  app.on('will-quit', stop);
-}
-
-module.exports = {
-  init, maybeStart, stop, restart, base, probeHealth,
-  status: () => ({ ...state, base: base() }),
-  ready: () => state.status === 'ready' && !!state.port,
-  onState: (fn) => { listeners.push(fn); return () => {
-    const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1);
-  }; },
-};
+function restart(cfg) {stop();setTimeout(()=>maybeStart(cfg || getter()),1500);}
+function init(electronApp,cfgGetter) {app=electronApp;getter=cfgGetter;app.on('before-quit',stop);app.on('will-quit',stop);}
+module.exports={init,maybeStart,stop,restart,ready,base,token,probeHealth,
+  status:()=>({...state,base:base()}),onState:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};

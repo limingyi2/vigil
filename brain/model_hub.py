@@ -21,7 +21,7 @@ import ipaddress
 import socket
 import urllib.request
 import urllib.error
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     from paths import CONFIG_PATH, DATA_DIR
@@ -183,7 +183,13 @@ def _write_cache(base, ids):
 
 
 def _norm_base(base):
-    return str(base or "").strip().rstrip("/").lower()
+    raw = str(base or "").strip().rstrip("/")
+    try:
+        p = urlsplit(raw)
+        # Hosts are case-insensitive; API paths are not.
+        return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path.rstrip('/'), p.query, p.fragment))
+    except ValueError:
+        return raw
 
 
 def validate_base_url(base):
@@ -343,29 +349,14 @@ def current(cfg):
     """
     cfg = cfg or {}
     vis = cfg.get("vision") if isinstance(cfg.get("vision"), dict) else {}
-    provider = str(cfg.get("provider") or "")
-    if provider not in PROVIDERS:
-        # 老配置没有 provider 字段：按 base 反推，认不出来就算自定义。
-        # ⚠️ 反推要按 base 的 host 判，别用 `in` 匹配整串 ——
-        # "siliconflow" 那种字面匹配在多两个provider 之后就成了隐形坑：
-        # 用户切到小米但 provider 字段没落盘时，会被算成"自定义"，
-        # 界面显示的名字和实际用的服务对不上。
-        b = str(cfg.get("api_base") or "").lower()
-        provider = "custom"
-        for pid, meta in PROVIDERS.items():
-            if pid == "custom":
-                continue
-            host = str(meta.get("base") or "").lower()
-            if host and host in b:
-                provider = pid
-                break
+    provider = _configured_provider(cfg)
     ol = cfg.get("ollama") if isinstance(cfg.get("ollama"), dict) else {}
     dl = cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
     return {
         "provider": provider,
         "provider_name": PROVIDERS.get(provider, {}).get("name", provider),
         "api_base": str(cfg.get("api_base") or ""),
-        "api_key": str(cfg.get("api_key") or ""),
+        "api_key": provider_key(cfg, provider, cfg.get("api_base")),
         "model_mode": str(cfg.get("model_mode") or "cloud"),
         "ollama": {
             "base": str(ol.get("base") or ""),
@@ -433,6 +424,17 @@ def _key_slot(prov, base):
     return "%s|%s" % (str(prov or "").strip(), _norm_base(base))
 
 
+def _configured_provider(cfg):
+    provider = str(cfg.get('provider') or '').strip()
+    if provider in PROVIDERS:
+        return provider
+    base = _norm_base(cfg.get('api_base'))
+    for pid, meta in PROVIDERS.items():
+        if meta.get('base') and _norm_base(meta['base']) == base:
+            return pid
+    return 'custom'
+
+
 def remember_provider_key(cfg, prov, base, key):
     """按服务商和 Base URL 保存密钥，同时保留旧版按服务商读取的记录。"""
     prov = str(prov or "").strip()
@@ -465,45 +467,52 @@ def provider_key(cfg, prov, base=None):
     切换看着成功了，她下一句就调不动（401）。要真能一键切换，
     必须把每家的密钥分别记下来：`api_keys = {"siliconflow": "sk-…"}`。
     """
+    cfg = cfg or {}
+    prov = str(prov or '').strip()
     bag = cfg.get("api_keys")
-    requested = _norm_base(base) if base is not None else None
     bases = cfg.get("api_key_bases") if isinstance(cfg.get("api_key_bases"), dict) else {}
+    active_provider = _configured_provider(cfg)
+    active = _norm_base(cfg.get('api_base'))
+    entry = bag.get(prov) if isinstance(bag, dict) else None
+    # No-Base callers still resolve one concrete endpoint, never "any key".
+    bound = _norm_base(entry.get('base')) if isinstance(entry, dict) else _norm_base(bases.get(prov))
+    requested = _norm_base(base) if base is not None else (
+        active if prov == active_provider and active else bound or _norm_base(PROVIDERS.get(prov, {}).get('base')))
     if isinstance(bag, dict):
-        if requested is not None:
-            exact = bag.get(_key_slot(prov, base))
+        if requested:
+            exact = bag.get(_key_slot(prov, requested))
             if isinstance(exact, dict):
                 k = str(exact.get("key") or "").strip()
-                if k and _norm_base(exact.get("base")) == requested:
+                if k and not is_masked(k) and _norm_base(exact.get("base")) == requested:
                     return k
         entry = bag.get(prov)
         if isinstance(entry, dict):
             k = str(entry.get("key") or "").strip()
             bound = _norm_base(entry.get("base"))
-            if k and (requested is None or bound == requested):
+            if k and not is_masked(k) and bound == requested:
                 return k
         else:
             k = str(entry or "").strip()
             # Legacy string records had no address metadata.  They remain
             # usable for the active legacy endpoint, but never for an explicit
             # different/custom Base URL.
-            active = _norm_base(cfg.get("api_base"))
-            bound = _norm_base(bases.get(prov))
-            saved_match = any(
-                str(row.get("provider") or "") == str(prov or "")
-                and _norm_base(row.get("base")) == requested
-                for row in (cfg.get("saved_models") or [])
-                if isinstance(row, dict)) if requested is not None else False
-            if k and (requested is None or requested == (bound or active)
-                      or saved_match):
+            if prov not in bases:
+                bound = (active if prov == active_provider else '') or _norm_base(PROVIDERS.get(prov, {}).get('base'))
+            if k and not is_masked(k) and bound and bound == requested:
                 return k
-    if requested is None:
-        # Backwards compatibility for a config that only has api_key: it is
-        # valid for the currently selected provider, never for another one.
-        if str(cfg.get("provider") or "") == str(prov or ""):
-            return str(cfg.get("api_key") or "")
-    elif (str(cfg.get("provider") or "") == str(prov or "")
-          and requested == _norm_base(cfg.get("api_base"))):
-        return str(cfg.get("api_key") or "")
+    key = str(cfg.get('api_key') or '').strip()
+    if prov == active_provider and requested == active and key and not is_masked(key):
+        # Legacy single-key configs remain valid at their current pair, unless
+        # existing records prove that this key belongs to a different pair.
+        for owner, record in (bag.items() if isinstance(bag, dict) else []):
+            if isinstance(record, dict):
+                if str(record.get('key') or '') == key and (
+                        owner.split('|', 1)[0] != prov or _norm_base(record.get('base')) != requested):
+                    return ''
+            elif str(record or '') == key and (
+                    owner != prov or (bases.get(owner) and _norm_base(bases[owner]) != requested)):
+                return ''
+        return key
     return ""
 
 
@@ -539,20 +548,11 @@ def adopt_current_key(cfg):
     apply_cfg 的"换走的是哪家"也靠这个字段。
     """
     cfg = cfg or {}
-    prov = str(cfg.get("provider") or "").strip()
-    if not prov:
-        b = str(cfg.get("api_base") or "").lower()
-        for pid, meta in PROVIDERS.items():
-            if pid == "custom":
-                continue
-            host = str(meta.get("base") or "").lower()
-            if host and host in b:
-                prov = pid
-                break
-        if prov:
-            cfg["provider"] = prov
+    prov = _configured_provider(cfg)
+    if not cfg.get('provider'):
+        cfg['provider'] = prov
     k = str(cfg.get("api_key") or "").strip()
-    if not prov or not k or has_provider_key(cfg, prov, cfg.get("api_base")):
+    if not prov or not k or provider_key(cfg, prov, cfg.get('api_base')) != k or has_provider_key(cfg, prov, cfg.get("api_base")):
         return False
     bag = dict(cfg.get("api_keys") or {})
     bag[prov] = k
@@ -894,7 +894,8 @@ def apply_cfg(cfg, p):
     image / audio / vision_enabled。返回 (新配置, 改了哪些项的中文说明)；
     空字符串＝不改那一项。
     """
-    cfg = dict(cfg or {})
+    source_cfg = dict(cfg or {})
+    cfg = dict(source_cfg)
     changed = []
 
     prov = str(p.get("provider") or "").strip()
@@ -902,8 +903,8 @@ def apply_cfg(cfg, p):
     # 下面第一行就把 cfg["provider"] 覆盖了，之后再想"换走的是哪家"
     # 拿到的已经是新家 —— 于是 `api_keys` 里永远登记不上，
     # 切回去时 `provider_key(原家)` 回退到 api_key，拿到的是别家的密钥。
-    prev_prov = str(cfg.get("provider") or "").strip()
-    prev_key0 = cfg.get("api_key")
+    prev_prov = _configured_provider(source_cfg)
+    prev_key0 = provider_key(source_cfg, prev_prov, source_cfg.get('api_base'))
     prev_base = str(cfg.get("api_base") or "").strip().rstrip("/")
     switched = bool(prov and prov in PROVIDERS and prov != prev_prov)
     if switched:
@@ -934,29 +935,41 @@ def apply_cfg(cfg, p):
     # 切回去时 provider_key 只能回退到 api_key（那时已是别家的）。
     # 先把"换走的是哪家、它眼下用哪把"记进 api_keys，再谈换密钥 ——
     # 顺序反了的话 want_key 会取到还没登记时的回退值。
-    if switched and prev_key0 and prev_prov in PROVIDERS:
+    destination_provider = prov if prov in PROVIDERS else prev_prov
+    pair_changed = (destination_provider != prev_prov or _norm_base(cfg.get('api_base')) != _norm_base(prev_base))
+    if pair_changed and isinstance(source_cfg.get('api_keys'), dict):
+        # Freeze legacy string records against the ORIGINAL config. Otherwise
+        # an unbound record could acquire the newly selected URL on next read.
+        bag = dict(source_cfg['api_keys'])
+        bases = dict(source_cfg.get('api_key_bases') or {})
+        for owner, old_key in list(bag.items()):
+            if owner not in PROVIDERS or not isinstance(old_key, str) or not old_key:
+                continue
+            bound = bases.setdefault(owner, _norm_base(prev_base if owner == prev_prov else PROVIDERS[owner].get('base')))
+            if bound and not is_masked(old_key):
+                bag.setdefault(_key_slot(owner, bound), {'key': old_key, 'base': _norm_base(bound)})
+        source_cfg = dict(source_cfg, api_keys=bag, api_key_bases=bases)
+        cfg.update(api_keys=bag, api_key_bases=bases)
+    if pair_changed and prev_key0 and prev_prov in PROVIDERS:
         cfg = remember_provider_key(cfg, prev_prov, prev_base, prev_key0)
-    want_base = (p_base if user_base else
-                 (PROVIDERS.get(prov, {}).get("base") if switched else prev_base))
-    want_key = provider_key(cfg, prov, want_base) if switched else ""
+    want_base = str(cfg.get('api_base') or '')
+    want_key = provider_key(source_cfg, destination_provider, want_base) if pair_changed else ''
+    if pair_changed:
+        # Resolve against the original identity, before the new provider/base
+        # could claim the old api_key via the legacy fallback.
+        cfg['provider'] = destination_provider
+        cfg['api_key'] = want_key
+        changed.append('已恢复目标地址的密钥' if want_key else '目标服务商和地址未配置密钥')
 
     # 打码串绝不能写进去：它 != 真 key，会通过下面的 != 判断，然后覆盖掉真的那把，
     # 之后 AI 一句也说不出来。空串（前端留空 = 沿用当前）和打码串在这里都要放过。
-    if key and not is_masked(key) and key != cfg.get("api_key"):
+    if key and not is_masked(key) and (key != cfg.get("api_key") or pair_changed):
         cfg["api_key"] = key
         changed.append("密钥已更新")
         # 同时记进按家那份，否则下次切走再切回来还得重填一遍
-        if prov in PROVIDERS:
-            cfg = remember_provider_key(cfg, prov, cfg.get("api_base"), key)
+        cfg = remember_provider_key(cfg, destination_provider, cfg.get("api_base"), key)
     elif is_masked(key):
         changed.append("密钥没改（填的是打码后的样子，服务器上那把没动）")
-
-    # 切了服务商就换上那把已存的密钥；那家一把都没存就不换 ——
-    # 沿用别家的密钥等于换完她立刻调不动，而界面显示"已切换"。
-    if switched and want_key and want_key != cfg.get("api_key") \
-            and not (key and not is_masked(key) and key == cfg.get("api_key")):
-        cfg["api_key"] = want_key
-        changed.append("已换上%s的密钥" % PROVIDERS[prov]["name"])
 
     chat = str(p.get("chat") or "").strip()
     if chat and chat != cfg.get("model"):

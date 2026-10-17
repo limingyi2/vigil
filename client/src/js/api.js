@@ -56,8 +56,8 @@
   /** 拿 JSON；失败时把 status/err 一起带出来，页面好显示 */
   function pick(r) {
     if (!r) return { ok: false, err: '无响应' };
-    if (r.json && typeof r.json === 'object') return { ok: !!r.ok, ...r.json, _status: r.status, _err: r.err || (r.json && r.json.err) || '' };
-    return { ok: !!r.ok, _status: r.status, _err: r.err || (r.text || '').slice(0, 200) };
+    if (r.json && typeof r.json === 'object') return { ...r.json, ok: !!r.ok && r.json.ok !== false, _status: r.status, _target: r.target || '', _err: r.err || (r.json && r.json.err) || '' };
+    return { ok: !!r.ok, _status: r.status, _target: r.target || '', _err: r.err || (r.text || '').slice(0, 200) };
   }
 
   /** 探活 + 记录延迟：只用 /api/persona，它轻且一定在 */

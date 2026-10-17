@@ -1,0 +1,22 @@
+Source commit: 05ba0c7544ddca2509c22e22d064bcb9745d9149
+Command: npm exec --prefix F:\zhixia\client -- electron F:\vigil-p8-validation-05ba\client\tools\test-chat-v2-electron.js
+Result: Exit 1 after the chat/P6/attachment/video scenarios completed.
+
+Failure:
+Error: Timeout: document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'
+    at until (client/tools/test-chat-v2-electron.js:159:148)
+    at async main (client/tools/test-chat-v2-electron.js:495:9)
+
+Renderer diagnostics at timeout:
+status = WebWallGL 正在准备首帧
+error = (empty)
+hidden = false
+focused = true
+iframeLoaded = null
+webError = null
+fps = 0
+
+Reproduction: run the command above on Windows. The test reaches the Wallpaper gallery, selects scene fixture 990003, and waits 30 seconds for the live-render status. The embedded scene never reports its first frame. Chat/P6, attachments, inline video controls, dialogs, and the preceding Wallpaper layout checks pass first.
+
+The failing Electron test intentionally retained its isolated temporary profile/log directory for inspection:
+C:\Users\limingyi\AppData\Local\Temp\vigil-chat-v2-dokJfV
