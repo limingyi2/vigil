@@ -301,6 +301,10 @@ async function main() {
     await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
     await wallpaperSceneRun(); console.log('PASS: isolated chat harness Wallpaper scene first frame'); return;
   }
+  if (process.env.P8_WALLPAPER_LAYOUT_ONLY === '1') {
+    await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
+    await wallpaperSettingsChecks(); await wallpaperSceneRun(); console.log('PASS: Wallpaper layout/setup checks followed by scene first frame'); return;
+  }
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   assert.equal(await ev(`document.querySelector('#rpBtn').getAttribute('aria-expanded')`),'false');
   assert.equal((await measure()).context,'none');
