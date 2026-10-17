@@ -65,7 +65,7 @@ def _literal_assignment(tree, key):
     return None
 
 
-def _check_python(path, package_name, errors, warnings):
+def _check_python(path, package_name, errors, warnings, layout="single"):
     try:
         with open(path, encoding="utf-8") as fh:
             source = fh.read()
@@ -74,6 +74,47 @@ def _check_python(path, package_name, errors, warnings):
         errors.append(_issue("python_syntax", "%s 不是有效 Python：%s" % (
             os.path.basename(path), str(exc)[:160])))
         return
+
+    module_functions = {
+        node.name for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    module_assignments = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        module_assignments.update(
+            target.id for target in targets if isinstance(target, ast.Name)
+        )
+
+    if "on_message" in module_functions:
+        warnings.append(_issue(
+            "unsupported_on_message_hook",
+            "当前插件宿主不会调用 on_message；聊天工具请同时声明 TOOLS 与 TOOL_SPECS"
+        ))
+    if "TOOLS" in module_assignments and "TOOL_SPECS" not in module_assignments:
+        warnings.append(_issue(
+            "missing_tool_specs",
+            "插件声明了 TOOLS，但缺少 TOOL_SPECS；原生聊天模型看不到这些工具"
+        ))
+    if "TOOL_SPECS" in module_assignments and "TOOLS" not in module_assignments:
+        warnings.append(_issue(
+            "missing_tool_implementation",
+            "插件声明了 TOOL_SPECS，但缺少 TOOLS 实现，工具调用不会成功"
+        ))
+    if layout == "single" and any(
+        isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and ("<!doctype html" in node.value.lower() or "<html" in node.value.lower())
+        for node in ast.walk(tree)
+    ):
+        warnings.append(_issue(
+            "html_string_not_ui",
+            "单文件插件中的 HTML 字符串不会自动变成插件页面；当前 Creator 不支持自定义前端 UI"
+        ))
 
     module_name = _literal_assignment(tree, "NAME")
     if module_name is None:
@@ -202,7 +243,7 @@ def check_plugin_directory(path):
         return report
     if entry_name:
         _check_python(os.path.join(root, entry_name), package_name,
-                      report["errors"], report["warnings"])
+                      report["errors"], report["warnings"], report["layout"])
     report["manifest"] = _read_manifest(root, package_name, names, report["errors"])
     report["ok"] = not report["errors"]
     return report
