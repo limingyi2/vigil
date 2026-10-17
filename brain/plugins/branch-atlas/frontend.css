@@ -1,0 +1,157 @@
+#branch-atlas-root {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 12000;
+  color: var(--text, #e8edf5);
+  font: 13px/1.5 Inter, "Segoe UI", system-ui, sans-serif;
+}
+#branch-atlas-root * { box-sizing: border-box; }
+#branch-atlas-root button { font: inherit; cursor: pointer; }
+#branch-atlas-root button:disabled { opacity: .55; cursor: wait; }
+#branch-atlas-root .ba-launch {
+  border: 1px solid rgba(126, 153, 187, .34);
+  border-radius: 999px;
+  padding: 10px 15px;
+  color: var(--text, #e8edf5);
+  background: rgba(20, 27, 38, .94);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .28);
+  backdrop-filter: blur(16px);
+}
+#branch-atlas-root .ba-launch:hover { border-color: rgba(126, 176, 255, .8); }
+#branch-atlas-root .ba-panel[hidden] { display: none !important; }
+#branch-atlas-root .ba-panel {
+  position: absolute;
+  right: 0;
+  bottom: 52px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(78vh, 760px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid rgba(140, 157, 181, .3);
+  border-radius: 16px;
+  background: var(--panel, rgba(17, 23, 33, .97));
+  color: var(--text, #e8edf5);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .4);
+  backdrop-filter: blur(24px);
+}
+#branch-atlas-root .ba-head,
+#branch-atlas-root .ba-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+#branch-atlas-root .ba-head { justify-content: space-between; }
+#branch-atlas-root .ba-title { font-size: 16px; font-weight: 700; letter-spacing: .02em; }
+#branch-atlas-root .ba-subtitle,
+#branch-atlas-root .ba-current,
+#branch-atlas-root .ba-foot { color: var(--muted, #a5afbf); font-size: 11px; }
+#branch-atlas-root .ba-close {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(140, 157, 181, .25);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+}
+#branch-atlas-root .ba-button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(140, 157, 181, .3);
+  border-radius: 9px;
+  padding: 7px 11px;
+  background: rgba(140, 157, 181, .09);
+  color: inherit;
+}
+#branch-atlas-root .ba-button.primary {
+  border-color: rgba(103, 157, 255, .5);
+  background: rgba(68, 125, 226, .2);
+}
+#branch-atlas-root .ba-current {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#branch-atlas-root .ba-status {
+  padding: 8px 10px;
+  border: 1px solid rgba(140, 157, 181, .18);
+  border-radius: 9px;
+  background: rgba(140, 157, 181, .06);
+  overflow-wrap: anywhere;
+}
+#branch-atlas-root .ba-status.is-error {
+  border-color: rgba(236, 112, 112, .5);
+  color: #ffb4b4;
+  background: rgba(154, 45, 45, .13);
+}
+#branch-atlas-root .ba-meta {
+  color: var(--muted, #a5afbf);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+#branch-atlas-root .ba-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+#branch-atlas-root .ba-section {
+  min-width: 0;
+  border: 1px solid rgba(140, 157, 181, .18);
+  border-radius: 11px;
+  padding: 10px;
+  background: rgba(140, 157, 181, .035);
+}
+#branch-atlas-root .ba-section h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  color: var(--text, #e8edf5);
+  font-size: 12px;
+  font-weight: 650;
+}
+#branch-atlas-root .ba-branches {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 145px;
+  overflow: auto;
+}
+#branch-atlas-root .ba-branch {
+  border-radius: 6px;
+  padding: 4px 7px;
+  background: rgba(140, 157, 181, .08);
+  color: var(--muted, #a5afbf);
+  overflow-wrap: anywhere;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+#branch-atlas-root .ba-branch.is-current {
+  border: 1px solid rgba(83, 181, 145, .28);
+  color: #9ee2c7;
+  background: rgba(44, 137, 102, .14);
+}
+#branch-atlas-root .ba-empty { color: var(--muted, #a5afbf); font-size: 11px; }
+#branch-atlas-root .ba-worktree,
+#branch-atlas-root .ba-graph {
+  margin: 0;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre;
+  color: var(--text, #e8edf5);
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  tab-size: 2;
+}
+#branch-atlas-root .ba-worktree { max-height: 145px; }
+#branch-atlas-root .ba-graph-section { padding: 10px 12px; }
+#branch-atlas-root .ba-graph { max-height: 320px; }
+#branch-atlas-root .ba-foot { padding-top: 2px; }
+@media (max-width: 600px) {
+  #branch-atlas-root { right: 10px; bottom: 10px; }
+  #branch-atlas-root .ba-panel { width: calc(100vw - 20px); padding: 12px; max-height: 82vh; }
+  #branch-atlas-root .ba-columns { grid-template-columns: minmax(0, 1fr); }
+}
