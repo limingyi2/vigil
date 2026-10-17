@@ -13,6 +13,8 @@
   'use strict';
   const J = (json, status) => Promise.resolve({ ok: true, status: status || 200, json: json });
   const now = Math.floor(Date.now() / 1000);
+  const PREVIEW_SESSIONS = [];
+  const PREVIEW_HISTORY = new Map();
 
   const STATS = {
     turns: 128, tok_in: 31200, tok_out: 10900, fallback: 2, avg_ms: 2900,
@@ -123,6 +125,25 @@
 
   window.vigil = {
     api: (method, path, body) => {
+      const url = new URL(path, 'http://preview');
+      if (url.pathname === '/api/conversations' && method === 'GET') return J({ok:true,items:PREVIEW_SESSIONS});
+      if (url.pathname === '/api/conversations' && method === 'POST') {
+        const item = {id:crypto.randomUUID(),title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false,has_content:true};
+        PREVIEW_SESSIONS.unshift(item); PREVIEW_HISTORY.set(item.id,[]); return J({ok:true,item},201);
+      }
+      if (url.pathname.startsWith('/api/conversations/') && method === 'POST') {
+        const bits = url.pathname.split('/').filter(Boolean), id = bits[2];
+        if (bits[3] === 'delete') { const i=PREVIEW_SESSIONS.findIndex(x=>x.id===id); if(i>=0) PREVIEW_SESSIONS.splice(i,1); PREVIEW_HISTORY.delete(id); return J({ok:true}); }
+        const item=PREVIEW_SESSIONS.find(x=>x.id===id); if(item){item.title=body.title;return J({ok:true,item});}
+      }
+      if (url.pathname === '/api/history' && method === 'GET') return J({ok:true,items:PREVIEW_HISTORY.get(url.searchParams.get('conversation_id'))||[],display_turns:[]});
+      if (url.pathname === '/api/creator/jobs' && method === 'GET') return J({ok:true,items:[]});
+      if (url.pathname === '/api/chat' && method === 'POST') {
+        const id=body.conversation_id, history=PREVIEW_HISTORY.get(id)||[];
+        history.push({role:'user',text:body.text||'',t:new Date().toISOString()},{role:'assistant',text:'（网页验收模拟）已收到：'+(body.text||''),t:new Date().toISOString()});
+        PREVIEW_HISTORY.set(id,history); const item=PREVIEW_SESSIONS.find(x=>x.id===id); if(item){item.has_content=true;item.title=(body.text||'新对话').slice(0,48);item.updated_at=Date.now()/1000;}
+        return J({ok:true,reply:'（网页验收模拟）已收到：'+(body.text||'')});
+      }
       for (const [re, fn] of ROUTES) {
         if (re.test(path)) return fn(body, path);
       }

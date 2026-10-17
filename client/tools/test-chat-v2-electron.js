@@ -30,7 +30,7 @@ const results = [], errors = [], requests = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win, host, history = [], failure = false, historyError = false, personaEmpty = false;
 const legacyConversationId = '11111111-1111-4111-8111-111111111111';
-const conversations = [{id:legacyConversationId,title:'之前的聊天',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:true}];
+const conversations = [{id:legacyConversationId,title:'旧版历史',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:true,has_content:true}];
 const otherHistories = new Map();
 const creatorJobs = new Map();
 const creatorJobById = new Map();
@@ -65,7 +65,9 @@ function fixtureApi(method, raw, body, base) {
     conversations.push(item); otherHistories.set(item.id,[]); json={ok:true,item};
   }
   if (p.startsWith('/api/conversations/') && method === 'POST') {
-    const item=conversations.find(x=>x.id===p.split('/').at(-1)); if(item){item.title=body.title;item.updated_at=Date.now()/1000;json={ok:true,item};}
+    const bits=p.split('/').filter(Boolean), id=bits[2];
+    if(bits[3]==='delete'){const i=conversations.findIndex(x=>x.id===id);if(i>=0)conversations.splice(i,1);otherHistories.delete(id);creatorJobs.delete(id);json={ok:true};}
+    else {const item=conversations.find(x=>x.id===id);if(item){item.title=body.title;item.updated_at=Date.now()/1000;json={ok:true,item};}}
   }
   if (p === '/api/plugins/frontend') json = { version:1, plugins:[] };
   if (p === '/api/history') { const cid=url.searchParams.get('conversation_id'); json = { items:cid===legacyConversationId?history:(otherHistories.get(cid)||[]), display_turns:[] }; }
@@ -236,11 +238,8 @@ async function shot(name) { await wait(100); fs.writeFileSync(path.join(shots,na
 async function chat() {
   // Independent legacy layout scenarios start with empty fixture storage.
   // Refresh/reopen retention is covered by test-p1-electron.js.
-  await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k));document.querySelector('#gnav [data-page="chat"]').click()`);
-  await until(`document.querySelector('#ta') && document.querySelector('[data-session="${legacyConversationId}"]')`);
-  if(await ev(`API.state.chatConversationId!==${JSON.stringify(legacyConversationId)}`)) {
-    await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
-  }
+  await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k));localStorage.setItem('vigil.chat.renderer-session.v1',JSON.stringify({app_instance:'ui-v2-test-process',conversation_id:'',mode:'welcome'}));document.querySelector('#gnav [data-page="chat"]').click()`);
+  await until(`document.querySelector('#ta')`);
   await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden`); await wait(100);
 }
 async function measure() {
@@ -306,6 +305,67 @@ async function main() {
   gpu = { features:app.getGPUFeatureStatus(), webgl:await ev(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`) };
   wallpaperTrace('environment',{electron:process.versions.electron,chrome:process.versions.chrome,platform:process.platform,gpu,initialMeasure:await measure(),predecessorState:{fixtureSelection:'not-started',visibleFrames:await ev(`document.querySelectorAll('iframe').length`),page:await ev(`document.body.dataset.vigilPage`),classes:await ev(`document.body.className`),resourceEntries:await ev(`performance.getEntriesByType('resource').length`)}});
   if(baseline) { await shot('before-light'); await ev(`document.querySelector('#themeBtn').click()`); await shot('before-dark'); return; }
+  if (process.env.VIGIL_CHAT_STYLE_ONLY === '1') {
+    assert.equal(await ev(`document.querySelector('#hero .welcome-brand')?.textContent`),'Vigil');
+    assert.equal(await ev(`document.querySelector('.hero-hints')`),null);
+    assert.equal(await ev(`document.querySelector('.session-brand')?.textContent.trim()`),'Vigil');
+    assert.equal(await ev(`document.querySelector('.session-brand img')`),null);
+    assert.equal(await ev(`document.querySelector('#newTopicBtn span')?.textContent`),'新对话');
+    assert.equal(await ev(`document.querySelector('#newTopicBtn .i use')?.getAttribute('href')`),'#i-chat');
+    assert.equal(await ev(`document.querySelector('#newTopicBtn').textContent.includes('+')`),false);
+    assert.ok(await ev(`document.querySelector('#panel').getBoundingClientRect().width<=220`));
+    assert.equal(await ev(`document.querySelector('.session-chats [data-session="${legacyConversationId}"]')!==null`),true);
+    assert.equal(await ev(`document.querySelector('.session-workspace')`),null);
+    const setting=await ev(`(()=>{const r=document.querySelector('#settingsOpen').getBoundingClientRect(),p=document.querySelector('#panel').getBoundingClientRect();return{footer:!!document.querySelector('#settingsOpen').closest('.panel-footer'),gap:p.bottom-r.bottom}})()`);
+    assert.equal(setting.footer,true); assert.ok(setting.gap<20);
+    await shot('trial-welcome');
+    await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
+    await until(`document.querySelector('.session-workspace [data-session="${legacyConversationId}"]')`);
+    assert.equal(await ev(`document.querySelector('.session-workspace .session-row').classList.contains('on')`),true);
+    await shot('trial-sidebar-selected');
+    for(const [width,height] of [[1280,800],[860,700],[600,650],[420,700]]) {
+      win.setSize(width,height); await wait(140);
+      const m=await ev(`(()=>{const p=document.querySelector('#panel').getBoundingClientRect(),c=document.querySelector('.composer').getBoundingClientRect(),i=document.querySelector('#ta').getBoundingClientRect();return{panelRight:p.right,composerLeft:c.left,composerBottom:c.bottom,inputRight:i.right,windowWidth:innerWidth,windowHeight:innerHeight}})()`);
+      assert.ok(m.panelRight<=m.composerLeft+1,JSON.stringify({width,height,m})); assert.ok(m.composerBottom<=height+1,JSON.stringify({width,height,m})); assert.ok(m.inputRight<=width+1,JSON.stringify({width,height,m}));
+      if(width===600) await shot('trial-welcome-600px');
+    }
+    win.setSize(1280,800); await wait(140);
+    const normal=await ev(`getComputedStyle(document.querySelector('.cbox')).backgroundColor`);
+    await ev(`document.body.classList.add('vwp-active')`);
+    const glass=await ev(`(()=>({box:getComputedStyle(document.querySelector('.cbox')).backdropFilter,sidebar:getComputedStyle(document.querySelector('#panel')).backdropFilter,bg:getComputedStyle(document.querySelector('.cbox')).backgroundColor}))()`);
+    assert.ok(glass.box.includes('blur(20px)')); assert.ok(glass.sidebar.includes('blur(18px)')); assert.notEqual(normal,glass.bg);
+    await ev(`document.body.classList.remove('vwp-active')`);
+    const createBefore=requests.filter(r=>r.method==='POST'&&r.path==='/api/conversations').length;
+    await ev(`document.querySelector('#newTopicBtn').click()`);
+    await until(`!document.querySelector('#hero').hidden && document.activeElement===document.querySelector('#ta')`);
+    assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='/api/conversations').length,createBefore);
+    assert.equal(await ev(`document.querySelector('.session-workspace')`),null);
+    assert.equal(await ev(`document.querySelector('.session-chats [data-session="${legacyConversationId}"]')!==null`),true);
+    await shot('trial-new-chat');
+    await ev(`document.querySelector('#ta').value='WELCOME_FIRST_MESSAGE';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
+    await until(`API.state.chatConversationId && document.querySelector('#hero').hidden && document.querySelector('#msgs').textContent.includes('WELCOME_FIRST_MESSAGE') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
+    assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='/api/conversations').length,createBefore+1);
+    assert.equal(await ev(`document.querySelector('.session-workspace [data-session="'+API.state.chatConversationId+'"]')!==null`),true);
+    const conversationA=await ev(`API.state.chatConversationId`);
+    await shot('trial-new-chat-started');
+    await ev(`document.querySelector('#newTopicBtn').click()`);
+    await until(`!document.querySelector('#hero').hidden && API.state.chatConversationId==='' && document.activeElement===document.querySelector('#ta')`);
+    assert.equal(await ev(`document.querySelector('#msgs').textContent`),'');
+    await ev(`document.querySelector('#ta').value='WELCOME_SECOND_MESSAGE';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
+    await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationA)} && document.querySelector('#hero').hidden && document.querySelector('#msgs').textContent.includes('WELCOME_SECOND_MESSAGE') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
+    const conversationB=await ev(`API.state.chatConversationId`);
+    assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='/api/conversations').length,createBefore+2);
+    await ev(`document.querySelector('[data-session="${conversationA}"]').click()`);
+    await until(`document.querySelector('#msgs').textContent.includes('WELCOME_FIRST_MESSAGE')`);
+    assert.equal(await ev(`document.querySelector('#msgs').textContent.includes('WELCOME_SECOND_MESSAGE')`),false);
+    assert.equal(await ev(`document.querySelector('.session-workspace [data-session="${conversationA}"]')!==null`),true);
+    assert.equal(await ev(`document.querySelector('.session-chats [data-session="${conversationB}"]')!==null`),true);
+    await shot('trial-session-switch');
+    await ev(`document.querySelector('#settingsOpen').click()`);
+    await until(`document.querySelectorAll('.settings-tile').length===8`);
+    await shot('trial-settings-grid');
+    console.log('PASS: focused chat layout check',JSON.stringify({setting,normal,glass})); return;
+  }
   if (process.env.P8_WALLPAPER_ONLY === '1') {
     await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
     await wallpaperSceneRun(); console.log('PASS: isolated chat harness Wallpaper scene first frame'); return;
@@ -322,12 +382,16 @@ async function main() {
     await wallpaperSceneRun(); console.log('PASS: window resize only followed by Wallpaper scene first frame'); return;
   }
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
-  assert.equal(await ev(`document.querySelector('#rpBtn').getAttribute('aria-expanded')`),'false');
+  assert.equal(await ev(`document.querySelector('#rpBtn')`),null);
+  assert.equal(await ev(`getComputedStyle(document.querySelector('#gnav')).display`),'none');
+  assert.equal(await ev(`document.querySelector('#topbar').textContent.trim()`),'');
   assert.equal((await measure()).context,'none');
-  assert.equal(await ev(`document.querySelector('#hero').textContent.includes('有什么可以帮你')`),true);
+  assert.equal(await ev(`document.querySelector('#hero .welcome-brand')?.textContent`),'Vigil');
+  assert.equal(await ev(`document.querySelector('#hero').textContent.includes('与更强大的 AI')`),true);
+  assert.equal(await ev(`document.querySelector('#hero-hints, .hero-hints')`),null);
   result('empty session and default collapsed context',await measure());
-  const type=await ev(`(()=>{const size=s=>getComputedStyle(document.querySelector(s)).fontSize;return{body:size('body'),input:size('#ta'),welcome:size('#hero h1'),button:size('#rpBtn'),model:size('#modelBtn'),sidebar:size('.phead h2'),zoom:getComputedStyle(document.body).zoom,transform:getComputedStyle(document.body).transform}})()`);
-  assert.deepEqual(type,{body:'15px',input:'15px',welcome:'32px',button:'14px',model:'14px',sidebar:'14px',zoom:'1',transform:'none'});
+  const type=await ev(`(()=>{const size=s=>getComputedStyle(document.querySelector(s)).fontSize;return{body:size('body'),input:size('#ta'),welcome:size('#hero h1'),button:size('#modelBtn'),model:size('#modelBtn'),sidebar:size('.session-brand'),zoom:getComputedStyle(document.body).zoom,transform:getComputedStyle(document.body).transform}})()`);
+  assert.deepEqual(type,{body:'15px',input:'15px',welcome:'58px',button:'14px',model:'14px',sidebar:'15px',zoom:'1',transform:'none'});
   assert.equal(win.webContents.getZoomFactor(),1);
   const composerWidth=(await measure()).input.width;
   if (process.env.P8_DIAG_SKIP_FIXED_LAYOUT === '1') wallpaperTrace('diagnostic-layout-gate',{expected:860,actual:composerWidth,decision:'skipped only to reach wallpaper scenario'});
@@ -350,18 +414,32 @@ async function main() {
   win.restore(); await wait(100);
   result('titlebar maximize/minimize via production preload IPC');
   await shot('after-light-empty');
-  await ev(`document.querySelector('[data-hint]').click()`);
+  const sidebarSettings=await ev(`(()=>{const r=document.querySelector('#settingsOpen').getBoundingClientRect(),p=document.querySelector('#panel').getBoundingClientRect();return{atFooter:!!document.querySelector('#settingsOpen').closest('.panel-footer'),bottom:r.bottom,panelBottom:p.bottom}})()`);
+  assert.equal(sidebarSettings.atFooter,true); assert.ok(sidebarSettings.panelBottom-sidebarSettings.bottom<20);
+  const normalMaterial=await ev(`(()=>({input:getComputedStyle(document.querySelector('.cbox')).backgroundColor,main:getComputedStyle(document.querySelector('.main')).backgroundColor}))()`);
+  await ev(`document.body.classList.add('vwp-active')`);
+  const wallpaperGlass=await ev(`(()=>({input:getComputedStyle(document.querySelector('.cbox')).backdropFilter,sidebar:getComputedStyle(document.querySelector('#panel')).backdropFilter,inputBg:getComputedStyle(document.querySelector('.cbox')).backgroundColor}))()`);
+  await ev(`document.body.classList.remove('vwp-active')`);
+  assert.ok(wallpaperGlass.input.includes('blur(20px)'));
+  assert.ok(wallpaperGlass.sidebar.includes('blur(18px)'));
+  assert.notEqual(normalMaterial.input,wallpaperGlass.inputBg);
+  result('welcome wordmark, no quick prompts, bottom-left settings and wallpaper glass-only materials',{sidebarSettings,normalMaterial,wallpaperGlass});
+  await ev(`document.querySelector('#ta').value='快捷输入';document.querySelector('#ta').dispatchEvent(new Event('input'))`);
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),false);
   await ev(`document.querySelector('#ta').value='   ';document.querySelector('#ta').dispatchEvent(new Event('input'));`);
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   result('quick question and blank-content disabled state');
-  await ev(`document.querySelector('#sessionsBtn').click()`);
-  assert.equal(await ev(`getComputedStyle(document.querySelector('#panel')).display`),'none');
-  await ev(`document.querySelector('#sessionsBtn').click();document.querySelector('#rpBtn').click()`);
-  assert.equal((await measure()).context,'block');
-  await shot('after-light-context');
-  await ev(`document.querySelector('#rpBtn').click();document.querySelector('#themeBtn').click()`);
-  await shot('after-dark-empty'); result('session list and context toggle, dark theme');
+  await ev(`document.querySelector('#settingsOpen').click()`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
+  await shot('settings-grid');
+  await ev(`document.querySelector('.settings-tile').click()`);
+  await until(`API.state.page==='ability' && document.querySelector('.settings-detail-back')`);
+  await ev(`document.querySelector('.settings-detail-back').click()`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
+  await ev(`document.querySelector('#settingsBackChat').click()`);
+  await until(`API.state.page==='chat' && !document.querySelector('#hero').hidden`);
+  await ev(`document.documentElement.dataset.theme='dark'`);
+  await shot('after-dark-empty'); result('compact chat shell, settings gateway and dark theme');
   await ev(`const ta=document.querySelector('#ta');ta.value='多行内容\\n'.repeat(30);ta.dispatchEvent(new Event('input'))`);
   assert.ok(await ev(`document.querySelector('#ta').clientHeight<=180 && document.querySelector('#ta').clientHeight>=120`));
   assert.equal(await ev(`getComputedStyle(document.querySelector('#ta')).overflowY`),'auto');
@@ -392,11 +470,6 @@ async function main() {
   assert.equal(await ev(`document.querySelector('.codehead span').textContent`),'js');
   assert.ok(await ev(`U.md(${JSON.stringify('```\nfirst\nsecond\n```')},{codeActions:true}).includes('<code>first\\nsecond\\n</code>')`));
   result('Enter, Shift+Enter, IME, stream state and deduplicated IPC payload');
-  await ev(`document.querySelector('#clearBtn').click()`);
-  await until(`document.querySelector('.vigil-confirm[role="dialog"]')`);
-  await ev(`document.querySelector('.vigil-confirm [data-choice="cancel"]').click()`);
-  assert.equal(await ev(`document.querySelector('.vigil-confirm-backdrop')`),null);
-  result('destructive history clear retains a themed in-app confirmation');
   // Clipboard write executes in the real Electron renderer, not a mocked copy handler.
   savedClipboard = Object.fromEntries(require('electron').clipboard.availableFormats().map(format => [format,require('electron').clipboard.readBuffer(format)]));
   win.show(); win.focus(); await wait(150);
@@ -410,24 +483,30 @@ async function main() {
   await ev(`document.querySelector('#localBtn').click()`); await until(`!document.querySelector('#localPop').hidden && document.querySelector('#lpClose')`);
   await ev(`document.querySelector('#lpClose').click()`); result('existing safety control opens and closes');
   // Load history through the existing refresh entry and select a real session row.
+  const conversationSeed=await ev(`API.state.chatConversationId`);
+  assert.ok(conversationSeed);
   await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelector('#msgs .codeblock')`);
   assert.equal(await ev(`document.querySelector('#hero').hidden`),true);
-  await ev(`document.querySelector('[data-session]').click()`);
-  assert.equal(await ev(`document.querySelector('[data-session]').closest('.session-row').classList.contains('on')`),true);
+  await ev(`document.querySelector('[data-session="${conversationSeed}"]').click()`);
+  assert.equal(await ev(`document.querySelector('[data-session="${conversationSeed}"]').closest('.session-row').classList.contains('on')`),true);
   result('history restored and persistent conversation selection is interactive');
-  await until(`document.querySelector('[data-session="${legacyConversationId}"]').textContent.includes('检查界面')`);
+  await until(`document.querySelector('[data-session="${conversationSeed}"]').textContent.includes('检查界面')`);
   const legacyHistoryText=await ev(`document.querySelector('#msgs').textContent`);
   assert.ok(legacyHistoryText.includes('检查界面'));
   const conversationLegacy=await ev(`API.state.chatConversationId`);
+  const createCountBeforeDraft=requests.filter(r=>r.path==='/api/conversations'&&r.method==='POST').length;
   await ev(`document.querySelector('#newTopicBtn').click()`);
-  await until(`API.state.chatConversationId==='' && document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
+  await until(`API.state.chatConversationId==='' && !document.querySelector('#hero').hidden && document.activeElement===document.querySelector('#ta')`);
+  assert.ok(Math.abs((await measure()).composer.bottom - (await ev('innerHeight'))) < 2);
+  assert.equal(requests.filter(r=>r.path==='/api/conversations'&&r.method==='POST').length,createCountBeforeDraft);
   assert.equal(await ev(`document.querySelector('#msgs').textContent`),'');
+  await shot('new-chat-welcome');
   await ev(`document.querySelector('#ta').value='A_ONLY';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
   await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationLegacy)} && document.querySelector('#msgs').textContent.includes('A_ONLY') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
   const conversationA=await ev(`API.state.chatConversationId`);
   assert.equal(requests.filter(r=>r.method==='STREAM').at(-1).body.conversation_id,conversationA);
   await ev(`document.querySelector('#newTopicBtn').click()`);
-  await until(`API.state.chatConversationId==='' && document.querySelector('#hero') && !document.querySelector('#hero').hidden`);
+  await until(`API.state.chatConversationId==='' && !document.querySelector('#hero').hidden && document.activeElement===document.querySelector('#ta')`);
   assert.equal(await ev(`document.querySelector('#msgs').textContent`),'');
   await ev(`document.querySelector('#ta').value='B_ONLY';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
   await until(`API.state.chatConversationId && API.state.chatConversationId!==${JSON.stringify(conversationA)} && document.querySelector('#msgs').textContent.includes('B_ONLY') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'`);
@@ -467,8 +546,14 @@ async function main() {
   win.webContents.reload();
   await until(`API.state.chatConversationId===${JSON.stringify(conversationB)} && document.querySelector('#msgs').textContent.includes('B_ONLY')`);
   result('A/B independent messages, scoped Creator draft restore, continuation, legacy label and renderer restart');
-  await ev(`document.querySelector('#themeBtn').click()`); await shot('after-light-chat');
-  await ev(`document.querySelector('#themeBtn').click()`);
+  await ev(`document.querySelector('[data-delete="${conversationB}"]').click()`);
+  await until(`document.querySelector('.vigil-confirm[role="dialog"]')`);
+  await ev(`document.querySelector('.vigil-confirm [data-choice="ok"]').click()`);
+  await until(`!document.querySelector('[data-session="${conversationB}"]') && API.state.chatConversationId!==${JSON.stringify(conversationB)}`);
+  const deletePath='/api/conversations/'+conversationB+'/delete';
+  assert.ok(requests.some(r=>r.path===deletePath&&r.method==='POST'));
+  result('delete confirmation removes one historical session and returns to an available chat');
+  await ev(`document.documentElement.dataset.theme='light'`); await shot('after-light-chat');
   result('ordinary light-theme history and code rendering');
   // Inspect matched content edges and a fixed composer while scrolling long history.
   await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
@@ -533,15 +618,15 @@ async function main() {
   const navCount=await ev(`document.querySelectorAll('#gnav .gbtn').length`);
   assert.ok(navCount>=7); result('global function entries retained',navCount);
   historyError=true;
-  await ev(`document.querySelector('#reloadBtn').click()`);
+  await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
   await until(`document.querySelector('#retryHistory')`);
   assert.equal(await ev(`document.querySelector('#hero').hidden`),true);
   assert.equal(await ev(`getComputedStyle(document.querySelector('#chatLoadState')).display`),'flex');
   await shot('round2-history-error');
   historyError=false;
   await ev(`document.querySelector('#retryHistory').click()`);
-  await until(`!document.querySelector('#hero').hidden`);
-  result('history failure is explicit and retry restores empty welcome');
+  await until(`document.querySelector('#hero').hidden && API.state.chatConversationId===${JSON.stringify(legacyConversationId)}`);
+  result('history failure is explicit and empty active conversation remains a blank chat');
   await ev(`document.querySelector('#gnav [data-page="persona"]').click()`);
   await until(`document.querySelectorAll('.persona-view .pcard').length===2`);
   assert.ok(requests.some(r=>r.path==='/api/persona'&&r.base==='cloud'));
@@ -615,23 +700,24 @@ async function main() {
   result('background wallpaper rotation preserves the current chat page');
   const material=await ev(`(()=>{const h=getComputedStyle(document.querySelector('#hero')),c=getComputedStyle(document.querySelector('.cbox'));return{welcomeBackground:h.backgroundColor,welcomeBorder:h.borderWidth,welcomeBlur:h.backdropFilter,inputBlur:c.backdropFilter}})()`);
   assert.equal(material.welcomeBackground,'rgba(0, 0, 0, 0)'); assert.equal(material.welcomeBorder,'0px'); assert.equal(material.welcomeBlur,'none');
-  result('wallpaper welcome has no card or backdrop blur',material);
+  assert.ok(material.inputBlur.includes('blur(20px)'));
+  result('wallpaper welcome wordmark and frosted composer material',material);
+  await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
+  await until(`API.state.chatConversationId==='${legacyConversationId}'`);
   history=[{role:'assistant',text:answer,t:Date.now()}];
   await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelector('.codeblock')`); await shot('after-wallpaper-chat');
   result('wallpaper reading surface and unchanged chat DOM');
   for(const [width,height] of [[1280,800],[900,700],[600,650],[800,540]]) {
     win.setSize(width,height); await wait(120);
     const m=await measure(); assert.equal(m.overflow,false); assert.ok(m.input.x>=0 && m.input.x+m.input.width<=width); assert.ok(m.composer.bottom<=height);
-    await ev(`document.querySelector('#rpBtn').click()`); assert.equal((await measure()).context,'block');
-    await ev(`document.querySelector('#rpBtn').click()`);
+    if(width<=860) assert.ok(await ev(`document.querySelector('#panel').getBoundingClientRect().right<=document.querySelector('.composer').getBoundingClientRect().left+1`));
+    assert.equal(await ev(`document.querySelector('#rpBtn')`),null);
     await shot('after-wallpaper-'+width+'x'+height); result('window '+width+'x'+height,m);
   }
   win.setSize(600,650); await wait(120);
-  assert.equal(await ev(`getComputedStyle(document.querySelector('#panel')).display`),'none');
-  await ev(`document.querySelector('#sessionsBtn').click()`); assert.equal(await ev(`getComputedStyle(document.querySelector('#panel')).display`),'flex');
+  assert.equal(await ev(`getComputedStyle(document.querySelector('#panel')).display`),'flex');
   await shot('after-wallpaper-narrow-sessions');
-  await ev(`document.querySelector('#sessionsBtn').click()`); assert.equal(await ev(`getComputedStyle(document.querySelector('#panel')).display`),'none');
-  result('narrow window session overlay can be hidden and restored');
+  result('narrow window keeps session list accessible');
   win.setSize(1400,900); await wait(120);
   await ev(`document.querySelector('#gnav [data-page="persona"]').click()`);
   await until(`document.querySelector('.persona-view .pcard')`);

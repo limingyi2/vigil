@@ -29,7 +29,7 @@ def _db():
 
 
 def _row(row):
-    return {"id": row[0], "title": "之前的聊天" if row[4] else row[1], "created_at": row[2],
+    return {"id": row[0], "title": "旧版历史" if row[4] else row[1], "created_at": row[2],
             "updated_at": row[3], "legacy": bool(row[4])}
 
 
@@ -54,7 +54,7 @@ def ensure_legacy(owner, src, persona):
             return row[0]
         now, cid = time.time(), str(uuid.uuid4())
         db.execute("INSERT INTO conversations VALUES (?,?,?,?,?,?,?,1)",
-                   (owner, src, persona, cid, "旧对话", now, now))
+                   (owner, src, persona, cid, "旧版历史", now, now))
         return cid
 
 
@@ -102,3 +102,19 @@ def rename(owner, src, persona, cid, title):
         if not cur.rowcount:
             return None
     return get(owner, src, persona, cid)
+
+
+def delete(owner, src, persona, cid):
+    """Remove one conversation index row; transcript cleanup is handled by the caller."""
+    if not valid_id(cid):
+        return None
+    with _LOCK, _db() as db:
+        _init(db)
+        row = db.execute("SELECT id,title,created,updated,legacy FROM conversations WHERE owner=? AND src=? AND persona=? AND id=?",
+                         (owner, src, persona, cid)).fetchone()
+        if not row:
+            return None
+        item = _row(row)
+        db.execute("DELETE FROM conversations WHERE owner=? AND src=? AND persona=? AND id=?",
+                   (owner, src, persona, cid))
+        return item

@@ -35,6 +35,7 @@ class CreatorJobConversationTests(unittest.TestCase):
         self.assertEqual([item["job_id"] for item in creator_jobs.listing(owner, b)], [job_b["job_id"]])
         self.assertEqual({item["job_id"] for item in creator_jobs.listing(owner)},
                          {old["job_id"], job_a["job_id"], job_b["job_id"]})
+        self.assertEqual([item["job_id"] for item in creator_jobs.listing_legacy_unassigned(owner)], [old["job_id"]])
         self.assertIsNone(old["conversation_id"])
 
 

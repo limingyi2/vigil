@@ -20,38 +20,56 @@ body.vwp-active .statusbar {
   border-color:rgba(255,255,255,.2);
 }
 body.vwp-active .card { background:rgba(var(--vwp-rgb,18,20,24),.88); border-color:rgba(255,255,255,.18); }
-/* Chat materials: the iframe renderer remains untouched. Opaque tint provides
-   contrast even when Chromium cannot sample an iframe via backdrop-filter. */
+/* Chat surfaces stay above the existing wallpaper host. Frosted layers only
+   affect shell materials; they do not change iframe rendering or its host. */
 body.vwp-active[data-vigil-page="chat"] {
-  --chat-bg:transparent; --chat-sidebar:rgba(20,24,30,.88);
-  --chat-surface:rgba(24,29,36,.9); --chat-user:rgba(43,52,64,.94);
-  --chat-code:rgba(18,23,30,.96); --chat-text:#f2f4f8;
-  --chat-muted:#c3cbd6; --chat-line:rgba(226,233,245,.16);
-  --chat-accent:#b5cbe7; --chat-selected:rgba(135,168,212,.18);
-  --chat-hover:rgba(197,216,242,.1); --chat-send:#bfd3eb; --chat-on-send:#1c2938;
+  --chat-bg:transparent; --chat-sidebar:rgba(23,25,29,.34);
+  --chat-surface:rgba(28,30,35,.38); --chat-user:rgba(35,38,44,.48);
+  --chat-code:rgba(20,22,27,.62); --chat-text:#f5f6f8;
+  --chat-muted:rgba(245,246,248,.78); --chat-line:rgba(255,255,255,.24);
+  --chat-accent:#d8e4f5; --chat-selected:rgba(255,255,255,.14);
+  --chat-hover:rgba(255,255,255,.1); --chat-send:#bfd3eb; --chat-on-send:#1c2938;
 }
 body.vwp-active[data-vigil-page="chat"] .titlebar,
 body.vwp-active[data-vigil-page="chat"] .gnav,
 body.vwp-active[data-vigil-page="chat"] .panel,
 body.vwp-active[data-vigil-page="chat"] .statusbar {
-  background:var(--chat-sidebar); backdrop-filter:none;
+  background:var(--chat-sidebar); backdrop-filter:blur(18px) saturate(135%);
+  border-color:rgba(255,255,255,.2);
 }
-body.vwp-active[data-vigil-page="chat"] .chat-topbar { background:rgba(20,24,30,.8); backdrop-filter:none; }
+body.vwp-active[data-vigil-page="chat"] .chat-topbar { background:rgba(20,22,26,.38); backdrop-filter:blur(16px) saturate(130%); }
 body.vwp-active[data-vigil-page="chat"] .hero {
   background:none; border:0; box-shadow:none; backdrop-filter:none;
-  color:#fff; text-shadow:0 1px 5px rgba(0,0,0,.85);
+  color:#fff; text-shadow:0 2px 16px rgba(0,0,0,.58);
 }
-body.vwp-active[data-vigil-page="chat"] .hero p,
-body.vwp-active[data-vigil-page="chat"] .hero-hints .chip { color:#f2f4f8; }
-body.vwp-active[data-vigil-page="chat"] .hero-hints .chip { background:rgba(20,24,30,.75); text-shadow:none; }
-body.vwp-active[data-vigil-page="chat"] .welcome-brand { background:none; }
+body.vwp-active[data-vigil-page="chat"] .hero p { color:rgba(255,255,255,.9); }
+body.vwp-active[data-vigil-page="chat"] .welcome-brand { color:#fff; }
+body.vwp-active[data-vigil-page="chat"] .turn .txt { border:1px solid rgba(255,255,255,.18); box-shadow:0 8px 28px rgba(0,0,0,.12); backdrop-filter:blur(16px) saturate(130%); }
 body.vwp-active[data-vigil-page="chat"] .turn:not(.me) .txt { background:var(--chat-surface); border-radius:12px; padding:16px 20px; }
-body.vwp-active[data-vigil-page="chat"] .rp .card { background:transparent; }
+body.vwp-active[data-vigil-page="chat"] .turn.me .txt { background:var(--chat-user); }
+body.vwp-active[data-vigil-page="chat"] .session-row.on { background:rgba(255,255,255,.14); }
+body.vwp-active[data-vigil-page="chat"] .session-row:hover { background:rgba(255,255,255,.09); }
+body.vwp-active[data-vigil-page="chat"] .panel-footer { border-color:rgba(255,255,255,.2); }
+body.vwp-active[data-vigil-page="chat"] .rp .card { background:rgba(25,27,32,.28); backdrop-filter:blur(12px); }
 body.vwp-active[data-vigil-page="chat"] .cbox {
-  background:rgba(24,29,36,max(.88,var(--vwp-alpha,.78)));
-  backdrop-filter:blur(min(8px,var(--vwp-blur,8px)));
+  background:rgba(27,29,34,.34);
+  border-color:rgba(255,255,255,.34);
+  box-shadow:0 16px 50px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter:blur(20px) saturate(140%);
 }
-body.vwp-active[data-vigil-page="chat"] .composer-caption { color:#eef2f8; text-shadow:0 1px 3px #141820; }
+body.vwp-active[data-vigil-page="chat"] .cbox .ibtn,
+body.vwp-active[data-vigil-page="chat"] .cbox .composer-model,
+body.vwp-active[data-vigil-page="chat"] .cbox .btn { background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.22); color:#f5f6f8; }
+body.vwp-active[data-vigil-page="chat"] .cbox #sendBtn { background:var(--chat-send); color:var(--chat-on-send); border:0; }
+body.vwp-active[data-vigil-page="chat"] .modelpop,
+body.vwp-active[data-vigil-page="chat"] .attach,
+body.vwp-active[data-vigil-page="chat"] .cr-review-drawer,
+body.vwp-active[data-vigil-page="chat"] .codeblock,
+body.vwp-active[data-vigil-page="chat"] .think-content {
+  background:rgba(25,27,32,.42); border-color:rgba(255,255,255,.24);
+  backdrop-filter:blur(18px) saturate(135%);
+}
+body.vwp-active[data-vigil-page="chat"] .composer-caption { color:#eef2f8; text-shadow:0 1px 5px rgba(0,0,0,.65); }
 /* Settings page only. Playback materials above keep their existing semantics.
    Theme tokens are separate from --vwp-rgb (the renderer's always-dark tint). */
 body[data-vigil-page="wallpaper"] {

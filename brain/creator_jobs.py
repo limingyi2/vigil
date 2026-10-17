@@ -107,6 +107,11 @@ def listing(owner, conversation_id=None):
         return items
 
 
+def listing_legacy_unassigned(owner):
+    """Return pre-session Creator jobs for the single legacy history entry only."""
+    return [item for item in listing(owner) if not item.get('conversation_id')]
+
+
 def hide(owner):
     # Hiding display entries must not destroy request-deduplication tombstones
     # or delete draft files / stop running generators.
