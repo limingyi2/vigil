@@ -1,0 +1,140 @@
+"""Run clean-install and uninstall-retention checks against an immutable Windows candidate."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run_logged(command, *, env, log_path, timeout):
+    result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
+    log_path.write_text(json.dumps({'command': [str(x) for x in command], 'exit_code': result.returncode,
+                                    'stdout': result.stdout, 'stderr': result.stderr}, indent=2), encoding='utf-8')
+    return result
+
+
+def main(installer, expected_commit, output):
+    assert os.name == 'nt', 'This acceptance check must run on an isolated Windows runner'
+    installer = Path(installer).resolve()
+    output = Path(output).resolve()
+    manifest_path = installer.parent / 'release-manifest.json'
+    contents_path = installer.with_suffix('.contents.json')
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    assert manifest['candidate'] is True and manifest['ver'] == '1.1.0'
+    assert manifest['source_commit'] == expected_commit, 'Candidate source commit mismatch'
+    assert manifest['setup_file'] == installer.name
+    installer_hash = sha256(installer)
+    assert installer_hash == manifest['sha256'], 'Candidate installer SHA-256 mismatch'
+    assert installer.stat().st_size == manifest['size'], 'Candidate installer size mismatch'
+
+    root = Path(tempfile.mkdtemp(prefix='Vigil candidate lifecycle '))
+    install = root / 'application'
+    profile = root / 'profile'
+    appdata = root / 'appdata'
+    localappdata = root / 'localappdata'
+    for directory in (profile, appdata, localappdata):
+        directory.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, VIGIL_USER_DATA=str(profile), APPDATA=str(appdata), LOCALAPPDATA=str(localappdata),
+               VIGIL_SIDECAR_DISABLE='1')
+    env.pop('ELECTRON_RUN_AS_NODE', None)
+    install_result = run_logged([str(installer), '/S', '/D=' + str(install)], env=env,
+                                log_path=root / 'installer-install.json', timeout=300)
+    assert install_result.returncode == 0, f'Candidate installer exited {install_result.returncode}'
+    assert (install / 'Vigil.exe').is_file(), 'Fresh installation did not create Vigil.exe'
+    for relative, expected in json.loads(contents_path.read_text(encoding='utf-8')).items():
+        file = install / Path(relative)
+        assert file.is_file() and sha256(file) == expected, f'Installed core file missing or changed: {relative}'
+    assert (install / 'resources/vigil-brain/_internal').is_dir(), 'Bundled Brain runtime is missing'
+
+    runtime_script = Path(__file__).resolve().parents[1] / 'client/tools/test-fresh-installed-runtime.cjs'
+    first = run_logged(['node', str(runtime_script), str(install), 'first'], env=env,
+                       log_path=root / 'runtime-first-launch.json', timeout=300)
+    assert first.returncode == 0, f'Fresh installed Electron/Brain/chat test failed: {first.stderr}'
+    first_record = json.loads(next(line for line in reversed(first.stdout.splitlines()) if line.startswith('{')))
+    assert first_record['result'] == 'passed' and first_record['fake_provider_chat'] == 'passed'
+    conversation_id = first_record['conversation_id']
+
+    restarted = run_logged(['node', str(runtime_script), str(install), 'restart'], env=env,
+                           log_path=root / 'runtime-restart.json', timeout=300)
+    assert restarted.returncode == 0, f'Chat restore after Electron restart failed: {restarted.stderr}'
+    restart_record = json.loads(next(line for line in reversed(restarted.stdout.splitlines()) if line.startswith('{')))
+    assert restart_record['conversation_id'] == conversation_id
+    brain_home = Path(first_record['brain_home'])
+    user_data_root = brain_home.parent
+    sentinels = {
+        user_data_root / 'config.json': '{"user_data":"preserve"}\n',
+        brain_home / 'plugins/p8-retention-plugin.py': 'NAME="p8_retention"\n',
+        brain_home / 'skill_host/skills/p8-retention/skill.json': '{"id":"p8-retention"}\n',
+        brain_home / 'data/creator_drafts/p8-retention/meta.json': '{"id":"p8-retention","status":"generated"}\n',
+        brain_home / 'data/p8-retention-chat.jsonl': '{"role":"user","content":"retention sentinel"}\n',
+    }
+    for path, content in sentinels.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
+    retained_before = {str(path): sha256(path) for path in sentinels}
+    outside = root / 'outside-data' / 'do-not-delete.txt'
+    outside.parent.mkdir()
+    outside.write_text('outside install and profile sentinel\n', encoding='utf-8')
+    outside_hash = sha256(outside)
+
+    uninstallers = list(install.glob('Uninstall*.exe'))
+    assert uninstallers, 'NSIS uninstaller was not installed'
+    uninstall_result = run_logged([str(uninstallers[0]), '/S'], env=env,
+                                  log_path=root / 'installer-uninstall.json', timeout=300)
+    assert uninstall_result.returncode == 0, f'NSIS uninstaller exited {uninstall_result.returncode}'
+    time.sleep(1)
+    remaining_app_files = [str(path.relative_to(install)) for path in install.rglob('*') if path.is_file()] if install.exists() else []
+    assert not remaining_app_files, f'Program files remain after uninstall: {remaining_app_files[:10]}'
+    retained_after = {name: sha256(Path(name)) for name in retained_before if Path(name).is_file()}
+    assert retained_after == retained_before, 'Uninstall changed or removed user profile data'
+    assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    logs_dir = output.parent / 'lifecycle-logs'
+    logs_dir.mkdir(exist_ok=True)
+    log_files = {
+        'install': root / 'installer-install.json',
+        'first_launch': root / 'runtime-first-launch.json',
+        'restart': root / 'runtime-restart.json',
+        'uninstall': root / 'installer-uninstall.json',
+    }
+    for name, source in log_files.items():
+        shutil.copy2(source, logs_dir / f'{name}.json')
+    report = {
+        'result': 'passed',
+        'environment': {'os': os.environ.get('RUNNER_OS', 'Windows isolated runner'),
+                        'runner_name': os.environ.get('RUNNER_NAME'), 'isolation_root': str(root)},
+        'candidate': {'version': manifest['ver'], 'source_commit': manifest['source_commit'],
+                      'installer': installer.name, 'size': installer.stat().st_size, 'sha256': installer_hash},
+        'fresh_install': {'installer_exit_code': install_result.returncode, 'core_files_verified': True,
+                          'electron_started': True, 'brain_health': 'ready', 'welcome_page': True,
+                          'fake_provider_first_chat': True, 'conversation_id': conversation_id},
+        'restart_recovery': {'electron_restarted': True, 'chat_history_restored': True},
+        'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
+                      'program_files_removed': True, 'user_data_policy': 'preserved',
+                      'retained_test_data': list(retained_before), 'outside_sentinel_preserved': True},
+        'logs': {name: f'lifecycle-logs/{name}.json' for name in log_files},
+    }
+    output.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(json.dumps(report))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('installer')
+    parser.add_argument('--expected-source-commit', required=True)
+    parser.add_argument('--output', required=True)
+    args = parser.parse_args()
+    main(args.installer, args.expected_source_commit, args.output)
