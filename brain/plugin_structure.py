@@ -152,7 +152,7 @@ def _check_chat_tool_contract(tree, module_functions, errors, warnings, required
                 ))
             params = spec.get("params", [])
             if not isinstance(params, (list, tuple)):
-                errors.append(_issue(
+                issues.append(_issue(
                     "invalid_tool_specs",
                     "工具 %s 的 params 必须是参数三元组列表" % name
                 ))
