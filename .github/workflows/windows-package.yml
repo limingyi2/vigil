@@ -2,7 +2,7 @@ name: Windows unified installer acceptance
 on:
   workflow_dispatch:
   push:
-    branches: ['master', 'codex/unified-client-brain', 'codex/p6-multisession-dialogs']
+    branches: ['master', 'codex/unified-client-brain']
 jobs:
   windows-installer:
     runs-on: windows-latest
