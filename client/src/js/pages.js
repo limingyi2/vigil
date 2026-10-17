@@ -4145,11 +4145,29 @@
           toast(detail);
           return;
         }
-        if (approvalState) approvalState.textContent = '已安装，审批已消费，不能重复使用。';
-        installButton.textContent = '已安装';
+        const installResult = r.install || {};
+        const installedName = String(installResult.package || installResult.name ||
+          (r.approval && r.approval.target_name) || creatorTargetOf(d));
+        const isPlugin = d.kind !== 'skill';
+        // The Creator route deliberately commits files without importing newly supplied code.
+        // plugin_ops reports restart_needed/dynamic_loaded, so don't claim the Agent can use it yet.
+        const restartNeeded = installResult.restart_needed === true ||
+          (isPlugin && installResult.dynamic_loaded === false);
+        let installStatus;
+        if (isPlugin && restartNeeded) {
+          installStatus = '安装成功：' + installedName + '.py 已写入 Brain 插件目录。当前运行中的 Brain 尚未加载它；重启 Brain 后，Agent 才能调用插件声明的 TOOLS / TOOL_SPECS。审批已消费，不能重复使用。';
+        } else if (isPlugin) {
+          installStatus = '安装成功：' + installedName + '.py 已写入 Brain 插件目录。请到插件管理页确认运行状态和工具清单，再在聊天中描述要执行的任务。审批已消费，不能重复使用。';
+        } else if (restartNeeded) {
+          installStatus = '安装成功：' + installedName + ' 已写入技能目录，但需要重启技能宿主后才能完全生效。审批已消费，不能重复使用。';
+        } else {
+          installStatus = '安装成功：' + installedName + ' 已写入技能目录。请到技能管理页确认宿主已加载，再在聊天中描述要执行的任务。审批已消费，不能重复使用。';
+        }
+        if (approvalState) approvalState.textContent = installStatus;
+        installButton.textContent = restartNeeded ? '已安装 · 待重启' : '已安装';
         installButton.disabled = true;
         if (typeof window.__vigilRefreshExtensions === 'function') window.__vigilRefreshExtensions();
-        toast('已受控安装 ' + creatorTargetOf(d) + (r.install?.restart_needed ? ' · 需要重启/确认生效' : ''));
+        toast(installStatus);
         return;
       }
       if (e.target.closest('#crRev')) {
