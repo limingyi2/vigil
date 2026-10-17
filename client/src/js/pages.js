@@ -3954,12 +3954,13 @@
         '<p style="margin:8px 0 0"><b>用途：</b>' + esc(d.summary || '（模型没给）') + '</p>' +
         '<p style="margin:4px 0 0"><b>风险与限制：</b>' + esc(d.risks || '无') + '</p>' +
         '<p class="muted" style="font-size:12px;margin:8px 0 0">' +
-          '静态验证只检查目录结构与 Manifest，不执行生成的代码；' +
+          '静态验证检查插件结构、Manifest 与聊天工具契约，不执行生成的代码；' +
           '<b>通过 ≠ 沙箱安全</b>。安装前仍需人工阅读上面的代码。</p>' +
       '</div>' +
       '<div class="card" style="margin-top:8px">' +
         '<div class="pkg-h">静态验证 ' + okBadge + '</div>' +
         errHtml + warnHtml +
+        (!v.ok ? '<p class="muted" style="font-size:12px;margin-top:8px">验证未通过，安装步骤暂不可用。请先修复上面的错误，再点击“重新验证”。</p>' : '') +
         (!errs.length && !warns.length ? '<p class="muted" style="font-size:12px">没有错误或警告。</p>' : '') +
       '</div>' +
       (v.ok ? '<div class="card" id="crReviewBox" style="margin-top:8px;display:none;border-color:var(--warn)">' +
