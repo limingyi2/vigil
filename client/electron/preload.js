@@ -151,6 +151,10 @@ contextBridge.exposeInMainWorld('vigil', {
     importFile: () => ipcRenderer.invoke('wallpaper:import'),
     directory: () => ipcRenderer.invoke('wallpaper:directory'),
   },
+  // Narrow native capability for first-party local project tools; returns a selected folder only.
+  projectPicker: {
+    pickDirectory: () => ipcRenderer.invoke('project-picker:directory'),
+  },
 
   platform: process.platform,
   agentCenter: {
