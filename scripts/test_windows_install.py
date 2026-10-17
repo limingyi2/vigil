@@ -45,7 +45,16 @@ class ModelFixture(BaseHTTPRequestHandler):
             return
 
         content = json.dumps({'files': {
-            'fixture_plugin.py': 'NAME = "fixture_plugin"\nDESC = "migration acceptance"\ndef on_message(text, ctx):\n    return None\n'
+            'fixture_plugin.py': (
+                'NAME = "fixture_plugin"\n'
+                'DESC = "migration acceptance"\n'
+                'def smoke_ping(arg):\n'
+                '    return "VIGIL_PLUGIN_CALL_OK"\n'
+                'TOOLS = {"smoke_ping": smoke_ping}\n'
+                'TOOL_SPECS = {"smoke_ping": {'
+                '"desc": "Return a fixed marker to verify this plugin is callable from chat.", '
+                '"params": [], "arg_param": None}}\n'
+            )
         }, 'summary': 'fixture draft', 'risks': 'none'}) if creator else 'Hello fixture'
         result = {'choices': [{'message': {'content': content}, 'finish_reason': 'stop'}],
                   'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
