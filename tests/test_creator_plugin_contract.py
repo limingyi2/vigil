@@ -60,5 +60,5 @@ class CreatorPluginContractTests(unittest.TestCase):
                 self.assertIn(expected, {item["code"] for item in report["warnings"]})
 
 
-if __import__("__main__").__name__ == "__main__":
+if __name__ == "__main__":
     unittest.main()
