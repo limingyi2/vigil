@@ -50,10 +50,11 @@ class ModelFixture(BaseHTTPRequestHandler):
         user_messages = [str(m.get('content') or '') for m in messages
                          if isinstance(m, dict) and m.get('role') == 'user']
         request = '\n'.join(user_messages)
-        if 'A_CONTINUE' in request:
+        current_user = user_messages[-1] if user_messages else ''
+        if 'A_CONTINUE' in current_user:
             ModelFixture.conversation_checks.append({
                 'conversation': 'A', 'ok': 'A_ONLY' in request and 'B_ONLY' not in request})
-        if 'B_CONTINUE' in request:
+        if 'B_CONTINUE' in current_user:
             ModelFixture.conversation_checks.append({
                 'conversation': 'B', 'ok': 'B_ONLY' in request and 'A_ONLY' not in request})
         tools = body.get('tools') or []
@@ -107,9 +108,9 @@ class ModelFixture(BaseHTTPRequestHandler):
             self.wfile.write(result)
             return
 
-        if 'A_CONTINUE' in request:
+        if 'A_CONTINUE' in current_user:
             content = 'A_CONTEXT_OK' if 'A_ONLY' in request and 'B_ONLY' not in request else 'A_CONTEXT_LEAK'
-        elif 'B_CONTINUE' in request:
+        elif 'B_CONTINUE' in current_user:
             content = 'B_CONTEXT_OK' if 'B_ONLY' in request and 'A_ONLY' not in request else 'B_CONTEXT_LEAK'
         else:
             content = json.dumps({'files': {
