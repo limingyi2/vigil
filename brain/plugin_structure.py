@@ -234,10 +234,14 @@ def _check_python(path, package_name, errors, warnings, layout="single", require
         and ("<!doctype html" in node.value.lower() or "<html" in node.value.lower())
         for node in ast.walk(tree)
     ):
-        warnings.append(_issue(
+        issue = _issue(
             "html_string_not_ui",
             "单文件插件中的 HTML 字符串不会自动变成插件页面；当前 Creator 不支持自定义前端 UI"
-        ))
+        )
+        if require_chat_tools:
+            errors.append(issue)
+        else:
+            warnings.append(issue)
 
     module_name = _literal_assignment(tree, "NAME")
     if module_name is None:
