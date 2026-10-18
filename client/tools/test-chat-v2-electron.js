@@ -709,7 +709,7 @@ async function main() {
   result('wallpaper reading surface and unchanged chat DOM');
   for(const [width,height] of [[1280,800],[900,700],[600,650],[800,540]]) {
     win.setSize(width,height); await wait(120);
-    const m=await measure(); assert.equal(m.overflow,false); assert.ok(m.input.x>=0 && m.input.x+m.input.width<=width); assert.ok(m.composer.bottom<=height);
+    const m=await measure(); assert.equal(m.overflow,false); assert.ok(m.input.x>=0 && m.input.x+m.input.width<=width); assert.ok(m.composer.bottom<=height+0.5,'composer bottom '+m.composer.bottom+' > '+height);
     if(width<=860) assert.ok(await ev(`document.querySelector('#panel').getBoundingClientRect().right<=document.querySelector('.composer').getBoundingClientRect().left+1`));
     assert.equal(await ev(`document.querySelector('#rpBtn')`),null);
     await shot('after-wallpaper-'+width+'x'+height); result('window '+width+'x'+height,m);

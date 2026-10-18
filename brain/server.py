@@ -1676,7 +1676,12 @@ def start_remote_api(brain):
                         elif method == 'GET' and len(parts) == 4:
                             self._json(200, {'ok': True, **item})
                         elif method == 'POST' and parts[4:] == ['cancel']:
-                            self._json(200, {'ok': True, **jobs.cancel(jid, owner)})
+                            item = jobs.cancel(jid, owner)
+                            if item and item.get('cancel_state') == 'too_late':
+                                # Already finished: saying "cancelled" would be a lie.
+                                self._json(409, {'ok': False, 'err': '任务已结束，无法取消', **item})
+                            else:
+                                self._json(200, {'ok': True, **item})
                         elif method == 'GET' and parts[4:] == ['events']:
                             cursor = max(0, int((query.get('after') or ['0'])[0]))
                             self.send_response(200)
@@ -1916,6 +1921,46 @@ def start_remote_api(brain):
                 body = {}
             if self._agent_api('POST', path, body):
                 return
+            if path == '/api/workspaces' or path.startswith('/api/workspaces/'):
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "只有管理员能管理工作区"})
+                    return
+                src = _norm_src(body.get('src') or 'pc')
+                if src != 'pc':
+                    self._json(400, {"ok": False, "err": "工作区仅用于桌面渠道"})
+                    return
+                _, owner, src, persona = self._conversation_context(src)
+                import workspaces, conversations
+                if path == '/api/workspaces':
+                    try:
+                        item = workspaces.create(owner, src, str(persona),
+                                                 body.get('path'), body.get('name'))
+                    except ValueError:
+                        self._json(400, {"ok": False, "err": "工作区路径必须是本机绝对路径"})
+                        return
+                    self._json(200 if item.get('existing') else 201,
+                               {"ok": True, "item": item})
+                    return
+                if path.endswith('/rename'):
+                    wid = path.rsplit('/', 2)[-2]
+                    item = workspaces.rename(owner, src, str(persona), wid, body.get('name'))
+                    if not item:
+                        self._json(404, {"ok": False, "err": "工作区不存在或名称为空"})
+                        return
+                    self._json(200, {"ok": True, "item": item})
+                    return
+                if path.endswith('/delete'):
+                    wid = path.rsplit('/', 2)[-2]
+                    item = workspaces.remove(owner, src, str(persona), wid)
+                    if not item:
+                        self._json(404, {"ok": False, "err": "工作区不存在"})
+                        return
+                    # Chats survive as ordinary chats; no files are touched.
+                    detached = conversations.detach_workspace(owner, src, str(persona), wid)
+                    self._json(200, {"ok": True, "item": item, "detached": detached})
+                    return
+                self._json(404, {"ok": False, "err": "接口不存在"})
+                return
             if path == '/api/conversations' or path.startswith('/api/conversations/'):
                 if not self._is_admin():
                     self._json(403, {"ok": False, "err": "只有管理员能管理桌面会话"})
@@ -1925,10 +1970,30 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": "会话管理仅用于桌面渠道"})
                     return
                 _, owner, src, persona = self._conversation_context(src)
-                import conversations
+                import conversations, workspaces
+                def _workspace_ok(wid):
+                    if not wid:
+                        return True
+                    return bool(workspaces.get(owner, src, str(persona), wid))
                 if path == '/api/conversations':
-                    item = conversations.create(owner, src, str(persona))
+                    wid = str(body.get('workspace_id') or '') or None
+                    if not _workspace_ok(wid):
+                        self._json(404, {"ok": False, "err": "工作区不存在"})
+                        return
+                    item = conversations.create(owner, src, str(persona), wid)
                     self._json(201, {"ok": True, "item": item})
+                    return
+                if path.endswith('/workspace'):
+                    cid = path.rsplit('/', 2)[-2]
+                    wid = str(body.get('workspace_id') or '') or None
+                    if not _workspace_ok(wid):
+                        self._json(404, {"ok": False, "err": "工作区不存在"})
+                        return
+                    item = conversations.assign(owner, src, str(persona), cid, wid)
+                    if not item:
+                        self._json(404, {"ok": False, "err": "会话不存在"})
+                        return
+                    self._json(200, {"ok": True, "item": item})
                     return
                 if path.endswith('/delete'):
                     cid = path.rsplit('/', 2)[-2]
@@ -3224,6 +3289,26 @@ def start_remote_api(brain):
             # 受限设备的默认拒绝闸门（GET 版）：读接口也按权限矩阵裁。
             if self._deny_if_limited_device("GET", path):
                 return
+            if path == '/api/workspaces':
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "只有管理员能读取工作区"})
+                    return
+                src = _norm_src(_query_param(self.path, 'src') or 'pc')
+                if src != 'pc':
+                    self._json(400, {"ok": False, "err": "工作区仅用于桌面渠道"})
+                    return
+                _, owner, src, persona = self._conversation_context(src)
+                import workspaces, conversations
+                items = workspaces.list_for(owner, src, str(persona))
+                counts = {}
+                for conv in conversations.list_for(owner, src, str(persona)):
+                    wid = conv.get('workspace_id')
+                    if wid:
+                        counts[wid] = counts.get(wid, 0) + 1
+                for item in items:
+                    item['conversation_count'] = counts.get(item['id'], 0)
+                self._json(200, {"ok": True, "items": items})
+                return
             if path == '/api/conversations':
                 if not self._is_admin():
                     self._json(403, {"ok": False, "err": "只有管理员能读取桌面会话"})
@@ -3253,6 +3338,10 @@ def start_remote_api(brain):
                             or _creator_jobs.listing(_job_owner, _cid)
                             or _display_turns.listing(_turn_owner)
                             or _agent_runs.display_records(_turn_owner))
+                        # An empty chat the user opened inside a workspace is a
+                        # deliberate object; keep it visible after a restart.
+                        if item.get('workspace_id'):
+                            item['has_content'] = True
                     if item['has_content']:
                         visible.append(item)
                 items = visible

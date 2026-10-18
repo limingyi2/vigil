@@ -2,6 +2,12 @@
 
 SQLite owns request deduplication and terminal snapshots. Thinking deltas are
 ephemeral; they are never written to the database. No generated code is run.
+
+P7.2 cancellation: ``cancel()`` records intent (``cancelling``) and closes the
+live model connection through a StopToken. The worker then confirms
+``cancelled``. A cancelled job keeps its partial text for audit but can never
+produce, validate or install a draft. Closing the connection stops local
+delivery; tokens the provider already generated cannot be recalled.
 """
 import copy
 import hashlib
@@ -19,12 +25,17 @@ import paths
 import creator
 from model_providers import get_provider
 from model_providers.base import ProviderResponseError, ProviderHTTPError
-from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
+from model_providers.execution import (prepare, completion_events, ERROR_MESSAGES,
+                                       StopToken, Cancelled)
 
 LOCK = threading.RLock()
 EVENTS = {}
 INITIALIZED = set()
+# Live workers only: job_id → StopToken. Never persisted; after a restart the
+# job is terminal (interrupted) and has no in-flight request to stop.
+STOPS = {}
 TERMINAL = {'succeeded', 'failed', 'cancelled', 'interrupted'}
+CANCEL_REQUESTED = {'cancelling', 'cancelled'}
 MAX_PREVIEW = 65536
 
 
@@ -37,7 +48,14 @@ def _db():
     if filename not in INITIALIZED:
         for jid, blob in db.execute('SELECT id,data FROM jobs').fetchall():
             item = json.loads(blob)
-            if item['status'] not in TERMINAL:
+            if item['status'] in CANCEL_REQUESTED:
+                # The worker that would have confirmed is gone; finish the cancel
+                # rather than leaving a job that looks like it is still working.
+                item.update(status='cancelled', stage='cancelled',
+                            error=None, cancelled_at=time.time(),
+                            cancel_note='进程重启，取消已生效')
+                db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(item, ensure_ascii=False), jid))
+            elif item['status'] not in TERMINAL:
                 item.update(status='interrupted', error={'class': 'interrupted', 'message': '执行进程已重启，未自动重新生成'})
                 db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(item, ensure_ascii=False), jid))
         db.commit()
@@ -142,15 +160,54 @@ def events(jid, owner, after=0):
 
 
 def cancel(jid, owner):
+    """Request cancellation. Returns the job with an extra ``cancel_state``.
+
+    ``cancel_state``: ``cancelling`` (worker is stopping), ``cancelled``
+    (already stopped), ``too_late`` (terminal with another result).
+    """
     with LOCK, _db() as db:
         item = snapshot(jid, owner)
-        if item and item['status'] not in TERMINAL:
-            item['status'] = 'cancelled'
+        if not item:
+            return None
+        status = item['status']
+        if status in TERMINAL:
+            item['cancel_state'] = 'cancelled' if status == 'cancelled' else 'too_late'
+            return item
+        worker = STOPS.get(jid)
+        if not worker and status == 'queued':
+            # Nothing started yet: cancel takes effect immediately.
+            item.update(status='cancelled', stage='cancelled', error=None,
+                        cancelled_at=time.time(), cancel_note='尚未开始生成，已直接取消')
             _event(item, 'cancelled', {'status': 'cancelled'})
             _save(db, item)
-    if item:
-        _mirror_update(owner, item['request_id'], status='cancelled',
-                       content=item.get('content') or '')
+            item['cancel_state'] = 'cancelled'
+        else:
+            item.update(status='cancelling', stage='cancelling',
+                        cancel_requested_at=time.time())
+            _event(item, 'stage', {'stage': 'cancelling'})
+            _save(db, item)
+            item['cancel_state'] = 'cancelling'
+    _mirror_update(owner, item['request_id'], status=item['status'],
+                   content=item.get('content') or '')
+    if worker:
+        # Close the live response; the worker confirms the state itself.
+        worker.cancel()
+    return item
+
+
+def _finish_cancel(jid, owner, note='已取消：本地已停止接收模型输出，已生成的部分不会用于生成或安装草稿'):
+    with LOCK, _db() as db:
+        item = snapshot(jid, owner)
+        if not item or item['status'] == 'cancelled':
+            return item
+        if item['status'] not in CANCEL_REQUESTED:
+            return item
+        item.update(status='cancelled', stage='cancelled', error=None,
+                    cancelled_at=time.time(), cancel_note=note)
+        _event(item, 'cancelled', {'status': 'cancelled'})
+        _save(db, item)
+    _mirror_update(owner, item['request_id'], status='cancelled',
+                   content=item.get('content') or '')
     return item
 
 
@@ -193,12 +250,18 @@ def create(body, cfg, owner, start=True):
 
 def _run(jid, owner, cfg):
     item = {}
+    stop = None
+    cancelled = False
     try:
         with LOCK, _db() as db:
             item = snapshot(jid, owner)
             if item['status'] != 'queued':
                 return
-            item.update(status='running', stage='generating')
+            # Registered under the same lock as the state change so a cancel
+            # arriving now always finds the worker that owns this job.
+            stop = StopToken()
+            STOPS[jid] = stop
+            item.update(status='running', stage='generating', started_at=time.time())
             _event(item, 'stage', {'stage': 'generating'})
             _save(db, item)
         previous = None
@@ -217,29 +280,45 @@ def _run(jid, owner, cfg):
         text = []
         result = None
         size = 0
-        for event in completion_events(provider, payload):
-            with LOCK, _db() as db:
-                item = snapshot(jid, owner)
-                if item['status'] in TERMINAL:
-                    return
-                if event['type'] == 'completion':
-                    result = event['result']
-                    item['provider_finish_reason'] = result.get('finish_reason')
-                    if result['usage']:
-                        item['usage'] = result['usage']
-                        _event(item, 'usage', result['usage'])
-                else:
-                    delta = event['text']
-                    size += len(delta.encode('utf-8'))
-                    if size > 16 * 1024 * 1024:
-                        raise ValueError('模型输出超过作业资源上限')
-                    if event['type'] == 'text_delta':
-                        text.append(delta)
-                        item['content'] = (item['content'] + delta)[-MAX_PREVIEW:]
-                        item['preview_truncated'] = size > MAX_PREVIEW
-                        _mirror_update(owner, item['request_id'], content=item['content'])
-                    _event(item, event['type'], {'text': delta})
-                _save(db, item)
+        stream = completion_events(provider, payload, stop=stop)
+        try:
+            for event in stream:
+                with LOCK, _db() as db:
+                    item = snapshot(jid, owner)
+                    # Cancellation owns the transition: the worker only confirms.
+                    if stop.requested or item['status'] in CANCEL_REQUESTED:
+                        cancelled = True
+                        break
+                    if item['status'] in TERMINAL:
+                        return
+                    if event['type'] == 'completion':
+                        result = event['result']
+                        item['provider_finish_reason'] = result.get('finish_reason')
+                        if result['usage']:
+                            item['usage'] = result['usage']
+                            _event(item, 'usage', result['usage'])
+                    else:
+                        delta = event['text']
+                        size += len(delta.encode('utf-8'))
+                        if size > 16 * 1024 * 1024:
+                            raise ValueError('模型输出超过作业资源上限')
+                        if event['type'] == 'text_delta':
+                            text.append(delta)
+                            item['content'] = (item['content'] + delta)[-MAX_PREVIEW:]
+                            item['preview_truncated'] = size > MAX_PREVIEW
+                            _mirror_update(owner, item['request_id'], content=item['content'])
+                        _event(item, event['type'], {'text': delta})
+                    _save(db, item)
+        finally:
+            # Closing the generator unwinds the provider's ``with`` block, which
+            # closes the live HTTP response. Anything that is not a generator
+            # (a test double, a plain iterator) simply has no close().
+            closer = getattr(stream, 'close', None)
+            if callable(closer):
+                closer()
+        if cancelled:
+            _finish_cancel(jid, owner)
+            return
         if not result or not result['complete']:
             from model_providers.execution import stage_of
             reason = result['reason'] if result else 'connection_lost'
@@ -249,34 +328,46 @@ def _run(jid, owner, cfg):
             return
         with LOCK, _db() as db:
             item = snapshot(jid, owner)
-            if item['status'] in TERMINAL:
-                return
-            item['stage'] = 'validating'
-            _event(item, 'stage', {'stage': 'validating'})
-            # Under the same lock as cancellation: once persistence begins,
-            # cancellation cannot win and leave a hidden successful draft.
-            draft, err = creator._persist(item['kind'], item['requirement'], ''.join(text), cfg,
-                prev_meta=previous, feedback=item['feedback'])
-            if err:
-                diagnostic = getattr(err, 'diagnostic', {})
-                _fail(jid, owner, 'invalid_structure', diagnostic.get('code', 'invalid_format'),
-                      stage=diagnostic.get('stage', 'parse'),
-                      message=diagnostic.get('message', '生成产物不符合契约（未落地文件）'),
-                      parse_fields={k: diagnostic[k] for k in ('position', 'line', 'column', 'missing') if k in diagnostic})
-                return
-            item.update(status='succeeded', stage='assembling', draft_id=draft['id'])
-            if draft.get('validation', {}).get('ok') is False:
-                verrs = (draft.get('validation') or {}).get('errors') or []
-                vcodes = [str(e.get('code')) for e in verrs if isinstance(e, dict) and e.get('code')][:5]
-                failed = _fail(jid, owner, 'static_validation', 'validation_failed', stage='static_validation')
-                failed['draft_id'] = draft['id']
-                _save(db, failed)
+            if stop.requested or item['status'] in CANCEL_REQUESTED:
+                cancelled = True
+            elif item['status'] in TERMINAL:
                 return
             else:
-                _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
-                _mirror_update(owner, item['request_id'], status='succeeded', content=''.join(text))
-            _save(db, item)
+                item['stage'] = 'validating'
+                _event(item, 'stage', {'stage': 'validating'})
+                # Under the same lock as cancellation: once persistence begins,
+                # cancellation cannot win and leave a hidden successful draft.
+                draft, err = creator._persist(item['kind'], item['requirement'], ''.join(text), cfg,
+                    prev_meta=previous, feedback=item['feedback'])
+                if err:
+                    diagnostic = getattr(err, 'diagnostic', {})
+                    _fail(jid, owner, 'invalid_structure', diagnostic.get('code', 'invalid_format'),
+                          stage=diagnostic.get('stage', 'parse'),
+                          message=diagnostic.get('message', '生成产物不符合契约（未落地文件）'),
+                          parse_fields={k: diagnostic[k] for k in ('position', 'line', 'column', 'missing') if k in diagnostic})
+                    return
+                item.update(status='succeeded', stage='assembling', draft_id=draft['id'])
+                if draft.get('validation', {}).get('ok') is False:
+                    verrs = (draft.get('validation') or {}).get('errors') or []
+                    vcodes = [str(e.get('code')) for e in verrs if isinstance(e, dict) and e.get('code')][:5]
+                    failed = _fail(jid, owner, 'static_validation', 'validation_failed', stage='static_validation')
+                    failed['draft_id'] = draft['id']
+                    _save(db, failed)
+                    return
+                else:
+                    _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
+                    _mirror_update(owner, item['request_id'], status='succeeded', content=''.join(text))
+                _save(db, item)
+        if cancelled:
+            _finish_cancel(jid, owner)
+    except Cancelled:
+        _finish_cancel(jid, owner, '已取消：模型连接已关闭，已生成的部分不会用于生成或安装草稿')
     except Exception as exc:
+        if stop is not None and stop.requested:
+            # The provider raises a transport error when we close its stream;
+            # that is a cancellation, not a failure.
+            _finish_cancel(jid, owner, '已取消：模型连接已关闭，已生成的部分不会用于生成或安装草稿')
+            return
         if isinstance(exc, OSError) and item.get('stage') == 'validating':
             reason, stage = 'draft_save', 'draft_save'
         elif isinstance(exc, ProviderHTTPError):
@@ -300,14 +391,19 @@ def _run(jid, owner, cfg):
             reason, stage = 'service_error', 'model_request'
         _fail(jid, owner, reason, exception_type=type(exc).__name__,
               stage=stage, http_status=status)
+    finally:
+        if stop is not None:
+            stop.detach()
+        if STOPS.get(jid) is stop:
+            STOPS.pop(jid, None)
 
 
 def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,
           detail=None, http_status=None, message=None, parse_fields=None):
     with LOCK, _db() as db:
         item = snapshot(jid, owner)
-        if item['status'] in TERMINAL:
-            return
+        if item['status'] in TERMINAL or item['status'] in CANCEL_REQUESTED:
+            return item
         code = code or {'length': 'output_truncated', 'thinking_only': 'empty_content',
             'invalid_structure': 'invalid_format', 'service_error': 'provider_error',
             'connection_lost': 'provider_error', 'auth': 'auth_failed'}.get(reason, reason)
@@ -349,7 +445,7 @@ def legacy(body, cfg, owner):
             if item.get('draft_id'):
                 return creator.get_draft(item['draft_id'])
             error = item.get('error') or {}
-            message = error.get('message') or '生成已取消或中断'
+            message = error.get('message') or item.get('cancel_note') or '生成已取消或中断'
             if error.get('class') in ('service_error', 'connection_lost') and '模型调用失败' not in message:
                 message = '模型调用失败：' + message
             return None, message

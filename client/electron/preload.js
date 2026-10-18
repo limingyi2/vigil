@@ -156,6 +156,12 @@ contextBridge.exposeInMainWorld('vigil', {
   projectPicker: {
     pickDirectory: () => ipcRenderer.invoke('project-picker:directory'),
   },
+  // 工作区：选一个真实文件夹，并查询它现在是否还在。
+  // 两个方法都不读文件内容，也不授予任何读写权限。
+  workspace: {
+    pick: () => ipcRenderer.invoke('workspace:pick'),
+    probe: (p) => ipcRenderer.invoke('workspace:probe', p),
+  },
 
   platform: process.platform,
   agentCenter: {

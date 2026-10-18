@@ -138,10 +138,14 @@ function draftRoot() {
 }
 function root() {
   const nodes=new Map();
-  return {isConnected:true,innerHTML:'',querySelector(selector){
-    if (!nodes.has(selector)) nodes.set(selector,{textContent:'',hidden:false,setAttribute(key,v){this[key]=v;}});
-    return nodes.get(selector);
-  }};
+  const node=()=>({textContent:'',hidden:false,className:'',dataset:{},disabled:false,
+    setAttribute(key,v){this[key]=v;},querySelector(){return node();},addEventListener(){}});
+  return {isConnected:true,innerHTML:'',dataset:{},
+    querySelectorAll(){return [];},
+    querySelector(selector){
+      if (!nodes.has(selector)) nodes.set(selector,node());
+      return nodes.get(selector);
+    }};
 }
 
 test('detaching a chat bubble removes its subscription and observer immediately', () => {
@@ -165,9 +169,13 @@ test('Creator terminal snapshot shows stage, code, parser facts, advice and log 
   const p=pages(),r=root();
   const error={stage:'parse',code:'json_parse_error',message:'Expecting value (line 3, column 10) <script>bad()</script>',hint:'换模型重试',log_id:'job_safe'};
   await p.watchCreatorJob(r,{job_id:'job_safe',request_id:'req_test',status:'failed',content:'',error});
-  const status=r.querySelector('.stream-status');
-  for(const text of ['JSON 解析','json_parse_error','line 3, column 10','换模型重试','job_safe'])assert.ok(status.textContent.includes(text),text);
-  assert.equal(status.role,'alert');assert.equal(r.innerHTML.includes('<script>'),false);
+  // P7.2: the diagnosis lives in the task card note, never in the model output.
+  const note=r.querySelector('[data-cr-note]');
+  for(const text of ['JSON 解析','json_parse_error','line 3, column 10','换模型重试','job_safe'])assert.ok(note.textContent.includes(text),text);
+  assert.equal(note.role,'alert');assert.equal(note.dataset.tone,'err');
+  assert.equal(r.innerHTML.includes('<script>'),false);
+  // A terminal job can never offer cancellation again.
+  assert.equal(r.querySelector('[data-cr-cancel]').hidden,true);
   assert.equal(p.handlers.size,0);assert.equal(p.observers.size,0);
 });
 

@@ -83,10 +83,11 @@ async function run(){
   for(let i=0;i<20;i++)await send('bounded fixture '+i);
   assert.equal(chatRequests,20);console.log('PASS 20 ordinary streaming turns complete without cross-turn updates');
   await ev("document.querySelector('#creatorBtn').click()");
+  const noteOf="(document.querySelectorAll('.cr-live-turn .cr-task [data-cr-note]').length?Array.from(document.querySelectorAll('.cr-live-turn .cr-task [data-cr-note]')).at(-1).textContent:'')";
   for(const s of ['model_request','network','auth','parse','codegen','static_validation','draft_save']){
     stage=s;await send('creator '+s);
-    await until(`Array.from(document.querySelectorAll('.stream-status')).at(-1)?.textContent.includes(${JSON.stringify(s+'_failed')})`);
-    const text=await ev("Array.from(document.querySelectorAll('.stream-status')).at(-1).textContent");
+    await until(`${noteOf}.includes(${JSON.stringify(s+'_failed')})`);
+    const text=await ev(noteOf);
     for(const wanted of [s+'_failed','line 3, column 10','检查配置后重试','job_log_'])assert.ok(text.includes(wanted),text);
     assert.equal(await ev("document.querySelectorAll('.turn img[src=x]').length"),0);
   }

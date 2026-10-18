@@ -1011,6 +1011,55 @@ ipcMain.handle('project-picker:directory', async () => {
     return { ok: false, err: String(e && e.message || e).slice(0, 160) };
   }
 });
+
+// ── 工作区（一个真实文件夹）─────────────────────────────────────
+// 只做两件事：让用户用原生选择器指定一个目录；回答"这个目录现在还在不在"。
+// 两者都不读文件内容，也不改变 localtool 的授权 —— 选中文件夹不等于拿到
+// 读写/执行权限，那边该弹的确认框一个都不会少。
+function workspacePath(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text || text.length > 1024) return '';
+  if (/[\u0000-\u001f]/.test(text)) return '';
+  if (!path.isAbsolute(text)) return '';
+  try { return path.normalize(text); } catch (_) { return ''; }
+}
+ipcMain.handle('workspace:pick', async () => {
+  if (!win || win.isDestroyed()) return { ok: false, err: '窗口尚未准备好' };
+  try {
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择一个本地文件夹作为工作区',
+      buttonLabel: '作为工作区打开',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) {
+      return { ok: true, canceled: true };
+    }
+    return { ok: true, path: workspacePath(result.filePaths[0]) || result.filePaths[0] };
+  } catch (e) {
+    return { ok: false, err: String(e && e.message || e).slice(0, 160) };
+  }
+});
+ipcMain.handle('workspace:probe', async (_e, raw) => {
+  const target = workspacePath(raw);
+  if (!target) return { ok: false, err: '路径不是有效的绝对路径' };
+  try {
+    const st = await fs.promises.stat(target);
+    if (!st.isDirectory()) return { ok: true, path: target, exists: true, directory: false, readable: false };
+    try {
+      await fs.promises.access(target, fs.constants.R_OK);
+      return { ok: true, path: target, exists: true, directory: true, readable: true };
+    } catch (_) {
+      return { ok: true, path: target, exists: true, directory: true, readable: false };
+    }
+  } catch (e) {
+    const code = String((e && e.code) || '');
+    // ENOENT / ENOTDIR 说明目录被删了或移走了；EPERM / EACCES 是权限。
+    if (code === 'EPERM' || code === 'EACCES') {
+      return { ok: true, path: target, exists: false, directory: false, readable: false, permission: true };
+    }
+    return { ok: true, path: target, exists: false, directory: false, readable: false, code: code || 'unknown' };
+  }
+});
 ipcMain.handle('auto:connect', () => autoConnect());
 ipcMain.handle('local:defaults', () => ({
   roots: localtool.defaultRoots(),

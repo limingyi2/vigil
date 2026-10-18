@@ -143,62 +143,97 @@
 
   async function watchCreatorJob(root, initial, scope = recordKey()) {
     const jid = initial.job_id;
-    const thinkId = 'creatorThink_' + jid;
-    root.innerHTML = '<div class="bdy">' + streamBodyHtml(thinkId, 'creatorText_' + jid) +
-      '<button class="btn oline creator-cancel">取消生成</button></div>';
-    const text = root.querySelector('.streaming-text');
-    const thinking = root.querySelector('.think-text');
-    const block = root.querySelector('.think-block');
-    const status = root.querySelector('.stream-status');
-    const cancel = root.querySelector('.creator-cancel');
-    root.querySelector('.think-toggle').onclick = () => {
-      const content = root.querySelector('.think-content'); content.hidden = !content.hidden;
-    };
-    let current = initial, cursor = 0, finished = false;
-    text.textContent = initial.content || '';
-    block.hidden = true;
-    cancel.onclick = async () => {
-      const r = pick(await post('/api/creator/jobs/' + jid + '/cancel', {}));
-      if (r.ok) { current = r; applySnapshot(r); }
-    };
+    // One structured task card, never the raw model response. The full text is
+    // still stored by the backend; the chat surface only shows progress facts.
+    root.dataset.scope = scope;
+    root.innerHTML = '<div class="bdy">' + creatorTaskCardHtml(initial) + '</div>';
+    const card = creatorCard(root, initial);
+    let current = initial, cursor = 0, finished = false, cancelState = 'idle', lost = false;
+    const streamApi = global.vigil && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent);
     function applySnapshot(item) {
       current = item;
       cursor = Math.max(cursor, item.event_cursor || 0);
-      text.textContent = item.content || '';
-      rememberTurn(item.request_id, {input:item.feedback || item.requirement,kind:item.kind,job_id:jid,
-        status:item.status,content:item.content || '',error:item.error}, scope);
-      status.textContent = item.error ? creatorErrorText(item.error) : item.stage || item.status;
-      status.setAttribute('role', item.error ? 'alert' : 'status');
+      card.update(item);
+      rememberTurn(item.request_id, {input:item.feedback || item.requirement,kind:item.kind,
+        job_id:jid,status:item.status,error:item.error}, scope);
       finished = ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(item.status);
       if (finished) {
-        cancel.hidden = true;
-        if (item.status !== 'succeeded') status.textContent += '（结果不完整）';
+        cancelState = item.status === 'cancelled' ? 'done' : 'idle';
+        card.setCancel({hidden: true});
+      }
+      if (item.status === 'cancelling' && cancelState === 'idle') cancelState = 'waiting';
+      if (cancelState === 'sending' || cancelState === 'waiting') {
+        card.setCancel({label: '正在取消…', disabled: true});
+      } else if (cancelState === 'failed') {
+        card.setCancel({label: '重试取消', disabled: false});
       }
     }
-    const streamApi = global.vigil && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent);
+    async function requestCancel() {
+      if (cancelState === 'sending' || cancelState === 'waiting' || finished) return;
+      cancelState = 'sending';
+      card.setCancel({label: '正在取消…', disabled: true});
+      card.note('已发送取消请求，等待模型连接关闭…', 'warn');
+      card.log('请求取消（后端确认前不会显示已取消）');
+      let r;
+      try { r = pick(await post('/api/creator/jobs/' + jid + '/cancel', {}, {timeoutMs: 8000})); }
+      catch (e) { r = {ok:false, _err:String((e && e.message) || e)}; }
+      if (r && (r._status === 409 || (r.cancel_state === 'too_late'))) {
+        cancelState = 'idle';
+        card.setCancel({hidden: true});
+        card.note('任务已经结束，无法取消：' + (r.err || '结果以下方状态为准'), 'err');
+        toast('任务已结束，无法取消');
+        applySnapshot(Object.assign({}, current, r.job_id ? r : {}));
+        return;
+      }
+      if (!r || !r.ok) {
+        cancelState = 'failed';
+        const reason = (r && (r._err || r.err)) || '后端未确认';
+        card.note('取消失败：' + reason + '。任务可能仍在运行，可重试取消。', 'err');
+        card.setCancel({label: '重试取消', disabled: false});
+        toast('取消失败：' + reason);
+        card.log('取消失败：' + reason);
+        return;
+      }
+      card.log('后端已受理：' + (r.status || ''));
+      applySnapshot(r);
+      if (r.status !== 'cancelled') {
+        cancelState = 'waiting';
+        card.setCancel({label: '正在取消…', disabled: true});
+        card.note('取消请求已受理，正在关闭模型连接…', 'warn');
+      }
+    }
+    card.onCancel(requestCancel);
     const off = streamApi ? subscribeUntilDetached(root, streamApi, evt => {
       if (evt.job_id !== jid || finished || !root.isConnected || recordKey() !== scope) return;
       if (evt.type === 'snapshot') { applySnapshot(evt.payload); return; }
       if (evt.seq <= cursor) return;
       cursor = evt.seq;
       const p = evt.payload || {};
-      if (evt.type === 'error') { applySnapshot({...current,status:'failed',error:p,content:text.textContent,event_cursor:cursor}); return; }
-      if (evt.type === 'text_delta') {
-        text.textContent += p.text || '';
-        rememberTurn(initial.request_id, {content:text.textContent}, scope);
+      if (evt.type === 'error') {
+        card.log('失败：' + creatorErrorText(p));
+        applySnapshot(Object.assign({}, current, {status:'failed', error:p, event_cursor:cursor}));
+        return;
       }
-      if (evt.type === 'think_delta') { block.hidden = false; thinking.textContent += p.text || ''; }
-      if (evt.type === 'stage') status.textContent = p.stage;
+      if (evt.type === 'stage') { card.update(current, p.stage); card.log('阶段：' + creatorStageLabel(p.stage)); }
+      if (evt.type === 'text_delta') card.bytes(current);
+      if (evt.type === 'usage' && p && typeof p === 'object') card.log('用量：' + JSON.stringify(p).slice(0, 120));
     }) : null;
     applySnapshot(initial);
     try {
       while (!finished && root.isConnected && recordKey() === scope) {
-        if (global.vigil && global.vigil.apiStream && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent)) {
-          await global.vigil.apiStream('/api/creator/jobs/' + jid + '/events?after=' + cursor, null);
+        const hasStream = global.vigil && global.vigil.apiStream && (global.vigil.onStreamEvent || global.vigil.onCreatorEvent);
+        if (hasStream) {
+          const sr = await global.vigil.apiStream('/api/creator/jobs/' + jid + '/events?after=' + cursor, null);
+          if (sr && sr.ok === false) { card.note('与后端的实时连接中断，状态未确认；可重试连接', 'err'); }
         } else await new Promise(resolve => setTimeout(resolve, 500));
         if (!root.isConnected || recordKey() !== scope) break;
         const r = pick(await get('/api/creator/jobs/' + jid));
-        if (!r.ok) { status.textContent = '连接中断，记录已保留，请刷新查询'; break; }
+        if (!r.ok) {
+          lost = true;
+          card.note('连接中断，记录已保留在后台；可重试连接查询真实状态', 'err');
+          card.setRetry(true);
+          break;
+        }
         applySnapshot(r);
       }
       if (current.status === 'succeeded' && current.draft_id && root.isConnected) {
@@ -206,8 +241,173 @@
         if (r.ok && r.draft) { root.innerHTML = draftCardHtml(r.draft); bindDraftCard(root, r.draft); }
       }
       return current;
-    } finally { if (off) off(); }
+    } finally { if (off) off(); if (lost) card.setRetry(true); }
   }
+
+  /** Rebuild a finished Creator job from durable state (after reload/restart). */
+  async function restoreCreatorJob(root, job) {
+    if (!root || !root.isConnected) return;
+    if (job.status === 'succeeded' && job.draft_id) {
+      const r = pick(await get('/api/creator/draft?id=' + encodeURIComponent(job.draft_id)));
+      if (!root.isConnected) return;
+      if (r.ok && r.draft) { root.innerHTML = draftCardHtml(r.draft); bindDraftCard(root, r.draft); return; }
+      root.innerHTML = '<div class="bdy">' + creatorTaskCardHtml(job) + '</div>';
+      const card = creatorCard(root, job);
+      card.update(job);
+      card.note('草稿已生成，但当前读不到草稿文件（可能已被删除）：' + (r._err || r.err || ''), 'err');
+      return;
+    }
+    root.innerHTML = '<div class="bdy">' + creatorTaskCardHtml(job) + '</div>';
+    const card = creatorCard(root, job);
+    card.update(job);
+    card.log('已从后端恢复该任务的状态');
+  }
+
+  const CREATOR_PHASES = [
+    ['queued', '等待模型'], ['generating', '生成中'], ['validating', '验证中'], ['done', '完成'],
+  ];
+  function creatorStageLabel(stage) {
+    return ({queued:'等待模型', generating:'生成中', validating:'验证中', assembling:'整理产物',
+      cancelling:'正在取消', cancelled:'已取消', failed:'失败', succeeded:'已完成'})[stage] || String(stage || '');
+  }
+  function creatorPhase(job) {
+    const s = String((job && job.status) || 'queued');
+    const stage = String((job && job.stage) || '');
+    if (s === 'queued') return {key:'queued', step:0, label:'等待模型', tone:'idle'};
+    if (s === 'cancelling') return {key:'cancelling', step:1, label:'正在取消', tone:'warn'};
+    if (s === 'cancelled') return {key:'cancelled', step:1, label:'已取消', tone:'muted'};
+    if (s === 'interrupted') return {key:'interrupted', step:1, label:'已中断', tone:'muted'};
+    if (s === 'failed') return {key:'failed', step:2, label:'失败', tone:'err'};
+    if (s === 'succeeded') return {key:'succeeded', step:3, label:'完成', tone:'ok'};
+    if (stage === 'validating' || stage === 'assembling') return {key:'validating', step:2, label:'验证中', tone:'run'};
+    return {key:'generating', step:1, label:'生成中', tone:'run'};
+  }
+  function creatorNeed(job) {
+    const text = String((job && (job.requirement || job.feedback)) || '').replace(/\s+/g, ' ').trim();
+    return text.length > 72 ? text.slice(0, 72) + '…' : (text || '未填写需求');
+  }
+  function creatorTaskCardHtml(job) {
+    const phase = creatorPhase(job);
+    return '<div class="card cr-task" data-cr-task="' + esc(job.job_id || '') + '">' +
+      '<div class="cr-task-top">' +
+        '<span class="tag neutral">' + esc(job.kind === 'skill' ? '技能' : '插件') + '</span>' +
+        '<div class="cr-task-title"><b>' + esc(creatorNeed(job)) + '</b>' +
+          '<span class="muted mono">' + esc(String(job.job_id || '').slice(0, 18)) + '</span></div>' +
+        '<span class="cr-phase ' + phase.tone + '" data-cr-phase><i></i><span></span></span>' +
+      '</div>' +
+      '<div class="cr-rail">' + CREATOR_PHASES.map(([key, label], i) =>
+        '<span class="cr-step" data-step="' + i + '">' + esc(label) + '</span>').join('') + '</div>' +
+      '<div class="cr-task-note" data-cr-note role="status"></div>' +
+      '<div class="cr-task-foot">' +
+        '<span class="muted cr-meter" data-cr-meter>已用时 0 秒</span>' +
+        '<span class="sp"></span>' +
+        '<button class="btn ghost cr-retry" type="button" data-cr-retry hidden>重试连接</button>' +
+        '<button class="btn ghost cr-log-toggle" type="button" data-cr-log-toggle aria-expanded="false">状态日志</button>' +
+        '<button class="btn oline cr-cancel" type="button" data-cr-cancel>取消生成</button>' +
+      '</div>' +
+      '<div class="cr-log" data-cr-log hidden><div class="cr-log-scroll"><ol class="cr-log-list"></ol></div></div>' +
+      '</div>';
+  }
+  /** Bind the live task card. Only progress facts are rendered — never the model text. */
+  function creatorCard(root, initial) {
+    const q = (s) => root.querySelector(s);
+    const phaseEl = q('[data-cr-phase]'), noteEl = q('[data-cr-note]'), meterEl = q('[data-cr-meter]');
+    const cancelEl = q('[data-cr-cancel]'), logEl = q('[data-cr-log]'), logList = q('.cr-log-list');
+    const logToggle = q('[data-cr-log-toggle]'), retryEl = q('[data-cr-retry]');
+    const startedAt = (Number(initial.created_at) || Date.now() / 1000) * 1000;
+    const byteLen = (text) => {
+      try { return new TextEncoder().encode(String(text || '')).length; } catch (_) { return String(text || '').length; }
+    };
+    let handler = null, sizes = byteLen(initial.content);
+    const written = [];
+    function log(line) {
+      if (!logList) return;
+      const at = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+      written.push(at + '  ' + String(line || '').slice(0, 160));
+      while (written.length > 60) written.shift();
+      logList.innerHTML = written.map((row) => '<li>' + esc(row) + '</li>').join('');
+      const scroll = logEl && logEl.querySelector('.cr-log-scroll');
+      if (scroll) scroll.scrollTop = scroll.scrollHeight;
+    }
+    function meter(item) {
+      const seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+      const kb = (sizes / 1024).toFixed(1);
+      const stopped = ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(String(item && item.status));
+      if (meterEl) meterEl.textContent = '已用时 ' + seconds + ' 秒 · 模型返回 ' + kb + ' KB（不在此处展示源码）' +
+        (stopped ? '' : ' · 实时更新');
+    }
+    function update(item, stageOverride) {
+      const phase = creatorPhase(item);
+      const status = String((item && item.status) || '');
+      if (phaseEl) {
+        phaseEl.className = 'cr-phase ' + phase.tone;
+        const label = phaseEl.querySelector('span');
+        if (label) label.textContent = stageOverride ? creatorStageLabel(stageOverride) : phase.label;
+      }
+      root.querySelectorAll('.cr-step').forEach((node) => {
+        const index = Number(node.dataset.step);
+        const reached = phase.step;
+        node.classList.toggle('done', index < reached || phase.key === 'succeeded');
+        node.classList.toggle('on', index === reached && !['succeeded','failed','cancelled','interrupted'].includes(phase.key));
+        node.classList.toggle('bad', index === reached && phase.key === 'failed');
+      });
+      // The button follows the durable status, so a card rebuilt after a reload
+      // or a restart can never offer "取消" on a job that already ended.
+      if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(status)) {
+        setCancel({hidden: true});
+      } else if (status === 'cancelling') {
+        setCancel({label: '正在取消…', disabled: true});
+      }
+      if (item && item.error) note(creatorErrorText(item.error), 'err');
+      else if (item && item.status === 'cancelled') note(item.cancel_note || '已取消，未生成任何草稿', 'muted');
+      else if (item && item.status === 'interrupted') note('执行已中断，未自动重新生成', 'muted');
+      else if (item && item.status === 'cancelling') note('正在关闭模型连接…', 'warn');
+      meter(item);
+    }
+    function note(text, tone) {
+      if (!noteEl) return;
+      noteEl.textContent = String(text || '');
+      noteEl.dataset.tone = tone || '';
+      noteEl.setAttribute('role', tone === 'err' ? 'alert' : 'status');
+    }
+    function setCancel(opts) {
+      const o = opts || {};
+      if (!cancelEl) return;
+      cancelEl.hidden = !!o.hidden;
+      cancelEl.disabled = !!o.disabled;
+      cancelEl.textContent = o.label || '取消生成';
+    }
+    function setRetry(show) { if (retryEl) retryEl.hidden = !show; }
+    if (logToggle && logEl) logToggle.onclick = () => {
+      const open = logEl.hidden;
+      logEl.hidden = !open;
+      logToggle.setAttribute('aria-expanded', String(open));
+      logToggle.textContent = open ? '收起日志' : '状态日志';
+    };
+    if (cancelEl) cancelEl.onclick = (e) => { e.preventDefault(); if (handler) handler(); };
+    if (retryEl) retryEl.onclick = () => {
+      if (!root.isConnected) return;
+      setRetry(false);
+      void watchCreatorJob(root, currentJob, root.dataset.scope || recordKey());
+    };
+    let currentJob = initial;
+    log('任务已提交，等待模型');
+    const api = {
+      update(item, stageOverride) {
+        currentJob = item || currentJob;
+        update(currentJob, stageOverride);
+        return api;
+      },
+      note, log, setCancel, setRetry,
+      bytes(item) {
+        sizes = Math.max(sizes, byteLen(item && item.content));
+        meter(item);
+      },
+      onCancel(fn) { handler = fn; },
+    };
+    return api;
+  }
+
   const tag = (cls, text) => '<span class="tag ' + cls + '">' + esc(text) + '</span>';
   /** 时间戳归一成毫秒：秒 / 毫秒 / 字符串都能吃（与 ui.js fmtTime 同一套规则） */
   const toMs = (t) => {
@@ -473,16 +673,28 @@
     topbar.innerHTML = '';
 
     // 会话由 Brain 持久化。localStorage 保留作旧版本兼容，但不会用于冷启动自动选中。
+    // 工作区 = 一个真实的本地文件夹；会话只是它内部的对话，不是它本身。
     panel.innerHTML =
       '<div class="phead"><div class="session-brand">Vigil</div></div>' +
-      '<div class="session-new"><button class="session-new-button" id="newTopicBtn" title="新建空白会话" aria-label="新对话">' + icon('chat', 'sm') + '<span>新对话</span></button></div>' +
+      // 侧栏只留“新对话”：打开文件夹统一放在输入区的“选择工作空间”里，
+      // 同一个动作不在两处出现，用户也不用先在左栏找入口。
+      '<div class="session-new"><button class="session-new-button" id="newTopicBtn" title="新建空白会话（不属于任何工作区）" aria-label="新对话">' + icon('chat', 'sm') + '<span>新对话</span></button></div>' +
       '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>' +
       '<div class="panel-footer"><button class="panel-settings" id="settingsOpen" title="设置" aria-label="打开设置">' + icon('set', 'sm') + '<span>设置</span></button></div>';
     const sessList = panel.querySelector('#sessList');
 
     const SESS_KEY = 'vigil.chat.active.v2:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
     const RENDERER_SESSION_KEY = 'vigil.chat.renderer-session.v1';
+    const WORKSPACE_OPEN_KEY = 'vigil.workspaces.open.v1:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
     let sessionItems = [];
+    let workspaceItems = [];
+    let workspaceError = '';
+    const workspaceProbe = {};          // wid → {state:'ok'|'missing'|'permission'|'unknown'|'checking', detail}
+    let workspaceOpen = {};
+    try { workspaceOpen = JSON.parse(localStorage.getItem(WORKSPACE_OPEN_KEY) || '{}') || {}; } catch (_) { workspaceOpen = {}; }
+    function saveWorkspaceOpen() {
+      try { localStorage.setItem(WORKSPACE_OPEN_KEY, JSON.stringify(workspaceOpen)); } catch (_) {}
+    }
     let activeConversationId = '';
     let draftActive = false;
     state.chatConversationId = '';
@@ -492,6 +704,39 @@
     function rememberRendererSelection(id, mode) {
       rendererSelection = { app_instance: appInstanceId, conversation_id: id || '', mode: mode || (id ? 'conversation' : 'welcome') };
       try { localStorage.setItem(RENDERER_SESSION_KEY, JSON.stringify(rendererSelection)); } catch (_) {}
+    }
+    async function refreshWorkspaces() {
+      workspaceError = '';
+      if (API.runtime.preview) { workspaceItems = []; drawSessions(); return; }
+      const r = pick(await get('/api/workspaces?src=pc'));
+      if (!r.ok) {
+        // An older Brain has no workspace API. Say so instead of drawing a fake list.
+        workspaceItems = [];
+        workspaceError = Number(r._status) === 404 ? '当前 Brain 版本没有工作区接口' : (r._err || '工作区列表加载失败');
+        drawSessions();
+        return;
+      }
+      workspaceItems = Array.isArray(r.items) ? r.items : [];
+      drawSessions();
+      void probeWorkspaces();
+    }
+    async function probeWorkspaces() {
+      const api = global.vigil && global.vigil.workspace;
+      for (const ws of workspaceItems.slice()) {
+        if (!api || !api.probe) { workspaceProbe[ws.id] = {state:'unknown', detail:'当前环境无法检查目录'}; continue; }
+        workspaceProbe[ws.id] = {state:'checking'};
+        try {
+          const p = await api.probe(ws.path);
+          if (!p || !p.ok) workspaceProbe[ws.id] = {state:'missing', detail:(p && p.err) || '无法检查该目录'};
+          else if (!p.exists) workspaceProbe[ws.id] = {state:'missing', detail: p.permission ? '无访问权限（可能已被移动）' : '目录不存在或已移动'};
+          else if (p.directory === false) workspaceProbe[ws.id] = {state:'missing', detail:'这个路径不是文件夹'};
+          else if (p.readable === false) workspaceProbe[ws.id] = {state:'permission', detail:'目录存在但当前用户无访问权限'};
+          else workspaceProbe[ws.id] = {state:'ok', detail:''};
+        } catch (e) {
+          workspaceProbe[ws.id] = {state:'missing', detail:String((e && e.message) || e)};
+        }
+        drawSessions();
+      }
     }
     async function refreshConversations() {
       if (API.runtime.preview) {
@@ -506,6 +751,7 @@
       if (activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
       state.chatConversationId = activeConversationId;
       drawSessions();
+      drawWorkspaceBar();
       return activeConversationId;
     }
     const tsOf = (t) => {
@@ -523,32 +769,112 @@
       return fmtTime(ms, 'day');
     };
 
-    function drawSessions() {
-      const renderRow = (s) => {
-        const updated = Number(s.updated_at || s.created_at || 0) * 1000;
-        return '<div class="li session-row' + (s.id === activeConversationId ? ' on' : '') + '">' +
-          '<button class="session-open" data-session="' + esc(s.id) + '" title="切换会话">' +
-          '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(String(s.title || '').slice(0, 7)) + '</b>' +
-          '<span>' + esc(relative(updated)) + '</span></span></button>' +
-          '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button>' +
-          '<button class="ibtn session-delete" data-delete="' + esc(s.id) + '" aria-label="删除会话" title="删除会话">' + icon('x', 'sm') + '</button></div>';
+    /** 当前会话所属文件夹（没有就什么都不显示）——只做展示，不改归属。 */
+    function drawWorkspaceBar() {
+      const bar = view.querySelector('#chatWsBar');
+      if (!bar) return;
+      const conv = sessionItems.find((s) => s.id === activeConversationId);
+      const ws = conv && conv.workspace_id ? workspaceItems.find((w) => w.id === conv.workspace_id) : null;
+      if (!ws) { bar.hidden = true; bar.innerHTML = ''; drawComposerFoot(); return; }
+      bar.hidden = false;
+      bar.title = ws.path;
+      bar.innerHTML = '<span class="ic">' + icon('folder', 'sm') + '</span>' +
+        '<b>' + esc(ws.name) + '</b>' +
+        '<button class="chat-ws-path" type="button" data-ws-path="' + esc(ws.path) + '" title="点击复制路径">' + esc(ws.path) + '</button>' +
+        '<span class="chat-ws-note">仅有位置，不等于已授权读写</span>';
+      const pathButton = bar.querySelector('[data-ws-path]');
+      if (pathButton) pathButton.onclick = async () => {
+        try { await navigator.clipboard.writeText(ws.path); toast('已复制路径：' + ws.path); }
+        catch (_) { toast('复制失败，路径：' + ws.path); }
       };
-      const active = sessionItems.find((s) => s.id === activeConversationId);
-      const remaining = sessionItems.filter((s) => s.id !== activeConversationId);
-      const pinned = active || draftActive;
-      const empty = '<div class="empty" style="text-align:left;padding:10px 8px">还没有会话</div>';
-      const workspaceSection = pinned
-        ? '<section class="session-group session-workspace"><div class="session-group-title">工作区</div>' +
-          (active ? renderRow(active) : '<div class="li session-row on session-draft" aria-current="page"><span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>新对话</b></span></div>') + '</section>'
+      drawComposerFoot();
+    }
+    function workspaceRowHtml(ws) {
+      const convs = sessionItems.filter((s) => s.workspace_id === ws.id);
+      const probe = workspaceProbe[ws.id] || {state:'checking'};
+      const hasActive = convs.some((s) => s.id === activeConversationId);
+      const open = workspaceOpen[ws.id] !== undefined ? !!workspaceOpen[ws.id] : hasActive;
+      const tone = probe.state === 'ok' ? '' : probe.state === 'checking' ? 'checking' : 'bad';
+      const statusText = probe.state === 'ok' ? '' : probe.state === 'checking' ? '检查中…' : (probe.detail || '目录状态未知');
+      return '<div class="ws-row' + (hasActive ? ' on' : '') + '" data-workspace="' + esc(ws.id) + '">' +
+        '<button class="ws-open" data-ws-toggle="' + esc(ws.id) + '" aria-expanded="' + String(open) + '" title="' + esc(ws.path) + '">' +
+          '<span class="ic">' + icon('folder', 'sm') + '</span>' +
+          '<span class="tx"><b>' + esc(ws.name) + '</b>' +
+            '<span class="ws-path" data-ws-copy="' + esc(ws.path) + '" title="点击复制真实路径：' + esc(ws.path) + '">' + esc(ws.path) + '</span>' +
+          '</span>' +
+          '<span class="ws-count">' + convs.length + '</span>' +
+        '</button>' +
+        '<button class="ibtn ws-new" data-ws-new="' + esc(ws.id) + '" aria-label="在此工作区新建会话" title="在此工作区新建会话">' + icon('plus', 'sm') + '</button>' +
+        '<button class="ibtn ws-remove" data-ws-remove="' + esc(ws.id) + '" aria-label="移除工作区" title="移除工作区（不删除文件）">' + icon('x', 'sm') + '</button>' +
+        (tone ? '<div class="ws-status ' + tone + '" role="status">' + esc(statusText) + '</div>' : '') +
+        '</div>' +
+        (open ? '<div class="ws-chats">' + (convs.length ? convs.map((s) => renderSessionRow(s)).join('')
+          : '<div class="empty ws-empty">这个工作区还没有会话</div>') + '</div>' : '');
+    }
+    function renderSessionRow(s) {
+      const s_updated = Number(s.updated_at || s.created_at || 0) * 1000;
+      const inWorkspace = !!s.workspace_id;
+      return '<div class="li session-row' + (s.id === activeConversationId ? ' on' : '') + (inWorkspace ? ' in-workspace' : '') + '">' +
+        '<button class="session-open" data-session="' + esc(s.id) + '" title="切换会话">' +
+        '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(String(s.title || '').slice(0, 7)) + '</b>' +
+        '<span>' + esc(relative(s_updated)) + '</span></span></button>' +
+        '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button>' +
+        '<button class="ibtn session-delete" data-delete="' + esc(s.id) + '" aria-label="删除会话" title="删除会话">' + icon('x', 'sm') + '</button></div>';
+    }
+    function drawSessions() {
+      // Workspaces first: each one owns the chats that point at its folder.
+      // Everything else stays an ordinary chat — switching never moves anything.
+      const loose = sessionItems.filter((s) => !s.workspace_id);
+      const known = new Set(workspaceItems.map((w) => w.id));
+      // A chat whose workspace vanished must remain reachable as a normal chat.
+      const orphaned = sessionItems.filter((s) => s.workspace_id && !known.has(s.workspace_id));
+      const wsHtml = workspaceItems.map(workspaceRowHtml).join('');
+      const head = '<div class="session-group-title">工作区</div>';
+      const workspaceSection = (workspaceItems.length || workspaceError)
+        ? '<section class="session-group session-workspaces">' + head +
+            (workspaceError
+              ? '<div class="empty ws-empty">' + esc(workspaceError) + '</div>'
+              : wsHtml + '<button class="ws-add" id="wsAddBtn" type="button">' + icon('plus', 'sm') + '<span>打开文件夹</span></button>')
+          + '</section>'
         : '';
-      const chatsSection = remaining.length || !pinned
-        ? '<section class="session-group session-chats">' + (pinned ? '<div class="session-group-title">聊天</div>' : '') +
-          (remaining.length ? remaining.map(renderRow).join('') : (pinned ? '' : empty)) + '</section>'
+      const looseRows = loose.concat(orphaned).sort((a, b) =>
+        Number(b.updated_at || 0) - Number(a.updated_at || 0));
+      const grouped = !!(workspaceItems.length || workspaceError);
+      // The row for an unsaved chat only exists while no conversation is
+      // selected; it never points at a workspace.
+      const newChatRow = !activeConversationId
+        ? '<div class="li session-row on session-draft" aria-current="page"><span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>新对话</b></span></div>'
         : '';
+      // No empty "聊天" heading: with workspaces present, that section only
+      // exists when it actually holds something.
+      const showChats = looseRows.length || !!newChatRow || !grouped;
+      const chatsSection = showChats ? '<section class="session-group session-chats">' +
+        (grouped ? '<div class="session-group-title">聊天</div>' : '') +
+        (looseRows.length ? looseRows.map((s) => renderSessionRow(s)).join('')
+          : (newChatRow ? '' : '<div class="empty" style="text-align:left;padding:10px 8px">还没有会话</div>')) +
+        newChatRow +
+        '</section>' : '';
       sessList.innerHTML = workspaceSection + chatsSection;
       sessList.querySelectorAll('[data-session]').forEach((n) => n.addEventListener('click', () => activateConversation(n.dataset.session)));
       sessList.querySelectorAll('[data-rename]').forEach((n) => n.addEventListener('click', () => renameConversation(n.dataset.rename)));
       sessList.querySelectorAll('[data-delete]').forEach((n) => n.addEventListener('click', (e) => { e.stopPropagation(); deleteConversation(n.dataset.delete); }));
+      sessList.querySelectorAll('[data-ws-toggle]').forEach((n) => n.addEventListener('click', () => {
+        const wid = n.dataset.wsToggle;
+        const hasActive = sessionItems.some((s) => s.workspace_id === wid && s.id === activeConversationId);
+        const current = workspaceOpen[wid] !== undefined ? !!workspaceOpen[wid] : hasActive;
+        workspaceOpen[wid] = !current;
+        saveWorkspaceOpen();
+        drawSessions();
+      }));
+      sessList.querySelectorAll('[data-ws-new]').forEach((n) => n.addEventListener('click', (e) => { e.stopPropagation(); newConversationIn(n.dataset.wsNew); }));
+      sessList.querySelectorAll('[data-ws-remove]').forEach((n) => n.addEventListener('click', (e) => { e.stopPropagation(); removeWorkspace(n.dataset.wsRemove); }));
+      sessList.querySelectorAll('[data-ws-copy]').forEach((n) => n.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { await navigator.clipboard.writeText(n.dataset.wsCopy); toast('已复制路径：' + n.dataset.wsCopy); }
+        catch (_) { toast('复制失败，路径：' + n.dataset.wsCopy); }
+      }));
+      const add = sessList.querySelector('#wsAddBtn');
+      if (add) add.addEventListener('click', () => { if (!busy) openFolderWorkspace(); });
     }
     async function activateConversation(id, options = {}) {
       if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
@@ -580,7 +906,186 @@
       attachBox.innerHTML = '';
       updateComposer();
       drawSessions();
+      drawWorkspaceBar();
       await loadMsgs(true);
+    }
+    function addWorkspaceItem(item) {
+      if (!item || !item.id) return null;
+      const existing = workspaceItems.findIndex((w) => w.id === item.id);
+      if (existing >= 0) workspaceItems.splice(existing, 1);
+      workspaceItems.unshift(item);
+      return item;
+    }
+    /** Pick a real local folder through the native dialog, then register it.
+     *  ``assign`` is only passed by the composer picker: there the click is
+     *  explicitly about this conversation, so the new folder becomes its
+     *  workspace. The sidebar list action never reassigns anything. */
+    async function openFolderWorkspace(assign) {
+      const bridge = global.vigil || {};
+      const picker = bridge.workspace && bridge.workspace.pick
+        ? bridge.workspace : bridge.projectPicker;
+      if (!bridge.workspace && !(bridge.projectPicker && bridge.projectPicker.pickDirectory)) {
+        toast('当前环境没有原生文件夹选择器（浏览器预览不可用）');
+        return;
+      }
+      let picked;
+      try {
+        picked = picker.pick ? await picker.pick() : await picker.pickDirectory();
+      } catch (e) { toast('无法打开文件夹选择器：' + String((e && e.message) || e)); return; }
+      if (!picked || !picked.ok) { toast('无法打开文件夹：' + ((picked && picked.err) || '未知错误')); return; }
+      if (picked.canceled || !picked.path) return;
+      const r = pick(await post('/api/workspaces', { src:'pc', path: picked.path }));
+      if (!r.ok || !r.item) { toast(r._err || r.err || '工作区创建失败'); return; }
+      addWorkspaceItem(r.item);
+      workspaceOpen[r.item.id] = true;
+      saveWorkspaceOpen();
+      workspaceProbe[r.item.id] = {state:'checking'};
+      drawSessions();
+      toast(r.item.existing ? '这个文件夹已经是工作区' : '已添加工作区：' + r.item.name);
+      void probeWorkspaces();
+      if (assign && activeConversationId) await chooseWorkspace(r.item.id);
+    }
+    /** New chat inside a workspace. The link is explicit — never inferred. */
+    async function newConversationIn(wid) {
+      const ws = workspaceItems.find((w) => w.id === wid);
+      if (!ws || busy) return;
+      const r = pick(await post('/api/conversations', { src:'pc', workspace_id: wid }));
+      if (!r.ok || !r.item) { toast(r._err || r.err || '无法在这个工作区里新建会话'); return; }
+      sessionItems.unshift(r.item);
+      workspaceOpen[wid] = true;
+      saveWorkspaceOpen();
+      drawSessions();
+      await activateConversation(r.item.id);
+    }
+    async function removeWorkspace(wid) {
+      const ws = workspaceItems.find((w) => w.id === wid);
+      if (!ws) return;
+      if (!await confirmDialog('移除工作区「' + ws.name + '」？里面的会话会保留为普通聊天，不会删除或移动任何文件。')) return;
+      const r = pick(await post('/api/workspaces/' + encodeURIComponent(wid) + '/delete', { src:'pc' }));
+      if (!r.ok) { toast(r._err || r.err || '移除工作区失败'); return; }
+      workspaceItems = workspaceItems.filter((w) => w.id !== wid);
+      sessionItems = sessionItems.map((s) => s.workspace_id === wid ? Object.assign({}, s, {workspace_id:null}) : s);
+      delete workspaceProbe[wid];
+      drawSessions();
+      drawWorkspaceBar();
+      toast('已移除工作区，会话保留为普通聊天');
+    }
+    // ── 输入区下方：工作空间 + 授权范围（只说明现状，不代替设置页）──
+    let pendingWorkspaceId = null;
+    function drawComposerFoot() {
+      const label = view.querySelector('#wsPickBtn [data-ws-label]');
+      if (label) {
+        const conv = sessionItems.find((s) => s.id === activeConversationId);
+        const ws = conv && conv.workspace_id ? workspaceItems.find((w) => w.id === conv.workspace_id) : null;
+        const pending = !ws && pendingWorkspaceId ? workspaceItems.find((w) => w.id === pendingWorkspaceId) : null;
+        label.textContent = ws ? ws.name : pending ? '下一个会话：' + pending.name : '选择工作空间';
+        const chip = view.querySelector('#wsPickBtn');
+        if (chip) chip.title = ws ? ws.path : '选择这个对话所属的本地文件夹';
+      }
+      const perm = view.querySelector('#permChip');
+      if (perm) {
+        const wide = !!(state.cfg && state.cfg.allowAllPaths);
+        const text = perm.querySelector('[data-perm-label]');
+        if (text) text.textContent = wide ? '允许完全访问' : '仅授权目录';
+        perm.classList.toggle('wide', wide);
+        perm.title = wide ? '当前允许访问整台机器；点击去设置里改' : '当前只允许白名单目录；点击去设置里改';
+      }
+    }
+    let wsPop = null;
+    function closeWsPop() {
+      if (!wsPop) return;
+      wsPop.hidden = true;
+      const b = view.querySelector('#wsPickBtn');
+      if (b) b.setAttribute('aria-expanded', 'false');
+    }
+    function pickWorkspaceTitle(wid) {
+      const w = wid ? workspaceItems.find((x) => x.id === wid) : null;
+      return w ? w.name : '';
+    }
+    function drawWsPop() {
+      if (!wsPop) return;
+      const conv = sessionItems.find((s) => s.id === activeConversationId);
+      const currentId = (conv && conv.workspace_id) || pendingWorkspaceId || '';
+      const rows = workspaceItems.map((w) => {
+        const search = (w.name + ' ' + w.path).toLowerCase();
+        return '<button class="wsp-item' + (w.id === currentId ? ' on' : '') + '" type="button" data-ws-pick="' + esc(w.id) + '"' +
+          ' data-search="' + esc(search) + '" title="' + esc(w.path) + '">' + icon('folder', 'sm') +
+          '<span class="tx"><b>' + esc(w.name) + '</b><span>' + esc(w.path) + '</span></span></button>';
+      }).join('');
+      wsPop.innerHTML =
+        '<div class="wsp-head"><input class="input" id="wsSearch" type="search" placeholder="搜索工作空间" aria-label="搜索工作空间"></div>' +
+        '<div class="wsp-list">' +
+          (workspaceItems.length ? rows : '<div class="wsp-empty">还没有工作空间</div>') +
+          (conv && conv.workspace_id
+            ? '<button class="wsp-item" type="button" data-ws-pick="" data-search=""><span class="ic">' + icon('x', 'sm') + '</span>' +
+              '<span class="tx"><b>移出工作区</b><span>会话保留为普通聊天，不动任何文件</span></span></button>'
+            : '') +
+        '</div>' +
+        '<div class="wsp-foot">' +
+          '<button class="wsp-action" type="button" id="wspOpenFolder">' + icon('plus', 'sm') + '<span>打开本地文件夹</span></button>' +
+          '<span class="wsp-note">只记录位置，不授予读写权限</span>' +
+        '</div>';
+      const search = wsPop.querySelector('#wsSearch');
+      if (search) search.oninput = () => {
+        const q = String(search.value || '').trim().toLowerCase();
+        wsPop.querySelectorAll('[data-ws-pick]').forEach((n) => {
+          const text = n.dataset.search || '';
+          n.hidden = !!q && !text.includes(q);
+        });
+      };
+      wsPop.querySelectorAll('[data-ws-pick]').forEach((n) => {
+        n.onclick = () => chooseWorkspace(n.dataset.wsPick || '');
+      });
+      const openBtn = wsPop.querySelector('#wspOpenFolder');
+      if (openBtn) openBtn.onclick = async () => { closeWsPop(); await openFolderWorkspace(true); };
+    }
+    /** 归属只由用户这一下点击决定，选择工作区不会自动获得文件权限。 */
+    async function chooseWorkspace(wid) {
+      const name = pickWorkspaceTitle(wid);
+      if (!activeConversationId) {
+        pendingWorkspaceId = wid || null;
+        closeWsPop();
+        drawComposerFoot();
+        toast(wid ? '下一个新会话会放进：' + name : '下一个新会话不归属工作区');
+        return;
+      }
+      const r = pick(await post('/api/conversations/' + encodeURIComponent(activeConversationId) + '/workspace',
+        { src:'pc', workspace_id: wid || null }));
+      if (!r.ok || !r.item) { toast(r._err || r.err || '工作区归属保存失败'); return; }
+      sessionItems = sessionItems.map((s) => s.id === r.item.id ? r.item : s);
+      if (wid) { workspaceOpen[wid] = true; saveWorkspaceOpen(); }
+      pendingWorkspaceId = null;
+      closeWsPop();
+      drawSessions();
+      drawWorkspaceBar();
+      toast(wid ? '已把这个会话放进：' + name : '已移出工作区，会话保留为普通聊天');
+    }
+    /** 输入区下方那两个标签的绑定，必须在 view.innerHTML 之后调用。 */
+    function bindComposerFoot() {
+      wsPop = view.querySelector('#wsPop');
+      const pick = view.querySelector('#wsPickBtn');
+      if (pick) pick.addEventListener('click', () => {
+        if (!wsPop) return;
+        if (!wsPop.hidden) { closeWsPop(); return; }
+        drawWsPop();
+        // Anchor the panel over the chip that opened it, not the page corner.
+        const shell = view.querySelector('.composer');
+        if (shell) {
+          const box = shell.getBoundingClientRect(), chip = pick.getBoundingClientRect();
+          const width = Math.min(340, box.width - 24);
+          wsPop.style.left = Math.max(8, Math.min(chip.left - box.left, box.width - width - 8)) + 'px';
+        }
+        wsPop.hidden = false;
+        pick.setAttribute('aria-expanded', 'true');
+        const search = wsPop.querySelector('#wsSearch');
+        if (search) requestAnimationFrame(() => search.focus());
+      });
+      const perm = view.querySelector('#permChip');
+      if (perm) perm.addEventListener('click', () => {
+        // 这里只做跳转：授权范围必须在设置页里显式改，点一下标签不给权限。
+        toast('本地文件与命令的授权范围在 设置 → 本地操控 里调整');
+        ctx.navigate('settings');
+      });
     }
     async function renameConversation(id) {
       const item = sessionItems.find((s) => s.id === id);
@@ -617,6 +1122,7 @@
     view.innerHTML =
       '<div class="split no-right">' +
       '  <div class="chat">' +
+      '    <div class="chat-ws-bar" id="chatWsBar" hidden></div>' +
       '    <div class="hero" id="hero" hidden></div>' +
       '    <div class="chat-load-state" id="chatLoadState" role="status">正在加载会话…</div>' +
       '    <div class="msgs" id="msgs" role="log" aria-label="聊天记录"></div>' +
@@ -635,9 +1141,10 @@
       '        </div>' +
       '      </div>' +
       '      <div class="localpop" id="localPop" hidden></div>' +
+      '      <div class="wsPop localpop" id="wsPop" hidden role="dialog" aria-label="选择工作空间"></div>' +
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
-      '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="给 Vigil 发送消息…"></textarea>' +
+      '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="今天帮你做些什么？@ 添加上下文，/ 调用技能与指令"></textarea>' +
       '        <div class="creatorbar" id="creatorBar" hidden>' +
       '          <span class="muted" style="font-size:12px">创作模式：直接描述你要的插件/技能，Agent 生成草稿（只保存与审核，不自动安装）</span>' +
       '          <div class="sp"></div>' +
@@ -645,15 +1152,22 @@
       '          <button class="chip" data-kind="skill">技能</button>' +
       '        </div>' +
       '        <div class="cbar">' +
-      '          <button class="ibtn" id="localBtn" title="本地操控：权限模式 · 白名单目录">' + icon('shield', 'sm') + '</button>' +
-      '          <button class="ibtn" id="clipBtn" title="添加图片、视频或普通文件">' + icon('clip', 'sm') + '</button>' +
+      '          <button class="ibtn cbar-add" id="clipBtn" title="添加图片、视频或普通文件" aria-label="添加附件">' + icon('plus', 'sm') + '</button>' +
       '          <button class="chip" id="creatorBtn" title="创作模式：用自然语言让 Agent 生成插件/技能草稿">创作：关</button>' +
-      '          <button class="btn composer-model" id="modelBtn" title="打开模型列表，点一条即切换">' + esc(model) + ' ▾</button>' +
+      '          <button class="ibtn" id="localBtn" title="本地操控：权限模式 · 白名单目录">' + icon('shield', 'sm') + '</button>' +
       '          <div class="sp"></div>' +
-      '          <span class="mono hintline">Enter 发送 · Shift+Enter 换行</span>' +
-      '          <button class="btn fill" id="sendBtn" disabled aria-label="发送消息" title="发送消息">' + icon('arrow-up', 'sm') + '</button>' +
+      '          <button class="btn composer-model" id="modelBtn" title="打开模型列表，点一条即切换">' + esc(model) + ' ▾</button>' +
+      '          <button class="btn fill" id="sendBtn" disabled aria-label="发送消息" title="发送消息（Enter）">' + icon('arrow-up', 'sm') + '</button>' +
       '        </div></div>' +
-      '    </div><div class="composer-caption"><span>Vigil · AI Agent Workspace</span><span class="ccount" id="ccount">0 字</span></div></div>' +
+      '      <div class="composer-caption composer-foot">' +
+      '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span><span class="caret">▾</span></button>' +
+      '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span><span class="caret">▾</span></button>' +
+      '        <div class="sp"></div>' +
+      '        <span class="foot-brand">Vigil · AI Agent Workspace</span>' +
+      '        <span class="ccount" id="ccount">0 字</span>' +
+      '      </div>' +
+      '      </div>' +
+      '    </div>' +
       '  </div>' +
       '  <aside class="rp no" id="rp" aria-label="上下文与统计"></aside>' +
       '</div>';
@@ -807,6 +1321,7 @@
       if (typeof clearAttachment === 'function') clearAttachment();
       if (persist) rememberRendererSelection('', 'welcome');
       drawSessions();
+      drawWorkspaceBar();
       if (focusComposer) requestAnimationFrame(() => { if (taEl.isConnected) taEl.focus(); });
     }
     function showDraftConversation(persist = false) {
@@ -828,6 +1343,7 @@
       if (typeof clearAttachment === 'function') clearAttachment();
       if (persist) rememberRendererSelection('', 'draft');
       drawSessions();
+      drawWorkspaceBar();
       requestAnimationFrame(() => { if (taEl.isConnected) taEl.focus(); });
     }
     async function ensureConversation() {
@@ -838,8 +1354,12 @@
           const item = sessionItems[0];
           if (item) activeConversationId = item.id;
         } else {
-          const result = pick(await post('/api/conversations', {src:'pc'}));
-          if (!result.ok || !result.item || !result.item.id) return '';
+          // 用户在下方的“选择工作空间”里点过某个文件夹，这一条新会话才归属它。
+          const created = pick(await post('/api/conversations',
+            Object.assign({src:'pc'}, pendingWorkspaceId ? {workspace_id: pendingWorkspaceId} : {})));
+          if (!created.ok || !created.item || !created.item.id) return '';
+          const result = created;
+          pendingWorkspaceId = null;
           const existing = sessionItems.findIndex((item) => item.id === result.item.id);
           if (existing >= 0) sessionItems.splice(existing, 1);
           sessionItems.unshift(result.item);
@@ -869,6 +1389,9 @@
       const restoreDraft = rendererSelection && rendererSelection.app_instance === appInstanceId
         && rendererSelection.mode === 'draft';
       if (!await loadRecordScope()) { showWelcomeHome(false); return; }
+      // Workspaces are a separate index; a failed read must not block the chat
+      // list, so it runs alongside and degrades to the "not available" note.
+      refreshWorkspaces().catch(() => {});
       try { await refreshConversations(); }
       catch (error) {
         showWelcomeHome(false);
@@ -903,13 +1426,15 @@
       bar.querySelectorAll('.chip[data-kind]').forEach((c) =>
         c.classList.toggle('on', c.dataset.kind === creatorMode));
       ta.placeholder = creatorMode === 'off'
-        ? '给 Vigil 发送消息…'
+        ? '今天帮你做些什么？@ 添加上下文，/ 调用技能与指令'
         : '描述你想要的' + (creatorMode === 'skill' ? '技能' : '插件')
           + '。例如：一个每小时整点提醒我喝水的插件；一个把一段文字反转后返回的技能。';
       try { localStorage.setItem('vigil.chat.creatorMode', creatorMode); } catch (_) {}
     }
     // 立即调用必须在这里：let creatorMode 已声明（TDZ 已过）
     applyCreatorMode();
+    bindComposerFoot();
+    drawComposerFoot();
     // 附件：文件只在发送时分块上传；聊天请求只携带服务端返回的附件元数据。
     let imgB64 = '';
     let attachment = null;
@@ -1245,12 +1770,18 @@
         }
         const t = item.created_at * 1000;
         items.push({role:'user',text:input,t,request_id:item.request_id});
+        if (item.job_id) {
+          // Creator jobs restore as a task card. Their stored ``content`` is the
+          // raw model response and must never be rendered as a chat message.
+          items.push({role:'creator',t,request_id:item.request_id,job:item});
+          jobsToWatch.push(item);
+          continue;
+        }
         const message = (item.error ? creatorErrorText(item.error) : '') || ({pending:'请求尚未确认送达，未自动重发',running:'原请求执行中，未自动重发',
-          failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:item.kind === 'chat' ? '任务完成' : '草稿已生成'})[status] || status;
+          failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:'任务完成'})[status] || status;
         items.push({role:'assistant',text:(item.content || '') + '\n\n' + message,t,
-          request_id:item.request_id,partial:status!=='succeeded',job:item.job_id ? item : null,
+          request_id:item.request_id,partial:status!=='succeeded',
           run:item.run_id ? item : null});
-        if (item.job_id && !['failed','cancelled','interrupted'].includes(status)) jobsToWatch.push(item);
       }
       items.sort((a,b)=>toMs(a.t)-toMs(b.t));
       const renderKey = JSON.stringify(items);
@@ -1277,6 +1808,10 @@
         ? [...msgs.querySelectorAll('.crturn')] : [];
       msgs.innerHTML = items.map((m) => {
         const mine = ['me', 'user', 'self'].includes(String(m.role || '').toLowerCase());
+        if (m.role === 'creator') {
+          // Filled by restoreCreatorJob/watchCreatorJob below.
+          return '<div class="turn cr-live-turn" data-job="' + esc(m.job.job_id) + '"></div>';
+        }
         // 用户消息纯文本（esc），AI 消息用 Markdown 渲染
         const t = mine || m.partial ? esc(m.text || '').replace(/\n/g,'<br>') : U.md(m.text || '', { codeActions: true });
         const atts = mine && Array.isArray(m.attachments) ? m.attachments.map((a) =>
@@ -1304,7 +1839,9 @@
       draftCards.forEach((n) => msgs.appendChild(n));
       for (const job of jobsToWatch) {
         const root = msgs.querySelector('[data-job="' + job.job_id + '"]');
-        if (root) void watchCreatorJob(root, job);
+        if (!root) continue;
+        if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(job.status)) void restoreCreatorJob(root, job);
+        else void watchCreatorJob(root, job, recordKey());
       }
       msgs.scrollTop = msgs.scrollHeight;
     }
@@ -4249,11 +4786,13 @@
         const lines = content.split(/\r?\n/);
         const preview = lines.slice(0, 6).join('\n');
         const omitted = Math.max(0, lines.length - 6);
+        const bytes = (() => { try { return new TextEncoder().encode(content).length; } catch (_) { return content.length; } })();
+        const sizeText = (bytes / 1024).toFixed(1) + ' KB · ' + lines.length + ' 行';
         return '<div class="card cr-file-card" style="margin-top:8px">' +
           '<div class="cr-file-head">' +
             '<div class="cr-file-title">' +
               icon('clip', 'sm') + ' <strong>' + esc(f.name) + '</strong>' +
-              '<span class="muted cr-file-size">' + content.length + ' 字符</span>' +
+              '<span class="muted cr-file-size">' + esc(sizeText) + '</span>' +
               '<span class="tag neutral">' + esc(creatorLangOf(f.name)) + '</span>' +
             '</div>' +
             '<div class="cr-file-actions">' +

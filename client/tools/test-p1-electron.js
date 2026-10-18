@@ -28,6 +28,11 @@ async function until(source) {
   while (Date.now() < end) { if (await ev('Boolean(' + source + ')')) return; await wait(40); }
   throw Error('Timeout: ' + source);
 }
+async function untilMain(check, label) {
+  const end = Date.now() + 12000;
+  while (Date.now() < end) { if (check()) return; await wait(40); }
+  throw Error('Timeout: ' + (label || 'main state'));
+}
 function ok(name) { results.push(name); console.log('PASS ' + name); }
 function response(method, raw, body) {
   const p = new URL(raw, 'http://fixture').pathname;
@@ -60,7 +65,8 @@ function response(method, raw, body) {
     else {
       created++;
       data = {ok:true,job_id:'job_' + created,request_id:body.request_id,kind:body.kind,
-        requirement:body.requirement,created_at:Date.now()/1000,status:'running',stage:'generating',event_cursor:0,content:''};
+        requirement:body.requirement,conversation_id:body.conversation_id||null,
+        created_at:Date.now()/1000,status:'running',stage:'generating',event_cursor:0,content:''};
       jobs.set(data.job_id, data);
     }
   } else if (p === '/api/creator/jobs') data = {ok:true,items:[...jobs.values()]};
@@ -120,14 +126,15 @@ async function main() {
   }
   await submit('生成测试插件');
   await until('document.querySelector("#msgs").textContent.includes("模型输出被截断")');
-  assert.ok(await ev('document.querySelector("#msgs").textContent.includes("候选正文")'));
-  ok('Creator real delta events preserve partial content on truncation');
+  assert.equal(await ev('document.querySelector("#msgs").textContent.includes("候选正文")'),false);
+  assert.equal([...jobs.values()].at(-1).content,'候选正文');
+  ok('Creator truncation is diagnosed in the task card; partial text stays in the job record');
   mode = 'json'; await submit('生成格式错误插件');
   await until('document.querySelector("#msgs").textContent.includes("没按契约返回 JSON")');
   ok('Creator JSON error is visible through production preload');
   mode = 'cancel'; await submit('取消测试');
-  await until('[...document.querySelectorAll(".creator-cancel")].some(b=>!b.hidden)');
-  await ev('[...document.querySelectorAll(".creator-cancel")].find(b=>!b.hidden).click()');
+  await until('[...document.querySelectorAll("[data-cr-cancel]")].some(b=>!b.hidden)');
+  await ev('[...document.querySelectorAll("[data-cr-cancel]")].find(b=>!b.hidden).click()');
   await wait(850);
   assert.equal([...jobs.values()].at(-1).status, 'cancelled');
   ok('Cancellation remains terminal when late stream completes');
@@ -150,13 +157,18 @@ async function main() {
   ok('Main chat failure and partial answer survive reload without a second request');
   await ev('document.querySelector("#creatorBtn").click()');
   mode='disconnect'; await submit('重连不重跑');
-  await until('document.querySelector("#msgs").textContent.includes("重连不重跑") && [...document.querySelectorAll(".creator-cancel")].every(b=>b.hidden)');
+  await until('document.querySelector("#msgs").textContent.includes("重连不重跑") && [...document.querySelectorAll("[data-cr-cancel]")].every(b=>b.hidden)');
   assert.equal(created,4);
   ok('Read-only reconnection never creates another Creator job');
-  mode='no-native'; await submit('无原生流测试');
-  await until('document.querySelector("#msgs").textContent.includes("非流式完整响应")');
+  mode='no-native';
+  const beforeNoNative = created;
+  await submit('无原生流测试');
+  await untilMain(() => created === beforeNoNative + 1
+    && [...jobs.values()].at(-1).content === '非流式完整响应', 'no-native job');
+  await until('Array.from(document.querySelectorAll(".cr-task [data-cr-note]")).at(-1).textContent.includes("模型没按契约返回 JSON")');
+  assert.equal(await ev('document.querySelector("#msgs").textContent.includes("非流式完整响应")'),false);
   assert.equal(created,5);
-  ok('No native token stream uses real stage and completed response display');
+  ok('No native token stream reports the provider error without dumping the raw response');
   offline=true; await submit('未送达请求恢复');
   await wait(200);
   await win.loadFile(path.join(client,'src/index.html'));
