@@ -211,12 +211,15 @@ class TransactionTests(unittest.TestCase):
 
     def test_source_child_symlink_rejected_without_read(self):
         source = self.source()
+        link = source / 'zxplugin.json'
         try:
-            (source / 'zxplugin.json').symlink_to(self.config)
+            link.symlink_to(self.config)
         except OSError as exc:
             if getattr(exc, 'winerror', None) == 1314:
                 self.skipTest('Windows symlink creation requires a privilege not enabled in this test environment')
             raise
+        if not os.path.islink(str(link)):
+            self.skipTest('这台机器把 symlink 建成了普通文件，测不到"拒绝符号链接"这条')
         self.assertFalse(self.market_install()['ok'])
         self.assertEqual(self.config.read_bytes(), self.config_before)
 
@@ -225,12 +228,15 @@ class TransactionTests(unittest.TestCase):
         outside = self.home / 'outside'
         outside.mkdir()
         (outside / 'user.txt').write_text('preserve')
+        link = self.plugins / 'demo'
         try:
-            (self.plugins / 'demo').symlink_to(outside, target_is_directory=True)
+            link.symlink_to(outside, target_is_directory=True)
         except OSError as exc:
             if getattr(exc, 'winerror', None) == 1314:
                 self.skipTest('Windows symlink creation requires a privilege not enabled in this test environment')
             raise
+        if not os.path.islink(str(link)):
+            self.skipTest('这台机器把 symlink 建成了普通目录，测不到"拒绝符号链接"这条')
         self.assertFalse(self.market_install()['ok'])
         self.assertEqual((outside / 'user.txt').read_text(), 'preserve')
 

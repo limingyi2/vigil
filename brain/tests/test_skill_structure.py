@@ -115,6 +115,9 @@ class TestSkillStructure(unittest.TestCase):
             (self.root / "link.js").symlink_to(outside)
         except (OSError, NotImplementedError):
             self.skipTest("symlink unavailable")
+        if not (self.root / "link.js").is_symlink():
+            # 这台机器（无开发者模式）建出来的不是真 symlink，这条断言无从验证
+            self.skipTest("this host does not create real symlinks")
         self.assertFalse(check_skill_directory(self.root)["ok"])
 
     def test_static_check_does_not_execute_javascript(self):

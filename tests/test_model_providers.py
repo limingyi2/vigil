@@ -237,7 +237,9 @@ class TestOllamaChatErrors(unittest.TestCase):
 class TestOllamaHealth(unittest.TestCase):
     def test_健康检查不抛异常(self):
         import model_providers.ollama as mod
-        old = mod.httpx
+        # 只换掉 get 本身，收尾也还原 get —— 之前存的是整个 httpx 模块，
+        # 还原后 httpx.get 变成一个模块对象，后面所有用 httpx.get 的测试都会莫名其妙失败。
+        old = mod.httpx.get
         def boom(*a, **k):
             raise httpx.ConnectError("down")
         mod.httpx.get = boom

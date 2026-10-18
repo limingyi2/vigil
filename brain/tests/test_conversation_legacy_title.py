@@ -33,7 +33,10 @@ class LegacyConversationTitleTests(unittest.TestCase):
                 cid = "11111111-1111-4111-8111-111111111111"
                 with conversations._db() as db:
                     conversations._init(db)
-                    db.execute("INSERT INTO conversations VALUES (?,?,?,?,?,?,?,1)",
+                    # 表多了 workspace_id（P7.2 工作区），显式列名避免依赖列数
+                    db.execute("INSERT INTO conversations "
+                               "(owner,src,persona,id,title,created,updated,legacy,workspace_id) "
+                               "VALUES (?,?,?,?,?,?,?,1,NULL)",
                                ("owner", "pc", "default", cid, "旧版对话", 1, 1))
                 items = conversations.list_for("owner", "pc", "default")
                 legacy = next(item for item in items if item["id"] == cid)
