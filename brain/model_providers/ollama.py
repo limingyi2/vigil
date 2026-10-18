@@ -175,11 +175,13 @@ class OllamaProvider(ModelProvider):
         # reasoning_effort 是云端特有参数，Ollama 用 think + num_predict 控制，
         # 带着发过去可能被当非法字段，删掉。
         p.pop("reasoning_effort", None)
-        # format="json"（JSON mode，修复 B）是原生 /api/chat 顶层字段，
-        # Dispatcher 只在无工具的最终输出/格式修正请求上携带，这里透传，
-        # 不清理不改写；工具轮不带该字段，避免破坏 FC 输出。
+        # format 是原生 /api/chat 顶层字段（修复 B 起在无工具收口/修正轮携带）：
+        # "json" 字符串 = 裸 JSON mode；dict = JSON Schema 约束解码（官方支持，
+        # 逐 token 掩码保证输出符合 schema）。dict 必须原样透传——转 str 会把
+        # Python repr 发给端点直接 400。工具轮不带该字段，避免破坏 FC 输出。
         if "format" in p and p["format"] not in (None, ""):
-            p["format"] = str(p["format"])
+            if not isinstance(p["format"], (str, dict)):
+                p["format"] = str(p["format"])
         opts = dict(p.get("options") or {})
         if self.num_ctx:
             opts.setdefault("num_ctx", self.num_ctx)

@@ -23,6 +23,7 @@ from delegation.sandbox import ReadOnlySandbox, SandboxError  # noqa: E402
 from delegation import validator as V          # noqa: E402
 from delegation import bridge as DBridge       # noqa: E402
 from delegation.dispatcher import run_delegation  # noqa: E402
+from delegation import dispatcher as D           # noqa: E402
 
 
 class _Workspace(object):
@@ -504,18 +505,20 @@ class TestDispatcher(_Workspace, unittest.TestCase):
         final = '{"answer":"已读到认证文件","files":["src/auth.py"]}'
         p = _ScriptedProvider([
             parallel,
-            _Msg.call("c9", "read_file", {"path": "src/auth.py"}),
             _Msg.say(final),
         ])
         r = run_delegation(c, ollama_cfg={"model": "m"},
                            provider_factory=lambda cfg: p, persist=False)
+        # 第二轮改动 C：同参并行调用被去重拦截（1 次真实执行 + 7 次重复），
+        # 连续重复 ≥3 → 强制提前收口，不再烧满工具额度。
         self.assertEqual(r["status"], "succeeded", r["errors"])
         self.assertTrue(r["degraded"])
-        self.assertEqual(r["tool_calls"], 8)
-        self.assertEqual(r["model_requests"], 3)
-        self.assertTrue(any(e["category"] == "tool_limit" for e in r["errors"]))
-        # 同参重复读命中任务内缓存
-        self.assertGreaterEqual(r["cache_hits"], 1)
+        self.assertEqual(r["tool_calls"], 1)
+        self.assertEqual(r["dup_calls"], 7)
+        self.assertTrue(r["forced_finish"])
+        self.assertEqual(r["model_requests"], 2)
+        self.assertTrue(any(e["category"] == "early_stop"
+                            for e in r["errors"]))
 
     def test_分段计时字段存在(self):
         r, _ = self._run([
@@ -1190,7 +1193,8 @@ class TestFixBRound1Reliability(_Workspace, unittest.TestCase):
         r, p = self._run([_Msg.say('{"fields":{"姓名":"张三"}}')], c)
         self.assertEqual(r["status"], "succeeded", r["errors"])
         for payload in p.payloads:
-            self.assertEqual(payload.get("format"), "json")
+            self.assertEqual(payload.get("format"),
+                             D._JSON_SCHEMAS["extraction_v1"])
             self.assertNotIn("tools", payload)
         # 工具 kind：勘察轮不启用；模型自然收尾轮仍挂工具（强制 JSON 会
         # 破坏 FC 工具调用），只有无工具收口轮/修正轮才启用
@@ -1218,21 +1222,29 @@ class TestFixBRound1Reliability(_Workspace, unittest.TestCase):
         self.assertNotIn("format", out2)
 
     def test_预算预留_勘察不吞掉最终回答与修正额度(self):
-        # 模型永远在要工具：修复后不得把 max_model_requests 全花在勘察上，
-        # 必须留出无工具最终回答轮（format=json）；degraded 照实标记。
+        # 模型一直在要工具（每轮不同路径，避开重复调用检测）：修复后不得把
+        # max_model_requests 全花在勘察上，必须留出无工具最终回答轮；
+        # degraded 照实标记。
         c = self.contract()  # read_only_bug_analysis：max_model_requests=6
-        always_tool = {"choices": [{"message": {"content": "", "tool_calls": [
-            {"id": "c1", "type": "function",
-             "function": {"name": "read_file",
-                          "arguments": json.dumps({"path": "src/auth.py"})}}]}}]}
-        r, p = self._run([always_tool], c)
-        self.assertEqual(r["model_requests"], 6)
+        def tool_resp(path):
+            return {"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "read_file",
+                              "arguments": json.dumps({"path": path})}}]}}]}
+        r, p = self._run([tool_resp("src/auth.py"), tool_resp("error.log"),
+                          tool_resp("src"), tool_resp("./error.log"),
+                          _Msg.say('{"answer":"x","evidence":'
+                                   '[{"path":"src/auth.py","line":2,'
+                                   '"excerpt":"return issue_token(None)"}]}')], c)
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertEqual(r["model_requests"], 5)
         self.assertLessEqual(r["model_requests"],
                              c["limits"]["max_model_requests"])
         # 最后一个请求必须是无工具 + JSON mode 的收口轮
         last = p.payloads[-1]
         self.assertNotIn("tools", last)
-        self.assertEqual(last.get("format"), "json")
+        self.assertEqual(last.get("format"),
+                         D._JSON_SCHEMAS["bug_analysis_v1"])
         self.assertTrue(r["degraded"])
         self.assertTrue(any(e["category"] == "budget_reserved"
                             for e in r["errors"]))
@@ -1246,13 +1258,14 @@ class TestFixBRound1Reliability(_Workspace, unittest.TestCase):
                          '"evidence":[{"path":"src/auth.py","line":2,'
                          '"excerpt":"return issue_token(None)",'
                          '"observation":"未判空"}]}')
-        tool_resp = {"choices": [{"message": {"content": "", "tool_calls": [
-            {"id": "c%d" % i, "type": "function",
-             "function": {"name": "read_file",
-                          "arguments": json.dumps({"path": "src/auth.py"})}
-            } for i in range(2)]}}]}
+        def tool_resp(path):
+            return {"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "read_file",
+                              "arguments": json.dumps({"path": path})}}]}}]}
         c = self.contract()
-        r, p = self._run([tool_resp, tool_resp, tool_resp, tool_resp,
+        r, p = self._run([tool_resp("src/auth.py"), tool_resp("error.log"),
+                          tool_resp("src"), tool_resp("error.log"),
                           _Msg.say(evidence_json)], c)
         self.assertEqual(r["status"], "succeeded", r["errors"])
         self.assertTrue(r["degraded"])
@@ -1304,8 +1317,9 @@ class TestFixBRound1Reliability(_Workspace, unittest.TestCase):
         self.assertTrue(r["json_raw_ok"])
         self.assertFalse(r["json_repaired"])
         self.assertTrue(r["retry_problems"])
-        # 修正轮请求也是无工具 + JSON mode
-        self.assertEqual(p.payloads[2].get("format"), "json")
+        # 修正轮请求也是无工具 + schema 约束解码
+        self.assertEqual(p.payloads[2].get("format"),
+                         D._JSON_SCHEMAS["bug_analysis_v1"])
         self.assertNotIn("tools", p.payloads[2])
 
     def test_抽取结果落盘含input_text_chars不含原文(self):
@@ -1320,6 +1334,115 @@ class TestFixBRound1Reliability(_Workspace, unittest.TestCase):
         # 原文不出现在结果 output（output 只存最终 JSON 输出）之外的关键位：
         # goal 里只有抽取目标
         self.assertIn("抽取", r["goal"])
+
+
+class TestRound2Reliability(_Workspace, unittest.TestCase):
+    """第二轮（format schema / 修复增强 / 提前收口 / goal 锚点）回归。"""
+
+    def _run(self, responses, **over):
+        c = self.contract(**over)
+        p = _ScriptedProvider(responses)
+        return run_delegation(c, ollama_cfg={"model": "m"},
+                              provider_factory=lambda cfg: p,
+                              persist=False), p
+
+    def test_收口与修正请求按kind传schema对象(self):
+        final_ok = ('{"answer":"login 未判空","evidence":'
+                    '[{"path":"src/auth.py","line":2,'
+                    '"excerpt":"return issue_token(None)"}]}')
+        r, p = self._run([
+            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            _Msg.say("这不是 JSON"),
+            _Msg.say(final_ok),
+        ])
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        # 修正重试请求（第 3 个 payload）必须带 dict schema 而非裸 "json"
+        fmt = p.payloads[2].get("format")
+        self.assertIsInstance(fmt, dict)
+        self.assertEqual(fmt, D._JSON_SCHEMAS["bug_analysis_v1"])
+        # 工具轮不带 format
+        self.assertNotIn("format", p.payloads[0])
+        self.assertNotIn("format", p.payloads[1])
+
+    def test_ollama_format_透传保类型(self):
+        from model_providers.ollama import OllamaProvider
+        prov = OllamaProvider({"model": "m"})
+        out = prov.build_payload({"messages": [], "format": {"type": "object"}})
+        self.assertEqual(out["format"], {"type": "object"})
+        out = prov.build_payload({"messages": [], "format": "json"})
+        self.assertEqual(out["format"], "json")
+        out = prov.build_payload({"messages": [], "format": 123})
+        self.assertEqual(out["format"], "123")
+
+    def test_重复调用被拦截不烧工具额度(self):
+        final_ok = ('{"answer":"login 未判空","evidence":'
+                    '[{"path":"src/auth.py","line":2,'
+                    '"excerpt":"return issue_token(None)"}]}')
+        r, p = self._run([
+            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            _Msg.call("c2", "read_file", {"path": "src/auth.py"}),
+            _Msg.say(final_ok),
+        ])
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertEqual(r["tool_calls"], 1)
+        self.assertEqual(r["dup_calls"], 1)
+        # 第二次相同调用只回了提示，没有真实取证
+        tool_msgs = [m for m in p.payloads[1]["messages"]
+                     if m.get("role") == "tool"]
+        self.assertIn("重复调用", tool_msgs[-1]["content"])
+
+    def test_连续重复调用三次强制提前收口(self):
+        final_ok = ('{"answer":"login 未判空","evidence":'
+                    '[{"path":"src/auth.py","line":2,'
+                    '"excerpt":"return issue_token(None)"}]}')
+        dup = lambda cid: _Msg.call(cid, "read_file", {"path": "src/auth.py"})
+        r, p = self._run([
+            dup("c1"), dup("c2"), dup("c3"), dup("c4"),
+            _Msg.say(final_ok),
+        ])
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertTrue(r["forced_finish"])
+        self.assertGreaterEqual(r["dup_calls"], 3)
+        self.assertEqual(r["tool_calls"], 1)
+        # 强制收口走的是无工具请求（带 format schema）
+        self.assertNotIn("tools", p.payloads[-1])
+        self.assertIsInstance(p.payloads[-1].get("format"), dict)
+
+    def test_截断补全与智能引号修复(self):
+        good, why = D._repair_json_text(
+            '{"answer": "abc", "evidence": [{"path": "a.py", "excerpt": "未闭合')
+        self.assertIsNotNone(good)
+        self.assertIn("trunc_close", why)
+        good2, why2 = D._repair_json_text(
+            '{“answer”: "abc"}')
+        self.assertIsNotNone(good2)
+        self.assertIn("smart_quotes", why2)
+        # 修不出来的照旧返回 None
+        bad, why3 = D._repair_json_text("完全不是 JSON 的文本")
+        self.assertIsNone(bad)
+
+    def test_goal锚点_每三轮重插(self):
+        r, p = self._run([
+            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            _Msg.call("c2", "read_file", {"path": "error.log"}),
+            _Msg.call("c3", "read_file", {"path": "src/auth.py"}),
+            _Msg.say("还没好"),
+        ])
+        # 第 4 个请求的消息里应包含第 3 轮后追加的目标提醒
+        msgs = p.payloads[3]["messages"]
+        self.assertTrue(any(
+            m.get("role") == "user" and m["content"].startswith("【目标提醒】")
+            for m in msgs), [m.get("content", "")[:40] for m in msgs])
+
+    def test_json_format_按kind选择(self):
+        c1 = self.contract(kind="structured_extraction",
+                           input_text="抽取",
+                           expected_schema="extraction_v1",
+                           workspace="", input_refs=[])
+        self.assertEqual(D._json_format(c1),
+                         D._JSON_SCHEMAS["extraction_v1"])
+        self.assertEqual(D._json_format({"expected_schema": "no_such"}),
+                         "json")
 
 
 if __name__ == "__main__":

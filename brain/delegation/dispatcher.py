@@ -33,36 +33,173 @@ _LAST_RAW_KEEP = 600
 # 没有任何收口机会，整单作废。
 _FINAL_RESERVE = 2
 
+# 第二轮改动 A：按 expected_schema 产出 Ollama 原生 format 的 JSON Schema
+# 对象（逐 token 约束解码，官方 docs.ollama.com/capabilities/structured-outputs）。
+# 只用最小子集 type/properties/required/items/enum（规避复杂特性的覆盖坑，
+# 见 JSONSchemaBench：约束解码对扁平简单 schema 覆盖率≈100%）。语义校验
+# 仍由 validator 全量兜底——约束解码只保语法不保语义（BoundaryML 悖论）。
+_JSON_SCHEMAS = {
+    "bug_analysis_v1": {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "evidence": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "line": {"type": "number"},
+                    "excerpt": {"type": "string"},
+                    "observation": {"type": "string"},
+                },
+                "required": ["path", "excerpt"],
+            }},
+            "confidence": {"type": "string",
+                           "enum": ["high", "medium", "low"]},
+        },
+        "required": ["answer", "evidence"],
+    },
+    "file_list_v1": {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "files": {"type": "array", "items": {"type": "string"}},
+            "evidence": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "observation": {"type": "string"},
+                },
+                "required": ["path"],
+            }},
+        },
+        "required": ["answer", "files"],
+    },
+    "extraction_v1": {
+        "type": "object",
+        "properties": {"fields": {"type": "object"}},
+        "required": ["fields"],
+    },
+    "plan_draft_v1": {
+        "type": "object",
+        "properties": {
+            "steps": {"type": "array", "items": {"type": "string"}},
+            "evidence_paths": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["steps"],
+    },
+}
+
+
+def _json_format(contract):
+    """无工具收口/修正请求的 format 字段：有 schema 用 schema，否则裸 JSON。"""
+    return _JSON_SCHEMAS.get(contract.get("expected_schema")) or "json"
+
+
+# 第二轮改动 D：收口指令的微型正例（few-shot，六层防御第 1 层）。
+_FINAL_EXAMPLES = {
+    "bug_analysis_v1":
+        '正例：{"answer":"根因是 X","evidence":[{"path":"logs/a.log",'
+        '"line":12,"excerpt":"原文一行","observation":"说明 Y"}],'
+        '"confidence":"medium"}',
+    "file_list_v1":
+        '正例：{"answer":"折扣是 0.85","files":["config/settings.json"],'
+        '"evidence":[{"path":"config/settings.json","observation":"discount=0.85"}]}',
+    "extraction_v1": '正例：{"fields":{"姓名":"张三"}}',
+    "plan_draft_v1":
+        '正例：{"steps":["改 A 文件的 B 函数","补 C 测试"],'
+        '"evidence_paths":["src/a.py"]}',
+}
+
+
+def _final_instruction(contract, why):
+    """预算耗尽/验收失败的收口指令：few-shot 微示例 + 首末字符约束。"""
+    example = _FINAL_EXAMPLES.get(contract.get("expected_schema"))
+    ex = ("\n%s。首字符必须是 { ，末字符必须是 } ，"
+          "不要 Markdown 代码围栏、不要任何解释文字。" % example) if example else ""
+    return ("（系统）%s。不要再调用任何工具，立即基于已有证据按 JSON 格式"
+            "输出最终答案；没有把握的条目给出 confidence=low。%s" % (why, ex))
+
 
 def _repair_json_text(text):
-    """确定性、零模型调用的 JSON 修复（D3），全程只做不改变语义的机械处理：
+    """确定性、零模型调用的 JSON 修复（D3；规则参考开源 json_repair 的
+    失败类别归纳），全程只做不改变语义的机械处理：
     ① 剥 markdown 代码围栏；② 截取首个 { 到末个 } 之间的对象；
-    ③ 删除 } / ] 前的尾逗号。修复后仍要能 json.loads 且过完整验收，
-    不补字段、不猜内容、不改任何值。
+    ③ 删除 } / ] 前的尾逗号；④ 智能引号归一；
+    ⑤ 截断补全：从最后一个完整值边界截掉残尾，再补齐未闭合的 { [。
+    修复后仍要能 json.loads 且过完整验收，不补字段、不猜内容、不改任何值。
 
     返回 (json_text, fixes)；修不出来返回 (None, 失败原因)。
     """
     t = (text or "").strip()
     if not t:
         return None, "empty"
-    fixes = []
-    cand = t
-    t2 = re.sub(r"^```(?:json)?\s*", "", cand)
-    t2 = re.sub(r"\s*```(?:json)?\s*$", "", t2)
-    if t2 != cand:
-        cand, fixes = t2, fixes + ["fence"]
-    s, e = cand.find("{"), cand.rfind("}")
-    if s >= 0 and e > s and (s > 0 or e < len(cand) - 1):
-        cand = cand[s:e + 1]
-        fixes.append("brace")
-    t3 = re.sub(r",\s*([}\]])", r"\1", cand)
-    if t3 != cand:
-        cand, fixes = t3, fixes + ["trailing_comma"]
-    try:
-        json.loads(cand)
-        return cand, ",".join(fixes)
-    except Exception as ex:
-        return None, str(ex)[:100]
+
+    def _tries(cand):
+        """对一个候选串做 ①②③ 归一后尝试解析；成功返回 (text, fixes)。"""
+        fixes = []
+        t2 = re.sub(r"^```(?:json)?\s*", "", cand)
+        t2 = re.sub(r"\s*```(?:json)?\s*$", "", t2)
+        if t2 != cand:
+            cand, fixes = t2, fixes + ["fence"]
+        s, e = cand.find("{"), cand.rfind("}")
+        if s >= 0 and e > s and (s > 0 or e < len(cand) - 1):
+            cand = cand[s:e + 1]
+            fixes.append("brace")
+        t3 = re.sub(r",\s*([}\]])", r"\1", cand)
+        if t3 != cand:
+            cand, fixes = t3, fixes + ["trailing_comma"]
+        try:
+            json.loads(cand)
+            return cand, ",".join(fixes)
+        except Exception:
+            return None, None
+
+    ok = _tries(t)
+    if ok[0] is not None:
+        return ok
+    # ④ 智能引号归一（只影响语法字符，正文里的引号内容随之统一，不改值义）
+    t_q = t.replace("\u201c", '"').replace("\u201d", '"') \
+           .replace("\u2018", "'").replace("\u2019", "'")
+    ok = _tries(t_q)
+    if ok[0] is not None:
+        return ok[0], ok[1] + ",smart_quotes" if ok[1] else "smart_quotes"
+    # ⑤ 截断补全：从最后一个"完整值边界"（逗号/闭括号之后）逐个尝试截断，
+    # 对**截断后的前缀单独重算**未闭合的 { [ 并补齐；上限 6 次防长文死循环。
+    def _close_open(cand):
+        """对前缀串重算字符串外未闭合的 { [，返回补齐后的串。"""
+        closers_ = {"{": "}", "[": "]"}
+        stack_, in_str_, esc_ = [], False, False
+        for ch in cand:
+            if in_str_:
+                if esc_:
+                    esc_ = False
+                elif ch == "\\":
+                    esc_ = True
+                elif ch == '"':
+                    in_str_ = False
+                continue
+            if ch == '"':
+                in_str_ = True
+            elif ch in closers_:
+                stack_.append(ch)
+            elif ch in ("}", "]"):
+                if stack_ and closers_[stack_[-1]] == ch:
+                    stack_.pop()
+        return cand.rstrip().rstrip(":,") + \
+            ('"' if in_str_ else "") + \
+            "".join(closers_[c] for c in reversed(stack_))
+
+    cand_base = t_q.rstrip().rstrip(":,")
+    for _ in range(6):
+        ok = _tries(_close_open(cand_base))
+        if ok[0] is not None:
+            return ok[0], (ok[1] + ",trunc_close" if ok[1] else "trunc_close")
+        cut = max(cand_base.rfind(","), cand_base.rfind("}"),
+                  cand_base.rfind("]"))
+        if cut <= 1:
+            break
+        cand_base = cand_base[:cut + 1]
+    return None, "unrepairable"
 
 
 def _system_prompt(contract):
@@ -210,6 +347,8 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
         retry_problems=[], last_raw="",
         # 修复 A：待抽取原文规模留档（不含原文本身，避免落盘文件片段）
         input_text_chars=len(contract.get("input_text") or ""),
+        # 第二轮改动 C：重复调用/无效轮提前收口的观测计数
+        dup_calls=0, empty_streak=0, forced_finish="",
         errors=[], retry_used=False,
     )
 
@@ -256,6 +395,9 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
     messages = [{"role": "system", "content": _system_prompt(contract)},
                 {"role": "user", "content": first_user}]
     tool_events = []
+    # 第二轮改动 C：重复调用检测（key 规范化后去重）与无效连续轮计数
+    seen_calls = set()
+    round_no = 0
     # read_blobs：子循环**实际读到**的文件内容（read_file 全文 + file_grep
     # 命中行），validator 用它核验 evidence.excerpt，模型嘴说不算。
     read_blobs = {}
@@ -345,10 +487,10 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                 payload["tools"] = tools
                 payload["tool_choice"] = "auto"
             else:
-                # 修复 B：无工具的最终输出请求启用 JSON mode（Ollama 原生
-                # 顶层 format 字段，见 build_payload）。工具轮不启用——
-                # 强制 JSON 会破坏 FC 工具调用输出。
-                payload["format"] = "json"
+                # 修复 B：无工具的最终输出请求启用约束解码（第二轮改动 A：
+                # 按 kind 传 JSON Schema 对象，语法 100% 保证；validator 兜语义）。
+                # 工具轮不启用——强制 JSON 会破坏 FC 工具调用输出。
+                payload["format"] = _json_format(contract)
             result["model_requests"] += 1
             try:
                 data = _call_model(
@@ -389,8 +531,10 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                 break
 
             # 执行工具调用
+            round_no += 1
             messages.append({"role": "assistant", "content": text,
                              "tool_calls": tcs})
+            executed_outs = []
             for tc in tcs:
                 name, args = _tool_args(tc)
                 # 工具预算用尽：不再执行，但**留出最终回答机会**——
@@ -415,6 +559,21 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                     result["errors"].append({"category": "tool_denied",
                                              "tool": name})
                 else:
+                    # 第二轮改动 C：重复调用检测（工具+规范化参数完全相同
+                    # = 已有相同结果，NTU 2610.06191：小模型会反复空转到
+                    # 额度打满）。不执行、不烧工具额度，回灌提示换路或收口。
+                    dkey = (name, json.dumps(args, sort_keys=True,
+                                             ensure_ascii=False))
+                    if dkey in seen_calls:
+                        result["dup_calls"] += 1
+                        out = ("重复调用：相同工具+参数此前已调用并返回过"
+                               "同样结果，禁止重复。请换一个路径/参数，"
+                               "或直接输出最终 JSON。")
+                        messages.append({"role": "tool",
+                                         "tool_call_id": tc.get("id") or "x",
+                                         "content": out})
+                        continue
+                    seen_calls.add(dkey)
                     result["tool_calls"] += 1
                     tt = time.monotonic()
                     try:
@@ -433,13 +592,41 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                                                  "tool": name,
                                                  "detail": str(e)[:120]})
                         _remember_tool(name, args, out, False)
+                    executed_outs.append(str(out or ""))
                 messages.append({"role": "tool",
                                  "tool_call_id": tc.get("id") or "x",
                                  "content": str(out)[:4000]})
 
+            # 第二轮改动 C：无效连续轮——本轮执行过的工具全部空结果/失败。
+            if executed_outs and not any(o.strip() for o in executed_outs):
+                result["empty_streak"] += 1
+            elif executed_outs:
+                result["empty_streak"] = 0
+
             if budget_out:
                 # 用完最后一轮工具：立刻进"无工具收口"（下面统一处理）
                 break
+            if (result["dup_calls"] >= 3 or result["empty_streak"] >= 3):
+                # harness 层硬停止（NTU 2610.06191 实证 prompt 提醒无效，
+                # 唯一有效的是确定性强制终止）：连续无效轮/重复空转 →
+                # 提前进无工具收口，剩余额度留给收口+修正。
+                why = ("连续 %d 轮重复空转" % result["dup_calls"]
+                       if result["dup_calls"] >= 3
+                       else "连续 %d 轮工具结果全部为空/失败"
+                       % result["empty_streak"])
+                result["forced_finish"] = why
+                result["errors"].append({"category": "early_stop",
+                                         "detail": why})
+                budget_out = True
+                result["degraded"] = True
+                break
+            # Focused ReAct：每 3 轮把原始目标重插上下文（对抗长轨迹的
+            # lost-in-the-middle；目标在 15k 上下文尾部会被工具结果冲淡）。
+            if tools and round_no % 3 == 0:
+                messages.append({"role": "user", "content":
+                                 "【目标提醒】%s…若证据已够请直接输出最终 JSON，"
+                                 "否则继续调用工具。"
+                                 % contract["goal"][:200]})
         else:
             # 请求轮次耗尽但模型还在要工具：同样给一次无工具收口的机会，
             # 收不出来再按 request_limit 失败。
@@ -451,15 +638,14 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
         if budget_out and not final_text.strip() \
                 and result["model_requests"] < limits["max_model_requests"] \
                 and time.monotonic() <= deadline:
-            messages.append({"role": "user", "content":
-                             "（系统）工具预算已用完。不要再调用任何工具，"
-                             "立即基于已有证据按 JSON 格式输出最终答案；"
-                             "没有把握的条目给出 confidence=low。"})
+            messages.append({"role": "user", "content": _final_instruction(
+                contract, "工具预算已用完")})
             result["model_requests"] += 1
             try:
                 data2 = _call_model(
                     {"messages": messages, "temperature": 0.2,
-                     "max_tokens": 2048, "format": "json"},
+                     "max_tokens": 2048,
+                     "format": _json_format(contract)},
                     deadline - time.monotonic())
                 if data2:
                     final_text = (data2.get("choices") or [{}])[0] \
@@ -513,10 +699,13 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                     and time.monotonic() <= deadline):
                 result["model_requests"] += 1
                 try:
-                    # 修复 B：格式修正轮同样启用 JSON mode（无工具请求）
+                    # 修复 B：格式修正轮同样启用约束解码（第二轮改动 A：
+                    # 按 kind 传 JSON Schema——工具轮自然收口的 final_text
+                    # 不带 format，这里是它唯一的语法约束机会）。
                     data2 = _call_model(
                         {"messages": messages, "temperature": 0.2,
-                         "max_tokens": 2048, "format": "json"},
+                         "max_tokens": 2048,
+                         "format": _json_format(contract)},
                         deadline - time.monotonic())
                     if data2:
                         raw2 = (data2.get("choices") or [{}])[0] \
