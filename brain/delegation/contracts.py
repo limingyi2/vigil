@@ -40,13 +40,16 @@ KINDS = {
         "needs_workspace": True,
     },
     "structured_extraction": {
-        # 纯文本进、JSON 出：不开放任何工具
+        # 纯文本进、JSON 出：不开放任何工具。原文必须经 input_text 传入
+        #（第一轮修复：磁盘文件任务曾被误派成这种无工具类型，7 次全废；
+        # 现在缺 input_text 显式拒绝，指引改用工作区 kind）。
         "allowed_tools": (),
         "max_model_requests": 2,
         "max_tool_calls": 0,
         "timeout_seconds": 90,
         "expected_schemas": ("extraction_v1",),
         "needs_workspace": False,
+        "needs_input_text": True,
     },
     "plan_draft": {
         # 无工作区 = 纯通用草案（不给工具，输出标 generic）；
@@ -69,6 +72,12 @@ ABS_LIMITS = {"max_model_requests": 6, "max_tool_calls": 8,
 _GOAL_MAX = 2000
 _INPUT_REF_MAX = 50
 _REF_LEN_MAX = 400
+# structured_extraction 的原文上限：必须能整体装进本地模型上下文还要留出
+# JSON 输出与系统提示的空间（num_ctx 15k token 量级），超限显式拒绝而不是
+# 静默截断——截断会让"抽取结果"看起来成功但字段缺失。
+_INPUT_TEXT_MAX = 8000
+_WS_KIND_GUIDE = ("工作区里的文件任务请改用 log_root_cause / file_discovery / "
+                  "read_only_bug_analysis（带 workspace 参数）")
 
 
 class ContractError(ValueError):
@@ -152,8 +161,9 @@ def _clip_int(v, hard_max, default):
 def validate_contract(raw, *, src, allowed_roots):
     """把模型参数收成规范合同 dict，或抛 ContractError。
 
-    返回字段：kind/goal/input_refs(相对工作区的安全路径列表)/workspace/
-    expected_schema/limits。task_id 由 dispatcher 生成，不从这里进。
+    返回字段：kind/goal/input_text(structured_extraction 的待抽取原文)/
+    input_refs(相对工作区的安全路径列表)/workspace/expected_schema/limits。
+    task_id 由 dispatcher 生成，不从这里进。
     """
     raw = raw if isinstance(raw, dict) else {}
 
@@ -169,6 +179,23 @@ def validate_contract(raw, *, src, allowed_roots):
         raise ContractError("missing_goal", "委派任务缺少 goal")
     if len(goal) > _GOAL_MAX:
         goal = goal[:_GOAL_MAX]
+
+    # 文本抽取与工作区任务是两类互斥输入：structured_extraction 只处理
+    # 调用方**当面贴出**的原文（input_text），缺了/超限都显式拒绝，
+    # 绝不拿工作区路径当输入，也不静默截断。
+    input_text = ""
+    if spec.get("needs_input_text"):
+        input_text = str(raw.get("input_text") or "").strip()
+        if not input_text:
+            raise ContractError(
+                "missing_input_text",
+                "structured_extraction 只做文本抽取，必须在 input_text 参数里"
+                "贴上要抽取的原文全文；%s。" % _WS_KIND_GUIDE)
+        if len(input_text) > _INPUT_TEXT_MAX:
+            raise ContractError(
+                "input_text_too_long",
+                "input_text 超过 %d 字上限（当前 %d 字），请只贴与抽取目标"
+                "相关的原文段落。" % (_INPUT_TEXT_MAX, len(input_text)))
 
     # 限额：取合同建议与 kind 默认中较小者，再被硬顶夹一次。
     raw_limits = raw.get("limits") if isinstance(raw.get("limits"), dict) else {}
@@ -225,6 +252,7 @@ def validate_contract(raw, *, src, allowed_roots):
     return {
         "kind": kind,
         "goal": goal,
+        "input_text": input_text,
         "workspace": workspace,
         "input_refs": input_refs,
         "expected_schema": schema,
