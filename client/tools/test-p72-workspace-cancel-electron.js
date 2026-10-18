@@ -168,21 +168,24 @@ async function run(){
     preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
   await win.loadFile(path.join(client,'src/index.html'));
   await until("!!document.querySelector('#wsPickBtn')");await wait(350);
-  // The sidebar no longer has its own "打开文件夹" button: one entry only,
-  // inside the composer's workspace picker.
-  assert.equal(await ev("!!document.querySelector('#openFolderBtn')"),false,'侧栏不应再有单独的打开文件夹按钮');
+  // The sidebar is a list, not a launcher: the only "打开文件夹" entry is the
+  // composer picker. Nothing in the left column may create a workspace.
+  assert.equal(await ev("!!document.querySelector('#openFolderBtn, #wsAddBtn, .ws-add')"),false,'侧栏不得有任何打开文件夹按钮');
+  assert.equal(await ev("document.querySelector('#sessList').textContent.includes('打开文件夹')"),false,'侧栏文字里不得出现打开文件夹');
 
   // ── 1. 打开文件夹 = 一个工作区 ───────────────────────────────
   assert.equal(await ev("document.querySelector('#wsPickBtn').textContent.includes('选择工作空间')"),true);
   await ev("document.querySelector('#wsPickBtn').click()");
   await until("!document.querySelector('#wsPop').hidden");
+  const folderButtons=await ev("[...document.querySelectorAll('button')].map(n=>n.textContent.trim()).filter(t=>t.includes('文件夹'))");
+  assert.deepEqual(folderButtons,['打开本地文件夹'],'全界面只能有一个打开文件夹入口，且在选择器里：'+JSON.stringify(folderButtons));
   await ev("document.querySelector('#wspOpenFolder').click()");
   await until("!!document.querySelector('.ws-row')");
   const wsRow=await ev(`(()=>{const r=document.querySelector('.ws-row');return{name:r.querySelector('.ws-open .tx b').textContent,path:r.querySelector('.ws-path').textContent,count:r.querySelector('.ws-count').textContent,status:r.querySelector('.ws-status')?.textContent||'ok'}})()`);
   assert.equal(wsRow.name,'vigil-demo-workspace');
   assert.equal(wsRow.path,WORKSPACE_PATH);
   assert.equal(wsRow.status,'ok');
-  assert.equal(await ev("!!document.querySelector('#wsAddBtn')"),true);
+  assert.equal(await ev("!!document.querySelector('#wsAddBtn, .ws-add')"),false,'建完工作区侧栏仍不得冒出打开文件夹按钮');
   assert.equal(state.assignCalls.length,0,'没有会话时打开文件夹只建工作区，不改任何会话归属');
   console.log('PASS 打开文件夹建工作区：显示文件夹名、真实路径与目录状态');
 
@@ -333,6 +336,8 @@ async function run(){
   assert.ok(done.note.includes('不会用于生成或安装草稿'),done.note);
   assert.equal(state.draftFetches,0,'已取消的任务不得再去取草稿');
   assert.equal(await ev("document.querySelectorAll('.crturn').length"),0,'已取消的任务不得出现草稿卡');
+  // Drop the earlier failure toast so the evidence shows only the cancelled card.
+  await ev("(()=>{const t=document.getElementById('toast');if(t)t.innerHTML='';})()");
   await shot('p72-creator-cancelled.png');
   console.log('PASS 取消确认后显示已取消、移除加载态、不生成也不安装草稿');
 
@@ -390,6 +395,8 @@ async function run(){
   assert.equal(collapsed.hasFull,false,'未展开时不得渲染完整源码');
   assert.equal(collapsed.pageOverflow,false,'长文件不得撑破页面');
   assert.equal(collapsed.msgsOverflow,false,'长文件不得撑破聊天区');
+  await ev(`document.querySelector('${card}').scrollIntoView({block:'center'})`);
+  await shot('p72-draft-collapsed.png');
   await ev(`document.querySelector('${card} [data-cr-file-toggle="0"]').click()`);
   await until(`document.querySelector('${card} [data-cr-file-body="0"]').hidden===false`);
   const expanded=await ev(`(()=>{const b=document.querySelector('${card} [data-cr-file-body="0"]'),box=b.querySelector('.cr-code'),m=document.querySelector('#msgs');return{hasFull:b.textContent.includes('step_419'),scrollable:!!box&&box.scrollHeight>box.clientHeight,boxHeight:box?box.clientHeight:0,pageOverflow:document.documentElement.scrollWidth>window.innerWidth+1,msgsOverflow:m.scrollWidth>m.clientWidth+1}})()`);

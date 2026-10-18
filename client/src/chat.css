@@ -381,12 +381,6 @@ body[data-vigil-page="chat"] .ws-chats { padding:2px 0 4px 10px; margin-left:8px
 body[data-vigil-page="chat"] .ws-chats .session-row { padding:2px; }
 body[data-vigil-page="chat"] .ws-chats .li .tx b { font-size:13px; }
 body[data-vigil-page="chat"] .ws-empty { padding:6px 8px; font-size:11.5px; }
-body[data-vigil-page="chat"] .ws-add {
-  width:100%; display:flex; align-items:center; gap:7px; margin-top:2px; padding:7px 9px;
-  border:1px dashed var(--chat-line); border-radius:9px; background:transparent;
-  color:var(--chat-muted); font:12px var(--font); cursor:pointer;
-}
-body[data-vigil-page="chat"] .ws-add:hover { border-color:var(--chat-muted); color:var(--chat-text); }
 body[data-vigil-page="chat"] .session-row.in-workspace .session-open { padding-left:4px; }
 
 /* ═══ P7.2 Creator 任务卡：只报进度，不铺源码 ═════════════════════════ */

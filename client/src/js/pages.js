@@ -830,11 +830,13 @@
       const orphaned = sessionItems.filter((s) => s.workspace_id && !known.has(s.workspace_id));
       const wsHtml = workspaceItems.map(workspaceRowHtml).join('');
       const head = '<div class="session-group-title">工作区</div>';
+      // The sidebar is a list, not a launcher: the only "打开文件夹" entry
+      // lives in the composer picker, so nothing here creates workspaces.
       const workspaceSection = (workspaceItems.length || workspaceError)
         ? '<section class="session-group session-workspaces">' + head +
             (workspaceError
               ? '<div class="empty ws-empty">' + esc(workspaceError) + '</div>'
-              : wsHtml + '<button class="ws-add" id="wsAddBtn" type="button">' + icon('plus', 'sm') + '<span>打开文件夹</span></button>')
+              : wsHtml)
           + '</section>'
         : '';
       const looseRows = loose.concat(orphaned).sort((a, b) =>
@@ -873,8 +875,6 @@
         try { await navigator.clipboard.writeText(n.dataset.wsCopy); toast('已复制路径：' + n.dataset.wsCopy); }
         catch (_) { toast('复制失败，路径：' + n.dataset.wsCopy); }
       }));
-      const add = sessList.querySelector('#wsAddBtn');
-      if (add) add.addEventListener('click', () => { if (!busy) openFolderWorkspace(); });
     }
     async function activateConversation(id, options = {}) {
       if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
