@@ -190,8 +190,7 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 }
 .chatwrap .foot-chip:hover { background:var(--chat-hover); color:var(--chat-text); }
 .chatwrap .foot-chip .i { width:14px; height:14px; flex:none; }
-.chatwrap .foot-chip > span:not(.caret):not(.perm-dot) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.chatwrap .foot-chip .caret { flex:none; font-size:10px; opacity:.7; }
+.chatwrap .foot-chip > span:not(.perm-dot) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chatwrap .foot-chip[aria-expanded="true"] { background:var(--chat-hover); color:var(--chat-text); }
 .chatwrap .perm-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--ok); }
 .chatwrap .foot-chip.wide .perm-dot { background:var(--warn); }
@@ -201,6 +200,8 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .attach { border-radius:10px; margin-bottom:8px; background:var(--chat-surface); }
 .chatwrap .attach[hidden] { display:none; }
 .chatwrap .localpop { left:50%; right:auto; transform:translateX(-50%); width:min(560px,calc(100% - 24px)); }
+/* 从输入框下方标签打开时贴着那个标签，不再居中 */
+.chatwrap .localpop.anchored { transform:none; }
 /* ── 工作空间选择器：贴在输入框下方那一行按钮的上方 ── */
 .chatwrap .wsPop {
   left:0; right:auto; transform:none; width:min(340px,calc(100% - 24px));

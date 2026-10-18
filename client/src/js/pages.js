@@ -988,7 +988,7 @@
         const text = perm.querySelector('[data-perm-label]');
         if (text) text.textContent = wide ? '允许完全访问' : '仅授权目录';
         perm.classList.toggle('wide', wide);
-        perm.title = wide ? '当前允许访问整台机器；点击去设置里改' : '当前只允许白名单目录；点击去设置里改';
+        perm.title = wide ? '当前允许访问整台机器；点这里调整授权范围' : '当前只允许白名单目录；点这里调整授权范围';
       }
     }
     let wsPop = null;
@@ -1067,6 +1067,8 @@
       if (pick) pick.addEventListener('click', () => {
         if (!wsPop) return;
         if (!wsPop.hidden) { closeWsPop(); return; }
+        const lp = view.querySelector('#localPop');
+        if (lp) lp.hidden = true;
         drawWsPop();
         // Anchor the panel over the chip that opened it, not the page corner.
         const shell = view.querySelector('.composer');
@@ -1082,9 +1084,9 @@
       });
       const perm = view.querySelector('#permChip');
       if (perm) perm.addEventListener('click', () => {
-        // 这里只做跳转：授权范围必须在设置页里显式改，点一下标签不给权限。
-        toast('本地文件与命令的授权范围在 设置 → 本地操控 里调整');
-        ctx.navigate('settings');
+        // 授权范围就在聊天框里改：点标签弹出和盾牌同一个面板，不跳设置页。
+        // 权限仍然只由面板里的显式选择改变，点标签本身不授予任何权限。
+        toggleLocalPop(perm);
       });
     }
     async function renameConversation(id) {
@@ -1160,8 +1162,8 @@
       '          <button class="btn fill" id="sendBtn" disabled aria-label="发送消息" title="发送消息（Enter）">' + icon('arrow-up', 'sm') + '</button>' +
       '        </div></div>' +
       '      <div class="composer-caption composer-foot">' +
-      '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span><span class="caret">▾</span></button>' +
-      '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span><span class="caret">▾</span></button>' +
+      '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span></button>' +
+      '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span></button>' +
       '        <div class="sp"></div>' +
       '        <span class="foot-brand">Vigil · AI Agent Workspace</span>' +
       '        <span class="ccount" id="ccount">0 字</span>' +
@@ -2337,6 +2339,7 @@
     // 不再摆一堆开关。工具随档位走：只读=危险工具全关，其余档=危险工具开。
     const pop = view.querySelector('#localPop');
     const localBtn = view.querySelector('#localBtn');
+    const permChip = view.querySelector('#permChip');
     const MODES = [
       ['readonly', '只读模式', '仅允许查看系统状态与读取文件，不执行任何修改操作'],
       ['asked', '默认模式', '允许读写白名单目录、执行白名单命令；涉及修改的操作需逐次确认'],
@@ -2375,6 +2378,7 @@
           toast('已切换至全部允许模式');
         }
         drawLocalPop();
+        drawComposerFoot();
       };
 
       pop.innerHTML =
@@ -2393,7 +2397,8 @@
           (i === 0 ? '<span class="muted" style="font-size:11px;flex:none">默认</span>'
                    : '<button class="btn" data-rm="' + esc(r) + '">移除</button>') + '</div>').join('') +
         '<div class="lpadd"><input class="input mono" id="lpRoot" placeholder="D:\\某目录（点添加后生效）">' +
-        '<button class="btn oline" id="lpAdd">添加</button></div>' +
+        '<button class="btn oline" id="lpAdd">添加</button>' +
+        '<button class="btn oline" id="lpPick">选择文件夹…</button></div>' +
         '</div>';
 
       pop.querySelector('#lpClose').addEventListener('click', () => { pop.hidden = true; });
@@ -2405,26 +2410,59 @@
         toast('已添加');
         drawLocalPop();
       });
+      // 系统目录选择器：不让人手打路径。选完立刻写进白名单并在面板里可见。
+      pop.querySelector('#lpPick').addEventListener('click', async () => {
+        const api = global.vigil && global.vigil.workspace;
+        if (!api || !api.pick) { toast('当前版本没有系统文件夹选择器'); return; }
+        const r = await api.pick();
+        if (!r || !r.ok || r.canceled || !r.path) return;
+        const p = r.path;
+        await save({ roots: roots.includes(p) ? roots : roots.concat([p]) });
+        toast('已授权目录：' + p);
+        drawLocalPop();
+      });
       pop.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async () => {
         await save({ roots: roots.filter((x) => x !== b.dataset.rm) });
         drawLocalPop();
       }));
     }
 
+    // 盾牌和输入框下方那个"仅授权目录"标签共用这一个面板：授权范围留在
+    // 聊天框里改，不跳设置页。位置贴着点它的那个按钮，不飘到页面中间。
+    function placeLocalPop(anchor) {
+      if (!pop) return;
+      const shell = view.querySelector('.composer');
+      if (!shell) return;
+      const box = shell.getBoundingClientRect(), chip = anchor.getBoundingClientRect();
+      const width = Math.min(560, Math.max(260, box.width - 24));
+      pop.classList.add('anchored');
+      pop.style.width = width + 'px';
+      pop.style.left = Math.max(8, Math.min(chip.left - box.left, box.width - width - 8)) + 'px';
+    }
+    function toggleLocalPop(anchor) {
+      if (!pop) return;
+      if (wsPop && !wsPop.hidden) closeWsPop();
+      const open = pop.hidden;
+      pop.hidden = !open;
+      if (anchor) anchor.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) return;
+      placeLocalPop(anchor || localBtn);
+      void drawLocalPop();
+    }
     const closePop = (e) => {
       if (pop.hidden) return;
-      if (pop.contains(e.target) || localBtn.contains(e.target)) return;
+      if (pop.contains(e.target) || localBtn.contains(e.target) ||
+          (permChip && permChip.contains(e.target))) return;
       pop.hidden = true;
+      localBtn.setAttribute('aria-expanded', 'false');
+      if (permChip) permChip.setAttribute('aria-expanded', 'false');
     };
     document.addEventListener('pointerdown', closePop);
     const offDoc = () => {
       document.removeEventListener('pointerdown', closePop);
       window.removeEventListener('resize', resizeComposer);
     };
-    localBtn.addEventListener('click', async () => {
-      if (pop.hidden) { pop.hidden = false; await drawLocalPop(); }
-      else pop.hidden = true;
-    });
+    localBtn.addEventListener('click', () => toggleLocalPop(localBtn));
 
     showWelcomeHome(false);
     void initializeConversationView();
@@ -4278,7 +4316,7 @@
         '<button class="btn oline md" id="abCheck">检查更新</button>' +
         '<span class="muted" style="font-size:12px" id="abMsg">启动时和每小时也会自动检查（走云端）</span>' +
         '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:10px">本地操控已并入聊天页：确认在气泡里，权限/目录/工具在输入框旁的盾牌面板里。桌宠 Live2D（阶段5）未开始。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:10px">本地操控已并入聊天页：确认在气泡里，权限/目录/工具在输入框旁的盾牌面板里，输入框下方的“仅授权目录”标签打开同一个面板。桌宠 Live2D（阶段5）未开始。</div>' +
         '</div>';
 
       const show = (u) => {

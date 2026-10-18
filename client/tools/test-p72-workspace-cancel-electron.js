@@ -232,6 +232,8 @@ async function run(){
   assert.equal(layout.footBelow,true,'工作空间与授权标签在输入框下方');
   assert.ok(layout.footText.includes('选择工作空间'),layout.footText);
   assert.ok(layout.footText.includes('仅授权目录'),layout.footText);
+  // 那两个标签后面只能有文字：.caret 是全局闪烁光标，绝不能出现在这里
+  assert.equal(await ev("document.querySelectorAll('.composer-foot .caret, .foot-chip .caret').length"),0,'输入区标签后面不得有闪烁光标块');
   await ev("document.querySelector('#wsPickBtn').click()");
   await until("!document.querySelector('#wsPop').hidden");
   const pop=await ev(`(()=>{const p=document.querySelector('#wsPop');return{search:!!p.querySelector('#wsSearch'),items:p.querySelectorAll('[data-ws-pick]').length,folder:!!p.querySelector('#wspOpenFolder'),note:(p.querySelector('.wsp-note')||{}).textContent||'',above:p.getBoundingClientRect().bottom<=document.querySelector('.cbox').getBoundingClientRect().top+1}})()`);
@@ -256,6 +258,20 @@ async function run(){
   assert.equal(state.conversations.find(c=>c.id===looseId).workspace_id,null);
   assert.equal(state.assignCalls.length,2);
   console.log('PASS 输入区排版照图：+ 在左、模型与圆形发送在右、下方工作空间/授权标签；选择器只列出并显式归属');
+
+  // 授权范围就在聊天框里改：点"仅授权目录"弹出同一个面板，不跳设置页
+  await ev("document.querySelector('#permChip').click()");
+  await until("!document.querySelector('#localPop').hidden && !!document.querySelector('#lpClose')");
+  const lp=await ev(`(()=>{const p=document.querySelector('#localPop');return{page:API.state.page,modes:p.querySelectorAll('[data-mode]').length,pick:!!p.querySelector('#lpPick'),anchored:p.classList.contains('anchored'),labelled:p.textContent.includes('权限模式'),above:p.getBoundingClientRect().bottom<=document.querySelector('.cbox').getBoundingClientRect().top+1}})()`);
+  assert.equal(lp.page,'chat','改授权范围不能跳出聊天页');
+  assert.equal(lp.modes,3,'面板要有三档权限');
+  assert.equal(lp.pick,true,'面板里要能直接选文件夹');
+  assert.equal(lp.anchored,true,'面板要贴着标签展开');
+  assert.equal(lp.above,true,'面板弹在输入框上方');
+  assert.equal(lp.labelled,true);
+  await shot('p72-composer-perm-panel.png');
+  await ev("document.querySelector('#lpClose').click()");
+  console.log('PASS 授权范围在聊天框内直接调整：弹出三档权限与目录白名单，不进设置页');
 
   // ── 4/5. 重启（渲染层重载）后恢复；已移动的目录要说清楚 ────
   state.workspaces.push({id:newId(),path:MISSING_PATH,name:'vigil-demo-moved-away',
