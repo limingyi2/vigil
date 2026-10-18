@@ -275,6 +275,20 @@ def _run(jid, owner, cfg):
             prev={f['name']: f['content'] for f in creator._read_files(creator._draft_dir(item['source_draft_id']))} if previous else None,
             feedback=item['feedback'])
         provider = get_provider(cfg)
+        # 本地模式：把输出上限抬到 4096。Ollama 默认 num_predict=2048 对一份
+        # 完整插件草稿偏小，被截断的 JSON 既不能当草稿也不能重试修复；
+        # 抬高上限后仍被截断，会走 output_truncated 明确报错（不会被当成成功）。
+        if getattr(provider, 'kind', '') == 'ollama':
+            try:
+                provider.num_predict = max(int(getattr(provider, 'num_predict', 0) or 0), 4096)
+            except (TypeError, ValueError):
+                pass
+            # 登记租约：切换运行模式时不能把这个正在用的模型卸掉
+            try:
+                import run_modes as _rm
+                _rm.acquire(jid, getattr(provider, 'model', ''))
+            except Exception:
+                pass
         payload = prepare({'model': cfg.get('model'), 'temperature': 0.2,
             'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]}, cfg)
         text = []
@@ -396,6 +410,11 @@ def _run(jid, owner, cfg):
             stop.detach()
         if STOPS.get(jid) is stop:
             STOPS.pop(jid, None)
+        try:
+            import run_modes as _rm
+            _rm.release(jid)
+        except Exception:
+            pass
 
 
 def _fail(jid, owner, reason, code=None, exception_type=None, *, stage=None,

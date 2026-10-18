@@ -558,10 +558,16 @@
       label();
       draw();
       if (open) placePop();
+      if (h.afterLoad) { try { h.afterLoad(); } catch (_) {} }
     }
     async function select(m) {
       if (switching) return;
       if (h.isBusy && h.isBusy()) { say('正在生成回复：等这一轮结束再切，免得上面显示的模型和实际用的对不上', true); return; }
+      // 本地/混合模式下模型由所选模型决定，默认模型清单在这里切了也不会生效
+      if (h.blockOpen && h.blockOpen()) {
+        say('现在用的是本地模型：先在输入框下方的模型菜单里切回默认模型', true);
+        return;
+      }
       if (m.active) { closePop(); return; }
       if (!m.has_key && m.provider !== 'custom') {
         // 这份清单可能是旧的：key 也许刚在别处补上（设置页 / 手机上 / 另一个窗口），
@@ -618,6 +624,8 @@
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (h.isBusy && h.isBusy()) { toast('正在生成回复：这一轮结束再切模型'); return; }
+      // 本地/混合模式：这个按钮改开模式菜单，免得在这里切了云端模型却没生效
+      if (h.blockOpen && h.blockOpen()) { if (h.onBlocked) h.onBlocked(); return; }
       if (open) closePop(); else openPop();
     });
     view.querySelector('#mqClose').addEventListener('click', closePop);
@@ -1143,6 +1151,7 @@
       '        </div>' +
       '      </div>' +
       '      <div class="localpop" id="localPop" hidden></div>' +
+      '      <div class="localpop pluspop" id="plusPop" hidden role="dialog" aria-label="添加内容与运行模式"></div>' +
       '      <div class="wsPop localpop" id="wsPop" hidden role="dialog" aria-label="选择工作空间"></div>' +
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
@@ -1162,6 +1171,7 @@
       '          <button class="btn fill" id="sendBtn" disabled aria-label="发送消息" title="发送消息（Enter）">' + icon('arrow-up', 'sm') + '</button>' +
       '        </div></div>' +
       '      <div class="composer-caption composer-foot">' +
+      '        <button class="foot-chip mode-chip" id="modeChip" type="button" data-mode="cloud" title="这一轮使用的模型"><span class="mode-dot"></span><span data-mode-model>—</span></button>' +
       '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span></button>' +
       '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span></button>' +
       '        <div class="sp"></div>' +
@@ -1184,7 +1194,14 @@
     // 生成过程中禁用（busy）：不让"正在跑的这轮"和"刚选的模型"对不上。
     const mq = modelQuickBind(view, ctx, {
       isBusy: () => busy,
-      onSwitched: (c) => { if (c && c.model) toast('已切到 ' + c.model); },
+      // 本地/混合模式下这个按钮改开模式菜单：云端清单里的选择在那两种模式里不生效
+      blockOpen: () => !!(runStatus && runStatus.mode !== 'cloud'),
+      onBlocked: () => { openPlusPop(); },
+      afterLoad: () => syncComposerModelLabel(),
+      onSwitched: (c) => {
+        if (c && c.model) toast('已切到 ' + c.model);
+        void loadRunMode(false);
+      },
     });
     // 创作模式开关：chip 循环 关 → 插件 → 技能 → 关
     // 创作模式 bar 里的类型直选（不用循环也能一步切到目标类型）
@@ -1437,6 +1454,239 @@
     applyCreatorMode();
     bindComposerFoot();
     drawComposerFoot();
+
+    // ── 运行模式（云端 / 本地 / 混合）与加号菜单 ─────────────────
+    // 运行模式 = "这一轮由谁执行"，创作模式 = "要不要产出草稿"，两者独立。
+    // 切模式只改服务端配置与输入区标记：不跳页、不新建会话、不清历史、
+    // 不动工作区归属，conversation_id 和滚动位置都保持原样。
+    let runStatus = null;
+    let modeSwitching = false;
+    let plusPop = null;
+    let plusAnchor = null;   // 弹层当前挂靠的按钮，窗口尺寸变化时按它重新定位
+
+    function effectiveModel(st) {
+      const s = st || runStatus || {};
+      if (s.mode === 'local') return (s.local && s.local.model) || '';
+      return (s.cloud && s.cloud.model) || '';
+    }
+    // 界面上不暴露"云端"这类内部术语：只在工具提示里区分默认 / 本地 / 混合
+    function modeLabelOf(st) {
+      const s = st || runStatus || {};
+      return s.mode === 'local' ? '本地' : s.mode === 'hybrid' ? '混合' : '默认';
+    }
+    // 本地/混合模式下这个按钮显示真实生效的本地模型；默认模式交回快速切换自己维护
+    function syncComposerModelLabel() {
+      const btn = view.querySelector('#modelBtn');
+      if (!btn || !runStatus || runStatus.mode === 'cloud') return;
+      btn.textContent = (effectiveModel() || '未配置') + ' ▾';
+      btn.title = '当前由' + modeLabelOf() + '模型执行：点开修改';
+    }
+    function drawModeChip() {
+      const chip = view.querySelector('#modeChip');
+      if (!chip) return;
+      const st = runStatus || { mode: 'cloud', cloud: {} };
+      const mode = st.mode || 'cloud';
+      const local = st.local || {};
+      chip.dataset.mode = mode;
+      const m = chip.querySelector('[data-mode-model]');
+      if (m) m.textContent = effectiveModel(st) || '未配置';
+      chip.title = mode === 'local'
+        ? '本地模型：' + (local.model || '未选模型')
+          + (local.reachable === false ? '（Ollama 未运行）' : '')
+        : mode === 'hybrid'
+          ? '混合：' + ((st.cloud || {}).model || '未配置') + ' 作答，本地模型辅助'
+          : '模型：' + ((st.cloud || {}).model || '未配置');
+      syncComposerModelLabel();
+    }
+    async function loadRunMode(probe) {
+      const r = pick(await get('/api/run-mode' + (probe ? '?probe=1' : '')));
+      if (!r || !r.ok) return;
+      runStatus = r;
+      drawModeChip();
+      if (plusPop && !plusPop.hidden && !modeSwitching) drawPlusPop();
+    }
+    function plusSay(text, bad) {
+      if (!plusPop) return;
+      const el = plusPop.querySelector('#plusMsg');
+      if (!el) return;
+      el.textContent = text || '';
+      el.style.color = bad ? 'var(--err)' : '';
+    }
+    function drawPlusPop() {
+      if (!plusPop) return;
+      const st = runStatus || { mode: 'cloud', cloud: {}, local: {} };
+      const cur = st.mode || 'cloud';
+      const local = st.local || {};
+      const installed = local.installed || [];
+      const modeRow = (mode, name, model, note) =>
+        '<button class="plus-row' + (mode === cur ? ' on' : '') + '" type="button" data-mode="' + mode + '">' +
+        '<span class="plus-rail"></span>' +
+        '<span class="plus-lb"><b>' + esc(name) + '</b><span>' + esc(model || '未配置') + '</span></span>' +
+        '<span class="plus-note">' + esc(note) + '</span>' +
+        (mode === cur ? '<span class="plus-check">' + icon('check', 'sm') + '</span>' : '') +
+        '</button>';
+      const localNote = local.reachable === false
+        ? 'Ollama 未运行（切换时自动启动）'
+        : local.reachable
+          ? 'Ollama 就绪 · ' + installed.length + ' 个模型'
+          : '切换时检查';
+      plusPop.innerHTML =
+        '<div class="lph"><span>添加与模型</span>' +
+        '<button class="ibtn" id="plusClose" type="button" aria-label="收起菜单" title="收起">' + icon('x', 'sm') + '</button></div>' +
+        '<div class="lpbody plusbody">' +
+        '<div class="plus-sec">添加</div>' +
+        '<button class="plus-row" type="button" data-plus="file">' +
+        '<span class="plus-rail plus-ic">' + icon('clip', 'sm') + '</span>' +
+        '<span class="plus-lb"><b>图片、视频或文件</b><span>单个不超过 256MB</span></span>' +
+        '<span class="plus-note">' + (attachment ? '已附加 1 个' : '') + '</span>' +
+        '</button>' +
+        '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
+        modeRow('cloud', '默认模型', (st.cloud || {}).model,
+          (st.cloud || {}).ready ? '随时可用' : '缺密钥或模型') +
+        modeRow('local', '本地模型', local.model, localNote) +
+        modeRow('hybrid', '混合', (st.cloud || {}).model, '默认作答 · 本地辅助') +
+        (cur === 'local' && installed.length
+          ? '<div class="plus-sub"><label for="plusLocalModel">本地模型</label>' +
+            '<select class="input" id="plusLocalModel">' +
+            installed.map((n) => '<option' + (n === local.model ? ' selected' : '') + '>' + esc(n) + '</option>').join('') +
+            '</select></div>'
+          : '') +
+        '<div class="plus-sec">创作模式<span class="plus-hint">与模型选择互不影响</span></div>' +
+        '<div class="plus-seg">' +
+        ['off', 'plugin', 'skill'].map((k) =>
+          '<button type="button" data-cr="' + k + '"' + (creatorMode === k ? ' class="on"' : '') + '>' +
+          (k === 'off' ? '关' : k === 'plugin' ? '插件' : '技能') + '</button>').join('') +
+        '</div>' +
+        '</div>' +
+        '<div class="plusfoot"><span id="plusMsg" role="status"></span></div>';
+      const closeBtn = plusPop.querySelector('#plusClose');
+      if (closeBtn) closeBtn.onclick = closePlusPop;
+      plusPop.querySelectorAll('[data-mode]').forEach((b) => {
+        b.onclick = () => {
+          const sel = plusPop.querySelector('#plusLocalModel');
+          setRunMode(b.dataset.mode, b.dataset.mode === 'local' && sel ? sel.value : '');
+        };
+      });
+      const sel = plusPop.querySelector('#plusLocalModel');
+      if (sel) sel.onchange = () => setRunMode('local', sel.value);
+      plusPop.querySelectorAll('[data-cr]').forEach((b) => {
+        b.onclick = () => {
+          creatorMode = b.dataset.cr;
+          applyCreatorMode();
+          drawPlusPop();
+          toast(creatorMode === 'off' ? '已回到普通对话'
+            : '创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿');
+        };
+      });
+      const fileRow = plusPop.querySelector('[data-plus="file"]');
+      if (fileRow) fileRow.onclick = () => { closePlusPop(); pickAttachmentFile(); };
+    }
+    // 纵向交给 CSS（bottom:100%+8px，和其他输入框弹层同一套）；
+    // 这里只管水平对齐，并按按钮上方的真实空间压高度，免得顶破窗口。
+    function placePlusPop(anchor) {
+      if (!plusPop || !anchor) return;
+      const shell = view.querySelector('.composer');
+      if (!shell) return;
+      const parent = plusPop.offsetParent || shell;
+      const pb = parent.getBoundingClientRect();
+      const sb = shell.getBoundingClientRect();
+      const a = anchor.getBoundingClientRect();
+      const width = Math.min(380, Math.max(280, sb.width - 24));
+      plusPop.classList.add('anchored');
+      plusPop.style.width = width + 'px';
+      plusPop.style.left = Math.max(8, Math.min(a.left - pb.left, sb.width - width - 8)) + 'px';
+      const room = Math.round(a.top - (sb.top - pb.top) - 16);   // 按钮到窗口顶的空隙
+      plusPop.style.maxHeight = Math.max(180, Math.min(520, room)) + 'px';
+      plusAnchor = anchor;
+    }
+    function closePlusPop() {
+      if (!plusPop) return;
+      plusPop.hidden = true;
+      plusAnchor = null;
+      ['#clipBtn', '#modeChip'].forEach((sel) => {
+        const n = view.querySelector(sel);
+        if (n) n.setAttribute('aria-expanded', 'false');
+      });
+    }
+    function openPlusPop(anchor) {
+      if (!plusPop) return;
+      if (wsPop && !wsPop.hidden) closeWsPop();
+      const lp = view.querySelector('#localPop');
+      if (lp) lp.hidden = true;
+      const a = anchor || view.querySelector('#clipBtn') || view.querySelector('#modeChip');
+      plusPop.hidden = false;
+      drawPlusPop();
+      placePlusPop(a);
+      if (a) a.setAttribute('aria-expanded', 'true');
+      // 先按缓存画，再探一次真实状态（探测要走 Ollama，慢，不挡打开）
+      void loadRunMode(true);
+    }
+    function togglePlusPop(anchor) {
+      if (!plusPop) return;
+      if (!plusPop.hidden) { closePlusPop(); return; }
+      openPlusPop(anchor);
+    }
+    /** 切模型：失败就保持原样并说明原因，绝不"显示已切换"。 */
+    async function setRunMode(mode, model) {
+      if (modeSwitching) return;
+      if (busy) { plusSay('正在生成回复：等这一轮结束再切模型', true); return; }
+      const already = runStatus && runStatus.mode === mode
+        && (!model || model === (runStatus.local || {}).model);
+      if (already) { plusSay('已经在用这个模型了'); return; }
+      modeSwitching = true;
+      plusPop.querySelectorAll('button,select').forEach((n) => { n.disabled = true; });
+      plusSay(mode === 'local'
+        ? '正在检查 Ollama 并加载本地模型…（首次可能要几十秒）'
+        : '正在切换模型…');
+      let r;
+      try { r = pick(await post('/api/run-mode', model ? { mode, model } : { mode })); }
+      catch (e) { r = { ok: false, _err: String((e && e.message) || e) }; }
+      modeSwitching = false;
+      const bad = r.err || r._err || '';
+      if (!r.ok) {
+        drawPlusPop();
+        plusSay(bad || '切换失败', true);
+        toast('没有切换：' + (bad || '未知错误'));
+        return;
+      }
+      if (r.status) runStatus = Object.assign({}, runStatus, r.status);
+      drawModeChip();
+      // 切回默认模型时把这个按钮的文案交回模型清单（本地模式期间它显示的是本地模型）
+      if (runStatus && runStatus.mode === 'cloud' && mq && mq.load) void mq.load();
+      drawPlusPop();
+      const extra = (r.warnings || []).filter(Boolean);
+      if (r.unchanged) plusSay('已经在用这个模型了');
+      else plusSay('生效中：' + (effectiveModel() || '未配置')
+        + (extra.length ? '（' + extra.join('；') + '）' : ''));
+      if (!r.unchanged) {
+        toast('已切换模型：' + (effectiveModel() || '未配置'));
+      }
+      // 以服务端状态为准再核一次（不拿请求参数冒充结果）
+      void loadRunMode(true);
+    }
+    const closePlusOnDoc = (e) => {
+      if (!plusPop || plusPop.hidden) return;
+      const add = view.querySelector('#clipBtn');
+      const chip = view.querySelector('#modeChip');
+      if (plusPop.contains(e.target)
+        || (add && add.contains(e.target)) || (chip && chip.contains(e.target))) return;
+      closePlusPop();
+    };
+    document.addEventListener('pointerdown', closePlusOnDoc);
+    ctx.onDispose(() => document.removeEventListener('pointerdown', closePlusOnDoc));
+    const replacePlus = () => {
+      if (!plusPop || plusPop.hidden) return;
+      placePlusPop(plusAnchor || view.querySelector('#clipBtn') || view.querySelector('#modeChip'));
+    };
+    window.addEventListener('resize', replacePlus);
+    ctx.onDispose(() => window.removeEventListener('resize', replacePlus));
+    plusPop = view.querySelector('#plusPop');
+    const addBtnEl = view.querySelector('#clipBtn');
+    if (addBtnEl) addBtnEl.addEventListener('click', (e) => { e.stopPropagation(); togglePlusPop(addBtnEl); });
+    const modeChipEl = view.querySelector('#modeChip');
+    if (modeChipEl) modeChipEl.addEventListener('click', (e) => { e.stopPropagation(); togglePlusPop(modeChipEl); });
+    drawModeChip();
+    void loadRunMode(false);
     // 附件：文件只在发送时分块上传；聊天请求只携带服务端返回的附件元数据。
     let imgB64 = '';
     let attachment = null;
@@ -1678,7 +1928,8 @@
       if (mb) mb.disabled = busy;
     }
     const attachBox = view.querySelector('#attach');
-    view.querySelector('#clipBtn').addEventListener('click', () => {
+    /** 加号菜单里的「图片、视频或文件」走这里：原生文件对话框 → 同一套类型/大小校验。 */
+    function pickAttachmentFile() {
       const inp = document.createElement('input');
       inp.type = 'file';
       inp.accept = ATTACH_ACCEPT;
@@ -1686,7 +1937,7 @@
         chooseFile(inp.files && inp.files[0]);
       };
       inp.click();
-    });
+    }
     const dropTarget = view.querySelector('.cbox');
     dropTarget.addEventListener('dragover', (e) => { e.preventDefault(); dropTarget.classList.add('drop-active'); });
     dropTarget.addEventListener('dragleave', () => dropTarget.classList.remove('drop-active'));
@@ -3790,8 +4041,8 @@
       const mpost = (p, b, timeoutMs) => post(p, b, { base: mb(), timeoutMs });
       const sourceSwitch = () => hasCloud
         ? '<div class="seg" id="mSrc" role="group" aria-label="模型配置来源" style="margin-bottom:12px">' +
-          '<button type="button" data-ms="cloud" aria-pressed="' + (state.mSrc === 'cloud') + '"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>云端（微信 / App 的她）</button>' +
-          '<button type="button" data-ms="local" aria-pressed="' + (state.mSrc === 'local') + '"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑的她）</button></div>'
+          '<button type="button" data-ms="cloud" aria-pressed="' + (state.mSrc === 'cloud') + '"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>主脑（微信 / App）</button>' +
+          '<button type="button" data-ms="local" aria-pressed="' + (state.mSrc === 'local') + '"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑）</button></div>'
         : '';
       const bindSourceSwitch = () => {
         v.querySelectorAll('#mSrc button[data-ms]').forEach((b) => b.addEventListener('click', () => {
@@ -3801,7 +4052,7 @@
         }));
       };
       v.innerHTML = sourceSwitch() + '<div class="card" role="status" aria-live="polite">正在读取' +
-        (state.mSrc === 'cloud' ? '云端' : '本机') + '模型配置…</div>';
+        (state.mSrc === 'cloud' ? '主脑' : '本机') + '模型配置…</div>';
       bindSourceSwitch();
       const [modelReply, savedReply] = await Promise.all([
         mpost('/api/models/list', {
@@ -3857,17 +4108,17 @@
       const ol = cur.ollama || {};
       const dl = cur.delegation || {};
       const mode = cur.model_mode || 'cloud';
-      // 运行方式卡片只在「本机大脑」视图出现 —— Ollama 长在这台 PC 上，
-      // 云端那台服务器够不着 127.0.0.1:11434。
+      // 模型卡片只在「本机大脑」视图出现 —— Ollama 长在这台 PC 上，
+      // 远端那台服务器够不着 127.0.0.1:11434。
       const localCard = state.mSrc === 'local' ? (
         '<div class="card" style="margin-bottom:14px">' +
-        '<b style="font-size:13px">运行方式</b>' +
+        '<b style="font-size:13px">模型</b>' +
         '<div class="seg" id="mMode" style="margin-top:10px">' +
-        '<button data-mm="cloud"' + (mode === 'cloud' ? ' class="on"' : '') + '>云端模型</button>' +
+        '<button data-mm="cloud"' + (mode === 'cloud' ? ' class="on"' : '') + '>默认</button>' +
         '<button data-mm="local"' + (mode === 'local' ? ' class="on"' : '') + '>本地 Ollama</button>' +
-        '<button data-mm="hybrid"' + (mode === 'hybrid' ? ' class="on"' : '') + '>混合（云端主脑+本地委派）</button>' +
+        '<button data-mm="hybrid"' + (mode === 'hybrid' ? ' class="on"' : '') + '>混合（默认 + 本地）</button>' +
         '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:6px">本地模式不调云端 API：同一套大脑用本机 Ollama 跑完整工具循环。混合模式：主模型仍在云端，只把需要翻本地文件的只读子任务委派给本机 Ollama。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:6px">默认：走服务商接口。本地：同一套大脑用本机 Ollama 跑完整工具循环，不经过任何线上接口。混合：主模型仍是默认模型，只把需要翻本地文件的只读子任务交给本机 Ollama。</div>' +
         '<div id="olBox" style="margin-top:12px' + ((mode === 'local' || mode === 'hybrid') ? '' : ';display:none') + '">' +
         '<div class="field"><label>Ollama 地址</label>' +
         '<input class="input mono" id="olBase" value="' + esc(ol.base || 'http://127.0.0.1:11434') + '" placeholder="http://127.0.0.1:11434">' +
@@ -3887,7 +4138,7 @@
         // 委派设置：只在混合模式露面（开关门控在大脑侧：hybrid + enabled + 已配本地模型）
         '<div id="dlBox" style="margin-top:12px' + (mode === 'hybrid' ? '' : ';display:none') + '">' +
         '<div style="border-top:1px solid var(--border,#e5e5e5);padding-top:10px">' +
-        '<label class="row" style="margin:0 0 6px"><input type="checkbox" id="dlEnabled"' + (dl.enabled ? ' checked' : '') + '> 允许云端主脑把只读子任务委派给本机</label>' +
+        '<label class="row" style="margin:0 0 6px"><input type="checkbox" id="dlEnabled"' + (dl.enabled ? ' checked' : '') + '> 允许主模型把只读子任务交给本机</label>' +
         '<div class="muted" style="font-size:11.5px">默认关闭。仅支持只读勘察（列目录/查找/读文件/搜内容），不能写文件、跑命令、删除或联网；单次硬顶 6 轮模型请求 / 8 次工具调用 / 180 秒。</div></div>' +
         '<div class="field" style="margin-top:10px"><label>授权工作区（每行一个绝对路径）</label>' +
         '<textarea class="input mono" id="dlRoots" rows="3" style="width:100%;resize:vertical;font-size:12px" placeholder="如 F:\projects\demo">' + esc((dl.allowed_roots || []).join('\n')) + '</textarea>' +
@@ -3917,7 +4168,7 @@
       const modelManager =
         '<section class="card hd model-manager" aria-labelledby="modelManagerTitle">' +
         '<div class="h"><div><h3 id="modelManagerTitle">已添加模型</h3>' +
-        '<div class="muted model-manager-note">本机清单供此客户端聊天切换；云端清单供 App / 微信。配置会写入 Brain 并在重启后保留。</div></div>' +
+        '<div class="muted model-manager-note">这份清单供本机聊天切换；App / 微信用主脑那份。配置会写入 Brain 并在重启后保留。</div></div>' +
         '<button class="btn fill md" type="button" id="mAddToggle">添加模型</button></div>' +
         '<div id="mSavedRows">' + savedRowsHtml() + '</div>' +
         '<div class="model-add-form" id="mAddForm" hidden>' +
@@ -3954,7 +4205,7 @@
         '<div class="card"><b style="font-size:13px">生图</b><div style="margin-top:10px">' + combo('mImage', groups.image, cur.image) + '</div></div>' +
         '<div class="card"><b style="font-size:13px">语音识别</b><div style="margin-top:10px">' + combo('mAudio', groups.audio, cur.audio) + '</div></div>' +
         '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">本地部署（Ollama / LM Studio / vllm）：接口地址填它的地址（如 http://你的IP:11434/v1），模型名手填——注意地址要云端大脑能访问到（走隧道或局域网）。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">本地部署（Ollama / LM Studio / vllm）：接口地址填它的地址（如 http://你的IP:11434/v1），模型名手填——注意这个地址要让主脑所在的机器访问得到（走隧道或局域网）。</div>' +
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center">' +
         '<button class="btn fill md" id="mSave">保存并生效（免重启）</button>' +
         '<button class="btn oline md" id="mPull">重新拉取模型</button>' +
@@ -4263,11 +4514,28 @@
             }
           }
         }
+        // 运行方式先过"带实测的切换门"：本地模型缺失 / 显存不足 / 加载超时
+        // 都在这里挡住，不会先写进配置再装作切好了。其余字段仍走 apply。
+        const wantMode = payload.model_mode;
+        if (wantMode && wantMode !== (cur.model_mode || 'cloud')) {
+          const sw = pick(await mpost('/api/run-mode', {
+            mode: wantMode, model: (payload.ollama || {}).model || '',
+          }));
+          if (!sw.ok) {
+            mRes.textContent = '没保存成：' + (sw.err || sw._err || '运行模式切换失败');
+            toast('运行模式没切成：' + (sw.reason || ''));
+            return;
+          }
+          cur.model_mode = wantMode;
+          delete payload.model_mode;      // 已经生效，不再重复提交
+          if (sw.warnings && sw.warnings.length) mRes.textContent = sw.warnings.join('；');
+        }
         const rr = pick(await mpost('/api/models/apply', payload));
         // 把服务端认账的改动原样亮出来（"服务商 → 小米 MiMo；已换上小米的密钥"），
         // 切换成没成功一眼看得见，不再是干巴巴的"已生效"。
+        const modeNote = /^没保存成/.test(mRes.textContent || '') ? '' : (mRes.textContent || '');
         mRes.textContent = rr.ok
-          ? ((rr.changed && rr.changed.length) ? rr.changed.join('；') : '没有改动')
+          ? ((rr.changed && rr.changed.length) ? rr.changed.join('；') : (modeNote || '没有改动'))
           : '没保存成：' + (rr._err || rr.err || '');
         toast(rr.ok ? '已生效' : '保存失败');
         if (rr.ok) {
@@ -4314,7 +4582,7 @@
         '<div class="kv"><span>token 存储</span><b>系统钥匙串（keytar）</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
         '<button class="btn oline md" id="abCheck">检查更新</button>' +
-        '<span class="muted" style="font-size:12px" id="abMsg">启动时和每小时也会自动检查（走云端）</span>' +
+        '<span class="muted" style="font-size:12px" id="abMsg">启动时和每小时也会自动检查</span>' +
         '</div>' +
         '<div class="muted" style="font-size:11.5px;margin-top:10px">本地操控已并入聊天页：确认在气泡里，权限/目录/工具在输入框旁的盾牌面板里，输入框下方的“仅授权目录”标签打开同一个面板。桌宠 Live2D（阶段5）未开始。</div>' +
         '</div>';
@@ -4364,7 +4632,7 @@
       v.innerHTML =
         '<div class="card" style="margin-bottom:14px">' +
         '<div class="kv"><span>集成状态</span><b id="wxState">' + (enabled ? '已启用' : '已停用') + '</b></div>' +
-        '<div class="kv"><span>当前路由</span><b>' + (route === 'local' ? '本机大脑优先' : '云端大脑优先') + '</b></div>' +
+        '<div class="kv"><span>当前路由</span><b>' + (route === 'local' ? '本机优先' : '主脑优先') + '</b></div>' +
         '<div class="kv"><span>Brain 全局对话模型</span><b class="mono" style="font-size:11px">' + esc(models.chat || model) + '</b></div>' +
         '<div class="kv"><span>视觉 / 生图</span><b class="mono" style="font-size:11px">' + esc(models.vision || '未配置') + ' / ' + esc(models.image || '未配置') + '</b></div>' +
         '<div class="kv"><span>Bridge 状态</span><b>' + esc(fwd.online ? '在线' : '未连接') + '</b></div>' +

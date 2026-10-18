@@ -897,6 +897,15 @@ def _query_param(path, key):
         return ""
 
 
+def _running_creator_jobs():
+    """正在跑的创作作业 id。切运行模式前要看一眼：单次任务不许中途换 Provider。"""
+    try:
+        import creator_jobs
+        return sorted(str(k) for k in (getattr(creator_jobs, "STOPS", {}) or {}))
+    except Exception:
+        return []
+
+
 def _stats_today():
     """今天的用量汇总（App 设置页显示"今天聊了多少轮、花了多少 token"）。"""
     today = time.strftime("%Y-%m-%d")
@@ -2990,6 +2999,41 @@ def start_remote_api(brain):
                     except Exception as e:
                         errlog.log_exc("api/voice/preview", e)
                         self._json(200, {"ok": False, "err": str(e)[:80]})
+                elif path == "/api/run-mode":
+                    # 在聊天框里切运行模式（云端 / 本地 / 混合）。
+                    # 顺序是"先证明能用，再写配置"：服务在不在、模型在不在、
+                    # 能不能真加载出字 —— 任何一步失败都原样退回并说明原因，
+                    # 绝不出现"界面已切换、下一条还在打旧 Provider"。
+                    try:
+                        import run_modes
+                        res = run_modes.switch(API_CFG, body.get("mode"),
+                                               body.get("model"),
+                                               active_jobs=_running_creator_jobs())
+                        if not res.get("ok"):
+                            self._json(200, res)
+                            return
+                        if not res.get("unchanged"):
+                            nc = res.pop("_cfg", None)
+                            if nc is not None:
+                                model_hub.save(nc)
+                                # 就地更新：不留"整份配置是空的"那一瞬
+                                for _k in [k for k in list(api_config.keys())
+                                           if k not in nc]:
+                                    api_config.pop(_k, None)
+                                api_config.update(nc)
+                                try:
+                                    _refresh_api_cfg(api_config)
+                                except Exception:
+                                    pass
+                                print("[模式] 运行模式 → " + str(res.get("mode_label")),
+                                      flush=True)
+                        else:
+                            res.pop("_cfg", None)
+                        res["current"] = model_hub.public_current(api_config)
+                        self._json(200, res)
+                    except Exception as e:
+                        errlog.log_exc("api/run-mode", e)
+                        self._json(200, {"ok": False, "err": "切换失败：%s" % str(e)[:120]})
                 elif path == "/api/models/apply":
                     # 写盘之后要 clear + update 内存那份（Brain 拿的是启动时
                     # load_config() 的字典），不然换了模型她还用旧的
@@ -3016,6 +3060,18 @@ def start_remote_api(brain):
                             except Exception:
                                 pass
                             print("[模型] " + "；".join(changed), flush=True)
+                            # 设置页把模式从本地/混合改回云端时，同样要释放显存；
+                            # 否则"退出本地"只改了配置，模型还占着内存。
+                            try:
+                                import run_modes as _rm
+                                if (str(pre_cfg.get("model_mode") or "cloud") in ("local", "hybrid")
+                                        and str(new_cfg.get("model_mode") or "cloud") == "cloud"):
+                                    _freed = _rm.unload_idle(pre_cfg)
+                                    if _freed["unloaded"]:
+                                        changed.append("已释放本地模型："
+                                                       + "、".join(_freed["unloaded"]))
+                            except Exception:
+                                pass
                             self._json(200, {
                                 "ok": True, "changed": changed,
                                 "current": model_hub.public_current(api_config)})
@@ -3658,6 +3714,20 @@ def start_remote_api(brain):
                     errlog.log_exc("api/models/saved", e)
                     self._json(200, {"ok": False, "err": str(e)[:120],
                                      "models": [], "current": {}})
+            elif path == "/api/run-mode":
+                # 运行模式状态：只报事实（配置里是什么 + 本机 Ollama 实际如何）。
+                # probe=1 才真的去连 Ollama —— 聊天页每次刷新都探一遍会慢几秒。
+                try:
+                    import run_modes as _rm
+                    _probe = str(_query_param(self.path, "probe") or "").lower() in (
+                        "1", "true", "yes")
+                    _st = _rm.status(API_CFG, probe=_probe)
+                    _st["current"] = model_hub.public_current(API_CFG)
+                    _st["running_jobs"] = _running_creator_jobs()
+                    self._json(200, _st)
+                except Exception as e:
+                    errlog.log_exc("api/run-mode", e)
+                    self._json(200, {"ok": False, "err": str(e)[:120]})
             elif path == "/api/logs":
                 # App「错误日志」页：src=server(云上)/client(手机)，fmt=text 是要导出
                 try:

@@ -40,6 +40,22 @@ const fixtureDraft = {id:'draft_p6_session',kind:'plugin',summary:'会话隔离�
 let uploadFailure = false;
 let savedClipboard;
 let gpu;
+// 运行模式夹具：GET/POST /api/run-mode。默认云端，切到本地成功后要能反映到界面。
+let runMode = 'cloud';
+let runModeFail = false;
+function runModeStatus() {
+  const label = runMode === 'local' ? '本地' : runMode === 'hybrid' ? '混合' : '云端';
+  return {
+    ok: true, mode: runMode, mode_label: label,
+    model: runMode === 'local' ? 'qwen3:8b' : 'mimo-v2.6-flash',
+    provider: 'xiaomi',
+    cloud: { model: 'mimo-v2.6-flash', provider: 'xiaomi', ready: true },
+    local: { base: 'http://127.0.0.1:11434', model: 'qwen3:8b', num_ctx: 16384,
+      reachable: true, installed: ['qwen3:8b', 'qwen2.5:14b'], model_installed: true, detail: '' },
+    hybrid: { delegation: true }, busy_jobs: [], loaded: [],
+    running_jobs: [], current: { model: 'mimo-v2.6-flash', provider: 'xiaomi' },
+  };
+}
 const answer = '# 执行结果\n\n这是一段用于检查长文本排版的回复。' + '内容应有舒适的行高和留白。'.repeat(18) +
   '\n\n## 下一步\n\n- 保留本地工具\n- 检查聊天布局\n\n> 每一步都有清晰的结果。\n\n[说明链接](https://example.com)\n\n```js\nconst vigil = "ready";\nconsole.log(vigil);\n```';
 function result(name, detail) { results.push({ name, status:'passed', ...(detail ? { detail } : {}) }); console.log('PASS ' + name); }
@@ -83,6 +99,20 @@ function fixtureApi(method, raw, body, base) {
   if (p === '/api/creator/drafts') json={ok:true,drafts:[]};
   if (p === '/api/history/clear') history = [];
   if (p === '/api/models') json = { current:{ model:'mimo-v2.6-flash', api_key_set:true }, providers:[], models:[] };
+  if (p === '/api/run-mode' && method === 'GET') json = runModeStatus();
+  if (p === '/api/run-mode' && method === 'POST') {
+    if (runModeFail) {
+      json = { ok:false, reason:'oom', err:'本地模型显存/内存不足（HTTP 500）' };
+    } else {
+      runMode = body && body.mode ? body.mode : 'cloud';
+      // 真实接口是"扁平字段 + status 全量快照"，照这个形状回，界面才不能只靠二次 GET 才对
+      const st = runModeStatus();
+      json = { ok:true, mode:st.mode, mode_label:st.mode_label, model:st.model,
+        status:st, current:{ model:st.model, provider:'xiaomi' },
+        changed:['模型已更新'], warnings:[], freed:{unloaded:[],kept:[],failed:[]} };
+    }
+  }
+  if (p === '/api/models/saved') json = { ok:true, models:[], current:{ model:'mimo-v2.6-flash', provider:'xiaomi', name:'mimo-v2.6-flash' } };
   if (p === '/api/attachments/capabilities') json = {video:false,video_frames:true};
   if (p === '/api/trace') json = { items:[] };
   return { ok:true, json };
@@ -434,6 +464,11 @@ async function main() {
   await shot('settings-grid');
   await ev(`document.querySelector('.settings-tile').click()`);
   await until(`API.state.page==='ability' && document.querySelector('.settings-detail-back')`);
+  // 设置详情页里点左栏换分区会重写 topbar：返回设置必须还在（否则走进死胡同）
+  await ev(`document.querySelector('#panel .li[data-k]:not(.on)').click()`);
+  await wait(150);
+  assert.equal(await ev(`!!document.querySelector('.settings-detail-back')`),true);
+  result('settings detail keeps its 返回设置 entry after switching sections');
   await ev(`document.querySelector('.settings-detail-back').click()`);
   await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
   await ev(`document.querySelector('#settingsBackChat').click()`);
@@ -482,6 +517,59 @@ async function main() {
   await shot('after-dark-chat');
   await ev(`document.querySelector('#localBtn').click()`); await until(`!document.querySelector('#localPop').hidden && document.querySelector('#lpClose')`);
   await ev(`document.querySelector('#lpClose').click()`); result('existing safety control opens and closes');
+  // ── 加号菜单与运行模式：在当前会话里切，不跳页、不新建会话、不丢历史与滚动 ──
+  const modeBefore = await ev(`(()=>({page:API.state.page, cid:API.state.chatConversationId,
+    scroll:document.querySelector('#msgs').scrollTop,
+    len:document.querySelector('#msgs').textContent.length,
+    sessions:document.querySelectorAll('#sessList .session-row').length}))()`);
+  await ev(`document.querySelector('#clipBtn').click()`);
+  await until(`!document.querySelector('#plusPop').hidden && document.querySelectorAll('#plusPop [data-mode]').length===3`);
+  assert.equal(await ev(`document.querySelector('#plusPop [data-mode="cloud"]').classList.contains('on')`),true);
+  assert.equal(await ev(`!!document.querySelector('#plusPop [data-mode="local"]') && !!document.querySelector('#plusPop [data-mode="hybrid"]') && !!document.querySelector('#plusPop [data-cr="plugin"]')`),true);
+  // 客户端不再出现"云端"这种内部术语
+  assert.equal(await ev(`document.querySelector('#plusPop').textContent.includes('云端')`),false);
+  // 弹层必须落在输入框上方且不出窗口（曾经从输入框往下溢，直接被窗口裁掉）
+  const popBox = await ev(`(()=>{const p=document.querySelector('#plusPop').getBoundingClientRect();
+    const c=document.querySelector('.composer').getBoundingClientRect();
+    return {top:p.top, bottom:p.bottom, h:p.height, comTop:c.top, vh:innerHeight,
+      css:document.querySelector('#plusPop').getAttribute('style')||''}})()`);
+  assert.ok(popBox.bottom <= popBox.comTop + 2, 'menu should open above the composer ' + JSON.stringify(popBox));
+  assert.ok(popBox.top >= 0 && popBox.bottom <= popBox.vh + 1, 'menu should stay inside the window ' + JSON.stringify(popBox));
+  await shot('plus-menu-cloud');
+  await ev(`document.querySelector('#plusPop [data-mode="local"]').click()`);
+  await until(`document.querySelector('#modeChip').dataset.mode==='local'`);
+  assert.equal(await ev(`document.querySelector('#modeChip').textContent.trim()`),'qwen3:8b');
+  assert.ok(await ev(`document.querySelector('#modelBtn').textContent.includes('qwen3:8b')`));
+  const modeAfter = await ev(`(()=>({page:API.state.page, cid:API.state.chatConversationId,
+    scroll:document.querySelector('#msgs').scrollTop,
+    len:document.querySelector('#msgs').textContent.length,
+    sessions:document.querySelectorAll('#sessList .session-row').length}))()`);
+  assert.equal(modeAfter.page,'chat');
+  assert.equal(modeAfter.cid,modeBefore.cid);
+  assert.equal(modeAfter.len,modeBefore.len);
+  assert.equal(modeAfter.sessions,modeBefore.sessions);
+  assert.equal(modeAfter.scroll,modeBefore.scroll);
+  await shot('plus-menu-local');
+  result('run mode switch in composer keeps page, conversation, history and scroll',{modeBefore,modeAfter});
+  // 失败路径：服务端拒绝时必须保持原模式并把原因写在菜单里
+  runModeFail = true;
+  // 菜单可能还开着：只在关着的时候点开，避免点到"收起"
+  await ev(`(()=>{const p=document.querySelector('#plusPop');if(p.hidden)document.querySelector('#modeChip').click()})()`);
+  await until(`!document.querySelector('#plusPop').hidden`);
+  await ev(`document.querySelector('#plusPop [data-mode="hybrid"]').click()`);
+  await until(`(document.querySelector('#plusMsg')||{}).textContent`);
+  assert.equal(await ev(`document.querySelector('#modeChip').dataset.mode`),'local');
+  assert.ok(await ev(`document.querySelector('#plusMsg').textContent.includes('显存')`));
+  assert.equal(await ev(`document.querySelector('#plusPop [data-mode="local"]').classList.contains('on')`),true);
+  runModeFail = false;
+  await shot('plus-menu-error');
+  result('failed mode switch keeps the old mode and shows the real reason');
+  // 切回默认模型
+  await ev(`document.querySelector('#plusPop [data-mode="cloud"]').click()`);
+  await until(`document.querySelector('#modeChip').dataset.mode==='cloud'`);
+  assert.equal(await ev(`document.querySelector('#modeChip').textContent.trim()`),'mimo-v2.6-flash');
+  await ev(`document.querySelector('#plusClose').click()`);
+  result('mode returns to cloud from the same conversation');
   // Load history through the existing refresh entry and select a real session row.
   const conversationSeed=await ev(`API.state.chatConversationId`);
   assert.ok(conversationSeed);
@@ -574,7 +662,7 @@ async function main() {
   await shot('after-error');
   history=[]; failure=false; await chat();
   const pngBase64=nativeImage.createFromBitmap(Buffer.from([100,150,200,255]),{width:1,height:1}).toPNG().toString('base64');
-  await ev(`window.__fixtureFileInput=null;const original=document.createElement.bind(document);window.__originalCreate=original;document.createElement=function(tag){const n=original(tag);if(tag==='input'){n.click=()=>{window.__fixtureFileInput=n}}return n};document.querySelector('#clipBtn').click();document.createElement=window.__originalCreate;const file=new File([Uint8Array.from(atob('${pngBase64}'),c=>c.charCodeAt(0))],'fixture.png',{type:'image/png'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange();`);
+  await ev(`window.__fixtureFileInput=null;const original=document.createElement.bind(document);window.__originalCreate=original;document.createElement=function(tag){const n=original(tag);if(tag==='input'){n.click=()=>{window.__fixtureFileInput=n}}return n};document.querySelector('#clipBtn').click();document.querySelector('#plusPop [data-plus="file"]').click();document.createElement=window.__originalCreate;const file=new File([Uint8Array.from(atob('${pngBase64}'),c=>c.charCodeAt(0))],'fixture.png',{type:'image/png'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange();`);
   await until(`!document.querySelector('#attach').hidden`);
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),false);
   await ev(`document.querySelector('#atClr').click()`); assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
@@ -588,7 +676,7 @@ async function main() {
   assert.match(imageSent.request_id, /^req_[a-z0-9-]+$/);
   assert.deepEqual({text:imageSent.text,img:imageSent.img,src:imageSent.src},{text:'',img:pngBase64,src:'pc'});
   result('image-only send through original stream IPC');
-  await ev(`(()=>{window.confirm=()=>{throw new Error('native confirm forbidden')};window.__fixtureFileInput=null;const original=document.createElement.bind(document);window.__originalCreate=original;document.createElement=function(tag){const n=original(tag);if(tag==='input'){n.click=()=>{window.__fixtureFileInput=n}}return n};document.querySelector('#clipBtn').click();document.createElement=window.__originalCreate;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange()})()`);
+  await ev(`(()=>{window.confirm=()=>{throw new Error('native confirm forbidden')};window.__fixtureFileInput=null;const original=document.createElement.bind(document);window.__originalCreate=original;document.createElement=function(tag){const n=original(tag);if(tag==='input'){n.click=()=>{window.__fixtureFileInput=n}}return n};document.querySelector('#clipBtn').click();document.querySelector('#plusPop [data-plus="file"]').click();document.createElement=window.__originalCreate;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange()})()`);
   await until(`document.querySelector('[data-video-choice="frames"]') && document.querySelector('[data-video-choice="original"]')`);
   assert.ok(await ev(`document.querySelector('#attach').textContent.includes('当前模型不支持直接理解完整视频')`));
   await ev(`document.querySelector('[data-video-choice="original"]').click()`);
@@ -596,7 +684,7 @@ async function main() {
   await ev(`document.querySelector('#atClr').click()`);
   result('video limits show inline keyframe/original choices without native confirm; cancel removes attachment');
   uploadFailure=true;
-  await ev(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();document.createElement=original;const file=new File(['fixture'],'failure.pdf',{type:'application/pdf'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange()})()`);
+  await ev(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();document.querySelector('#plusPop [data-plus="file"]').click();document.createElement=original;const file=new File(['fixture'],'failure.pdf',{type:'application/pdf'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange()})()`);
   await until(`!document.querySelector('#sendBtn').disabled`);
   await ev(`document.querySelector('#sendBtn').click()`);
   await until(`document.querySelector('.attachment-status.failed')`);

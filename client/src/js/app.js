@@ -109,12 +109,7 @@
         '<div class="mono" style="font-size:11.5px;color:var(--err);margin-top:6px">' + esc(e.message) + '</div></div></div>';
     }
     if (state.settingsDetail && page.id !== 'chat' && page.id !== 'settings' && topbarEl) {
-      const back = document.createElement('button');
-      back.className = 'btn oline settings-detail-back';
-      back.type = 'button';
-      back.textContent = '返回设置';
-      back.addEventListener('click', () => { state.settingsDetail = false; go('settings'); });
-      topbarEl.appendChild(back);
+      ensureSettingsBack();
     }
     // § 章节编号：页号 = 导航序号（01–08）。子页换名不动编号，
     // 所以渲染完再补；子页只改 h1 文本，编号插在最前不受影响。
@@ -122,6 +117,39 @@
       topbarEl.insertAdjacentHTML('afterbegin',
         '<span class="tnum mono">§ ' + String(PAGES.indexOf(page) + 1).padStart(2, '0') + '</span>');
     }
+  }
+
+  // ── 「返回设置」必须一直在 ──────────────────────────────────
+  // 设置子页的功能分区会 `topbar.innerHTML = ...` 重写整条顶栏，之前把按钮
+  // 追加在 topbar 里，用户一点左栏换分区按钮就没了 —— 而 .settings-detail
+  // 又隐藏了左侧导航，等于走进死胡同。现在按钮由 go() 之外的一个观察器守着，
+  // 顶栏被谁重写都会补回来。
+  let backGuardBusy = false;
+  function ensureSettingsBack() {
+    if (!topbarEl) return;
+    const want = !!state.settingsDetail
+      && state.page !== 'chat' && state.page !== 'settings';
+    const old = topbarEl.querySelector('.settings-detail-back');
+    if (!want) { if (old) old.remove(); return; }
+    if (old) return;
+    const back = document.createElement('button');
+    back.className = 'btn oline settings-detail-back';
+    back.type = 'button';
+    back.textContent = '返回设置';
+    back.addEventListener('click', () => { state.settingsDetail = false; go('settings'); });
+    topbarEl.appendChild(back);
+  }
+  function watchSettingsBack() {
+    if (!topbarEl || typeof MutationObserver !== 'function') return;
+    new MutationObserver(() => {
+      if (backGuardBusy) return;
+      backGuardBusy = true;
+      // 让当前这次重写先完成，再决定要不要补按钮
+      Promise.resolve().then(() => {
+        backGuardBusy = false;
+        ensureSettingsBack();
+      });
+    }).observe(topbarEl, { childList: true });
   }
 
   // ── 主题 ──────────────────────────────────────────────────
@@ -264,6 +292,7 @@
     };
 
     buildNav();
+    watchSettingsBack();
     perf('nav-built');
     if (!settingsWindow && window.VigilAgentCenter) {
       window.VigilAgentCenter.start();

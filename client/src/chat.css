@@ -270,6 +270,67 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .modelpop .mqfoot { display:flex; align-items:center; gap:8px; margin:0; padding:7px 12px 9px; border-top:1px solid var(--chat-line); flex:none; }
 .chatwrap .modelpop .mqfoot .btn { padding:4px 6px; font-size:11.5px; }
 .chatwrap .modelpop .mqfoot .muted { flex:1; min-width:0; font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* ═══ 运行模式标记（云端 / 本地 / 混合）════════════════════════════ */
+.chatwrap .mode-chip { gap:7px; }
+.chatwrap .mode-chip .mode-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--chat-muted); }
+.chatwrap .mode-chip[data-mode="cloud"] .mode-dot { background:var(--ok); }
+.chatwrap .mode-chip[data-mode="local"] .mode-dot { background:var(--chat-accent); }
+.chatwrap .mode-chip[data-mode="hybrid"] .mode-dot { background:var(--warn); }
+.chatwrap .mode-chip[data-mode="local"] { color:var(--chat-accent); }
+.chatwrap .mode-chip[data-mode="hybrid"] { color:var(--warn); }
+.chatwrap .mode-chip .mode-sep { color:var(--chat-line); }
+.chatwrap .mode-chip [data-mode-model] { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* ═══ 加号菜单：附件 / 模型 / 创作模式 ═════════════════════════════ */
+.chatwrap .pluspop {
+  left:0; right:auto; bottom:calc(100% + 8px); transform:none;
+  width:min(380px,calc(100% - 24px)); max-height:min(520px,66vh);
+  padding:0; border:1px solid var(--chat-line); border-radius:16px;
+  background:var(--chat-bg); box-shadow:0 16px 48px rgba(0,0,0,.22);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+.chatwrap .pluspop[hidden] { display:none; }
+.chatwrap .pluspop .lph {
+  flex:none; display:flex; align-items:center; justify-content:space-between;
+  padding:10px 12px; border-bottom:1px solid var(--chat-line);
+  font-size:14px; font-weight:600;
+}
+.chatwrap .plusbody { overflow-y:auto; min-height:0; padding:4px 8px 8px; }
+.chatwrap .plus-sec {
+  display:flex; align-items:center; gap:8px; padding:10px 6px 4px;
+  color:var(--chat-muted); font-size:11.5px; letter-spacing:.02em;
+}
+.chatwrap .plus-hint { color:var(--chat-muted); opacity:.8; font-size:10.5px; font-weight:400; }
+.chatwrap .plus-row {
+  width:100%; display:flex; align-items:center; gap:10px; padding:8px;
+  border:0; border-radius:9px; background:transparent; color:var(--chat-text);
+  text-align:left; cursor:pointer; font:inherit;
+}
+.chatwrap .plus-row:hover { background:var(--chat-hover); }
+.chatwrap .plus-row.on { background:var(--chat-selected); }
+.chatwrap .plus-row[disabled] { opacity:.5; cursor:progress; }
+.chatwrap .plus-rail { flex:none; display:grid; place-items:center; width:16px; height:16px; border-radius:50%; border:1px solid var(--chat-line); }
+.chatwrap .plus-row.on .plus-rail { border-color:var(--chat-accent); background:var(--chat-accent); }
+.chatwrap .plus-ic { border:0; width:20px; height:20px; color:var(--chat-muted); }
+.chatwrap .plus-lb { min-width:0; flex:1; display:flex; flex-direction:column; gap:1px; }
+.chatwrap .plus-lb b { font-size:13px; font-weight:550; }
+.chatwrap .plus-lb span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--chat-muted); font-size:11px; }
+.chatwrap .plus-note { flex:none; max-width:45%; color:var(--chat-muted); font-size:10.5px; text-align:right; }
+.chatwrap .plus-check { flex:none; width:16px; color:var(--chat-accent); }
+.chatwrap .plus-sub { display:flex; align-items:center; gap:8px; padding:2px 8px 6px 34px; }
+.chatwrap .plus-sub label { flex:none; color:var(--chat-muted); font-size:11px; }
+.chatwrap .plus-sub select { flex:1; min-width:0; height:28px; font-size:12px; border-radius:8px; }
+.chatwrap .plus-seg { display:flex; gap:6px; padding:2px 6px 4px; }
+.chatwrap .plus-seg button {
+  flex:1; height:28px; border:1px solid var(--chat-line); border-radius:8px;
+  background:transparent; color:var(--chat-muted); font-size:12px; cursor:pointer;
+}
+.chatwrap .plus-seg button.on { border-color:var(--chat-accent); background:var(--chat-selected); color:var(--chat-text); font-weight:600; }
+.chatwrap .plusfoot {
+  flex:none; min-height:30px; display:flex; align-items:center;
+  padding:6px 12px 8px; border-top:1px solid var(--chat-line);
+  color:var(--chat-muted); font-size:11px;
+}
+.chatwrap .plusfoot span:empty { display:none; }
 .chatwrap .cr-review-drawer {
   position:fixed; z-index:1000; top:0; right:0; bottom:0; width:min(520px,calc(100vw - 24px));
   box-sizing:border-box; overflow-y:auto; padding:24px; background:var(--chat-bg); color:var(--chat-text);

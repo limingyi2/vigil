@@ -55,6 +55,8 @@ a = Analysis(
         # 插件按文件路径动态加载（不在静态分析图里），它们 import 的
         # 顶层模块必须手动带进包 —— localtools 只被 remote 插件用
         "localtools", "devices", "agent_runs",
+        # 运行模式切换门（Ollama 生命周期）：只在路由/作业里按需 import
+        "run_modes",
     ],
     excludes=[
         "fastembed", "onnxruntime", "onnx", "torch", "tkinter",
