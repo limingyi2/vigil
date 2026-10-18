@@ -382,8 +382,16 @@ class TestDispatcher(_Workspace, unittest.TestCase):
         final = ('{"answer":"login 未判空，None 传进 issue_token",'
                  '"evidence":[{"path":"src/auth.py","line":2,'
                  '"excerpt":"return issue_token(None)","observation":"未判空"}]}')
+        two_calls = {"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "src/auth.py"})}},
+            {"id": "c2", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "error.log"})}},
+        ]}}]}
         r, p = self._run([
-            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            two_calls,
             ProviderResponseError("Ollama 响应里没有正文也没有工具调用"),
             _Msg.say(final),
         ])
@@ -408,8 +416,16 @@ class TestDispatcher(_Workspace, unittest.TestCase):
         bad = "我觉得是个问题"            # 不是 JSON
         good = ('{"answer":"login 未判空","evidence":[{"path":"src/auth.py",'
                 '"line":2,"excerpt":"return issue_token(None)"}]}')
+        two_calls = {"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "src/auth.py"})}},
+            {"id": "c2", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "error.log"})}},
+        ]}}]}
         r, p = self._run([
-            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            two_calls,
             _Msg.say(bad),
             _Msg.say(good),                 # 第 3 次响应 = 修正轮
         ])
@@ -419,8 +435,16 @@ class TestDispatcher(_Workspace, unittest.TestCase):
 
     def test_重试仍失败(self):
         c = self.contract()
+        two_calls = {"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "src/auth.py"})}},
+            {"id": "c2", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "error.log"})}},
+        ]}}]}
         p = _ScriptedProvider([
-            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            two_calls,
             _Msg.say("还是不对"),
             _Msg.say("依然不对"),
         ])
@@ -1307,8 +1331,16 @@ class TestFixBRound1Reliability(_Workspace, unittest.TestCase):
         # 原文可解析 → json_raw_ok；修正重试 → retry_used + retry_problems
         good = ('{"answer":"login 未判空","evidence":[{"path":"src/auth.py",'
                 '"line":2,"excerpt":"return issue_token(None)"}]}')
+        two_calls = {"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "src/auth.py"})}},
+            {"id": "c2", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "error.log"})}},
+        ]}}]}
         r, p = self._run([
-            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            two_calls,
             _Msg.say("这不是 JSON"),
             _Msg.say(good),
         ])
@@ -1350,8 +1382,16 @@ class TestRound2Reliability(_Workspace, unittest.TestCase):
         final_ok = ('{"answer":"login 未判空","evidence":'
                     '[{"path":"src/auth.py","line":2,'
                     '"excerpt":"return issue_token(None)"}]}')
+        two_calls = {"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "src/auth.py"})}},
+            {"id": "c2", "type": "function",
+             "function": {"name": "read_file",
+                          "arguments": json.dumps({"path": "error.log"})}},
+        ]}}]}
         r, p = self._run([
-            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            two_calls,
             _Msg.say("这不是 JSON"),
             _Msg.say(final_ok),
         ])
@@ -1433,6 +1473,26 @@ class TestRound2Reliability(_Workspace, unittest.TestCase):
         self.assertTrue(any(
             m.get("role") == "user" and m["content"].startswith("【目标提醒】")
             for m in msgs), [m.get("content", "")[:40] for m in msgs])
+
+
+    def test_勘察不足拒绝收口_继续取证(self):
+        # Round 2-2 改动 A：只读 1 个文件就自然收口 → 门拦截并要求继续
+        # 勘察；补读第二个文件后收口成功。
+        final1 = ('{"answer":"x","evidence":[{"path":"src/auth.py","line":2,'
+                  '"excerpt":"return issue_token(None)"}]}')
+        final2 = ('{"answer":"x","evidence":[{"path":"error.log",'
+                  '"excerpt":"TypeError: NoneType has no id"}]}')
+        r, p = self._run([
+            _Msg.call("c1", "read_file", {"path": "src/auth.py"}),
+            _Msg.say(final1),
+            _Msg.call("c2", "read_file", {"path": "error.log"}),
+            _Msg.say(final2),
+        ])
+        self.assertEqual(r["status"], "succeeded", r["errors"])
+        self.assertEqual(r["explore_nudges"], 1)
+        msgs = p.payloads[1]["messages"]
+        self.assertTrue(any("证据面不足" in (m.get("content") or "")
+                            for m in msgs))
 
     def test_json_format_按kind选择(self):
         c1 = self.contract(kind="structured_extraction",

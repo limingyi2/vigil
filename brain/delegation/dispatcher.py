@@ -349,6 +349,8 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
         input_text_chars=len(contract.get("input_text") or ""),
         # 第二轮改动 C：重复调用/无效轮提前收口的观测计数
         dup_calls=0, empty_streak=0, forced_finish="",
+        # Round 2-2 改动 A：勘察充分性门的干预次数
+        explore_nudges=0,
         errors=[], retry_used=False,
     )
 
@@ -398,6 +400,11 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
     # 第二轮改动 C：重复调用检测（key 规范化后去重）与无效连续轮计数
     seen_calls = set()
     round_no = 0
+    # Round 2-2 改动 A：勘察充分性门。自然收口时读过的独立文件数太少
+    # （retest_round2a 实测：F01/F02/F05 只读 config/settings.json 就收口，
+    # 而目标值在 migrations/docs 里；通过题委派普遍读 ≥2 个文件）→
+    # 丢弃这次收口、要求继续勘察；最多干预 2 次，预算照旧封顶。
+    explore_nudges = 0
     # read_blobs：子循环**实际读到**的文件内容（read_file 全文 + file_grep
     # 命中行），validator 用它核验 evidence.excerpt，模型嘴说不算。
     read_blobs = {}
@@ -527,6 +534,26 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
             text = msg.get("content") or ""
 
             if not tcs:
+                # Round 2-2 改动 A：勘察充分性门——读过的独立文件太少就
+                # 收口，多半是浅勘察（目标值常在别的目录）。预算与干预
+                # 次数有余量时拒绝这次收口，要求继续取证。
+                distinct_files = len({
+                    e.get("path") for e in tool_events
+                    if e.get("ok") and e.get("tool") in
+                    ("read_file", "file_grep") and e.get("path")})
+                if (sandbox is not None and explore_nudges < 2
+                        and distinct_files < 2
+                        and result["model_requests"] + 2
+                        < limits["max_model_requests"]
+                        and time.monotonic() <= deadline):
+                    explore_nudges += 1
+                    result["explore_nudges"] = explore_nudges
+                    messages.append({"role": "user", "content":
+                        "（系统）你只读过 %d 个文件就打算收口，证据面不足。"
+                        "继续用工具勘察其他相关位置（如 migrations/、docs/、"
+                        "logs/、其余配置与源码文件），拿到足够证据后再输出"
+                        "最终 JSON。" % distinct_files})
+                    continue
                 final_text = text
                 break
 
@@ -621,11 +648,11 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                 result["degraded"] = True
                 break
             # Focused ReAct：每 3 轮把原始目标重插上下文（对抗长轨迹的
-            # lost-in-the-middle；目标在 15k 上下文尾部会被工具结果冲淡）。
+            # lost-in-the-middle；Round 2-2 改动 B：措辞中性化，不催收口
+            # ——retest_round2a 实测催收口措辞伴随浅勘察收口）。
             if tools and round_no % 3 == 0:
                 messages.append({"role": "user", "content":
-                                 "【目标提醒】%s…若证据已够请直接输出最终 JSON，"
-                                 "否则继续调用工具。"
+                                 "【目标提醒】%s…请继续对照目标推进。"
                                  % contract["goal"][:200]})
         else:
             # 请求轮次耗尽但模型还在要工具：同样给一次无工具收口的机会，
@@ -703,7 +730,7 @@ def run_delegation(contract, *, ollama_cfg, cancel_event=None,
                     # 按 kind 传 JSON Schema——工具轮自然收口的 final_text
                     # 不带 format，这里是它唯一的语法约束机会）。
                     data2 = _call_model(
-                        {"messages": messages, "temperature": 0.2,
+                        {"messages": messages, "temperature": 0,
                          "max_tokens": 2048,
                          "format": _json_format(contract)},
                         deadline - time.monotonic())
