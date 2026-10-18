@@ -1485,6 +1485,9 @@
       const chip = view.querySelector('#modeChip');
       if (!chip) return;
       const st = runStatus || { mode: 'cloud', cloud: {} };
+      // 旧版主脑没有本地模型可选：这个标记没有信息量，藏起来，别占位显示 "—"
+      if (st.unsupported) { chip.hidden = true; return; }
+      chip.hidden = false;
       const mode = st.mode || 'cloud';
       const local = st.local || {};
       chip.dataset.mode = mode;
@@ -1500,6 +1503,14 @@
     }
     async function loadRunMode(probe) {
       const r = pick(await get('/api/run-mode' + (probe ? '?probe=1' : '')));
+      if (r && r._status === 404 && !r.ok) {
+        // 主脑是旧版：没有本地模型这回事。别把入口画成"能点但一定失败"，
+        // 保留聊天的默认模型，模型名交给快速切换按钮显示。
+        runStatus = { mode: 'cloud', unsupported: true, cloud: {}, local: {} };
+        drawModeChip();
+        if (plusPop && !plusPop.hidden && !modeSwitching) drawPlusPop();
+        return;
+      }
       if (!r || !r.ok) return;
       runStatus = r;
       drawModeChip();
@@ -1530,6 +1541,24 @@
         : local.reachable
           ? 'Ollama 就绪 · ' + installed.length + ' 个模型'
           : '切换时检查';
+      // 旧版主脑没有 /api/run-mode：只留一句说明，不摆一排点了必然失败的选项
+      const modeSection = st.unsupported
+        ? '<div class="plus-sec">模型<span class="plus-hint">这台主脑还不支持本地模型</span></div>' +
+          '<div class="plus-row muted-row">' +
+          '<span class="plus-rail"></span>' +
+          '<span class="plus-lb"><b>默认模型</b><span>' + esc((st.cloud || {}).model || '由主脑配置决定') + '</span></span>' +
+          '<span class="plus-note">主脑版本较旧</span></div>'
+        : '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
+          modeRow('cloud', '默认模型', (st.cloud || {}).model,
+            (st.cloud || {}).ready ? '随时可用' : '缺密钥或模型') +
+          modeRow('local', '本地模型', local.model, localNote) +
+          modeRow('hybrid', '混合', (st.cloud || {}).model, '默认作答 · 本地辅助') +
+          (cur === 'local' && installed.length
+            ? '<div class="plus-sub"><label for="plusLocalModel">本地模型</label>' +
+              '<select class="input" id="plusLocalModel">' +
+              installed.map((n) => '<option' + (n === local.model ? ' selected' : '') + '>' + esc(n) + '</option>').join('') +
+              '</select></div>'
+            : '');
       plusPop.innerHTML =
         '<div class="lph"><span>添加与模型</span>' +
         '<button class="ibtn" id="plusClose" type="button" aria-label="收起菜单" title="收起">' + icon('x', 'sm') + '</button></div>' +
@@ -1540,17 +1569,7 @@
         '<span class="plus-lb"><b>图片、视频或文件</b><span>单个不超过 256MB</span></span>' +
         '<span class="plus-note">' + (attachment ? '已附加 1 个' : '') + '</span>' +
         '</button>' +
-        '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
-        modeRow('cloud', '默认模型', (st.cloud || {}).model,
-          (st.cloud || {}).ready ? '随时可用' : '缺密钥或模型') +
-        modeRow('local', '本地模型', local.model, localNote) +
-        modeRow('hybrid', '混合', (st.cloud || {}).model, '默认作答 · 本地辅助') +
-        (cur === 'local' && installed.length
-          ? '<div class="plus-sub"><label for="plusLocalModel">本地模型</label>' +
-            '<select class="input" id="plusLocalModel">' +
-            installed.map((n) => '<option' + (n === local.model ? ' selected' : '') + '>' + esc(n) + '</option>').join('') +
-            '</select></div>'
-          : '') +
+        modeSection +
         '<div class="plus-sec">创作模式<span class="plus-hint">与模型选择互不影响</span></div>' +
         '<div class="plus-seg">' +
         ['off', 'plugin', 'skill'].map((k) =>
@@ -1629,6 +1648,10 @@
     /** 切模型：失败就保持原样并说明原因，绝不"显示已切换"。 */
     async function setRunMode(mode, model) {
       if (modeSwitching) return;
+      if (runStatus && runStatus.unsupported) {
+        plusSay('这台主脑是旧版，没有本地模型能力：先在设置里更新主脑', true);
+        return;
+      }
       if (busy) { plusSay('正在生成回复：等这一轮结束再切模型', true); return; }
       const already = runStatus && runStatus.mode === mode
         && (!model || model === (runStatus.local || {}).model);
@@ -4521,14 +4544,25 @@
           const sw = pick(await mpost('/api/run-mode', {
             mode: wantMode, model: (payload.ollama || {}).model || '',
           }));
-          if (!sw.ok) {
+          if (sw.ok) {
+            cur.model_mode = wantMode;
+            delete payload.model_mode;      // 已经生效，不再重复提交
+            if (sw.warnings && sw.warnings.length) mRes.textContent = sw.warnings.join('；');
+          } else if (sw._status === 404) {
+            // 旧版主脑没有切换门：本地/混合在那边根本不存在，不能假装保存成功；
+            // 回默认则按老接口照常保存 —— 缺一个接口不该把人挡在门外。
+            delete payload.model_mode;
+            if (wantMode !== 'cloud') {
+              mRes.textContent = '没保存成：这台主脑还没有本地模型能力（版本较旧），更新主脑后再切';
+              toast('主脑不支持本地模型');
+              return;
+            }
+            mRes.textContent = '主脑版本较旧：已按默认模型保存';
+          } else {
             mRes.textContent = '没保存成：' + (sw.err || sw._err || '运行模式切换失败');
             toast('运行模式没切成：' + (sw.reason || ''));
             return;
           }
-          cur.model_mode = wantMode;
-          delete payload.model_mode;      // 已经生效，不再重复提交
-          if (sw.warnings && sw.warnings.length) mRes.textContent = sw.warnings.join('；');
         }
         const rr = pick(await mpost('/api/models/apply', payload));
         // 把服务端认账的改动原样亮出来（"服务商 → 小米 MiMo；已换上小米的密钥"），

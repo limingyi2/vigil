@@ -307,6 +307,8 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 }
 .chatwrap .plus-row:hover { background:var(--chat-hover); }
 .chatwrap .plus-row.on { background:var(--chat-selected); }
+.chatwrap .plus-row.muted-row { cursor:default; opacity:.8; }
+.chatwrap .plus-row.muted-row:hover { background:transparent; }
 .chatwrap .plus-row[disabled] { opacity:.5; cursor:progress; }
 .chatwrap .plus-rail { flex:none; display:grid; place-items:center; width:16px; height:16px; border-radius:50%; border:1px solid var(--chat-line); }
 .chatwrap .plus-row.on .plus-rail { border-color:var(--chat-accent); background:var(--chat-accent); }

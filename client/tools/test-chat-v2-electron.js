@@ -43,6 +43,7 @@ let gpu;
 // 运行模式夹具：GET/POST /api/run-mode。默认云端，切到本地成功后要能反映到界面。
 let runMode = 'cloud';
 let runModeFail = false;
+let runModeUnsupported = false;   // 旧版主脑：没有 /api/run-mode
 function runModeStatus() {
   const label = runMode === 'local' ? '本地' : runMode === 'hybrid' ? '混合' : '云端';
   return {
@@ -99,6 +100,7 @@ function fixtureApi(method, raw, body, base) {
   if (p === '/api/creator/drafts') json={ok:true,drafts:[]};
   if (p === '/api/history/clear') history = [];
   if (p === '/api/models') json = { current:{ model:'mimo-v2.6-flash', api_key_set:true }, providers:[], models:[] };
+  if (p === '/api/run-mode' && runModeUnsupported) return { ok:false, status:404, err:'no such api /api/run-mode' };
   if (p === '/api/run-mode' && method === 'GET') json = runModeStatus();
   if (p === '/api/run-mode' && method === 'POST') {
     if (runModeFail) {
@@ -570,6 +572,17 @@ async function main() {
   assert.equal(await ev(`document.querySelector('#modeChip').textContent.trim()`),'mimo-v2.6-flash');
   await ev(`document.querySelector('#plusClose').click()`);
   result('mode returns to cloud from the same conversation');
+  // 旧版主脑（没有 /api/run-mode）：菜单不摆必然失败的选项，只说明情况
+  runModeUnsupported = true;
+  await ev(`document.querySelector('#clipBtn').click()`);
+  await until(`!document.querySelector('#plusPop').hidden`);
+  await until(`document.querySelectorAll('#plusPop [data-mode]').length===0 &&
+    document.querySelector('#plusPop').textContent.includes('不支持本地模型')`);
+  assert.equal(await ev(`!!document.querySelector('#plusPop [data-plus="file"]')`),true);
+  assert.equal(await ev(`!!document.querySelector('#plusPop [data-cr="plugin"]')`),true);
+  await ev(`document.querySelector('#plusClose').click()`);
+  runModeUnsupported = false;
+  result('old brain without run-mode hides the local model choices instead of failing');
   // Load history through the existing refresh entry and select a real session row.
   const conversationSeed=await ev(`API.state.chatConversationId`);
   assert.ok(conversationSeed);
