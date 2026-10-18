@@ -100,6 +100,14 @@ function fixtureApi(method, raw, body, base) {
   if (p === '/api/creator/drafts') json={ok:true,drafts:[]};
   if (p === '/api/history/clear') history = [];
   if (p === '/api/models') json = { current:{ model:'mimo-v2.6-flash', api_key_set:true }, providers:[], models:[] };
+  // 模型分区读的是 /api/models/list（真 Brain 的实现）；夹具以前只给了 /api/models，
+  // 页面会落到"读不到模型配置"的错误分支，于是永远看不到 #mProv。
+  if (p === '/api/models/list') json = { ok:true,
+    current:{ model:'mimo-v2.6-flash', provider:'xiaomi', api_base:'https://api.xiaomi.example/v1',
+      api_key_set:true, model_mode:'hybrid', ollama:{ reachable:true, models:['qwen3:8b'] }, delegation:{ enabled:true } },
+    providers:[{ key:'xiaomi', name:'小米', base:'https://api.xiaomi.example/v1' },
+      { key:'siliconflow', name:'硅基流动', base:'https://api.siliconflow.cn/v1' }],
+    groups:{ xiaomi:[{ id:'mimo-v2.6-flash' }] }, source:'fixture', count:1, err:'' };
   if (p === '/api/run-mode' && runModeUnsupported) return { ok:false, status:404, err:'no such api /api/run-mode' };
   if (p === '/api/run-mode' && method === 'GET') json = runModeStatus();
   if (p === '/api/run-mode' && method === 'POST') {
@@ -473,6 +481,30 @@ async function main() {
   result('settings detail keeps its 返回设置 entry after switching sections');
   await ev(`document.querySelector('.settings-detail-back').click()`);
   await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
+
+  // P8.1：客户端只连本机 Brain —— 设置里不能还有"连接模式 / 远程地址 / token"
+  // 这些入口，也不能还有"云端同步"这一页。链接口调用链一起删，不是藏按钮。
+  await ev(`[...document.querySelectorAll('.settings-tile')].find(b=>/本地大脑/.test(b.textContent)).click()`);
+  await until(`API.state.page==='system' && !!document.querySelector('#cRetry')`);
+  assert.equal(await ev(`!!document.querySelector('#sMode')||!!document.querySelector('#sBase')||!!document.querySelector('#sToken')`),false,
+    'remote brain fields must be gone');
+  // 分区切换在功能组的横排副导航里（renderSettings 写进 fakePanel，被宿主搬到 #cfgSubnav）
+  assert.equal(await ev(`[...document.querySelectorAll('#panel .li, .cfg-subnav .li')].some(x=>/同步/.test(x.textContent))`),false,
+    'cloud sync section must be gone');
+  assert.deepEqual(await ev(`[...document.querySelectorAll('.cfg-subnav .li')].map(x=>x.dataset.k)`),
+    ['conn','model','wechat','danger','about'],'settings must expose exactly the local-brain sections');
+  assert.ok(await ev(`!!document.querySelector('#cRestart')`),'local brain retry must be reachable');
+  await shot('settings-local-brain');
+  result('settings expose only the bundled brain (no mode, address, token or sync)');
+
+  await ev(`document.querySelector('.cfg-subnav .li[data-k="model"]').click()`);
+  await until(`!!document.querySelector('#mProv')`);
+  assert.equal(await ev(`!!document.querySelector('#mSrc')`),false,'model page must have one source');
+  result('model settings have a single local source');
+  assert.equal(requests.filter((r)=>r.base === 'cloud').length,0,'no request may target a cloud brain');
+
+  await ev(`document.querySelector('.settings-detail-back').click()`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
   await ev(`document.querySelector('#settingsBackChat').click()`);
   await until(`API.state.page==='chat' && !document.querySelector('#hero').hidden`);
   await ev(`document.documentElement.dataset.theme='dark'`);
@@ -730,7 +762,8 @@ async function main() {
   result('history failure is explicit and empty active conversation remains a blank chat');
   await ev(`document.querySelector('#gnav [data-page="persona"]').click()`);
   await until(`document.querySelectorAll('.persona-view .pcard').length===2`);
-  assert.ok(requests.some(r=>r.path==='/api/persona'&&r.base==='cloud'));
+  // P8.1：人设也只从本机 Brain 读 —— 请求不再带任何 base
+  assert.ok(requests.some(r=>r.path==='/api/persona' && !r.base),'persona must be read from the bundled brain');
   assert.equal(await ev(`getComputedStyle(document.querySelector('.pgrid')).display`),'flex');
   assert.equal(await ev(`getComputedStyle(document.querySelector('.pch b')).fontSize`),'16px');
   await shot('round2-persona-list');
@@ -740,8 +773,8 @@ async function main() {
   await ev(`document.querySelector('#pfSave').click()`);
   await until(`document.querySelector('#pfMsg').textContent.includes('已保存')`);
   const saved=requests.findLast(r=>r.path==='/api/persona/save');
-  assert.equal(saved.base,'cloud'); assert.equal(saved.body.key,'default'); assert.equal(saved.body.src,'wechat_group');
-  result('persona data, compact list, editor and existing cloud save IPC');
+  assert.ok(saved.base==null,'save must not carry a base'); assert.equal(saved.body.key,'default'); assert.equal(saved.body.src,'wechat_group');
+  result('persona data, compact list, editor and local save IPC');
   await ev(`document.querySelector('#themeBtn').click();document.querySelector('#pfBack').click()`);
   await until(`document.querySelector('.persona-view .pcard')`);
   await shot('round2-persona-light');

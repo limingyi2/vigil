@@ -641,10 +641,9 @@
       e.stopPropagation();
       closePop();
       if (global.vigil && global.vigil.settings) {
-        global.vigil.settings.open({ section: 'model', source: 'local' });
+        global.vigil.settings.open({ section: 'model' });
       } else {
         state.settingsSub = 'model';
-        state.mSrc = 'local';
         ctx.navigate && ctx.navigate('system');
       }
     });
@@ -1485,7 +1484,7 @@
       const chip = view.querySelector('#modeChip');
       if (!chip) return;
       const st = runStatus || { mode: 'cloud', cloud: {} };
-      // 旧版主脑没有本地模型可选：这个标记没有信息量，藏起来，别占位显示 "—"
+      // 旧版 Brain 没有本地模型可选：这个标记没有信息量，藏起来，别占位显示 "—"
       if (st.unsupported) { chip.hidden = true; return; }
       chip.hidden = false;
       const mode = st.mode || 'cloud';
@@ -1504,7 +1503,7 @@
     async function loadRunMode(probe) {
       const r = pick(await get('/api/run-mode' + (probe ? '?probe=1' : '')));
       if (r && r._status === 404 && !r.ok) {
-        // 主脑是旧版：没有本地模型这回事。别把入口画成"能点但一定失败"，
+        // Brain 是旧版：没有本地模型这回事。别把入口画成"能点但一定失败"，
         // 保留聊天的默认模型，模型名交给快速切换按钮显示。
         runStatus = { mode: 'cloud', unsupported: true, cloud: {}, local: {} };
         drawModeChip();
@@ -1541,13 +1540,13 @@
         : local.reachable
           ? 'Ollama 就绪 · ' + installed.length + ' 个模型'
           : '切换时检查';
-      // 旧版主脑没有 /api/run-mode：只留一句说明，不摆一排点了必然失败的选项
+      // 旧版 Brain 没有 /api/run-mode：只留一句说明，不摆一排点了必然失败的选项
       const modeSection = st.unsupported
-        ? '<div class="plus-sec">模型<span class="plus-hint">这台主脑还不支持本地模型</span></div>' +
+        ? '<div class="plus-sec">模型<span class="plus-hint">这台 Brain 还不支持本地模型</span></div>' +
           '<div class="plus-row muted-row">' +
           '<span class="plus-rail"></span>' +
-          '<span class="plus-lb"><b>默认模型</b><span>' + esc((st.cloud || {}).model || '由主脑配置决定') + '</span></span>' +
-          '<span class="plus-note">主脑版本较旧</span></div>'
+          '<span class="plus-lb"><b>默认模型</b><span>' + esc((st.cloud || {}).model || '由 Brain 配置决定') + '</span></span>' +
+          '<span class="plus-note">Brain 版本较旧</span></div>'
         : '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
           modeRow('cloud', '默认模型', (st.cloud || {}).model,
             (st.cloud || {}).ready ? '随时可用' : '缺密钥或模型') +
@@ -1649,7 +1648,7 @@
     async function setRunMode(mode, model) {
       if (modeSwitching) return;
       if (runStatus && runStatus.unsupported) {
-        plusSay('这台主脑是旧版，没有本地模型能力：先在设置里更新主脑', true);
+        plusSay('这台 Brain 是旧版，没有本地模型能力：先更新 Vigil', true);
         return;
       }
       if (busy) { plusSay('正在生成回复：等这一轮结束再切模型', true); return; }
@@ -2912,25 +2911,23 @@
   // ═══ 2. 人设 ═══════════════════════════════════════════════
   // 卡片式：选一个渠道（App / 微信私聊 / 微信群），点卡片上的「应用」把她在那边换掉。
   // 本机控制台不参与 —— 控制台是干活的工具，不扮演角色（走全局默认）。
-  // 🔴 全部接口直达**云端**：微信真身在云端，以前打到本地 sidecar，
-  // 改的是本地的账 —— 云端那只根本不知道，"切了人设没变"就是这么来的。
+  // 账本只有本机 Brain 这一份：读写的都是随包大脑里的人设文件。
   async function renderPersona(ctx) {
     ctx.view.classList.add('persona-view');
     const CHANS = [['app', 'App', '全局默认（没单独设置的渠道都跟它）'],
                    ['wechat', '微信私聊', '私聊那一个'],
                    ['wechat_group', '微信群', '群里那一个（@ 她 / 她搭话的）']];
-    const CB = { base: 'cloud' };   // 人设账本在云端，这一页全走云端
     let curChan = 'wechat_group';
-    const r = pick(await get('/api/persona', CB));
+    const r = pick(await get('/api/persona'));
     const list = r.templates || r.personas || r.presets || [];
     const per = {};
     for (const [c] of CHANS) {
-      const pr = pick(await get('/api/persona?src=' + c, CB));
+      const pr = pick(await get('/api/persona?src=' + c));
       per[c] = { key: pr.src_persona_key || pr.key || '', name: pr.name || '' };
     }
 
     ctx.topbar.className = 'topbar';
-    ctx.topbar.innerHTML = topbar('人格与语气', '微信真身在云端 · 应用/编辑直接写云端，下一句话就是新人设',
+    ctx.topbar.innerHTML = topbar('人格与语气', '存在本机 Brain · 应用/编辑立即生效，下一句话就是新人设',
       '<button class="btn oline" id="reloadP">' + icon('refresh', 'sm') + '重载人格</button>');
     ctx.panel.innerHTML = '<div class="phead"><h2>人设</h2></div>' +
       '<div class="pseg"><button data-sub="wechat_group"' + (curChan === 'wechat_group' ? ' class="on"' : '') + '>微信群</button>' +
@@ -2969,7 +2966,7 @@
 
     async function drawEditor(key) {
       const [, n] = CHANS.find(([x]) => x === curChan);
-      const f = pick(await get('/api/persona/full?key=' + encodeURIComponent(key), CB));
+      const f = pick(await get('/api/persona/full?key=' + encodeURIComponent(key)));
       const fields = f.fields || {};
       const val = (k) => {
         const v = fields[k];
@@ -3002,10 +2999,10 @@
         fields2.label = String(fields2.name || '').slice(0, 20);
         const btn = ctx.view.querySelector('#pfSave');
         btn.disabled = true;
-        const rr = pick(await post('/api/persona/save', { key: key, src: curChan, fields: fields2 }, CB));
+        const rr = pick(await post('/api/persona/save', { key: key, src: curChan, fields: fields2 }));
         btn.disabled = false;
         ctx.view.querySelector('#pfMsg').textContent = rr.ok ? '已保存' + (rr.reloaded ? '，她已切换到新设定' : '（这套人设她当前没在用，下次应用时生效）') : ('保存失败：' + (rr._err || rr.err || ''));
-        toast(rr.ok ? '人设已保存（云端）' : '保存失败');
+        toast(rr.ok ? '人设已保存' : '保存失败');
         if (rr.ok) {
           if ((per[curChan] || {}).key === key) per[curChan].name = fields2.name;
         }
@@ -3033,7 +3030,7 @@
       }));
       ctx.view.querySelectorAll('[data-apply]').forEach((b) => b.addEventListener('click', async () => {
         b.disabled = true;
-        const rr = pick(await post('/api/persona/apply', { key: b.dataset.apply, src: curChan }, CB));
+        const rr = pick(await post('/api/persona/apply', { key: b.dataset.apply, src: curChan }));
         b.disabled = false;
         toast(rr.ok ? '已切换（' + n + ' → ' + (rr.name || b.dataset.apply) + '），下一句话生效' : '切换失败：' + (rr._err || rr.err || ''));
         if (rr.ok) { per[curChan] = { key: b.dataset.apply, name: rr.name || b.dataset.apply }; draw(); }
@@ -3041,15 +3038,15 @@
     };
     U.bindSeg(ctx.panel.querySelector('.pseg'), (k) => { curChan = k; draw(); });
     ctx.topbar.querySelector('#reloadP').addEventListener('click', async () => {
-      const rr = pick(await post('/api/reload_persona', {}, CB));
-      toast(rr.ok ? '云端人设已重载' : '重载失败');
+      const rr = pick(await post('/api/reload_persona'));
+      toast(rr.ok ? '人设已重载' : '重载失败');
       ctx.refresh();
     });
     draw();
   }
 
   // ═══ 3. 记忆 ═══════════════════════════════════════════════
-  // 当前「人设 × 渠道」分区的记忆条目（云端 GET /api/memory，只读）。
+  // 当前「人设 × 渠道」分区的记忆条目（本机 GET /api/memory）。
   // 写入仍在对话里由她的抽取管线负责 —— 这页是给人看的账本。
   async function renderMemory(ctx) {
     const st = pick(await get('/api/stats'));
@@ -3072,7 +3069,7 @@
       '<input class="input" id="memQ" placeholder="搜一条…" style="height:26px;width:140px">' +
       '<select class="input" id="memType" style="height:26px;width:90px">' +
       '<option value="">全部</option><option value="fact">事实</option><option value="event">事件</option></select></div>' +
-      '<div class="muted" style="font-size:11px;margin:6px 0">改动（编辑 / 删除）会通过同步层自动上云；云端是权威源，删掉的东西不会被增量拉取复活。</div>' +
+      '<div class="muted" style="font-size:11px;margin:6px 0">改动（编辑 / 删除）直接写本机 Brain 的记忆库，删了就是删了（墓碑账本，不会被检索复活）。</div>' +
       '<div id="memList"></div></div>' +
       '</div>';
 
@@ -3112,11 +3109,11 @@
         if (nv == null) return;                     // 取消
         const r = pick(await post('/api/memory/edit',
           { store: curStore, id: b.dataset.edit, text: nv }));
-        if (r.ok) { toast('已改，同步层会推上云'); load(); }
+        if (r.ok) { toast('已改'); load(); }
         else toast('没改成：' + (r.err || r._err || ''));
       }));
       box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-        if (!await confirmDialog('删掉这条记忆？会同步到云端（墓碑账本，不会被增量拉取复活）。')) return;
+        if (!await confirmDialog('删掉这条记忆？删了就删了，检索不会再命中它。')) return;
         const r = pick(await post('/api/memory/delete',
           { store: curStore, id: b.dataset.del }));
         if (r.ok) { toast('已删除'); load(); }
@@ -3548,15 +3545,14 @@
     }
 
     // ── 功能开关 ──
-    // 「说话多少」滑条按渠道调：App / 微信群 / 微信私聊的真身在云端，
-    // 改动直达云端 config（1 档 = 只 @，由 gate 插件硬执行）；
-    // 本机走本地 sidecar。以前只有一根滑条管本机，微信的根本调不到。
+    // 这里只管本机控制台（pc）这一路。App / 微信那几路归各自的客户端和微信
+    // 桥接，桌面端改不到、也不该假装改得到（P8.1 起桌面端只连本机 Brain）。
     async function features() {
       const f = pick(await get('/api/features'));
-      const CHATS = [['app', 'App'], ['wechat_group', '微信群'], ['wechat', '微信私聊'], ['pc', '本机']];
-      let curCh = 'wechat_group';   // 用户最关心的就是群
+      const CHATS = [['pc', '本机']];
+      let curCh = 'pc';
       const chName = () => (CHATS.find(([c]) => c === curCh) || ['', '?'])[1];
-      const chBase = () => curCh === 'pc' ? null : 'cloud';
+      const chBase = () => null;
       const feats = f.features || {};
       const NAMES = {
         hotboard: '热搜接入', weather: '天气信息', weather_alert: '天气变化提醒',
@@ -3567,8 +3563,8 @@
         '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">' +
         '<div style="flex:1;min-width:180px"><b style="font-size:13.5px">说话多少</b>' +
         '<div class="muted" style="font-size:12px">1 档 = 只有被 @（或叫名字）才搭话；档位越高越爱插话</div></div>' +
-        '<div class="seg" id="chSrc">' + CHATS.map(([c, n]) =>
-          '<button data-ch="' + c + '"' + (c === curCh ? ' class="on"' : '') + '>' + n + '</button>').join('') + '</div>' +
+        (CHATS.length > 1 ? '<div class="seg" id="chSrc">' + CHATS.map(([c, n]) =>
+          '<button data-ch="' + c + '"' + (c === curCh ? ' class="on"' : '') + '>' + n + '</button>').join('') + '</div>' : '') +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:12px">' +
         '<input type="range" min="1" max="10" value="5" id="chattyRange" style="flex:1">' +
@@ -3580,7 +3576,7 @@
         Object.keys(feats).map((k) => '<tr><td>' + esc(NAMES[k] || k) + '</td>' +
           '<td class="c"><button class="sw ' + (feats[k] ? 'on' : '') + '" data-f="' + esc(k) + '"></button></td></tr>').join('') +
         '</table></div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">开关按渠道存（features_by_src），这里是本机控制台（pc）渠道的开关，改完即时生效。App / 微信各渠道的在手机端调。</div>';
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">这里是本机控制台（pc）的开关，改完即时生效。App 与微信各自那份在它们自己的设置里。</div>';
 
       const range = v.querySelector('#chattyRange');
       const valEl = v.querySelector('#chattyVal');
@@ -3592,9 +3588,7 @@
         const lvl = c.level || 5;
         range.value = lvl;
         valEl.textContent = lvl;
-        noteEl.textContent = curCh === 'pc'
-          ? '本机控制台的档位，存在本地。'
-          : '「' + chName() + '」的档位，存在云端大脑，改完下一句就生效。';
+        noteEl.textContent = '本机控制台的档位，存在本机 Brain，改完下一句就生效。';
       }
       loadLevel();
 
@@ -3641,30 +3635,19 @@
     ctx.panel.innerHTML = '<div class="phead"><h2>数据</h2></div><div class="plist">' +
       subs.map(([k, n], i) => li({ icon: k === 'ov' ? 'chart' : k === 'tok' ? 'activity' : k === 'lg' ? 'book' : k === 'tr' ? 'term' : 'chat', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
-    // ── 云端 / 本机 双数据源 ──
-    // 微信真身的 stats/trace/history/log 账都在云端大脑（8788），本地 sidecar
-    // 只有 pc 渠道的账 —— 这就是数据页曾经全 0 的根因。已配云端（设置 →
-    // 云端同步）时默认看云端，没配则只有本机、不显示切换。
-    // 🔴 state.cfg 启动流程里没人填（loadCfg 只在设置页保存后被调），
-    // 直接从主进程拿实时配置 —— 用 state.cfg 的话 hasCloud 恒 false，
-    // 切换永远不出现、永远看本机的零（2026-10-09 实锤过）。
-    const live = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
-    const sync = (live && live.sync) || {};
-    const hasCloud = !!(sync.cloud_url && sync.cloud_token);
-    if (!state.dataSrc) state.dataSrc = hasCloud ? 'cloud' : 'local';
-    const dget = (p) => get(p, { base: state.dataSrc === 'cloud' ? 'cloud' : null, timeoutMs: 8000 });
-    const dpost = (p, b) => post(p, b, { base: state.dataSrc === 'cloud' ? 'cloud' : null, timeoutMs: 8000 });
-    const srcSeg = () => !hasCloud ? '' :
-      '<div class="seg" id="dSrc"><button data-ds="cloud"' + (state.dataSrc === 'cloud' ? ' class="on"' : '') + '>云端</button>' +
-      '<button data-ds="local"' + (state.dataSrc === 'local' ? ' class="on"' : '') + '>本机</button></div>';
-    // 数据源够不着（云端没配 / 大脑离线）时不渲染一堆假 0，给一句能看懂的话
+    // ── 数据源：只有本机大脑这一份 ──
+    // 以前这里可以在"云端 / 本机"之间切：微信真身的账在云端，本机只有 pc
+    // 渠道。P8.1 起桌面端不再连云端，stats/trace/history/log 全来自本机 Brain。
+    const dget = (p) => get(p, { timeoutMs: 8000 });
+    const dpost = (p, b) => post(p, b, { timeoutMs: 8000 });
+    // 数据源够不着（大脑没起来）时不渲染一堆假 0，给一句能看懂的话
     const fail = (r) => {
       if (r && r.ok) return false;
-      v.innerHTML = '<div class="wrap">' + empty(state.dataSrc === 'cloud' ? '云端数据源不可达' : '本机数据源不可达',
+      v.innerHTML = '<div class="wrap">' + empty('本机数据源不可达',
         (r && (r._err || (r._status ? 'HTTP ' + r._status : ''))) || '') + '</div>';
       return true;
     };
-    ctx.topbar.innerHTML = topbar('概览', '', srcSeg() + '<button class="btn oline" id="dRe">' + icon('refresh', 'sm') + '刷新</button>');
+    ctx.topbar.innerHTML = topbar('概览', '', '<button class="btn oline" id="dRe">' + icon('refresh', 'sm') + '刷新</button>');
     ctx.view.innerHTML = '<div class="wrap" id="dView"></div>';
     const v = ctx.view.querySelector('#dView');
     const cur = () => ctx.topbar.querySelector('h1').textContent;
@@ -3846,7 +3829,7 @@
       const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = '聊天历史';
       // 控制台视角：本机是自己的会话，App / 微信的往来在这儿只读查看
-      // （云端视角下微信群聊的账在 wechat_group 分区，也得能看）
+      // （微信群聊的账在 wechat_group 分区，切分区也能看）
       const CHANS = [['pc', '本机'], ['app', 'App'], ['wechat', '微信'], ['wechat_group', '微信群']];
       v.innerHTML = '<div class="seg" style="margin-bottom:12px">' +
         CHANS.map(([c, n], i) => '<button data-hc="' + c + '"' + (i === 0 ? ' class="on"' : '') + '>' + n + '</button>').join('') +
@@ -3911,13 +3894,6 @@
       draw[k]();
     };
     ctx.topbar.querySelector('#dRe').addEventListener('click', reRender);
-    // 云端 ↔ 本机切换：按下后用新数据源重画当前子页
-    ctx.topbar.querySelectorAll('#dSrc button').forEach((b) => b.addEventListener('click', () => {
-      if (state.dataSrc === b.dataset.ds) return;
-      state.dataSrc = b.dataset.ds;
-      ctx.topbar.querySelectorAll('#dSrc button').forEach((x) => x.classList.toggle('on', x === b));
-      reRender();
-    }));
     ov();
   }
 
@@ -3927,122 +3903,80 @@
     let modelRenderId = 0;
     // 本地操控不再是设置里的一页：确认走聊天气泡，权限/目录/工具开关
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
-    // 「已绑定设备」删了：云端 brain 没有 /api/device/*（点了就是 no such api）。
-    const subs = [['conn', '连接与设备'], ['model', '模型管理'], ['wechat', '微信聊天集成'], ['sync', '云端同步'], ['danger', '权限与安全'], ['about', '关于']];
+    // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
+    // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
+    const subs = [['conn', '本地大脑'], ['model', '模型管理'], ['wechat', '微信桥接'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'wechat' ? 'chat' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'wechat' ? 'chat' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
-    ctx.topbar.innerHTML = topbar('连接与设备', state.base || '');
+    ctx.topbar.innerHTML = topbar('本地大脑', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
     const v = ctx.view.querySelector('#sView');
 
+    // 连接与设备：现在只说一件事 —— 本机大脑活着没有、为什么没活。
+    // 没有连接模式、没有远程地址、没有 token 输入框：地址由随包 Brain 决定。
     async function conn() {
-      ctx.topbar.querySelector('h1').textContent = '连接与设备';
-      const has = await (global.vigil ? global.vigil.token.has() : Promise.resolve(''));
+      ctx.topbar.querySelector('h1').textContent = '本地大脑';
       v.innerHTML =
-        // 正常情况下这一页根本不该被看到：客户端启动时会自己找大脑并取 token。
-        // 这里排第二，只在"自动探测没成功"时才需要人介入。
-        '<div class="card" style="margin-bottom:14px" id="autoCard">' +
-        '<div id="autoHint"></div>' +
-        '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
-        '<button class="btn fill" id="sAuto">自动探测</button>' +
-        '<span class="muted" id="sAutoRes" style="font-size:12px">' +
-        '本地模式只连接随包 Brain；远程模式只连接你明确选择的地址</span>' +
-        '</div></div>' +
-
-        '<div class="field"><label for="sMode">Brain 运行模式</label>' +
-        '<select class="input" id="sMode" aria-describedby="sModeHelp"><option value="local"' + (state.cfg.connection_mode !== 'remote' ? ' selected' : '') + '>本地随包（推荐）</option><option value="remote"' + (state.cfg.connection_mode === 'remote' ? ' selected' : '') + '>远程（明确指定）</option></select>' +
-        '<p class="muted" id="sModeHelp">本地自动启动并认证，不需要 IP、端口或 EXE。云端同步和微信桥可独立保留。</p></div>' +
-        '<div class="card" style="margin-bottom:14px">' +
-        '<div id="sRemoteFields"' + (state.cfg.connection_mode === 'remote' ? '' : ' hidden') + '><div class="field"><label for="sBase">远程 Brain 地址</label>' +
-        '<input class="input mono" id="sBase" value="' + esc(state.cfg.remote_base || '') + '" placeholder="https://brain.example.com">' +
-        '<div class="muted" style="font-size:11.5px">仅在远程模式使用，不会在本地启动失败时自动回退</div></div>' +
-        '<div class="field"><label>Brain Token</label>' +
-        '<input class="input" id="sToken" type="password" placeholder="' + (has ? '已保存（留空 = 不改）' : '还没配') + '">' +
-        '<div class="muted" style="font-size:11.5px">存在系统钥匙串（keytar），渲染层拿不到它</div></div>' +
-        '</div><div style="display:flex;gap:8px;align-items:center">' +
-        '<button class="btn fill" id="sSave">保存并重连</button>' +
-        '<button class="btn oline" id="sTest">测试连接</button>' +
-        '<span class="muted" id="sRes" style="font-size:12px"></span></div></div>' +
-
+        '<div id="scCard"></div>' +
         '<div class="sec">当前状态</div>' +
         '<div class="card">' +
-        '<div class="kv"><span>连接</span><b>' + (state.conn.ok ? '正常 ' + state.conn.ms + ' ms' : '不通') + '</b></div>' +
-        '<div class="kv"><span>地址</span><b class="mono">' + esc(state.cfg.base || '—') + '</b></div>' +
+        '<div class="kv"><span>连接</span><b id="cConn">' + (state.conn.ok ? '正常 ' + state.conn.ms + ' ms' : '不通') + '</b></div>' +
+        '<div class="kv"><span>地址</span><b class="mono" id="cBase">' + esc(state.base || '—') + '</b></div>' +
         '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
-        '<div class="kv"><span>token</span><b>' + (has ? '已保存' : '未配置') + '</b></div>' +
-        '<div class="kv"><span>凭据类型</span><b>' + (state.cfg.token_kind === 'device' ? '设备 token' : state.cfg.token_kind === 'brain' ? '主人钥匙' : '—') + '</b></div></div>';
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
+        '<button class="btn fill" id="cRetry">重试连接</button>' +
+        '<button class="btn oline" id="cRestart">重启大脑</button>' +
+        '<span class="muted" id="cRes" style="font-size:12px"></span></div></div>';
 
-      const res = v.querySelector('#sRes');
-      const ares = v.querySelector('#sAutoRes');
-      v.querySelector('#sMode').addEventListener('change', e => {v.querySelector('#sRemoteFields').hidden=e.target.value!=='remote';});
+      const card = v.querySelector('#scCard');
+      const sc = global.vigil && global.vigil.sidecar;
 
-      // ── 本地大脑（sidecar）卡片：状态读数 + 重启 ──────────────
-      // 只在 Electron 里有（网页 harness 没有 window.vigil.sidecar）
-      if (global.vigil && global.vigil.sidecar) {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.style.marginBottom = '14px';
-        v.insertBefore(card, v.querySelector('#autoCard'));
-        const drawSc = (s) => {
-          const tag = { ready: '✓ 运行中', starting: '… 启动中', failed: '✗ 放弃重启', stopped: '— 未启用' }[s.status] || s.status;
-          const tail = (s.logTail || []).slice(-3).map((l) => esc(l.slice(0, 80))).join('<br>');
-          card.innerHTML =
-            '<div class="sec" style="margin-top:0">本地大脑（sidecar）</div>' +
-            '<div class="kv"><span>状态</span><b>' + tag + (s.port ? ' · 端口 ' + s.port : '') + '</b></div>' +
-            '<div class="kv"><span>重启</span><b>' + (s.restarts || 0) + ' / 3</b></div>' +
-            (s.exe ? '<div class="kv"><span>程序</span><b class="mono" style="font-size:11px">' + esc(s.exe) + '</b></div>' : '') +
-            (tail ? '<div class="muted mono" style="font-size:10.5px;margin-top:6px;line-height:1.5">' + tail + '</div>' : '') +
-            '<div style="margin-top:8px"><button class="btn oline" id="scRestart">重启大脑</button></div>';
-          card.querySelector('#scRestart').addEventListener('click', async () => {
-            toast('正在重启本地大脑…');
-            await global.vigil.sidecar.restart();
-          });
-        };
-        global.vigil.sidecar.status().then(drawSc);
-        global.vigil.sidecar.onState(drawSc);   // 启动/崩溃/重启实时刷新
+      const drawSc = (s) => {
+        s = s || {};
+        const label = { ready: '运行中', starting: '启动中', failed: '启动失败', stopped: '未启动' }[s.status] || (s.status || '未知');
+        const bad = s.status === 'failed' || s.status === 'stopped';
+        card.innerHTML =
+          '<div class="sec" style="margin-top:0">随包 Brain</div>' +
+          '<div class="card" style="margin-bottom:14px"' + (bad ? ' data-state="failed"' : '') + '>' +
+          '<div class="kv"><span>状态</span><b>' + esc(label) + (s.port ? ' · 127.0.0.1:' + s.port : '') + '</b></div>' +
+          '<div class="kv"><span>自动重启</span><b>' + (s.restarts || 0) + ' / 3</b></div>' +
+          (s.exe ? '<div class="kv"><span>程序</span><b class="mono" style="font-size:11px">' + esc(s.exe) + '</b></div>' : '') +
+          (bad && s.diagnosis
+            ? '<div class="card err" style="margin-top:10px"><b>没能启动</b><p style="margin:6px 0 0">' + esc(s.diagnosis) + '</p>' +
+              '<p class="muted" style="margin:6px 0 0">本地 Brain 是唯一的后端；它起不来时聊天、创作、插件都不可用。点上面「重启大脑」重试，装坏了就重装 Vigil。</p></div>'
+            : '') +
+          ((s.logTail || []).length
+            ? '<div class="muted mono" style="font-size:10.5px;margin-top:8px;line-height:1.5">' +
+              (s.logTail.slice(-6) || []).map((l) => esc(l)).join('<br>') + '</div>'
+            : '') +
+          '</div>';
+      };
+
+      if (sc) {
+        sc.status().then(drawSc);
+        sc.onState(drawSc);
+      } else {
+        drawSc({ status: 'stopped', diagnosis: '当前不在 Electron 客户端里运行' });
       }
 
-      v.querySelector('#sAuto').addEventListener('click', async () => {
-        ares.textContent = '探测中…';
+      const say = (t) => { v.querySelector('#cRes').textContent = t; };
+      v.querySelector('#cRestart').addEventListener('click', async () => {
+        say('正在重启本地大脑…');
+        await global.vigil.sidecar.restart();
+      });
+      v.querySelector('#cRetry').addEventListener('click', async () => {
+        say('连接中…');
         const r = await global.vigil.autoConnect();
-        if (r && r.ok) {
-          ares.textContent = '✓ 已连上 ' + r.base + '，token 已收下';
-          await API.loadCfg();
-          await API.ping();
-          toast('已连上 ' + r.base);
-          ctx.refresh();
-          return;
-        }
-        ares.textContent = r && r.needToken ? '地址通了，但要手填 token（服务端不认本机）' : '没找到（' + ((r && r.tried || []).join('；') || '') + '）';
-        v.querySelector('#autoHint').innerHTML = U.autoHintHtml(r);
-      });
-      v.querySelector('#sSave').addEventListener('click', async () => {
-        const base = v.querySelector('#sBase').value.trim();
-        const tok = v.querySelector('#sToken').value.trim();
-        const mode=v.querySelector('#sMode').value;
-        if(mode==='remote' && !base){res.textContent='请填写远程 Brain 地址';return;}
-        await API.saveCfg({connection_mode:mode,...(mode==='remote'?{remote_base:base}:{})});
-        if (tok && mode==='remote') {
-          const r = await global.vigil.token.set(tok);
-          if (r && r.warn) toast(r.warn);
-        }
-        res.textContent = '已保存，正在重连…';
-        const connected=await global.vigil.autoConnect();
-        if(!connected.ok){res.textContent=connected.err || 'Brain 未就绪';return;}
+        if (!r || !r.ok) { say('连不上：' + ((r && r.err) || '未知原因')); return; }
         await API.loadCfg();
-        await API.ping();
-        res.textContent = state.conn.ok ? '连接正常（' + state.conn.ms + ' ms）' : '连不上：' + state.conn.err;
-        ctx.refresh();
+        const c = await API.ping();
+        const el = v.querySelector('#cConn');
+        if (el) el.textContent = c.ok ? '正常 ' + c.ms + ' ms' : '不通';
+        const b = v.querySelector('#cBase');
+        if (b) b.textContent = state.base || '—';
+        say(c.ok ? '已连上' : '探活失败：' + (c.err || ''));
       });
-      v.querySelector('#sTest').addEventListener('click', async () => {
-        res.textContent = '测试中…';
-        const r = await global.vigil.token.test();
-        res.textContent = r.ok ? '✓ 连接正常' + (r.name ? '（' + r.name + '）' : '') : '✗ 连不上：' + (r.err || 'HTTP ' + r.status);
-        API.ping();
-      });
-      // app.js 启动时如果自动探测失败，会把结果放在 state.autoFail
-      if (state.autoFail) v.querySelector('#autoHint').innerHTML = U.autoHintHtml(state.autoFail);
     }
 
     async function model(pv) {
@@ -4052,31 +3986,13 @@
       // 重画又按**已保存**的配置拉一遍，刚拉到的新家清单当场弹回旧家（实锤过）。
       ctx.topbar.querySelector('h1').textContent = '模型管理';
       v.innerHTML = '<div class="card" role="status" aria-live="polite">正在读取模型配置…</div>';
-      // 模型配置跟真身走：微信 / App 的她在云端，默认改云端的账；本机这份
-      // 只管 PC 控制台聊天那个大脑。跟数据页同一个套路（没配云端就只有本机）。
-      const live = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
-      if (!isCurrent()) return;
-      const sync = (live && live.sync) || {};
-      const hasCloud = !!(sync.cloud_url && sync.cloud_token);
-      if (!state.mSrc) state.mSrc = 'local';
-      const mb = () => (hasCloud && state.mSrc === 'cloud') ? 'cloud' : null;
-      const mget = (p, timeoutMs) => get(p, { base: mb(), timeoutMs });
-      const mpost = (p, b, timeoutMs) => post(p, b, { base: mb(), timeoutMs });
-      const sourceSwitch = () => hasCloud
-        ? '<div class="seg" id="mSrc" role="group" aria-label="模型配置来源" style="margin-bottom:12px">' +
-          '<button type="button" data-ms="cloud" aria-pressed="' + (state.mSrc === 'cloud') + '"' + (state.mSrc === 'cloud' ? ' class="on"' : '') + '>主脑（微信 / App）</button>' +
-          '<button type="button" data-ms="local" aria-pressed="' + (state.mSrc === 'local') + '"' + (state.mSrc === 'local' ? ' class="on"' : '') + '>本机（这台电脑）</button></div>'
-        : '';
-      const bindSourceSwitch = () => {
-        v.querySelectorAll('#mSrc button[data-ms]').forEach((b) => b.addEventListener('click', () => {
-          if (state.mSrc === b.dataset.ms) return;
-          state.mSrc = b.dataset.ms;
-          void model();
-        }));
-      };
-      v.innerHTML = sourceSwitch() + '<div class="card" role="status" aria-live="polite">正在读取' +
-        (state.mSrc === 'cloud' ? '主脑' : '本机') + '模型配置…</div>';
-      bindSourceSwitch();
+      // 只有一份模型配置：本机 Brain 的。App / 微信用什么模型不在这里管
+      // （那属于微信桥接，P8.2 会作为插件独立配置）。
+      const mget = (p, timeoutMs) => get(p, { timeoutMs });
+      const mpost = (p, b, timeoutMs) => post(p, b, { timeoutMs });
+      const sourceSwitch = () => '';
+      const bindSourceSwitch = () => {};
+      v.innerHTML = '<div class="card" role="status" aria-live="polite">正在读取模型配置…</div>';
       const [modelReply, savedReply] = await Promise.all([
         mpost('/api/models/list', {
           base: (pv && pv.base) || '', provider: (pv && pv.provider) || ''
@@ -4131,9 +4047,8 @@
       const ol = cur.ollama || {};
       const dl = cur.delegation || {};
       const mode = cur.model_mode || 'cloud';
-      // 模型卡片只在「本机大脑」视图出现 —— Ollama 长在这台 PC 上，
-      // 远端那台服务器够不着 127.0.0.1:11434。
-      const localCard = state.mSrc === 'local' ? (
+      // 模型卡片：Ollama 长在这台 PC 上，所以它只可能跟本机 Brain 有关
+      const localCard = (
         '<div class="card" style="margin-bottom:14px">' +
         '<b style="font-size:13px">模型</b>' +
         '<div class="seg" id="mMode" style="margin-top:10px">' +
@@ -4171,7 +4086,7 @@
         '<button class="btn oline md" id="dlRefresh" type="button">刷新</button>' +
         '<span class="muted" id="dlRes" style="font-size:11.5px"></span></div>' +
         '<div id="dlList" class="muted" style="font-size:11.5px">加载中…</div></div>' +
-        '</div></div>') : '';
+        '</div></div>');
 
       const savedRowsHtml = () => savedModels.length
         ? '<div class="model-table-wrap"><table class="model-table"><thead><tr>' +
@@ -4191,7 +4106,7 @@
       const modelManager =
         '<section class="card hd model-manager" aria-labelledby="modelManagerTitle">' +
         '<div class="h"><div><h3 id="modelManagerTitle">已添加模型</h3>' +
-        '<div class="muted model-manager-note">这份清单供本机聊天切换；App / 微信用主脑那份。配置会写入 Brain 并在重启后保留。</div></div>' +
+        '<div class="muted model-manager-note">这份清单由本机 Brain 保存，聊天模型菜单直接读它。配置会写入 Brain 并在重启后保留。</div></div>' +
         '<button class="btn fill md" type="button" id="mAddToggle">添加模型</button></div>' +
         '<div id="mSavedRows">' + savedRowsHtml() + '</div>' +
         '<div class="model-add-form" id="mAddForm" hidden>' +
@@ -4228,7 +4143,7 @@
         '<div class="card"><b style="font-size:13px">生图</b><div style="margin-top:10px">' + combo('mImage', groups.image, cur.image) + '</div></div>' +
         '<div class="card"><b style="font-size:13px">语音识别</b><div style="margin-top:10px">' + combo('mAudio', groups.audio, cur.audio) + '</div></div>' +
         '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">本地部署（Ollama / LM Studio / vllm）：接口地址填它的地址（如 http://你的IP:11434/v1），模型名手填——注意这个地址要让主脑所在的机器访问得到（走隧道或局域网）。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">本地部署（Ollama / LM Studio / vllm）：接口地址填它的地址（如 http://你的IP:11434/v1），模型名手填——注意这个地址要本机访问得到（默认就是 127.0.0.1）。</div>' +
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center">' +
         '<button class="btn fill md" id="mSave">保存并生效（免重启）</button>' +
         '<button class="btn oline md" id="mPull">重新拉取模型</button>' +
@@ -4613,10 +4528,11 @@
         '<div class="kv"><span>桌面框架</span><b>Electron ' + esc(String((global.process && process.versions && process.versions.electron) || '')) + '</b></div>' +
         '<div class="kv"><span>Brain 地址</span><b class="mono">' + esc(state.base || '—') + '</b></div>' +
         '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
-        '<div class="kv"><span>token 存储</span><b>系统钥匙串（keytar）</b></div>' +
+        '<div class="kv"><span>凭据</span><b>本机 Brain 自己的 token（不出机器）</b></div>' +
+        '<div class="kv"><span>更新来源</span><b>GitHub Releases</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
         '<button class="btn oline md" id="abCheck">检查更新</button>' +
-        '<span class="muted" style="font-size:12px" id="abMsg">启动时和每小时也会自动检查</span>' +
+        '<span class="muted" style="font-size:12px" id="abMsg">启动时和每小时也会自动检查（GitHub）</span>' +
         '</div>' +
         '<div class="muted" style="font-size:11.5px;margin-top:10px">本地操控已并入聊天页：确认在气泡里，权限/目录/工具在输入框旁的盾牌面板里，输入框下方的“仅授权目录”标签打开同一个面板。桌宠 Live2D（阶段5）未开始。</div>' +
         '</div>';
@@ -4655,143 +4571,49 @@
     }
 
     // ── 微信聊天集成：路由、开关、渠道设置和连接诊断 ───────────────
+    // ── 微信桥接：这一轮只读，不做任何"配置云端"的假动作 ─────────
+    // 微信消息由独立的桥接服务处理，它连的是哪台 Brain 不归这个客户端管；
+    // P8.2 会把它做成可安装/可停用的插件（WeChat Bridge），届时凭据与开关
+    // 都收在插件自己的配置里。现在把边界说清楚，别让按钮骗人。
     async function wechat() {
-      ctx.topbar.querySelector('h1').textContent = '微信聊天集成';
+      ctx.topbar.querySelector('h1').textContent = '微信桥接';
       const rt = pick(await get('/api/route'));
-      const route = rt.wechat_route || 'cloud';
-      const enabled = rt.enabled !== false;
-      const fwd = rt.forward || {};
-      const model = rt.model || '由 Brain 当前模型配置提供';
-      const models = rt.models || { chat: model };
+      const localOk = rt.ok;
       v.innerHTML =
         '<div class="card" style="margin-bottom:14px">' +
-        '<div class="kv"><span>集成状态</span><b id="wxState">' + (enabled ? '已启用' : '已停用') + '</b></div>' +
-        '<div class="kv"><span>当前路由</span><b>' + (route === 'local' ? '本机优先' : '主脑优先') + '</b></div>' +
-        '<div class="kv"><span>Brain 全局对话模型</span><b class="mono" style="font-size:11px">' + esc(models.chat || model) + '</b></div>' +
-        '<div class="kv"><span>视觉 / 生图</span><b class="mono" style="font-size:11px">' + esc(models.vision || '未配置') + ' / ' + esc(models.image || '未配置') + '</b></div>' +
-        '<div class="kv"><span>Bridge 状态</span><b>' + esc(fwd.online ? '在线' : '未连接') + '</b></div>' +
-        '<div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">' +
-        '<button class="btn ' + (enabled ? 'fill' : 'oline') + ' md" id="wxToggle">' + (enabled ? '停用微信聊天' : '启用微信聊天') + '</button>' +
-        '<button class="btn ' + (route === 'cloud' ? 'fill' : 'oline') + ' md" id="wxCloud">云端模型</button>' +
-        '<button class="btn ' + (route === 'local' ? 'fill' : 'oline') + ' md" id="wxLocal">本机模型</button>' +
+        '<div class="kv"><span>本机 Brain</span><b>' + (localOk ? '可达' : '不可达') + '</b></div>' +
+        '<div class="kv"><span>微信桥接进程</span><b>独立服务（不在本客户端里）</b></div>' +
+        '<div class="kv"><span>本轮改动</span><b>未触碰任何微信代码与配置</b></div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px;align-items:center">' +
         '<button class="btn oline md" id="wxCheck">连接检测</button><span class="muted" id="wxRes"></span></div></div>' +
-        '<div class="sec">私聊与群聊</div><div class="card" style="margin-bottom:14px">' +
-        '<div class="muted" style="font-size:11.5px;margin-bottom:8px">当前微信仍使用 Brain 的全局模型配置；本页展示真实来源、路由和 Bridge 状态，不宣称已经完成微信独立模型。私聊和群聊的说话档位独立保存。后续独立模型只需增加渠道 model_ref，不重复保存 API Key。</div>' +
-        '<div class="grid g2"><div><b>微信私聊说话档位</b><input class="input" id="wxPrivate" type="number" min="1" max="10" value="5"></div><div><b>微信群聊说话档位</b><input class="input" id="wxGroup" type="number" min="1" max="10" value="5"></div></div>' +
-        '<button class="btn oline md" id="wxSaveChatty" style="margin-top:10px">保存渠道设置</button></div>' +
-        '<div class="sec">Bridge 配置与说明</div><div class="card">' +
-        '<div class="kv"><span>连接配置</span><span class="mono" style="font-size:11px">使用当前 Brain 地址与设备 Token</span></div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">Bridge 进程仍由现有微信桥接服务管理。本页只读连接状态并切换路由，不自动安装、执行或修改 Bridge 命令。微信不支持的版本、扫码限制和外部进程风险请以桥接文档为准。</div>' +
-        '<div style="margin-top:10px"><b>最近 Brain 日志</b><div id="wxLogs" class="muted mono" style="font-size:11px;max-height:160px;overflow:auto;margin-top:6px">加载中…</div></div></div>';
-      const loadChatty = async () => {
-        const a = pick(await get('/api/chatty?src=wechat'));
-        const b = pick(await get('/api/chatty?src=wechat_group'));
-        v.querySelector('#wxPrivate').value = a.level || 5;
-        v.querySelector('#wxGroup').value = b.level || 5;
-      };
-      loadChatty();
-      const logs = pick(await get('/api/logs?src=server&n=20'));
-      v.querySelector('#wxLogs').textContent = logs.ok && logs.items?.length
-        ? logs.items.map((x) => String(x.msg || x.where || '').slice(0, 180)).join('\n')
-        : (logs.err || '暂无日志');
-      const sendRoute = async (next) => {
-        const r = pick(await post('/api/route', { wechat_route: next, enabled: enabled }));
-        v.querySelector('#wxRes').textContent = r.ok ? '已保存' : (r.err || '保存失败');
-        if (r.ok) ctx.refresh();
-      };
-      v.querySelector('#wxCloud').addEventListener('click', () => sendRoute('cloud'));
-      v.querySelector('#wxLocal').addEventListener('click', () => sendRoute('local'));
-      v.querySelector('#wxToggle').addEventListener('click', async () => {
-        const r = pick(await post('/api/route', { wechat_route: route, enabled: !enabled }));
-        v.querySelector('#wxRes').textContent = r.ok ? '已保存' : (r.err || '保存失败');
-        if (r.ok) ctx.refresh();
-      });
+        '<div class="sec">为什么这里没有开关</div><div class="card" style="margin-bottom:14px">' +
+        '<div class="muted" style="font-size:11.5px;line-height:1.7">' +
+        '桌面客户端已经只连本机 Brain，而微信桥接用的是它自己那套连接和凭据。' +
+        '在这里改"用哪台大脑回答"只会改到本机这份配置，对微信毫无影响 —— 所以不做。<br>' +
+        '下一轮（P8.2）会把 WeChat Bridge 做成插件：独立启用/停用、凭据隔离、可选连接桥接服务，' +
+        '复用现在的插件管理界面，不装插件时不会启动任何微信任务。</div></div>' +
+        '<div class="sec">仍然属于微信的远程依赖（P8.2 迁移清单）</div>' +
+        '<div class="card"><table class="tbl"><tr><th>依赖</th><th>现在归谁</th></tr>' +
+        [
+          ['微信登录 / 收发消息', 'wechat-bridge/ 独立进程'],
+          ['群聊 @ 门槛（gate 插件）', 'wechat-bridge/brain-plugin/gate.py'],
+          ['微信渠道人设 / 记忆分区', '桥接所连的 Brain'],
+          ['微信渠道说话档位', '桥接所连的 Brain（features_by_src）'],
+          ['云端 → 本机的大脑转发（ws_forward / forward.js）', '桥接与其 Brain，桌面端本轮已不再启动'],
+          ['微信渠道的统计与历史', '桥接所连的 Brain'],
+        ].map(([a, b]) => '<tr><td>' + esc(a) + '</td><td class="muted">' + esc(b) + '</td></tr>').join('') +
+        '</table>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">这些能力本轮一行没删；迁移到插件时按上表逐项搬，桌面端不参与。</div></div>';
+
       v.querySelector('#wxCheck').addEventListener('click', async () => {
         const r = pick(await get('/api/route'));
-        v.querySelector('#wxRes').textContent = r.ok ? ('Brain 可达 · Bridge ' + (r.forward?.online ? '在线' : '未连接')) : (r.err || '连接失败');
-      });
-      v.querySelector('#wxSaveChatty').addEventListener('click', async () => {
-        const a = Number(v.querySelector('#wxPrivate').value);
-        const b = Number(v.querySelector('#wxGroup').value);
-        await post('/api/chatty', { src: 'wechat', level: a });
-        await post('/api/chatty', { src: 'wechat_group', level: b });
-        toast('微信私聊和群聊设置已保存');
+        v.querySelector('#wxRes').textContent = r.ok
+          ? '本机 Brain 可达（微信桥接是否在线要问它自己）'
+          : (r.err || r._err || '本机 Brain 不可达');
       });
     }
 
-    // ── 云端同步（M5）：本地大脑 ↔ 云端权威源 ─────────────────
-    // 本地优先架构：本地大脑跑着，记忆/人设的改动走 outbox 上云，
-    // 云端的增量定时拉下来。这里管"云端在哪 + 主人钥匙 + 同步状态"，
-    // 顺带管微信双大脑路由开关（同属"两边大脑怎么分工"这件事）。
-    async function sync() {
-      ctx.topbar.querySelector('h1').textContent = '云端同步';
-      const cfg = await (global.vigil ? global.vigil.cfg.get() : Promise.resolve({}));
-      const sc = (cfg && cfg.sync) || {};
-      const rt = pick(await get('/api/route'));
-      const route = (rt && rt.wechat_route) || 'cloud';
-      const st = pick(await get('/api/sync/status'));
-      const isLocalBrain = /^https?:\/\/(127\.|localhost)/i.test(state.base || '');
-
-      v.innerHTML =
-        '<div class="sec">微信双大脑路由（她说的话在谁的脑子里想）</div>' +
-        '<div class="card" style="margin-bottom:14px">' +
-        '<div class="kv"><span>当前</span><b>' + (route === 'local' ? '本地大脑（本机这台）' : '云端大脑（云机）') + '</b></div>' +
-        '<div class="muted" style="font-size:11.5px;margin:6px 0">只对微信（私聊/群）生效；App 和本机控制台不受影响。本地大脑掉线时云端自动接管直答，消息不会丢。</div>' +
-        '<div style="display:flex;gap:8px;align-items:center">' +
-        '<button class="btn ' + (route === 'cloud' ? 'fill' : 'oline') + ' md" id="rtCloud">云端优先</button>' +
-        '<button class="btn ' + (route === 'local' ? 'fill' : 'oline') + ' md" id="rtLocal" ' + (isLocalBrain ? '' : 'title="当前连的是云端大脑，切本地没有意义"') + '>本地优先</button>' +
-        '<span class="muted" id="rtRes" style="font-size:12px"></span></div></div>' +
-
-        '<div class="sec">同步状态（大脑自己报的）</div>' +
-        '<div class="card" style="margin-bottom:14px">' +
-        '<div class="kv"><span>同步</span><b>' + (st && st.enabled ? '已启用 → ' + esc(st.cloud_url || '') : '未启用（没有云端地址可推）') + '</b></div>' +
-        '<div class="kv"><span>outbox 积压</span><b>' + esc((st && st.outbox_pending != null) ? st.outbox_pending : '—') + ' 条</b></div>' +
-        '<div class="kv"><span>记忆断点</span><b class="mono" style="font-size:11px">' + esc(JSON.stringify((st && st.mem_seqs) || {})) + '</b></div>' +
-        '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-        '<button class="btn oline md" id="syncNow">立即同步</button>' +
-        '<span class="muted" id="syncRes" style="font-size:12px"></span></div></div>' +
-
-        '<div class="sec">云端地址与主人钥匙（填一次，重启大脑生效）</div>' +
-        '<div class="card">' +
-        '<div class="field"><label>云端地址</label>' +
-        '<input class="input mono" id="syUrl" value="' + esc(sc.cloud_url || '') + '" placeholder="http://<你的云机 IP>:8788">' +
-        '<div class="muted" style="font-size:11.5px">本地大脑把记忆/人设改动推到这儿；留空 = 不同步</div></div>' +
-        '<div class="field"><label>主人钥匙（brain token）</label>' +
-        '<input class="input" id="syTok" type="password" placeholder="' + (sc.cloud_token ? '已保存（留空 = 不改）' : '还没配') + '">' +
-        '<div class="muted" style="font-size:11.5px">同步接口只认主人钥匙；设备 token 拉不到全量</div></div>' +
-        '<div style="display:flex;gap:8px;align-items:center">' +
-        '<button class="btn fill" id="sySave">保存</button>' +
-        '<span class="muted" id="syRes" style="font-size:12px">保存后重启本地大脑（设置 → 连接与设备 → 重启大脑）生效</span></div></div>';
-
-      v.querySelector('#rtCloud').addEventListener('click', async () => {
-        const r = pick(await post('/api/route', { route: 'cloud' }));
-        v.querySelector('#rtRes').textContent = r.ok ? '已切到云端' : (r.err || '没切成');
-        if (r.ok) ctx.refresh();
-      });
-      v.querySelector('#rtLocal').addEventListener('click', async () => {
-        const r = pick(await post('/api/route', { route: 'local' }));
-        v.querySelector('#rtRes').textContent = r.ok ? '已切到本地（云端会等本地作答，掉线自动兜底）' : (r.err || '没切成');
-        if (r.ok) ctx.refresh();
-      });
-      v.querySelector('#syncNow').addEventListener('click', async () => {
-        v.querySelector('#syncRes').textContent = '同步中…';
-        const r = pick(await post('/api/sync/flush', {}));
-        v.querySelector('#syncRes').textContent = r.ok
-          ? '推 ' + (r.pushed || 0) + ' 条 / 拉 ' + (r.pulled ? ((r.pulled.memories || 0) + ' 记忆 ' + (r.pulled.personas || 0) + ' 人设') : '0')
-          : '失败：' + (r.err || r._err || '');
-      });
-      v.querySelector('#sySave').addEventListener('click', async () => {
-        const url = v.querySelector('#syUrl').value.trim().replace(/\/+$/, '');
-        const tok = v.querySelector('#syTok').value.trim();
-        const next = Object.assign({}, sc, { cloud_url: url });
-        if (tok) next.cloud_token = tok;
-        await API.saveCfg({ sync: next });
-        v.querySelector('#syRes').textContent = '已保存';
-        toast('云端同步配置已保存');
-      });
-    }
-
-    const draw = { conn, model, wechat, sync, danger, about };
+    const draw = { conn, model, wechat, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -4899,7 +4721,7 @@
       {title:'插件与技能', desc:'查看已启用能力与插件市场', icon:'puzzle', page:'ability', group:'plugin_market'},
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
-      {title:'连接与系统', desc:'Brain 连接、同步和权限设置', icon:'set', page:'system', sub:'conn'},
+      {title:'本地大脑', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'壁纸与外观', desc:'壁纸、主题与显示效果', icon:'img', page:'wallpaper'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
@@ -4932,7 +4754,7 @@
       '<button class="btn oline" id="mgRe">' + icon('refresh', 'sm') + '刷新</button>');
     ctx.view.innerHTML = '<div class="wrap" id="mgView"><div class="muted" style="padding:20px 0">加载中…</div></div>';
     const v = ctx.view.querySelector('#mgView');
-    const CB = { base: 'cloud', timeoutMs: 8000 };   // 统一管理数据在云端大脑；失败时尽快转为明确错误状态
+    const CB = { timeoutMs: 8000 };   // 统一管理数据在本机 Brain；失败时尽快转为明确错误状态
 
     const statusColor = (s) => s === 'online' ? 'ok' : s === 'delayed' ? 'warn' : 'err';
     const statusText = (s) => s === 'online' ? '在线' : s === 'delayed' ? '延迟' : '离线';

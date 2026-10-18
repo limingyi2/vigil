@@ -324,3 +324,33 @@ def test_behavior_apply_only_touches_three_segments(home, monkeypatch):
     assert cfg["chatty"]["default"] == 3
     assert cfg["api_key"] == "sk-local-only"          # 只动三个键
     assert cfg["brain_token"] == "t"
+
+
+def test_desktop_sync_stays_off_even_with_legacy_cloud_config(home, monkeypatch):
+    """P8.1：桌面端不再跟任何远端对账。
+
+    旧配置里可能还留着 cloud_url / cloud_token（用户的凭据，不能删），
+    环境变量也可能被外部塞进来 —— 两者都不许让同步自己开起来。
+    """
+    import sync_client
+    cfg_path = os.path.join(home, "config", "config.json")
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump({"brain_token": "t", "sync": {
+            "cloud_url": "http://198.51.100.7:8788",
+            "cloud_token": "legacy-key",
+            "enabled": True,
+        }}, f)
+    monkeypatch.setenv("VIGIL_CLOUD_URL", "http://example.invalid:8788")
+    monkeypatch.setenv("VIGIL_CLOUD_TOKEN", "env-key")
+    assert sync_client.cloud() is None
+    assert sync_client.enabled() is False
+
+
+def test_desktop_sync_needs_an_explicit_opt_in_key(home):
+    import sync_client
+    cfg_path = os.path.join(home, "config", "config.json")
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump({"sync": {"cloud_url": "http://127.0.0.1:9", "cloud_token": "k",
+                            "desktop_sync": True}}, f)
+    # 只有显式写了 desktop_sync 才拿得到地址（没有代码会写这个键）
+    assert sync_client.cloud() == ("http://127.0.0.1:9", "k")

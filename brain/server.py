@@ -4072,16 +4072,10 @@ def run_server():
         except Exception as e:
             print("[插件] 启动失败（不影响聊天）：%s" % str(e)[:120],
                   flush=True)
-        # 本地优先同步（M2）：云端是记忆/人设/行为配置的权威源。
-        # 云端自己的 config 没有 sync 段 → cloud() 返回 None → 纯 no-op。
-        # 只有本地大脑（sidecar / 本机源码家）会真正起同步线程。
-        try:
-            import sync_client as _sync
-            _sync.set_reload_hook(lambda: reload_plugins_now())
-            _sync.start()
-        except Exception as e:
-            print("[同步] 启动失败（不影响聊天）：%s" % str(e)[:120],
-                  flush=True)
+        # 桌面端从 P8.1 起不再和任何远端对账：本地 Brain 就是唯一真身，
+        # 没有人再启动 sync_client 的拉取/推送线程。记忆、人设、行为配置
+        # 只写本机这一份。（`/api/sync/*` 是账本读写接口，留给多端场景，
+        # 但它不发起任何出站请求。）
 
     print("=" * 58, flush=True)
     print(" 云端大脑", flush=True)

@@ -48,8 +48,8 @@
     }
   }
 
-  // opts.base = 'cloud' → 主进程改打云端大脑（cfg.sync.cloud_url + cloud_token），
-  // 其余值 / 不传 → 本地 sidecar（设备 token）。云端路由见 electron/main.js。
+  // 目标只有一个：随包本地 Brain（主进程按 sidecar 动态端口拼地址）。
+  // 传 opts.base 会被主进程直接拒绝 —— 那是防止凭据外传的边界，不是可选项。
   const get = (p, opts) => api('GET', p, null, opts);
   const post = (p, b, opts) => api('POST', p, b || {}, opts);
 

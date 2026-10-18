@@ -22,13 +22,32 @@ test('missing or changed Brain artifact fails before spawn',t=>{
   const manifest={files:{'vigil-brain.exe':contract.hash(exe)}};contract.verifyTree(tmp,manifest);
   fs.writeFileSync(exe,'other');assert.throws(()=>contract.verifyTree(tmp,manifest));
 });
-test('local mode ignores legacy EXE, sidecar=false, environment EXE and stale remote base',()=>{
+test('the client only ever connects to the bundled brain',()=>{
   const source=fs.readFileSync(path.join(__dirname,'../electron/main.js'),'utf8');
+  // 远程 Brain 的入口必须整条链消失，不是只把按钮藏起来。
+  // 旧键名只允许出现在迁移清单（LEGACY_REMOTE_KEYS）里。
+  for(const needle of ['cfg.connection_mode','cfg.remote_base','cfg.cloud_base','base === \'cloud\'','pollBrain(cbase'])
+    assert.equal(source.includes(needle),false,'leftover remote brain path: '+needle);
+  assert.ok(source.includes('LEGACY_REMOTE_KEYS'),'legacy keys should be archived by migration');
   const fn=source.slice(source.indexOf('function connectionBase('),source.indexOf('async function autoConnect()'));
-  const context={URL,readCfg:()=>({}),sidecar:{base:()=>''}};vm.runInNewContext(fn+';this.pick=connectionBase',context);
-  assert.equal(context.pick({base:'http://127.0.0.1:18787',sidecar:false,sidecar_exe:'old.exe'}),'');
-  assert.equal(context.pick({connection_mode:'remote',remote_base:'https://brain.example.com'}),'https://brain.example.com');
-  assert.equal(context.pick({connection_mode:'remote',remote_base:'https://user:fixture@brain.example.com/?token=fixture'}),'');
+  assert.ok(fn.includes('function testBrain('),'test hook should sit next to connectionBase');
+  const context={URL,app:{isPackaged:true},process:{env:{VIGIL_TEST_BRAIN:'https://brain.example.com',VIGIL_TEST_TOKEN:'x'}},
+    sidecar:{base:()=>'http://127.0.0.1:41234'}};
+  vm.runInNewContext(fn+';this.pick=connectionBase;this.hook=testBrain',context);
+  // 打包后的发行版：外部地址一律不认，环境变量也不行
+  assert.equal(context.pick(),'http://127.0.0.1:41234');
+  assert.equal(context.hook(),null);
+  // 解包运行的测试钩子：只认回环，且要显式给 token
+  const dev={URL,app:{isPackaged:false},process:{env:{VIGIL_TEST_BRAIN:'http://127.0.0.1:8080',VIGIL_TEST_TOKEN:'t'}},
+    sidecar:{base:()=>'http://127.0.0.1:41234'}};
+  vm.runInNewContext(fn+';this.pick=connectionBase;this.hook=testBrain',dev);
+  assert.equal(dev.pick(),'http://127.0.0.1:8080');
+  assert.equal(dev.hook().token,'t');
+  const evil={URL,app:{isPackaged:false},process:{env:{VIGIL_TEST_BRAIN:'https://brain.example.com'}},
+    sidecar:{base:()=>'http://127.0.0.1:41234'}};
+  vm.runInNewContext(fn+';this.pick=connectionBase;this.hook=testBrain',evil);
+  assert.equal(evil.pick(),'http://127.0.0.1:41234');
+  assert.equal(evil.hook(),null);
 });
 test('rollback snapshot preserves a complete pair, checks hashes, never contains user home',t=>{
   const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'vigil-update-'));t.after(()=>fs.rmSync(tmp,{recursive:true,force:true}));

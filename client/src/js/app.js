@@ -36,8 +36,8 @@
     gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.addEventListener('click', () => {
         if (b.id === 'settingsBtn') {
-          if (window.vigil && window.vigil.settings) window.vigil.settings.open({ section: 'model', source: 'local' });
-          else { state.settingsSub = 'model'; state.mSrc = 'local'; go('system'); }
+          if (window.vigil && window.vigil.settings) window.vigil.settings.open({ section: 'model' });
+          else { state.settingsSub = 'model'; go('system'); }
         } else go(b.dataset.page);
       }));
   }
@@ -309,7 +309,6 @@
     if (settingsWindow && window.vigil && window.vigil.settings) {
       window.vigil.settings.onNavigate((target) => {
         state.settingsSub = target.section || 'model';
-        state.mSrc = target.source || 'local';
         go('system');
       });
     }
@@ -329,10 +328,9 @@
       if (state.page !== 'chat') go('chat');
     });
 
-    // 首屏先使用本地 shell；壁纸、插件和云端连接都异步进行。
+    // 首屏先使用本地 shell；壁纸、插件和本机 Brain 连接都异步进行。
     if (settingsWindow) {
       state.settingsSub = windowQuery.get('section') || 'model';
-      state.mSrc = windowQuery.get('source') || 'local';
       void go('system').then(() => perf('first-usable-settings'));
     } else {
       void go(state.page).then(() => perf('first-usable'));
@@ -343,28 +341,37 @@
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
     // 没有这段：换过地址（隧道 ↔ 本机）后会一直停在"未连接"，
     // 因为"有 token"就以为配好了，永远不会重新探测。
-    perf('cloud-connect-start');
+    perf('brain-connect-start');
     setStatus('连接中');
     ping().then(async () => {
-      if (!state.conn.ok && window.vigil && state.conn.err) {
-        setStatus('探活失败，正在重新探测');
+      if (!state.conn.ok && window.vigil) {
+        setStatus('本地 Brain 未就绪，正在重试');
         const again = await window.vigil.autoConnect().catch(() => null);
         if (again && again.ok) {
           await ping();
-          toast('已重新连上 ' + again.base);
+          toast('已连上本机 Brain ' + again.base);
+        } else {
+          // 起不来就把原因说清楚：本地 Brain 是唯一后端，静默失败等于"她不见了"
+          state.autoFail = again || { err: state.conn.err || '未知原因' };
+          toast('本地 Brain 没起来：' + (state.autoFail.err || '请到设置 → 本地大脑 查看'));
         }
       }
       if (state.conn.ok && lastPluginVersion === 0) void loadPluginFrontends();
       setStatus();
       refreshStats();
-      perf('cloud-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
+      perf('brain-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
       if (state.page === 'chat') void go('chat');
       if (!settingsWindow) maybeWizard();
     });
 
-    // 心跳：30 秒一轮 ping + 状态读数刷新
+    // 心跳：30 秒一轮 ping + 状态读数刷新。断线时顺手让主进程拉一次本地
+    // Brain（它可能刚好起完了），连上就继续用，不用重启客户端。
     setInterval(async () => {
       await ping();
+      if (!state.conn.ok && window.vigil && window.vigil.autoConnect) {
+        const again = await window.vigil.autoConnect().catch(() => null);
+        if (again && again.ok) await ping();
+      }
       setStatus();
       refreshStats();
     }, 30000);
@@ -396,10 +403,9 @@
       const r = await get('/api/models');
       if (r && r.ok && r.json && r.json.current && !r.json.current.api_key_set) {
         if (window.vigil.settings) {
-          window.vigil.settings.open({ section: 'model', source: 'local' });
+          window.vigil.settings.open({ section: 'model' });
         } else {
           state.settingsSub = 'model';
-          state.mSrc = 'local';
           go('system');
         }
         toast('填好模型 API key 就能聊了');

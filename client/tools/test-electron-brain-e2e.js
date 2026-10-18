@@ -161,10 +161,12 @@ function writeFixtures(modelBase, brainPort) {
     '});',
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(pluginDir, 'frontend.css'), '#e2e-plugin-visible { color: rgb(1, 2, 3); }', 'utf8');
+  // P8.1: the desktop client only talks to its bundled Brain. An unpackaged run
+  // may point at an already-running one through VIGIL_TEST_BRAIN (loopback only),
+  // which is how this suite exercises the real main/preload/renderer without a
+  // 160 MB package.
   const clientConfig = {
-    wizard_done: true, connection_mode: 'remote', remote_base: 'http://127.0.0.1:' + brainPort,
-    base: 'http://127.0.0.1:' + brainPort, src: 'pc', token_kind: 'brain',
-    device_id: '', roots: [], theme: 'light',
+    wizard_done: true, src: 'pc', roots: [], theme: 'light',
   };
   fs.writeFileSync(path.join(profile, 'config.json'), JSON.stringify(clientConfig), 'utf8');
   fs.writeFileSync(path.join(profile, 'token.json'), JSON.stringify({ token }), 'utf8');
@@ -251,9 +253,14 @@ async function startElectron(brainBase) {
     : require(path.join(client, 'node_modules', 'electron'));
   if (packaged && !fs.existsSync(electronExe)) throw new Error('Candidate packaged executable not found: ' + electronExe);
   const env = { ...process.env, VIGIL_USER_DATA: profile, VIGIL_TEST_MODE: '1',
+    VIGIL_TEST_BRAIN: brainBase, VIGIL_TEST_TOKEN: token,
     ELECTRON_ENABLE_LOGGING: '1', ELECTRON_DISABLE_SECURITY_WARNINGS: '1' };
   const logFile = fs.openSync(path.join(root, 'electron.log'), 'w');
-  const args = ['--remote-debugging-port=' + debugPort, '--remote-allow-origins=*', '--disable-gpu'];
+  // 两个开关都是必须的：传 --disable-gpu 会让这台机器的 GPU 进程反复崩
+  // （exit_code=-1073741819 → FATAL），不带 --no-sandbox 则 GPU 子进程被外层
+  // 沙箱掐掉、渲染进程跟着崩，CDP 永远连不上。
+  const args = ['--remote-debugging-port=' + debugPort, '--remote-allow-origins=*',
+    '--no-sandbox', '--disable-features=CalculateNativeWinOcclusion'];
   if (!packaged) args.push(client);
   electron = spawn(electronExe, args, {
     cwd: client, env, stdio: ['ignore', logFile, logFile], windowsHide: true,
@@ -313,6 +320,8 @@ async function safeCleanup() {
   const resolved = path.resolve(root), temp = path.resolve(os.tmpdir()) + path.sep;
   if (!resolved.startsWith(temp) || !path.basename(resolved).startsWith('vigil-p5-joint-'))
     throw new Error('Refusing to remove path outside this test-owned temporary directory');
+  // 排查用：VIGIL_E2E_KEEP=1 时不删现场，日志（brain.log / electron.log）留着看
+  if (process.env.VIGIL_E2E_KEEP === '1') { console.log('Kept test directory: ' + resolved); return; }
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
       fs.rmSync(resolved, { recursive: true, force: true });

@@ -1,24 +1,18 @@
 # -*- coding: utf-8 -*-
-"""本地优先 · 同步客户端（M2）：云端是记忆/人设/行为配置的权威源。
+"""同步账本的**服务端**工具（P8.1 之后不再有客户端同步）。
 
-只在一个进程里真正跑：**本地大脑**（sidecar exe / 本机源码跑的本地家）。
-云端自己就是权威源，config.json 里没有 sync.enabled 时这里完全是死代码。
+历史上这里是一个"本地优先"同步客户端：本地大脑把记忆/人设/行为改动推到
+云端权威源，再定期把云端增量拉回来。桌面客户端现在是纯本地的 —— 记忆、
+人设、行为配置只有本机 Brain 这一份，没有任何进程会启动这条链路。
 
-职责两件事：
+保留下来的只有：
 
-1. **增量拉取**（云端 → 本地）：启动拉一遍，之后每 interval_sec 拉一遍。
-   记忆按 store 各自的 seq 断点续传；人设按 version 对账；行为段（开关/
-   话痨度）按内容哈希对账。拉取落盘一律包在 sync_outbox.suppress() 里，
-   否则拉下来的东西又被记账推回云端，死循环。
+1. 行为段的快照 / 哈希 / 落盘（``/api/sync/behavior`` 两端都用它算口径）；
+2. ``cloud()``：一个**默认关闭、必须显式 opt-in** 的出口，永远返回 None，
+   除非配置里写了 ``sync.desktop_sync: true``（没有代码写这个键）。
 
-2. **outbox 推送**（本地 → 云端）：sync_outbox 里攒的本地改动慢慢推，
-   失败指数退避，推成功才删。所有 payload 都是幂等的（记忆按 id upsert、
-   人设带 version、行为段按内容哈希）—— 重推不重复，"推成功但确认丢了"
-   的窗口也不会造成两份。
-
-为什么不用 WebSocket：同步是纯"对账"语义，轮询天然幂等；WS 断线重连、
-半开连接这些坑对一个每两分钟跑一次的对账循环毫无收益。
-（M3 的微信消息转发是"低延迟推送"语义，那边才用 WS —— 见 forward.py。）
+也就是说：拉取循环、outbox 推送线程都不再有人启动；配置文件里遗留的
+``cloud_url`` / ``cloud_token`` 不会被读取，也不会被删除。
 """
 import hashlib
 import json
@@ -67,20 +61,20 @@ def _read_cfg():
 def cloud():
     """(base_url, token) 或 None（没启用）。
 
-    配置在 config.json 的 sync 段；环境变量给 sidecar 启动时注入用
-    （Electron 把云端地址和主人钥匙递给本地大脑，本地不用存第二份）。
-    config 里显式写了 enabled:false 就尊重它 —— 一键关同步的开关。
+    只有显式写了 ``sync.desktop_sync: true`` 才返回地址 —— 桌面客户端从
+    P8.1 起是纯本地：不再有「本地 + 云端两份账」这回事，也没有任何代码
+    会去写这个键。留在配置里的旧 ``cloud_url`` / ``cloud_token`` 是用户
+    的凭据，不删，但**不再让它自动生效**；环境变量注入（sidecar 以前会
+    递 VIGIL_CLOUD_URL/TOKEN）也一并去掉，免得哪天又被悄悄打开。
     """
     c = _read_cfg().get("sync") or {}
     if not isinstance(c, dict):
         c = {}
-    if c.get("enabled") is False:
+    if c.get("enabled") is False or c.get("desktop_sync") is not True:
         return None
-    base = str(c.get("cloud_url") or os.environ.get("VIGIL_CLOUD_URL") or "")
-    base = base.rstrip("/")
-    tok = str(c.get("cloud_token") or os.environ.get("VIGIL_CLOUD_TOKEN") or "")
-    enabled = bool(c.get("enabled")) or bool(base)
-    if not enabled or not base:
+    base = str(c.get("cloud_url") or "").rstrip("/")
+    tok = str(c.get("cloud_token") or "")
+    if not base:
         return None
     return base, tok
 
@@ -92,6 +86,11 @@ def interval():
     except (TypeError, ValueError):
         n = 120
     return max(5, n)
+
+
+def enabled():
+    """给测试与诊断用：桌面端是否还在跟远端对账（恒为 False）。"""
+    return cloud() is not None
 
 
 # --- 本地对账进度（断点） ---

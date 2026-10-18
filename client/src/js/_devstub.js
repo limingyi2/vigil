@@ -149,10 +149,19 @@
       }
       return Promise.resolve({ ok: false, status: 404, err: '假桥没这个路由：' + path });
     },
-    cfg: { get: () => Promise.resolve({ base: 'http://127.0.0.1:18787', src: 'app' }),
-           set: (p) => Promise.resolve({ base: 'http://127.0.0.1:18787', src: 'app', ...p }) },
-    token: { has: () => Promise.resolve(/nofind/.test(location.hash) ? '' : '已保存'), set: () => Promise.resolve({ ok: true }),
+    cfg: { get: () => Promise.resolve({ base: 'http://127.0.0.1:41234', src: 'pc' }),
+           set: (p) => Promise.resolve({ base: 'http://127.0.0.1:41234', src: 'pc', ...p }) },
+    token: { has: () => Promise.resolve('本地 Brain'),
              test: () => Promise.resolve({ ok: true, status: 200, name: '林知夏' }) },
+    // 假 sidecar：预览里也能看到"本地大脑"卡片（url 带 nofind 就演失败态）
+    sidecar: {
+      status: () => Promise.resolve(/nofind/.test(location.hash)
+        ? { status: 'failed', restarts: 3, port: 0, logTail: ['[sidecar] 随包 Brain 不存在'],
+            diagnosis: '随包 Brain 不存在：…\resources\vigil-brain（安装不完整，请重新安装 Vigil）' }
+        : { status: 'ready', restarts: 0, port: 41234, logTail: ['VIGIL_BRAIN_READY port=41234'], diagnosis: '' }),
+      restart: () => Promise.resolve({ ok: true }),
+      onState: () => {},
+    },
     local: {
       defaults: () => Promise.resolve({
         roots: ['C:\\Users\\limingyi', 'C:\\Users\\limingyi\\Desktop', 'C:\\Users\\limingyi\\Downloads', 'C:\\Users\\limingyi\\Documents'],
@@ -185,26 +194,13 @@
       onConfirm: () => {}, answer: () => {}, onStep: () => {}, onDone: () => {},
     },
     win: { minimize() {}, maximize() {}, close() {}, onState() {} },
-    device: {
-      whoami: () => Promise.resolve({ device_id: 'dev_1a2b3c4d', token_kind: 'device', base: 'http://127.0.0.1:18787' }),
-      list: () => Promise.resolve({ ok: true, status: 200, json: { ok: true, me: 'dev_1a2b3c4d', who: 'device', items: [
-        { device_id: 'dev_1a2b3c4d', device_name: 'DESKTOP-07', device_type: 'desktop', last_seen: '2026-10-07 04:20:11', last_ip: '127.0.0.1', status: 'active' },
-        { device_id: 'dev_9f8e7d6c', device_name: 'Pixel 8', device_type: 'mobile', last_seen: '2026-10-06 22:03:40', last_ip: '10.0.0.7', status: 'active' },
-        { device_id: 'dev_000011112222', device_name: '旧笔记本', device_type: 'desktop', last_seen: '2026-10-02 11:20:00', last_ip: '10.0.0.9', status: 'revoked' },
-      ] } }),
-      revoke: () => Promise.resolve({ ok: true, status: 200, json: { ok: true } }),
-      rebind: () => Promise.resolve({ ok: true, base: 'http://127.0.0.1:18787', name: 'DESKTOP-07' }),
-    },
-    // 自动探测：默认装作"隧道通了"。URL 里带 nofind 就演一次失败路径，
-    // 用来核对设置页的解释文案。（真实现见 electron/main.js 的 autoConnect）
+    // 拉起本地 Brain。URL 里带 nofind 就演一次失败路径，用来核对设置页的
+    // 诊断文案。（真实现见 electron/main.js 的 autoConnect）
     autoConnect: () => {
       if (/nofind/.test(location.hash)) {
-        return Promise.resolve({ ok: false, needToken: false, tried: [
-          'http://127.0.0.1:18787 → connect ECONNREFUSED',
-          'http://127.0.0.1:8788 → connect ECONNREFUSED',
-        ] });
+        return Promise.resolve({ ok: false, err: '随包 Brain 不存在（安装不完整，请重新安装 Vigil）' });
       }
-      return Promise.resolve({ ok: true, base: 'http://127.0.0.1:18787', kind: 'device', name: 'DESKTOP-07', tried: [] });
+      return Promise.resolve({ ok: true, base: 'http://127.0.0.1:41234', kind: 'local' });
     },
     openExternal: () => Promise.resolve(),
     platform: 'win32',

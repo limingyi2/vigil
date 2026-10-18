@@ -74,11 +74,11 @@ contextBridge.exposeInMainWorld('vigil', {
 
   token: {
     has: () => ipcRenderer.invoke('token:get'),
-    set: (t) => ipcRenderer.invoke('token:set', t),
+    // 只有本机 Brain 的 token，没有"手填远程 token"这回事；test 用来探活。
     test: () => ipcRenderer.invoke('token:test'),
   },
 
-  // 自动找大脑：探本机隧道/本机服务，命中就注册本机并收下设备 token（见 main.js）
+  // 启动本地大脑 / 查看它为什么没起来（见 main.js 的 sidecar 通道）
   autoConnect: () => ipcRenderer.invoke('auto:connect'),
 
   // 推送更新：mode 省略=只查状态；'ask'=发现新版就弹窗引导下载安装
@@ -91,14 +91,6 @@ contextBridge.exposeInMainWorld('vigil', {
     applyModel: (patch) => ipcRenderer.invoke('sidecar:apply-model', patch),
     providers: () => ipcRenderer.invoke('sidecar:providers'),
     onState: (fn) => ipcRenderer.on('sidecar:state', (_e, s) => fn(s)),
-  },
-
-  // 设备管理
-  device: {
-    list: () => ipcRenderer.invoke('device:list'),
-    revoke: (id) => ipcRenderer.invoke('device:revoke', id),
-    whoami: () => ipcRenderer.invoke('device:whoami'),
-    rebind: () => ipcRenderer.invoke('device:rebind'),
   },
 
   // 本地操控
