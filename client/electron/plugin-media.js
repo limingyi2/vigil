@@ -85,10 +85,6 @@ function createPluginMedia({ getBase, getToken }) {
   }
 
   return {
-    async origin() {
-      const port = await ensureServer();
-      return 'http://127.0.0.1:' + port;
-    },
     async url(resource) {
       const item = parseResource(resource);
       const key = JSON.stringify(item);

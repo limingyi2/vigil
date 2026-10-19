@@ -132,26 +132,17 @@ contextBridge.exposeInMainWorld('vigil', {
 
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
 
-  // Core-only plugin manager surface. Plugin UI content is hosted in a separate
-  // BrowserWindow and receives a different, deliberately narrow preload.
+  // 插件前端注入：渲染层只能"请主进程加载一次"。插件代码由主进程自己从
+  // 服务端拉取（token 不经过渲染层）并注入，不再有"任意代码 → executeJavaScript"
+  // 的通道（旧 runJS 已移除：插件 JS/XSS 能借它执行任意脚本）。
   plugins: {
-    listUi: () => ipcRenderer.invoke('plugin-ui:list'),
-    openUi: (id) => ipcRenderer.invoke('plugin-ui:open', id),
-    surfaceRequest: (id, request) => ipcRenderer.invoke('plugin-ui:surface-request', id, request),
-    onUiChanged: (fn) => {
-      const handler = (_event, plugins) => fn(Array.isArray(plugins) ? plugins : []);
-      ipcRenderer.on('plugin-ui:changed', handler);
-      return () => ipcRenderer.removeListener('plugin-ui:changed', handler);
-    },
-    onSurfaceChanged: (fn) => {
-      const handler = (_event, id) => fn(String(id || ''));
-      ipcRenderer.on('plugin-ui:surface-changed', handler);
-      return () => ipcRenderer.removeListener('plugin-ui:surface-changed', handler);
-    },
-    ...(process.env.VIGIL_TEST_MODE === '1' ? {
-      runtimeTest: () => ipcRenderer.invoke('test:plugin-ui-runtime'),
-      crashTest: (id) => ipcRenderer.invoke('test:plugin-ui-crash', id),
-    } : {}),
+    load: () => ipcRenderer.invoke('plugins:load'),
+    resourceUrl: (path) => ipcRenderer.invoke('plugins:resource-url', path),
+  },
+  wallpaper: {
+    request: (method, resource, body) => ipcRenderer.invoke('wallpaper:request', { method, resource, body }),
+    importFile: () => ipcRenderer.invoke('wallpaper:import'),
+    directory: () => ipcRenderer.invoke('wallpaper:directory'),
   },
   wallpaperExtension: {
     state: () => ipcRenderer.invoke('wallpaper-extension:state'),
@@ -159,6 +150,7 @@ contextBridge.exposeInMainWorld('vigil', {
     enable: () => ipcRenderer.invoke('wallpaper-extension:enable'),
     disable: () => ipcRenderer.invoke('wallpaper-extension:disable'),
     uninstall: () => ipcRenderer.invoke('wallpaper-extension:uninstall'),
+    load: () => ipcRenderer.invoke('wallpaper-extension:load'),
   },
   // Narrow native capability for first-party local project tools; returns a selected folder only.
   projectPicker: {

@@ -1359,8 +1359,7 @@ def start_remote_api(brain):
                     # 所以这里直接返回 {version, plugins}，不要再包一层 {ok, json}。
                     try:
                         import plugin_host as _ph
-                        _src = _query_param(self.path, "src")
-                        self._json(200, _ph.frontend_assets(_norm_src(_src) if _src else None))
+                        self._json(200, _ph.frontend_assets())
                     except Exception as e:
                         self._json(200, {"version": 0, "plugins": [],
                                          "err": str(e)[:80]})

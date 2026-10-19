@@ -62,15 +62,6 @@
             "style": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]{1,180}$" }
           }
         },
-        "ui": {
-          "type": "object", "additionalProperties": false,
-          "properties": {
-            "surfaces": {
-              "type": "array", "maxItems": 8, "uniqueItems": true,
-              "items": { "enum": ["content-background"] }
-            }
-          }
-        },
         "data_migrations": {
           "type": "array",
           "items": {

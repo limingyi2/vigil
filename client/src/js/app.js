@@ -191,78 +191,55 @@
   }
 
   // ── 启动 ──────────────────────────────────────────────────
-  let pluginUiSync = null;
-  let pluginSurfaceFrame = null;
-  let pluginSurfaceId = '';
-  function syncPluginSurfaces(plugins) {
-    const contribution = plugins.find(item => item && Array.isArray(item.surfaceUrls)
-      && item.surfaceUrls.some(surface => surface.surface === 'content-background' && typeof surface.url === 'string'));
-    const surface = contribution?.surfaceUrls?.find(item => item.surface === 'content-background');
-    const host = document.getElementById('plugin-surface-host');
-    if (!surface || !host || !/^vigil-plugin:\/\/p-[a-f0-9]{20}\/surface\.html$/.test(surface.url)) {
-      if (pluginSurfaceFrame) pluginSurfaceFrame.remove();
-      pluginSurfaceFrame = null; pluginSurfaceId = '';
-      document.body.classList.remove('plugin-surface-active');
-      return;
-    }
-    if (pluginSurfaceFrame && pluginSurfaceId === contribution.id && pluginSurfaceFrame.src === surface.url) return;
-    if (pluginSurfaceFrame) pluginSurfaceFrame.remove();
-    const frame = document.createElement('iframe');
-    frame.title = '插件内容背景'; frame.tabIndex = -1; frame.setAttribute('aria-hidden', 'true');
-    frame.setAttribute('sandbox', 'allow-scripts'); frame.referrerPolicy = 'no-referrer';
-    frame.addEventListener('error', () => {
-      if (pluginSurfaceFrame === frame) document.body.classList.remove('plugin-surface-active');
-    });
-    pluginSurfaceFrame = frame; pluginSurfaceId = contribution.id; host.replaceChildren(frame); frame.src = surface.url;
+  // ── 插件前端注入：CSS 在渲染层注入；JS 由主进程加载并注入 ──
+  // 安全收紧（2026-10）：渲染层不再有 window.vigil.runJS 这种"任意代码 →
+  // executeJavaScript"通道。插件 JS 由主进程凭服务端 token 自己拉取后注入，
+  // 每个插件独立 try/catch，一个炸了不影响其他。CSS 无执行权，仍在渲染层注入。
+  let lastPluginVersion = 0;
+  // Older brains return a timestamp version. Compare actual assets so they cannot
+  // reload the window every ten seconds and interrupt wallpaper playback.
+  function pluginFingerprint(plugins) {
+    const content = JSON.stringify(plugins.filter(p => p.name !== 'wallpaper')
+      .map(p => [p.name, p.enabled, p.js, p.css]).sort((a, b) => a[0].localeCompare(b[0])));
+    let h = 2166136261;
+    for (let i = 0; i < content.length; i++) h = Math.imul(h ^ content.charCodeAt(i), 16777619);
+    return (h >>> 0).toString(16);
   }
-  window.addEventListener('message', async event => {
-    const frame = pluginSurfaceFrame;
-    if (!frame || event.source !== frame.contentWindow || event.data?.channel !== 'vigil-plugin-surface') return;
-    if (event.data.type === 'surface-state') {
-      document.body.classList.toggle('plugin-surface-active', event.data.active === true);
-      return;
-    }
-    if (event.data.type !== 'request' || typeof event.data.id !== 'string' || event.data.id.length > 32) return;
-    const bridge = window.vigil?.plugins;
-    let result = { ok: false, err: 'Plugin Broker 不可用' };
-    if (typeof bridge?.surfaceRequest === 'function') {
-      try { result = await bridge.surfaceRequest(pluginSurfaceId, event.data.request); }
-      catch (error) { result = { ok: false, err: String(error.message || error) }; }
-    }
-    if (pluginSurfaceFrame === frame) frame.contentWindow?.postMessage({ channel: 'vigil-plugin-surface', type: 'response', id: event.data.id, result }, '*');
-  });
-  window.vigil?.plugins?.onSurfaceChanged?.(id => {
-    if (id && id === pluginSurfaceId && pluginSurfaceFrame?.contentWindow) {
-      pluginSurfaceFrame.contentWindow.postMessage({ channel: 'vigil-plugin-surface', type: 'refresh' }, '*');
-    }
-  });
-  async function syncPluginUiPages() {
-    if (pluginUiSync) return pluginUiSync;
-    pluginUiSync = (async () => {
-      const bridge = window.vigil && window.vigil.plugins;
-      if (!bridge || typeof bridge.listUi !== 'function') return;
-      const result = await bridge.listUi().catch(() => null);
-      if (!result || !result.ok || !Array.isArray(result.plugins)) return;
-      syncPluginSurfaces(result.plugins);
-      for (let i = PAGES.length - 1; i >= 0; i--) if (String(PAGES[i].id).startsWith('plugin-ui-')) PAGES.splice(i, 1);
-      for (const descriptor of result.plugins) {
-        if (!descriptor || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/.test(descriptor.id)) continue;
-        const pluginId = descriptor.id;
-        const pageId = 'plugin-ui-' + pluginId;
-        const label = String(descriptor.name || pluginId).slice(0, 80);
-        PAGES.push({ id: pageId, name: label, icon: descriptor.icon || 'puzzle', render(ctx) {
-          ctx.topbar.innerHTML = '<h1>' + U.esc(label) + '</h1>';
-          ctx.view.innerHTML = '<div class="wrap"><section class="card"><p>此插件的管理界面运行在独立、受限的窗口中。</p><button class="btn fill" type="button">打开插件设置</button></section></div>';
-          ctx.view.querySelector('button').addEventListener('click', async () => {
-            const opened = await bridge.openUi(pluginId);
-            if (!opened || !opened.ok) U.toast((opened && opened.err) || '无法打开插件设置');
-          });
-        } });
+
+  let pluginLoadInFlight = null;
+  function loadPluginFrontends() {
+    if (pluginLoadInFlight) return pluginLoadInFlight;
+    pluginLoadInFlight = (async () => { try {
+      const r = await get('/api/plugins/frontend');
+      if (!r || !r.ok || !r.json) return;
+      const { plugins } = r.json;
+      if (!Array.isArray(plugins)) return;
+
+      // 注入 CSS
+      for (const p of plugins) {
+        if (p.name === 'wallpaper') continue;
+        if (!p.enabled) continue;
+        if (p.css) {
+          const style = document.getElementById('plugin-css-' + p.name) || document.createElement('style');
+          style.id = 'plugin-css-' + p.name;
+          style.textContent = p.css;
+          document.head.appendChild(style);
+        }
       }
-      buildNav();
-      if (state.page.startsWith('plugin-ui-') && !PAGES.some(page => page.id === state.page)) void go('chat');
-    })().catch(error => console.warn('插件 UI 注册同步失败:', error)).finally(() => { pluginUiSync = null; });
-    return pluginUiSync;
+
+      // 注入 JS：交给主进程（它会重新拉一次资源并逐个执行）。
+      if (window.vigil && window.vigil.plugins && window.vigil.plugins.load) {
+        const lr = await window.vigil.plugins.load();
+        if (!lr || !lr.ok) return;
+      }
+
+      lastPluginVersion = pluginFingerprint(plugins);
+    } catch (e) {
+      console.warn('插件前端加载失败:', e);
+    } finally {
+      pluginLoadInFlight = null;
+    } })();
+    return pluginLoadInFlight;
   }
 
   async function boot() {
@@ -280,11 +257,40 @@
     try { t = localStorage.getItem('vigil_theme') || 'light'; } catch (_) {}
     applyTheme(t);
 
-    await syncPluginUiPages();
-    window.vigil?.plugins?.onUiChanged?.(plugins => {
-      syncPluginSurfaces(plugins);
-      void syncPluginUiPages();
-    });
+    // ── 插件前端注入：暴露全局 API 给插件用 ──
+    window.VigilAPI = API;
+    window.VigilUI = U;
+    window.VigilPlugin = {
+      // 注册新页面：push 进 PAGES，重建导航
+      registerPage(page) {
+        if (!page || !page.id || !page.render) return;
+        if (PAGES.find(p => p.id === page.id)) return;
+        PAGES.push(page);
+        buildNav();
+      },
+      // 动态注入 CSS
+      injectCSS(name, css) {
+        const id = 'plugin-dyn-css-' + name;
+        let el = document.getElementById(id);
+        if (!el) {
+          el = document.createElement('style');
+          el.id = id;
+          document.head.appendChild(el);
+        }
+        el.textContent = css;
+      },
+      // 简单事件总线
+      _listeners: {},
+      on(event, fn) {
+        (this._listeners[event] = this._listeners[event] || []).push(fn);
+      },
+      emit(event, data) {
+        (this._listeners[event] || []).forEach(fn => {
+          try { fn(data); } catch (e) { console.error('[插件事件]', e); }
+        });
+      },
+    };
+
     buildNav();
     watchSettingsBack();
     perf('nav-built');
@@ -329,6 +335,8 @@
     } else {
       void go(state.page).then(() => perf('first-usable'));
     }
+    if (!settingsWindow) void loadWallpaperExtension();
+    if (!settingsWindow) void loadPluginFrontends();
 
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
     // 没有这段：换过地址（隧道 ↔ 本机）后会一直停在"未连接"，
@@ -348,7 +356,7 @@
           toast('本地 Brain 没起来：' + (state.autoFail.err || '请到设置 → 本地大脑 查看'));
         }
       }
-      if (state.conn.ok) void syncPluginUiPages();
+      if (state.conn.ok && lastPluginVersion === 0) void loadPluginFrontends();
       setStatus();
       refreshStats();
       perf('brain-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
@@ -368,12 +376,35 @@
       refreshStats();
     }, 30000);
 
-    // 重新枚举启用插件；插件代码保持在独立 renderer 中运行。
+    // 插件热重载：10 秒查一次版本，变了就刷新页面（本地应用刷新零点几秒）
     setInterval(async () => {
-      if (!settingsWindow) await syncPluginUiPages();
+      try {
+        const r = await get('/api/plugins/frontend');
+        if (r && r.ok && r.json && r.json.version) {
+          if (!settingsWindow && lastPluginVersion === 0) await loadPluginFrontends();
+          else if (!settingsWindow && Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) location.reload();
+        }
+      } catch (_) { /* 静默 */ }
     }, 10000);
 
     refreshStats();
+  }
+
+  async function loadWallpaperExtension() {
+    try {
+      const api = window.vigil?.wallpaperExtension;
+      if (!api) return;
+      const state = await api.state();
+      if (!state?.ok || !state.enabled) return;
+      const loaded = await api.load();
+      if (!loaded?.ok) throw new Error(loaded?.err || '扩展加载失败');
+      let style = document.getElementById('wallpaper-extension-style');
+      if (!style) { style = document.createElement('style'); style.id = 'wallpaper-extension-style'; document.head.appendChild(style); }
+      style.textContent = loaded.style;
+      window.VigilWallpaper?.init();
+    } catch (e) {
+      console.warn('[Wallpaper 扩展] 已跳过，普通聊天继续运行：', e.message || e);
+    }
   }
 
   // ── 首启向导（填 key 即用）─────────────────────────────────

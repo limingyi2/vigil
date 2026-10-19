@@ -5,10 +5,8 @@ exports.beforePack=async()=>{
   const root=path.resolve(__dirname,'../..');
   const venv=path.join(root,'venv','Scripts','python.exe');
   const python=process.env.VIGIL_BUILD_PYTHON || (fs.existsSync(venv)?venv:'python');
-  const candidateId=String(process.env.VIGIL_CANDIDATE_ID||'');
   execFileSync(python,[path.join(root,'scripts/build_release.py'),'--verify',
-    ...(process.env.VIGIL_BUILD_CANDIDATE==='1'?['--candidate']:[]),
-    ...(candidateId?['--candidate-id',candidateId]:[])],{cwd:root,stdio:'inherit'});
+    ...(process.env.VIGIL_BUILD_CANDIDATE==='1'?['--candidate']:[])],{cwd:root,stdio:'inherit'});
 };
 exports.afterPack=async context=>{
   await exports.beforePack();

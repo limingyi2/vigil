@@ -5,7 +5,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { WallpaperExtensionManager } = require('../electron/extension-manager');
-const coreVersion = require('../package.json').version;
 
 async function run(packageDir) {
   assert.ok(packageDir, 'Provide a built Wallpaper extension directory');
@@ -15,7 +14,7 @@ async function run(packageDir) {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'preserve.fixture'), 'keep');
   let started = 0, closed = 0;
-  const manager = new WallpaperExtensionManager({ userData, coreVersion, hostFactory: () => {
+  const manager = new WallpaperExtensionManager({ userData, coreVersion: '1.1.7', hostFactory: () => {
     started++;
     return { request: async () => ({ data: { ok: true } }), close: () => { closed++; } };
   } });
@@ -31,7 +30,7 @@ async function run(packageDir) {
     assert.ok(assets.style.includes('vwp-'));
     await manager.disable();
     assert.equal(closed, 1);
-    const restarted = new WallpaperExtensionManager({ userData, coreVersion, hostFactory: () => {
+    const restarted = new WallpaperExtensionManager({ userData, coreVersion: '1.1.7', hostFactory: () => {
       started++;
       return { request: async () => ({ data: { ok: true } }), close: () => { closed++; } };
     } });

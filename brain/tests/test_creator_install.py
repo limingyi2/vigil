@@ -187,7 +187,6 @@ def test_creator_directory_plugin_installs_then_loads_tools_and_frontend(isolate
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(
         'NAME="creator_panel"\nDESC="approved directory fixture"\nFEATURE="creator_panel_fixture"\n'
-        'UI_PERMISSIONS=["brain.plugin.creator_panel.api"]\n'
         'def panel_status(arg): return "PANEL_TOOL_OK:" + str(arg)\n'
         'TOOLS={"panel_status": panel_status}\n'
         'TOOL_SPECS={"panel_status":{"desc":"panel status","params":[],"arg_param":None}}\n',
@@ -221,18 +220,14 @@ def test_creator_directory_plugin_installs_then_loads_tools_and_frontend(isolate
     plugin_host.load(force=True)
     import features
     monkeypatch.setattr(features, "on", lambda name, src=None: src == "pc")
-    monkeypatch.setattr(features, "all_features", lambda src=None: {"creator_panel_fixture": src == "pc"})
     assert "panel_status" in plugin_host.tool_specs("pc")
     assert "panel_status" not in plugin_host.tool_specs("wechat")
     assert plugin_host.run_tool("panel_status", "ready", src="pc") == "PANEL_TOOL_OK:ready"
     assert plugin_host.run_tool("panel_status", "ready", src="wechat") is None
-    assets = plugin_host.frontend_assets("pc")
+    assets = plugin_host.frontend_assets()
     installed = next(item for item in assets["plugins"] if item["name"] == "creator_panel")
     assert "registerPage" in installed["js"]
     assert ".creator-panel" in installed["css"]
-    assert installed["enabled"] is True
-    assert installed["permissions"] == ["brain.plugin.creator_panel.api"]
-    assert next(item for item in plugin_host.frontend_assets("wechat")["plugins"] if item["name"] == "creator_panel")["enabled"] is False
 
 
 def test_skill_archive_uses_existing_skill_transaction_boundary(isolated, monkeypatch):

@@ -45,7 +45,12 @@ class WallpaperExtensionManager {
     this.programs = path.join(this.root, 'programs');
     this.statePath = path.join(this.root, 'state.json');
     this.hostFactory = hostFactory || ((versionDir, manifest) => {
-      return require('./wallpaper-host-process').createWallpaperHostProcess({ versionDir, manifest, userData: this.userData });
+      const hostFile = path.resolve(versionDir, manifest.entry);
+      const { createWallpaperHost } = require(hostFile);
+      return createWallpaperHost({
+        dataDir: path.join(this.userData, 'wallpaper-engine'),
+        vendorDir: path.join(versionDir, 'vendor', 'dsh-wallpaper-engine'),
+      });
     });
     this.host = null;
     this.manifest = null;
@@ -215,10 +220,8 @@ class WallpaperExtensionManager {
     this.state.wallpaper.installed = false;
     this.state.wallpaper.activeVersion = null;
     this.state.wallpaper.grantedPermissions = [];
+    // Keep version directories for rollback/reinstall. User assets are in userData/wallpaper-engine.
     await this._saveState();
-    // Installed program versions are not user data. Remove their executable
-    // resources on uninstall while leaving userData/wallpaper-engine intact.
-    await fs.promises.rm(path.join(this.programs, EXTENSION_ID), { recursive: true, force: true });
     return this.getState();
   }
 
@@ -230,7 +233,7 @@ class WallpaperExtensionManager {
       fs.promises.readFile(path.join(root, ...this.manifest.renderer.script.split('/')), 'utf8'),
       fs.promises.readFile(path.join(root, ...this.manifest.renderer.style.split('/')), 'utf8'),
     ]);
-    return { ok: true, script, style, version: this.manifest.version, ui: this.manifest.ui || { surfaces: [] } };
+    return { ok: true, script, style, version: this.manifest.version };
   }
 
   async request(method, resource, body) {
