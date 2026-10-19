@@ -1126,7 +1126,12 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const requestedTimeout = Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(30000, timeoutMs)) : centerTimeout;
   const perfLabel = p === '/api/persona' ? 'connect.persona' : '';
   const r = await request(method, b + withSrc, body, token, requestedTimeout, perfLabel);
-  if (method !== 'GET' && (p.startsWith('/api/plugins/') || p.startsWith('/api/features'))) {
+  // The first renderer registry sync can race sidecar startup: the Core page is
+  // already usable while the local Brain is still coming online. Refresh once
+  // the initial persona read succeeds so installed plugin pages are registered
+  // in packaged launches too.
+  if ((method !== 'GET' && (p.startsWith('/api/plugins/') || p.startsWith('/api/features')))
+    || (method === 'GET' && p === '/api/persona' && r.ok)) {
     setImmediate(() => refreshPluginUiRegistry().then(result => console.log('[plugin-ui] lifecycle refreshed:', p, result.length)).catch(error => console.warn('[plugin-ui] lifecycle refresh failed:', error.message)));
   }
   // Report the actual destination, without credentials, query strings or paths.
