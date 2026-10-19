@@ -3,8 +3,8 @@
 让**指定的人格**在微信群里以真人方式接话。人格是 `preset_group` 这类配置项，
 名字由人格自己定义（本项目当前用的是"麦麦"），不是项目名。
 
-**当前跑在云服务器上，云服务器到期可整套切到虚拟机**，
-切换只改一个配置文件里的一个地址。
+桥接服务可部署在独立 Windows 运行机；云主机或虚拟机的实际部署状态
+需要查看相应环境。本次 P9.0 只做源码审计，没有连接或验证远端运行机。
 
 ## 快速上手
 
@@ -15,9 +15,9 @@
 
 ## 目录
 
-这是主项目里的一个**子模块**：大脑（`brain/`）、桌面宠物（`pet/`）、手机 App（`android-app/`）
-是主项目，本目录只负责"让她在微信群里接话"这一件事。它不含任何状态 ——
-记忆、人设、日记全在云端大脑里，跟 App 和桌面宠物共用同一份。
+Vigil 仓库保留了本目录的源码快照；WeChat Bridge 本身是单独部署的渠道服务，
+只负责读取/发送微信消息并请求 Brain 对话。微信客户端登录态留在桥接运行机；
+对话历史、人设和记忆由所连接的 Brain 按渠道处理，不随 Core 安装包迁移。
 
 ```
 wxauto_bridge.py              桥接本体：读消息 → 问大脑 → 发消息
@@ -54,38 +54,42 @@ vm/                           虚拟机侧脚本
 （`C:\zx\bridge\wxauto_bridge.py`），那是**装完之后**的运行位置，
 跟源码里的目录不是一回事。打包时会把这些脚本摊平放进安装包。
 
-### 与 `brain/wechat_bot/` 的关系
+### 源码与部署
 
-`brain/wechat_bot/wxauto_bridge.py` 和本目录的 `wxauto_bridge.py` **是同一份代码**
-（内容必须保持一致，md5 相同）。区别只在用在哪：
+当前 Vigil 仓库中的桥接源码是 `wechat-bridge/wxauto_bridge.py`；本仓库中不存在
+`brain/wechat_bot/`。`vm/` 脚本负责桥接运行机的安装/启动，`deploy/wechat/`
+下的部分部署脚本保留有旧运行路径假设，执行前必须按目标环境重新审查。
 
-- `wechat_bridge/`（本目录）→ **源码**，进安装包发给虚拟机
-- `brain/wechat_bot/` → **本机运行时位置**，部署脚本从这里读取
+WeChat Bridge 也有独立公开仓库 [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)，
+它是独立渠道服务的发行项目源码仓库。Vigil 仓库的同名源码副本与其 `master` 当前不同；
+两处的自动同步/发布流程尚未建立或核实。后续改动前需确认生产部署采用哪一份，不能假定修改一边会自动同步另一边。
 
-改逻辑时两边都要同步；只改一边会出现"虚拟机上是新版、本机还是旧的"。
+`brain/plugins/gate.py` 是当前 Brain 插件宿主中的 gate 实现；
+`wechat-bridge/brain-plugin/gate.py` 是随桥接项目保存的旧副本，行为与当前版本不同。
+旧副本未按当前 `Turn.veto()` 宿主契约更新，不应直接覆盖或安装到当前 Brain。
+P9.0 记录差异，不自动复制、删除或部署任一版本。WeChat Bridge 独立发行与 Brain
+内 gate 插件是两个不同交付物。
 
 ## 安全闸
 
-🔴 **大号微信绝不会被读取、发送或操作**，闸门在**代码层**生效，不靠自觉：
-
-- `expected_wxid` 必须是麦麦小号的 wxid（形如 `wxid_一串字母数字`），对不上**拒绝运行**
-- `forbidden_wxids` 里放大号的 wxid，**永久拒绝**
-  （这里原来写的是两个真实 wxid。仓库是 PUBLIC，账号 ID 属于个人身份信息，
-  写进来等于挂出去 —— 真值看本地那份 `wxbridge.local.json`，它被 .gitignore 挡着。）
-- 运行中每 3 轮复查一次身份 —— 启动时校验过不算数，
-  因为微信 4.x 是跨目录单实例，你把微信切回大号后桥接还开着
-- 两道闸独立，`expected_wxid` 填错了 `forbidden` 那层也拦得住
+当前源码包含登录账号期望值校验和运行中复核逻辑；实际行为取决于桥接运行机本地
+配置和当前微信客户端状态。本 README 不记录任何账号标识，也不承诺“绝不会”发生
+误配置或账号切换。部署前应按源码中的 fail-closed 检查核对本机配置，并用隔离账号
+完成受控验收；不要把账号标识放入 issue、日志或聊天内容。
 
 ## 凭据处理
 
-仓库是 **PUBLIC**。以下内容**永远不进仓库**（已在 `.gitignore` 挡住并验证）：
+仓库是 **PUBLIC**。真实凭据和机器/账号标识不得进入仓库、Manifest、日志、命令行、
+聊天历史或普通 UI。以下示例路径/文件只描述字段类别，不代表本次检查访问了本地配置：
 
 - `brain_token`（等同于密码）
 - SSH 私钥 `deploy/sshkeys/`
 - `wxbridge.local.json`（含 token、桥接机 IP、群名）
 - `*.apk` / `*.exe` / 联调截图
 
-`config-example/` 里那份是**空的**，只留字段和说明。
+`config-example/` 只用于结构示例。即使示例使用占位符，也应在提交前做凭据扫描。
+P9 的扩展迁移和通信边界见 `docs/P9_extension_protocol.md` 与
+`docs/P9_data_migration.md`；本阶段没有将 Bridge 安装为 Core 插件。
 
 ### `zx.cmd` 里的 token 从环境变量读
 
