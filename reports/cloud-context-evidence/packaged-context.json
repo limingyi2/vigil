@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "packaged_history_retrieval": true,
+  "historical_fact": "18883",
+  "three_tiers_saved": true,
+  "tier_reaches_runtime": true,
+  "restart_restores_tier": true,
+  "original_archive_prefix_unchanged": true,
+  "request_count": 1,
+  "model_options": {
+    "num_ctx": 12288,
+    "num_predict": 2048
+  }
+}

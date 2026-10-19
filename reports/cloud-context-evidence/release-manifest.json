@@ -1,0 +1,10 @@
+{
+  "code": 27,
+  "ver": "1.1.6",
+  "source_commit": "949ff0c4aa7441977ba4e086f0cfdddb18b5f536",
+  "candidate": true,
+  "sha256": "c021a4a57a70c5e7c032c89807fb3a61edadbec36bf02c4c320fa18ef039e662",
+  "size": 163961744,
+  "setup_file": "Vigil.Setup.1.1.6.exe",
+  "notes": "Unified Electron and Brain update"
+}

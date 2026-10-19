@@ -1,0 +1,10 @@
+{
+  "version": "1.1.6",
+  "code": 27,
+  "source_commit": "949ff0c4aa7441977ba4e086f0cfdddb18b5f536",
+  "size": 163961744,
+  "sha256": "c021a4a57a70c5e7c032c89807fb3a61edadbec36bf02c4c320fa18ef039e662",
+  "candidate": true,
+  "identities_match": true,
+  "context_modules_embedded": true
+}
