@@ -127,7 +127,7 @@ def build(candidate=False, brain_only=False, candidate_id=None):
         '--workpath', str(BUILD_WORK), str(ROOT / 'deploy/brain/vigil-brain.spec')], cwd=ROOT, check=True)
     files = {p.relative_to(OUT).as_posix(): filehash(p) for p in sorted(OUT.rglob('*')) if p.is_file()}
     (OUT / 'brain-manifest.json').write_text(json.dumps(dict(info, files=files), indent=2), encoding='utf-8')
-    verify(candidate)
+    verify(candidate, candidate_id)
     if not brain_only:
         env = dict(os.environ, VIGIL_BUILD_PYTHON=sys.executable,
                    VIGIL_BUILD_CANDIDATE='1' if candidate else '0',
@@ -167,7 +167,7 @@ def build(candidate=False, brain_only=False, candidate_id=None):
             command += ['--config.directories.output=' + output_rel]
         subprocess.run(['cmd', '/c', *command] if os.name == 'nt' else command,
             cwd=ROOT / 'client', env=env, check=True)
-        verify(candidate)
+        verify(candidate, candidate_id)
         installer = CLIENT_DIST / ('Vigil.Setup.' + info['version'] + '.exe')
         release = dict(code=info['code'], ver=info['version'], source_commit=info['commit'], candidate=candidate,
             sha256=filehash(installer), size=installer.stat().st_size,
