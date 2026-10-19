@@ -109,7 +109,13 @@ def test_refresh_pulls_updated_manifest_from_a_fake_local_git_remote():
         publish([])
         subprocess.run(["git", "clone", "--branch", "main", str(remote), str(clone)],
                        check=True, capture_output=True, text=True)
-        publish([{"name": "fixture", "path": "plugins/fixture"}])
+        publish([{
+            "name": "fixture", "version": "1.0.0",
+            "artifact": {"url": "https://raw.githubusercontent.com/example/repo/main/fixture.zip",
+                         "sha256": "a" * 64},
+            "protocol": {"name": "vigil-brain-plugin", "major": 1},
+            "permissions": [],
+        }])
         with patch.object(market, "_repo_path", return_value=str(clone)):
             result = market.api_refresh({}, {})
             assert result["ok"] is True

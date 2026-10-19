@@ -93,12 +93,10 @@ async function start() {
   assert.equal(runtime.json.pid, health.pid);
   const home = health.home;
   assert.ok(home && !home.startsWith(install), 'Brain user data should live outside the application install directory');
-  const wallpaperState = await evaluate('vigil.wallpaperExtension.state()');
-  assert.equal(wallpaperState.ok, true);
-  assert.equal(wallpaperState.installed, false, 'Fresh Core must not install Wallpaper implicitly');
-  assert.equal(wallpaperState.enabled, false, 'Fresh Core must keep Wallpaper disabled');
-  assert.equal(fs.existsSync(path.join(process.env.VIGIL_USER_DATA, 'wallpaper-engine')), false,
-    'Uninstalled Wallpaper must not create its data or engine directory');
+  const wallpaperExtensionApi = await evaluate('Boolean(vigil.wallpaperExtension)');
+  assert.equal(wallpaperExtensionApi, false, 'Core must not expose the retired Wallpaper desktop-extension API');
+  assert.equal(fs.existsSync(path.join(home, 'data', 'installed_plugins', 'wallpaper')), false,
+    'Fresh Core must not bundle or install Wallpaper implicitly');
   const initial = await evaluate("Boolean(document.querySelector('#hero')&&!document.querySelector('#hero').hidden&&document.querySelector('#ta')&&document.querySelector('#msgs').children.length===0)");
   assert.ok(initial, 'Fresh launch did not show an empty welcome page and composer');
 

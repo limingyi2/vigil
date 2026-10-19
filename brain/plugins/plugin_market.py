@@ -5,13 +5,14 @@
 安装 = 从本地仓库复制插件目录到 brain/plugins/；卸载 = 删除目录。
 """
 import hashlib
+import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
-from urllib.parse import quote, urlparse
+import zipfile
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 NAME = "plugin_market"
@@ -20,10 +21,13 @@ FEATURE = "plugin_market"
 
 # 显式配置 market_repo 时使用本地 Git 仓库；默认从公开 GitHub 市场读取。
 DEFAULT_REPO = ""
-REMOTE_REPO = "limingyi2/vigil"
-REMOTE_REF = "dev"
+REMOTE_REPO = "limingyi2/vigil-plugins"
+REMOTE_REF = "main"
 REMOTE_MARKET_URL = "https://raw.githubusercontent.com/%s/%s/market.json" % (REMOTE_REPO, REMOTE_REF)
-REMOTE_FILE_LIMIT = 2 * 1024 * 1024
+REMOTE_PACKAGE_LIMIT = 4 * 1024 * 1024
+REMOTE_PACKAGE_FILES_LIMIT = 64
+PLUGIN_PROTOCOL = {"name": "vigil-brain-plugin", "major": 1}
+ALLOWED_PERMISSIONS = {"wallpaper.workshop.read", "wallpaper.config.write", "wallpaper.media.read"}
 
 
 def _repo_path():
@@ -84,63 +88,100 @@ def _fetch_bytes(url, limit):
     return data
 
 
+def _validate_market(market, source_kind):
+    if not isinstance(market, dict) or not isinstance(market.get("plugins"), list):
+        return {"state": "read_failed", "plugins": [], "err": "market.json 格式无效"}
+    for item in market["plugins"]:
+        if not isinstance(item, dict) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", str(item.get("name") or "")):
+            return {"state": "read_failed", "plugins": [], "err": "market.json 插件条目无效"}
+        artifact = item.get("artifact")
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("url"), str) or not re.fullmatch(r"[a-fA-F0-9]{64}", str(artifact.get("sha256") or "")):
+            return {"state": "read_failed", "plugins": [], "err": "市场条目缺少有效的 SHA-256 制品信息"}
+        parsed = urlparse(artifact["url"])
+        if parsed.scheme != "https" or parsed.hostname != "raw.githubusercontent.com":
+            return {"state": "read_failed", "plugins": [], "err": "市场制品地址必须使用 HTTPS GitHub Raw"}
+        if item.get("protocol") != PLUGIN_PROTOCOL:
+            return {"state": "read_failed", "plugins": [], "err": "市场插件协议不兼容"}
+        perms = item.get("permissions")
+        if not isinstance(perms, list) or any(p not in ALLOWED_PERMISSIONS for p in perms):
+            return {"state": "read_failed", "plugins": [], "err": "市场插件权限清单无效或未获支持"}
+    market["state"] = "empty" if not market["plugins"] else "ready"
+    market["source_kind"] = source_kind
+    return market
+
+
 def _read_remote_market():
     """默认公开目录；安装版不需要配置开发机上的本地 clone。"""
     try:
         market = json.loads(_fetch_bytes(REMOTE_MARKET_URL, 512 * 1024).decode("utf-8-sig"))
-        if not isinstance(market, dict) or not isinstance(market.get("plugins"), list):
-            return {"state": "read_failed", "plugins": [], "err": "GitHub market.json 格式无效"}
-        if any(not isinstance(item, dict) or not isinstance(item.get("name"), str)
-               for item in market["plugins"]):
-            return {"state": "read_failed", "plugins": [], "err": "GitHub market.json 插件条目无效"}
-        market["state"] = "empty" if not market["plugins"] else "ready"
-        market["source_kind"] = "github"
-        return market
+        return _validate_market(market, "github")
     except Exception as exc:
         return {"state": "read_failed", "plugins": [], "source_kind": "github",
                 "err": "GitHub 插件市场读取失败：%s" % str(exc)[:100]}
 
 
 def _install_remote_directory(meta, name):
-    """下载 market.json 指定的 GitHub 文件，校验 Git blob SHA-1 后走现有安装事务。"""
-    source = meta.get("source")
-    if not isinstance(source, dict) or source.get("type") != "github":
-        return False, {"err": "市场条目没有可信的 GitHub 源"}
-    repo = str(source.get("repo") or "")
-    ref = str(source.get("ref") or "")
-    relative = str(source.get("path") or meta.get("path") or "")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
-        return False, {"err": "市场源仓库名无效"}
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", ref):
-        return False, {"err": "市场源版本无效"}
-    if (not relative or relative.startswith(("/", "\\", "~")) or ":" in relative
-            or "\\" in relative or any(part in ("", ".", "..") for part in relative.split("/"))):
-        return False, {"err": "市场源路径无效"}
-    files = source.get("files")
-    if not isinstance(files, dict) or not files or "__init__.py" not in files or len(files) > 64:
-        return False, {"err": "市场源文件清单无效"}
+    """Download a published package, verify artifact and Manifest hashes, then install transactionally."""
+    artifact = meta.get("artifact")
+    if not isinstance(artifact, dict):
+        return False, {"err": "市场条目没有制品信息"}
+    url, expected_sha = artifact.get("url"), artifact.get("sha256")
+    if (not isinstance(url, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", str(expected_sha or ""))):
+        return False, {"err": "市场制品 URL 或 SHA-256 无效"}
     try:
         import plugin_ops
         with tempfile.TemporaryDirectory(prefix="vigil-market-source-") as temp_root:
-            staged_source = os.path.join(temp_root, name)
-            os.makedirs(staged_source, exist_ok=True)
-            for filename, expected_sha in files.items():
-                if (not isinstance(filename, str)
-                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", filename)
-                        or not filename.endswith((".py", ".js", ".css", ".json", ".md", ".txt"))
-                        or not isinstance(expected_sha, str)
-                        or not re.fullmatch(r"[a-fA-F0-9]{40}", expected_sha)):
-                    raise ValueError("市场源包含无效文件名或校验值")
-                url = "https://raw.githubusercontent.com/%s/%s/%s/%s" % (
-                    repo, quote(ref, safe=""), quote(relative, safe="/"), quote(filename, safe=""))
-                data = _fetch_bytes(url, REMOTE_FILE_LIMIT)
-                header = b"blob " + str(len(data)).encode("ascii") + b"\0"
-                actual_sha = hashlib.sha1(header + data).hexdigest()
-                if actual_sha.lower() != expected_sha.lower():
-                    raise ValueError("文件校验失败：" + filename)
-                with open(os.path.join(staged_source, filename), "wb") as stream:
-                    stream.write(data)
-            return plugin_ops.install_market_directory(temp_root, name, name)
+            package = _fetch_bytes(url, REMOTE_PACKAGE_LIMIT)
+            if hashlib.sha256(package).hexdigest().lower() != expected_sha.lower():
+                raise ValueError("插件制品 SHA-256 校验失败")
+            archive_path = os.path.join(temp_root, name + ".zip")
+            with open(archive_path, "wb") as stream:
+                stream.write(package)
+            with zipfile.ZipFile(io.BytesIO(package)) as archive:
+                infos = archive.infolist()
+                if not infos or len(infos) > REMOTE_PACKAGE_FILES_LIMIT:
+                    raise ValueError("插件制品文件数量无效")
+                files = {}
+                unpacked_size = 0
+                for info in infos:
+                    path = info.filename
+                    if (info.is_dir() or not path.startswith(name + "/")
+                            or path.startswith(("/", "\\")) or "\\" in path
+                            or any(p in ("", ".", "..") for p in path.split("/"))
+                            or ((info.external_attr >> 16) & 0o170000) == 0o120000):
+                        raise ValueError("插件制品包含无效路径")
+                    path = path[len(name) + 1:]
+                    if not path or path in files or ":" in path:
+                        raise ValueError("插件制品包含重复或无效文件名")
+                    if info.file_size > 2 * 1024 * 1024:
+                        raise ValueError("插件制品单文件超过大小限制")
+                    unpacked_size += info.file_size
+                    if unpacked_size > 16 * 1024 * 1024:
+                        raise ValueError("插件制品解压后超过大小限制")
+                    files[path] = archive.read(info)
+            manifest = json.loads(files.pop("manifest.json").decode("utf-8"))
+            if (manifest.get("schema") != "vigil.brain-plugin/v1" or manifest.get("name") != name
+                    or manifest.get("version") != meta.get("version") or manifest.get("protocol") != PLUGIN_PROTOCOL
+                    or manifest.get("protocol") != meta.get("protocol")
+                    or manifest.get("permissions") != meta.get("permissions")):
+                raise ValueError("Manifest 名称、版本、协议或权限与市场清单不一致")
+            entry = manifest.get("entry")
+            if entry != "__init__.py" or manifest.get("frontend") != {"script": "frontend.js", "style": "frontend.css"}:
+                raise ValueError("Wallpaper Manifest 入口或前端资源不受支持")
+            expected_files = manifest.get("files")
+            if not isinstance(expected_files, list) or {x.get("path") for x in expected_files if isinstance(x, dict)} != set(files):
+                raise ValueError("Manifest 文件清单与制品内容不一致")
+            for item in expected_files:
+                if not isinstance(item, dict) or not re.fullmatch(r"[a-fA-F0-9]{64}", str(item.get("sha256") or "")):
+                    raise ValueError("Manifest 文件 SHA-256 无效")
+                payload = files[item["path"]]
+                if hashlib.sha256(payload).hexdigest().lower() != item["sha256"].lower():
+                    raise ValueError("Manifest 文件 SHA-256 校验失败：" + item["path"])
+            # The generic installer performs static plugin structure checks and the normal atomic commit.
+            ok, result = plugin_ops.install(archive_path, note="market:%s@%s" % (name, meta["version"]))
+            if ok:
+                result["manifest"] = manifest
+            return ok, result
     except Exception as exc:
         return False, {"err": "远程插件下载或校验失败：%s" % str(exc)[:120]}
 
@@ -158,14 +199,7 @@ def _read_market():
     try:
         with open(mpath, "r", encoding="utf-8") as f:
             market = json.load(f)
-        if not isinstance(market, dict) or not isinstance(market.get("plugins"), list):
-            return {"state": "read_failed", "plugins": [], "err": "market.json 格式无效：plugins 必须是数组"}
-        if any(not isinstance(item, dict) or not isinstance(item.get("name"), str)
-               for item in market["plugins"]):
-            return {"state": "read_failed", "plugins": [], "err": "market.json 格式无效：插件条目缺少名称"}
-        market["state"] = "empty" if not market["plugins"] else "ready"
-        market["source_kind"] = "local"
-        return market
+        return _validate_market(market, "local")
     except Exception as e:
         return {"state": "read_failed", "plugins": [], "err": "market.json 无法读取：%s" % str(e)[:80]}
 
@@ -218,12 +252,10 @@ def api_install(body, query):
     if not meta:
         return {"ok": False, "err": "市场里找不到插件 %s" % name}
 
-    import plugin_ops
     # Never import newly downloaded code during the install transaction.
     repo = _repo_path()
     if repo:
-        ok, result = plugin_ops.install_market_directory(
-            repo, meta.get("path", "plugins/" + name), name)
+        ok, result = _install_remote_directory(meta, name) if meta.get("artifact") else (False, {"err": "本地市场条目缺少可校验制品"})
     else:
         ok, result = _install_remote_directory(meta, name)
     if ok:
@@ -247,31 +279,13 @@ def api_uninstall(body, query):
         return {"ok": False, "err": "插件名不合法或为 Windows 保留名称"}
 
     # 只允许卸载目录型插件（市场里的都是目录型）
-    dst = os.path.join(_plugins_dir(), name)
-    import plugin_transaction
-    try:
-        plugin_transaction.reject_links(dst)
-    except ValueError as exc:
-        return {"ok": False, "err": str(exc)}
-    if not os.path.isdir(dst):
-        # 可能是单文件插件
-        fpath = os.path.join(_plugins_dir(), name + ".py")
-        if os.path.isfile(fpath):
-            try:
-                os.remove(fpath)
-            except Exception as e:
-                return {"ok": False, "err": "删除失败：%s" % str(e)[:80]}
-            _reload_plugins()
-            return {"ok": True, "name": name, "msg": "卸载成功，已热重载"}
-        return {"ok": False, "err": "插件未安装：%s" % name}
-
-    try:
-        shutil.rmtree(dst)
-    except Exception as e:
-        return {"ok": False, "err": "删除失败：%s" % str(e)[:80]}
-
-    _reload_plugins()
-    return {"ok": True, "name": name, "msg": "卸载成功，已热重载"}
+    import plugin_ops
+    ok, result = plugin_ops.uninstall(name, purge_data=False)
+    if ok:
+        result.update(ok=True, name=name, msg="插件已卸载；用户配置和素材保留")
+    else:
+        result["ok"] = False
+    return result
 
 
 def _reload_plugins():

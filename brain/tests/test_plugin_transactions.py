@@ -55,10 +55,8 @@ class TransactionTests(unittest.TestCase):
         return source
 
     def market_install(self, relative='plugins/demo', name='demo'):
-        with patch.object(market, '_read_market', return_value={
-            'plugins': [{'name': name, 'path': relative}]}), \
-             patch.object(market, '_reload_plugins', side_effect=AssertionError('must not execute')):
-            return market.api_install({'name': name}, {})
+        ok, result = ops.install_market_directory(str(self.repo), relative, name)
+        return dict(result, ok=ok)
 
     def old(self, directory=False):
         target = self.plugins / ('demo' if directory else 'demo.py')

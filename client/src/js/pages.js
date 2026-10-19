@@ -5326,7 +5326,7 @@
             if (r && r.ok && r.json && r.json.ok) {
               await load();
               if (name === 'wallpaper' && window.vigil?.sidecar?.restart && window.vigil?.sidecar?.onState) {
-                toast('Wallpaper 已安装，正在重启本地 Brain…');
+                toast(action === 'install' ? 'Wallpaper 已安装，正在重启本地 Brain…' : 'Wallpaper 已卸载，正在重启本地 Brain…');
                 let reloaded = false;
                 window.vigil.sidecar.onState((status) => {
                   if (!reloaded && status && status.status === 'ready') {

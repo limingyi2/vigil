@@ -199,7 +199,7 @@
   // Older brains return a timestamp version. Compare actual assets so they cannot
   // reload the window every ten seconds and interrupt wallpaper playback.
   function pluginFingerprint(plugins) {
-    const content = JSON.stringify(plugins.filter(p => p.name !== 'wallpaper')
+    const content = JSON.stringify(plugins
       .map(p => [p.name, p.enabled, p.js, p.css]).sort((a, b) => a[0].localeCompare(b[0])));
     let h = 2166136261;
     for (let i = 0; i < content.length; i++) h = Math.imul(h ^ content.charCodeAt(i), 16777619);
@@ -334,7 +334,6 @@
     } else {
       void go(state.page).then(() => perf('first-usable'));
     }
-    if (!settingsWindow) void loadWallpaperExtension();
     if (!settingsWindow) void loadPluginFrontends();
 
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
@@ -387,23 +386,6 @@
     }, 10000);
 
     refreshStats();
-  }
-
-  async function loadWallpaperExtension() {
-    try {
-      const api = window.vigil?.wallpaperExtension;
-      if (!api) return;
-      const state = await api.state();
-      if (!state?.ok || !state.enabled) return;
-      const loaded = await api.load();
-      if (!loaded?.ok) throw new Error(loaded?.err || '扩展加载失败');
-      let style = document.getElementById('wallpaper-extension-style');
-      if (!style) { style = document.createElement('style'); style.id = 'wallpaper-extension-style'; document.head.appendChild(style); }
-      style.textContent = loaded.style;
-      window.VigilWallpaper?.init();
-    } catch (e) {
-      console.warn('[Wallpaper 扩展] 已跳过，普通聊天继续运行：', e.message || e);
-    }
   }
 
   // ── 首启向导（填 key 即用）─────────────────────────────────

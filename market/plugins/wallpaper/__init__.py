@@ -27,6 +27,7 @@ from pathlib import Path
 NAME = "wallpaper"
 VERSION = "3.0.0"
 DESC = "Wallpaper Engine 壁纸接入：扫描 Steam 创意工坊，把视频/网页/场景壁纸渲染到客户端背景"
+FEATURE = "wallpaper"
 
 # ── 配置持久化 ──────────────────────────────────────────────
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".vigil" / "wallpaper"
