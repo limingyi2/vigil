@@ -101,13 +101,26 @@ def build(candidate=False, brain_only=False):
     verify(candidate)
     if not brain_only:
         env = dict(os.environ, VIGIL_BUILD_PYTHON=sys.executable, VIGIL_BUILD_CANDIDATE='1' if candidate else '0')
-        command = ['npm', 'run', 'dist']
+        npm = shutil.which('npm')
+        through_npm = bool(npm)
+        if npm:
+            command = [npm, 'run', 'dist']
+        else:
+            # Build from the lockfile-installed local toolchain when npm itself is
+            # not on PATH (for example, managed Windows build environments).
+            builder = ROOT / 'client/node_modules/.bin/electron-builder.cmd'
+            if not builder.is_file():
+                raise RuntimeError('npm is unavailable and the local electron-builder executable is missing')
+            command = [str(builder), '--win']
         if CLIENT_DIST.is_symlink() or CLIENT_DIST.exists():
             resolved = CLIENT_DIST.resolve()
             if resolved != CLIENT_DIST or CLIENT_DIST.parent.resolve() != (ROOT / 'client').resolve() or not CLIENT_DIST.is_dir():
                 raise RuntimeError('Unsafe existing release output directory')
             shutil.rmtree(CLIENT_DIST)
-        command += ['--', '--config.directories.output=dist-release']
+        if through_npm:
+            command += ['--', '--config.directories.output=dist-release']
+        else:
+            command += ['--config.directories.output=dist-release']
         subprocess.run(['cmd', '/c', *command] if os.name == 'nt' else command,
             cwd=ROOT / 'client', env=env, check=True)
         verify(candidate)

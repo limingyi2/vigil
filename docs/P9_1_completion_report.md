@@ -16,7 +16,7 @@
 - Electron 扩展生命周期、IPC 与 UI：`client/electron/main.js`、`client/electron/preload.js`、`client/electron/extension-manager.js`、`client/src/index.html`、`client/src/js/app.js`、`client/src/js/pages.js`。
 - Schema、示例及本地包构建/验证：`docs/schemas/extension-manifest.schema.json`、`client/electron/extension-manifest.schema.json`、`docs/examples/extensions/*.json`、`client/tools/build-wallpaper-extension.js`、`client/tools/test-*.js`。
 - Bridge 权威快照、部署和文档：`wechat-bridge/UPSTREAM.json`、`wechat-bridge/README.md`、`wechat-bridge/vm/runtime/*.bat`、`deploy/wechat/deploy_bridge_m4.py`、`docs/05-微信/P8.2-微信插件化迁移清单.md`、`docs/USER_GUIDE.md`、`docs/P9_extension_protocol.md`。
-- 测试和 CI：`tests/test_p9_bridge_contract.py`、`tests/test_p9_contract_artifacts.py`、`.github/workflows/p9-extension-contract.yml`、若干 Electron 回归 fixture、`scripts/test_windows_candidate_lifecycle.py`。
+- 测试和 CI：`tests/test_p9_bridge_contract.py`、`tests/test_p9_contract_artifacts.py`、`.github/workflows/p9-extension-contract.yml`、若干 Electron 回归 fixture、`scripts/test_windows_candidate_lifecycle.py`、`scripts/build_release.py`（npm 不在 PATH 时回退到锁文件安装的 electron-builder）。
 
 ## 测试结果
 
