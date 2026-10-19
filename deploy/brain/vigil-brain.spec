@@ -15,23 +15,33 @@
 - fastembed/onnxruntime 排除：懒加载失败会自动降级，记忆嵌入走云端 API。
 """
 import os
+import subprocess
 
 BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 
 # 带插件源码及目录型插件的前端/附属资源（运行时文件不进包）。
 plugin_data = []
 plugins_src = os.path.join(BLOCK, "plugins")
-for root, dirs, files in os.walk(plugins_src):
-    dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-    rel_dir = os.path.relpath(root, plugins_src)
-    for f in sorted(files):
-        if f.endswith((".pyc", ".pyo", ".log")) or f == "_registry.json":
-            continue
-        # 顶层加载器只认独立插件 .py；下划线脚本是开发/测试辅助文件。
-        if rel_dir == "." and (not f.endswith(".py") or f.startswith("_")):
-            continue
-        dest = "plugins" if rel_dir == "." else os.path.join("plugins", rel_dir)
-        plugin_data.append((os.path.join(root, f), dest))
+repo_root = os.path.dirname(BLOCK)
+tracked_plugins = subprocess.check_output(
+    ["git", "ls-files", "-z", "--", "brain/plugins"], cwd=repo_root
+).decode("utf-8").split("\0")
+for tracked in sorted(p for p in tracked_plugins if p):
+    if not tracked.startswith("brain/plugins/"):
+        raise RuntimeError("Unexpected plugin build path: " + tracked)
+    rel_file = tracked[len("brain/plugins/"):]
+    source = os.path.join(repo_root, *tracked.split("/"))
+    if not os.path.isfile(source) or os.path.islink(source):
+        raise RuntimeError("Tracked plugin source is missing or linked: " + tracked)
+    if rel_file.endswith((".pyc", ".pyo", ".log")) or os.path.basename(rel_file) == "_registry.json":
+        continue
+    rel_dir = os.path.dirname(rel_file) or "."
+    # Top-level loader only recognizes standalone plugin .py files; underscore
+    # files are developer/test helpers and must never enter the runtime package.
+    if rel_dir == "." and (not rel_file.endswith(".py") or os.path.basename(rel_file).startswith("_")):
+        continue
+    dest = "plugins" if rel_dir == "." else os.path.join("plugins", rel_dir)
+    plugin_data.append((source, dest))
 
 # 带 skill_host（Node.js 技能宿主）：server.js + start_host.bat + skills/ 下所有技能
 skill_host_data = []
