@@ -489,7 +489,7 @@ async function main() {
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   result('quick question and blank-content disabled state');
   await ev(`document.querySelector('#settingsOpen').click()`);
-  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===9`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===7`);
   await shot('settings-grid');
   await ev(`document.querySelector('.settings-tile').click()`);
   await until(`API.state.page==='ability' && document.querySelector('.settings-detail-back')`);
@@ -499,7 +499,7 @@ async function main() {
   assert.equal(await ev(`!!document.querySelector('.settings-detail-back')`),true);
   result('settings detail keeps its 返回设置 entry after switching sections');
   await ev(`document.querySelector('.settings-detail-back').click()`);
-  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===9`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===7`);
 
   // P8.1：客户端只连本机 Brain —— 设置里不能还有"连接模式 / 远程地址 / token"
   // 这些入口，也不能还有"云端同步"这一页。链接口调用链一起删，不是藏按钮。
@@ -511,7 +511,7 @@ async function main() {
   assert.equal(await ev(`[...document.querySelectorAll('#panel .li, .cfg-subnav .li')].some(x=>/同步/.test(x.textContent))`),false,
     'cloud sync section must be gone');
   assert.deepEqual(await ev(`[...document.querySelectorAll('.cfg-subnav .li')].map(x=>x.dataset.k)`),
-    ['conn','model','wechat','danger','about'],'settings must expose exactly the local-brain sections');
+    ['conn','model','danger','about'],'Core settings must not expose a fixed WeChat Bridge section');
   assert.ok(await ev(`!!document.querySelector('#cRestart')`),'local brain retry must be reachable');
   await shot('settings-local-brain');
   result('settings expose only the bundled brain (no mode, address, token or sync)');
@@ -523,7 +523,7 @@ async function main() {
   assert.equal(requests.filter((r)=>r.base === 'cloud').length,0,'no request may target a cloud brain');
 
   await ev(`document.querySelector('.settings-detail-back').click()`);
-  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===9`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===7`);
   await ev(`document.querySelector('#settingsBackChat').click()`);
   await until(`API.state.page==='chat' && !document.querySelector('#hero').hidden`);
   await ev(`document.documentElement.dataset.theme='dark'`);

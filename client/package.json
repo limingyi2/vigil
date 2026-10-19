@@ -11,7 +11,7 @@
     "agent": "electron tools/agent-dryrun.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win",
-    "test:p9-extension": "node tools/test-manifest-schema.js && node tools/test-extension-manager.js",
+    "test:p9-extension": "node tools/test-manifest-schema.js && node tools/test-extension-manager.js && node tools/test-plugin-ui-boundaries.js",
     "extension:wallpaper": "node tools/build-wallpaper-extension.js"
   },
   "build": {

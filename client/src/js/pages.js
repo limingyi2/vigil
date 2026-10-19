@@ -3971,9 +3971,9 @@
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
     // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
-    const subs = [['conn', '本地大脑'], ['model', '模型管理'], ['wechat', '微信桥接'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '本地大脑'], ['model', '模型管理'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'wechat' ? 'chat' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('本地大脑', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -4636,50 +4636,7 @@
       } catch (e) { /* 无云端配置等，静默 */ }
     }
 
-    // ── 微信聊天集成：路由、开关、渠道设置和连接诊断 ───────────────
-    // ── 微信桥接：这一轮只读，不做任何"配置云端"的假动作 ─────────
-    // 微信消息由独立的桥接服务处理，它连的是哪台 Brain 不归这个客户端管；
-    // P8.2 会把它做成可安装/可停用的插件（WeChat Bridge），届时凭据与开关
-    // 都收在插件自己的配置里。现在把边界说清楚，别让按钮骗人。
-    async function wechat() {
-      ctx.topbar.querySelector('h1').textContent = '微信桥接';
-      const rt = pick(await get('/api/route'));
-      const localOk = rt.ok;
-      v.innerHTML =
-        '<div class="card" style="margin-bottom:14px">' +
-        '<div class="kv"><span>本机 Brain</span><b>' + (localOk ? '可达' : '不可达') + '</b></div>' +
-        '<div class="kv"><span>微信桥接进程</span><b>独立服务（不在本客户端里）</b></div>' +
-        '<div class="kv"><span>本轮改动</span><b>未触碰任何微信代码与配置</b></div>' +
-        '<div style="display:flex;gap:8px;margin-top:10px;align-items:center">' +
-        '<button class="btn oline md" id="wxCheck">连接检测</button><span class="muted" id="wxRes"></span></div></div>' +
-        '<div class="sec">为什么这里没有开关</div><div class="card" style="margin-bottom:14px">' +
-        '<div class="muted" style="font-size:11.5px;line-height:1.7">' +
-        '桌面客户端已经只连本机 Brain，而微信桥接用的是它自己那套连接和凭据。' +
-        '在这里改"用哪台大脑回答"只会改到本机这份配置，对微信毫无影响 —— 所以不做。<br>' +
-        '下一轮（P8.2）会把 WeChat Bridge 做成插件：独立启用/停用、凭据隔离、可选连接桥接服务，' +
-        '复用现在的插件管理界面，不装插件时不会启动任何微信任务。</div></div>' +
-        '<div class="sec">仍然属于微信的远程依赖（P8.2 迁移清单）</div>' +
-        '<div class="card"><table class="tbl"><tr><th>依赖</th><th>现在归谁</th></tr>' +
-        [
-          ['微信登录 / 收发消息', 'wechat-bridge/ 独立进程'],
-          ['群聊 @ 门槛（gate 插件）', 'wechat-bridge/brain-plugin/gate.py'],
-          ['微信渠道人设 / 记忆分区', '桥接所连的 Brain'],
-          ['微信渠道说话档位', '桥接所连的 Brain（features_by_src）'],
-          ['云端 → 本机的大脑转发（ws_forward / forward.js）', '桥接与其 Brain，桌面端本轮已不再启动'],
-          ['微信渠道的统计与历史', '桥接所连的 Brain'],
-        ].map(([a, b]) => '<tr><td>' + esc(a) + '</td><td class="muted">' + esc(b) + '</td></tr>').join('') +
-        '</table>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">这些能力本轮一行没删；迁移到插件时按上表逐项搬，桌面端不参与。</div></div>';
-
-      v.querySelector('#wxCheck').addEventListener('click', async () => {
-        const r = pick(await get('/api/route'));
-        v.querySelector('#wxRes').textContent = r.ok
-          ? '本机 Brain 可达（微信桥接是否在线要问它自己）'
-          : (r.err || r._err || '本机 Brain 不可达');
-      });
-    }
-
-    const draw = { conn, model, wechat, danger, about };
+    const draw = { conn, model, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -4699,9 +4656,9 @@
     conn();
   }
 
-  async function renderWallpaperExtension(ctx) {
+  async function renderExtensions(ctx) {
     ctx.topbar.className = 'topbar';
-    ctx.topbar.innerHTML = '<h1>Wallpaper 扩展</h1>';
+    ctx.topbar.innerHTML = '<h1>插件与扩展</h1>';
     ctx.view.innerHTML = '<div class="wrap">正在读取扩展状态…</div>';
     const api = window.vigil?.wallpaperExtension;
     if (!api) { ctx.view.innerHTML = '<div class="wrap">桌面扩展管理仅在 Electron 客户端可用。</div>'; return; }
@@ -4754,10 +4711,10 @@
       { k: 'tools', num: '032', name: '本地操控', path: '/local', icon: 'term', render: renderTools },
       { k: 'life', num: '033', name: '生活面板', path: '/life', icon: 'heart', render: renderLife },
       { k: 'plugin_market', num: '034', name: '插件市场', path: '/plugins/market', icon: 'puzzle', render: renderPluginMarket },
+      { k: 'extensions', num: '035', name: '插件与扩展', path: '/extensions', icon: 'puzzle', render: renderExtensions },
     ] },
     { id: 'system', name: '连接与系统', num: '04', icon: 'set', items: [
       { k: 'settings', num: '041', name: '连接与设备', path: '/connection', icon: 'set', render: renderSettings },
-      { k: 'desktop_extensions', num: '042', name: '桌面扩展', path: '/extensions/desktop', icon: 'puzzle', render: renderWallpaperExtension },
     ] },
   ];
 
@@ -4824,11 +4781,10 @@
       ctx.navigate('chat');
     });
     const cards = [
-      {title:'插件与技能', desc:'查看已启用能力与插件市场', icon:'puzzle', page:'ability', group:'plugin_market'},
+      {title:'插件与扩展', desc:'管理本机安装的插件与桌面扩展', icon:'puzzle', page:'ability', group:'extensions'},
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地大脑', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
-      {title:'桌面扩展', desc:'独立安装、启停和更新桌面扩展', icon:'puzzle', page:'system', sub:'desktop_extensions'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
       {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
