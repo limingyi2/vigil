@@ -28,7 +28,7 @@ function wallpaperTrace(kind, data={}) {
 }
 const results = [], errors = [], requests = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-let win, host, history = [], failure = false, historyError = false, personaEmpty = false;
+let win, host, wallpaperExtensions, history = [], failure = false, historyError = false, personaEmpty = false;
 const legacyConversationId = '11111111-1111-4111-8111-111111111111';
 const conversations = [{id:legacyConversationId,title:'旧版历史',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:true,has_content:true}];
 const otherHistories = new Map();
@@ -155,12 +155,28 @@ async function setup() {
   // Automation must not depend on whether another window becomes foreground.
   // This changes only the temporary fixture settings, not playback defaults.
   await host.request('PUT','/settings',{settingsVersion:7,pauseOnHidden:false,pauseOnBlur:false});
+  const { WallpaperExtensionManager } = require(path.join(client,'electron/extension-manager'));
+  wallpaperExtensions = new WallpaperExtensionManager({
+    userData: app.getPath('userData'), coreVersion: '1.1.7', hostFactory: () => host,
+  });
+  const extensionPackage = process.env.VIGIL_TEST_WALLPAPER_PACKAGE;
+  if (!extensionPackage) throw new Error('Set VIGIL_TEST_WALLPAPER_PACKAGE to a built fake-installable extension package');
+  await wallpaperExtensions.installFromDirectory(extensionPackage, { grantedPermissions: [
+    'desktop.wallpaper.control', 'desktop.ui.contribute',
+  ] });
+  await wallpaperExtensions.enable();
   // Production bridge and production channel names; only the service responses
   // are fixtures. No synthetic window.vigil or extra test bridge is injected.
   ipcMain.handle('wallpaper:request', async (_, {method,resource,body}) => {
     const started=Date.now(); wallpaperTrace('wallpaper-host-request',{method,resource});
-    try { const result={ok:true,...await host.request(method,resource,body)}; wallpaperTrace('wallpaper-host-response',{method,resource,status:'ok',elapsedMs:Date.now()-started}); return result; }
+    try { const result={ok:true,...await wallpaperExtensions.request(method,resource,body)}; wallpaperTrace('wallpaper-host-response',{method,resource,status:'ok',elapsedMs:Date.now()-started}); return result; }
     catch(e) { wallpaperTrace('wallpaper-host-response',{method,resource,status:'error',error:e.message,elapsedMs:Date.now()-started}); return {ok:false,err:e.message}; }
+  });
+  ipcMain.handle('wallpaper-extension:state',()=>wallpaperExtensions.getState());
+  ipcMain.handle('wallpaper-extension:load',async()=>{
+    const assets=await wallpaperExtensions.rendererAssets();
+    await win.webContents.executeJavaScript('(function(){try{\n'+assets.script+'\n}catch(e){console.error("[Wallpaper 扩展]",e);}})();');
+    return {ok:true,style:assets.style,version:assets.version};
   });
   ipcMain.handle('api', (_, {method,path:p,body,base}) => fixtureApi(method,p,body,base));
   ipcMain.handle('app:instance-id',()=> 'ui-v2-test-process');
@@ -171,7 +187,7 @@ async function setup() {
       await wait(30);return {ok:true};
     }
     requests.push({method:'STREAM',path:p,body});
-    if (failure) { await wait(120); event.sender.send('api:stream:event',{type:'error',msg:'隔离测试错误'}); return {ok:false}; }
+    if (failure) { await wait(120); event.sender.send('api:stream:event',{type:'error',msg:'隔离测试错误'}); return {ok:true}; }
     const activeHistory=body.conversation_id===legacyConversationId?history:otherHistories.get(body.conversation_id);
     if(activeHistory) {
       activeHistory.push({role:'user',text:body.text,t:Date.now()});
@@ -232,6 +248,9 @@ async function setup() {
     } catch (e) { wallpaperTrace('cdp-attach-error',{error:e.message}); }
   }
   await win.loadFile(path.join(src,'index.html'));
+  // Wallpaper is no longer part of Core's static resources. This fixture opts
+  // into the extension stylesheet explicitly for the visual shell checks.
+  await win.webContents.insertCSS(fs.readFileSync(path.join(client,'src/plugins/wallpaper.css'),'utf8'));
   if (wallpaperDiag) {
     const source=`(()=>{const log=(kind,data={})=>{try{console.info('[P8-WALLPAPER-DIAG]',JSON.stringify({kind,url:location.href,t:Date.now(),...data}))}catch(_){}};addEventListener('error',e=>log('page-error',{message:e.message,source:e.filename,line:e.lineno,column:e.colno}));addEventListener('unhandledrejection',e=>log('unhandled-rejection',{reason:String(e.reason)}));addEventListener('message',e=>{if(e.data?.vigilWallpaper===true)log('wallpaper-parent-message',{origin:e.origin,data:e.data})});const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){const result=get.call(this,type,...args);if(/webgl/i.test(String(type)))log('webgl-context',{type,created:!!result,width:this.width,height:this.height,renderer:result&&(()=>{try{return result.getParameter(result.RENDERER)}catch(_){return ''}})()});return result};const raf=requestAnimationFrame;let first=true;window.requestAnimationFrame=function(cb){return raf.call(this,(ts)=>{if(first){first=false;log('first-animation-frame',{ts})}return cb(ts)})};let lastStatus;const seen=new WeakSet();const inspect=()=>{for(const f of document.querySelectorAll('iframe'))if(!seen.has(f)){seen.add(f);f.addEventListener('load',()=>log('iframe-load',{src:f.src}));f.addEventListener('error',()=>log('iframe-error',{src:f.src}));log('iframe-created',{src:f.src,connected:f.isConnected})}const s=document.querySelector('[data-status]');if(s&&s.textContent!==lastStatus){lastStatus=s.textContent;log('status-transition',{status:lastStatus,iframe:[...document.querySelectorAll('iframe')].map(f=>({src:f.src,connected:f.isConnected}))})}};new MutationObserver(inspect).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});addEventListener('pagehide',()=>log('pagehide'));addEventListener('beforeunload',()=>log('beforeunload'));inspect()})();`;
     wallpaperDiagnosticScriptSource=source;
@@ -402,7 +421,7 @@ async function main() {
     assert.equal(await ev(`document.querySelector('.session-chats [data-session="${conversationB}"]')!==null`),true);
     await shot('trial-session-switch');
     await ev(`document.querySelector('#settingsOpen').click()`);
-    await until(`document.querySelectorAll('.settings-tile').length===8`);
+    await until(`document.querySelectorAll('.settings-tile').length===9`);
     await shot('trial-settings-grid');
     console.log('PASS: focused chat layout check',JSON.stringify({setting,normal,glass})); return;
   }
@@ -470,7 +489,7 @@ async function main() {
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   result('quick question and blank-content disabled state');
   await ev(`document.querySelector('#settingsOpen').click()`);
-  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===9`);
   await shot('settings-grid');
   await ev(`document.querySelector('.settings-tile').click()`);
   await until(`API.state.page==='ability' && document.querySelector('.settings-detail-back')`);
@@ -480,7 +499,7 @@ async function main() {
   assert.equal(await ev(`!!document.querySelector('.settings-detail-back')`),true);
   result('settings detail keeps its 返回设置 entry after switching sections');
   await ev(`document.querySelector('.settings-detail-back').click()`);
-  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===9`);
 
   // P8.1：客户端只连本机 Brain —— 设置里不能还有"连接模式 / 远程地址 / token"
   // 这些入口，也不能还有"云端同步"这一页。链接口调用链一起删，不是藏按钮。
@@ -504,7 +523,7 @@ async function main() {
   assert.equal(requests.filter((r)=>r.base === 'cloud').length,0,'no request may target a cloud brain');
 
   await ev(`document.querySelector('.settings-detail-back').click()`);
-  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===8`);
+  await until(`API.state.page==='settings' && document.querySelectorAll('.settings-tile').length===9`);
   await ev(`document.querySelector('#settingsBackChat').click()`);
   await until(`API.state.page==='chat' && !document.querySelector('#hero').hidden`);
   await ev(`document.documentElement.dataset.theme='dark'`);
@@ -702,7 +721,8 @@ async function main() {
   // Failure paths and image-only attachment use the original send handler.
   history=[]; failure=true; await chat();
   await ev(`document.querySelector('#ta').value='错误场景';document.querySelector('#ta').dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()`);
-  await until(`document.querySelector('#msgs').textContent.includes('隔离测试错误')`);
+  try { await until(`document.querySelector('#msgs').textContent.includes('隔离测试错误')`); }
+  catch (error) { throw Error(error.message + '; rendered turns=' + JSON.stringify(await ev(`document.querySelector('#msgs').textContent.slice(-800)`))); }
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true); result('stream error UI and send state recovery');
   await shot('after-error');
   history=[]; failure=false; await chat();

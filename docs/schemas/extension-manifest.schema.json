@@ -10,7 +10,7 @@
   "$defs": {
     "common": {
       "type": "object",
-      "required": ["schema", "id", "version", "kind", "entry", "min_core", "protocol", "artifacts", "permissions", "data_migrations"],
+      "required": ["schema", "id", "version", "kind", "entry", "min_core", "protocol", "artifacts", "permissions", "files", "data_migrations"],
       "properties": {
         "schema": { "const": "vigil.extension/v1" },
         "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$", "maxLength": 80 },
@@ -43,6 +43,25 @@
           "type": "array", "uniqueItems": true,
           "items": { "enum": ["desktop.wallpaper.control", "desktop.ui.contribute", "channel.events.read", "channel.messages.send", "brain.chat.invoke"] }
         },
+        "files": {
+          "type": "array", "minItems": 1, "maxItems": 10000,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]{1,240}$" },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            }
+          }
+        },
+        "renderer": {
+          "type": "object", "additionalProperties": false,
+          "required": ["script", "style"],
+          "properties": {
+            "script": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]{1,180}$" },
+            "style": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]{1,180}$" }
+          }
+        },
         "data_migrations": {
           "type": "array",
           "items": {
@@ -66,13 +85,15 @@
     "desktopExtension": {
       "allOf": [
         { "$ref": "#/$defs/common" },
-        { "properties": { "kind": { "const": "desktop-extension" }, "protocol": { "properties": { "name": { "const": "vigil-desktop-extension" } } }, "permissions": { "items": { "enum": ["desktop.wallpaper.control", "desktop.ui.contribute"] } } } }
+        { "type": "object", "properties": { "kind": { "const": "desktop-extension" }, "protocol": { "type": "object", "properties": { "name": { "const": "vigil-desktop-extension" } } }, "permissions": { "type": "array", "items": { "enum": ["desktop.wallpaper.control", "desktop.ui.contribute"] } } } },
+        { "type": "object", "properties": { "renderer": true }, "required": ["renderer"] }
       ]
     },
     "channelBridge": {
       "allOf": [
         { "$ref": "#/$defs/common" },
-        { "properties": { "kind": { "const": "channel-bridge" }, "protocol": { "properties": { "name": { "const": "vigil-channel-bridge" } } }, "permissions": { "items": { "enum": ["channel.events.read", "channel.messages.send", "brain.chat.invoke"] } } } }
+        { "type": "object", "properties": { "kind": { "const": "channel-bridge" }, "protocol": { "type": "object", "properties": { "name": { "const": "vigil-channel-bridge" } } }, "permissions": { "type": "array", "items": { "enum": ["channel.events.read", "channel.messages.send", "brain.chat.invoke"] } } } },
+        { "not": { "type": "object", "properties": { "renderer": true }, "required": ["renderer"] } }
       ]
     }
   }

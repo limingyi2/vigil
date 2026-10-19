@@ -25,7 +25,7 @@ function response(method,raw){
 }
 async function run(){
   ipcMain.handle('api',(_,req)=>response(req.method,req.path));
-  for(const [name,value]of Object.entries({'app:version':'fixture','plugins:load':{ok:true},'auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'},'wallpaper:request':{ok:true,data:{settings:{},wallpapers:[]}}}))ipcMain.handle(name,()=>value);
+  for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','plugins:load':{ok:true},'auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'},'wallpaper:request':{ok:true,data:{settings:{},wallpapers:[]}},'wallpaper-extension:state':{ok:true,installed:false,enabled:false}}))ipcMain.handle(name,()=>value);
   ipcMain.handle('api:stream',()=>({ok:false,err:'unused'}));
   ipcMain.handle('cfg:set',()=>({wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}));
   win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
@@ -35,7 +35,6 @@ async function run(){
   await until('document.querySelector(".li[data-k=\\"plugin_market\\"]")');
   await ev('document.querySelector(".li[data-k=\\"plugin_market\\"]").click()');
   await until('document.querySelector("#pmGrid [data-action=\\"install\\"]")');
-  await ev('void(window.alert=(message)=>window.__marketAlerts=(window.__marketAlerts||[]).concat(String(message)))');
   const clickInstall='document.querySelector("#pmGrid [data-action=\\"install\\"]").click()';
   await ev(clickInstall);
   await until('document.querySelector("#pmGrid [data-action=\\"install\\"]").disabled');
@@ -43,7 +42,7 @@ async function run(){
   assert.equal(await ev('document.querySelector("#pmGrid [data-action=\\"install\\"]").textContent'),'安装中...');
   await ev(clickInstall);await wait(80);assert.equal(installCalls,1,'disabled install cannot issue a duplicate request');
   resolveInstall({ok:true,status:200,json:{ok:false,err:'fixture install rejected'}});
-  await until('window.__marketAlerts?.some(x=>x.includes("fixture install rejected"))');
+  await until('Array.from(document.querySelectorAll("#toast > div")).some(x=>x.textContent.includes("fixture install rejected"))');
   assert.equal(await ev('document.querySelector("#pmGrid [data-action=\\"install\\"]").disabled'),false);
   assert.equal(await ev('document.querySelector("#pmGrid [data-action=\\"install\\"]").textContent'),'安装');
   console.log('PASS install failure preserves backend error and restores retry state');

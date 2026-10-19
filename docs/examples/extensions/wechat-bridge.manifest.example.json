@@ -10,5 +10,8 @@
     { "platform": "windows-x64", "url": "https://example.invalid/wechat-bridge-1.0.0-win-x64.zip", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
   ],
   "permissions": ["channel.events.read", "channel.messages.send", "brain.chat.invoke"],
+  "files": [
+    { "path": "bridge/service.py", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+  ],
   "data_migrations": []
 }

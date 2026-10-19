@@ -4,12 +4,18 @@
   "version": "1.0.0",
   "kind": "desktop-extension",
   "entry": "extension/main.js",
+  "renderer": { "script": "extension/wallpaper.js", "style": "extension/wallpaper.css" },
   "min_core": "1.1.7",
   "protocol": { "name": "vigil-desktop-extension", "major": 1, "min_minor": 0 },
   "artifacts": [
     { "platform": "windows-x64", "url": "https://example.invalid/wallpaper-1.0.0-win-x64.zip", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
   ],
   "permissions": ["desktop.wallpaper.control", "desktop.ui.contribute"],
+  "files": [
+    { "path": "extension/main.js", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    { "path": "extension/wallpaper.js", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    { "path": "extension/wallpaper.css", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  ],
   "data_migrations": [
     { "id": "wallpaper-import-v1", "from": "builtin-wallpaper-v1", "to": "extension-wallpaper-v1", "strategy": "copy-verify-commit" }
   ]

@@ -163,6 +163,7 @@ async function run() {
   ipcMain.handle('app:version', () => 'model-settings-fixture');
   ipcMain.handle('app:instance-id', () => 'model-settings-test-process');
   ipcMain.handle('wallpaper:request', () => null);
+  ipcMain.handle('wallpaper-extension:state', () => ({ ok: true, installed: false, enabled: false }));
   ipcMain.handle('auto:connect', () => ({ ok: false }));
   ipcMain.handle('updater:check', () => ({ ok: true, update: false }));
   ipcMain.handle('sidecar:status', () => ({ status: 'stopped' }));

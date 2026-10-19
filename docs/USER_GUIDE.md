@@ -461,12 +461,12 @@ python -m unittest discover -s tests -t tests
 ## 微信接话
 
 WeChat Bridge 是独立渠道服务，发行项目源码仓库为
-[`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)；Vigil 仓库中也保留
-`wechat-bridge/` 副本和部署资料，但其当前同名源码与独立仓库 `master` 不同，自动同步规则尚未建立或确认。Bridge 与
-Brain 内的 Python gate 插件是不同交付物：当前 Brain 版本位于 `brain/plugins/gate.py`，
-`wechat-bridge/brain-plugin/gate.py` 是行为不同的旧副本，不能假定自动同步或直接替换。
+[`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)；Vigil 仓库的
+`wechat-bridge/` 是有固定来源摘要的归档兼容快照，非 Core 运行依赖。生产部署版本仍需检查桥接机部署记录。
+Bridge 与 Brain 内的 Python gate 插件是不同交付物：当前 Brain 权威版本位于 `brain/plugins/gate.py`，
+`wechat-bridge/brain-plugin/gate.py` 是不随 Bridge 发行的历史参考，双方通过共享 OPEN/PASS 契约测试而非整文件覆盖同步。
 本机微信登录态留在专用桥接运行机。凭据不应进入 Manifest、命令行、日志或聊天历史。
-当前 Bridge 仍使用旧 HTTP/WS 接口；统一扩展 RPC、安装生命周期和权限隔离尚未完成。
+Bridge 仍使用旧 HTTP/WS 接口；WeChat Bridge 的 Core 安装生命周期和新 RPC 尚未实现。P9.1 已实现 Wallpaper 独立桌面扩展的本地安装和启停，但不构成进程沙箱。
 P9 拆分方案见 [扩展通信契约](P9_extension_protocol.md) 与 [数据迁移约定](P9_data_migration.md)。
 
 ## 文档

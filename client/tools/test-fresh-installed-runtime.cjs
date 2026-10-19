@@ -40,7 +40,7 @@ async function evaluate(expression) {
 }
 
 async function start() {
-  const env = { ...process.env, PATH: `${process.env.SystemRoot}\\System32`, VIGIL_SIDECAR_DISABLE: '1' };
+  const env = { ...process.env, PATH: `${process.env.SystemRoot}\\System32`, VIGIL_SIDECAR_DISABLE: '1', VIGIL_TEST_NO_UPDATES: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.VIGIL_CLOUD_TOKEN;
   delete env.VIGIL_CLOUD_URL;
@@ -93,6 +93,12 @@ async function start() {
   assert.equal(runtime.json.pid, health.pid);
   const home = health.home;
   assert.ok(home && !home.startsWith(install), 'Brain user data should live outside the application install directory');
+  const wallpaperState = await evaluate('vigil.wallpaperExtension.state()');
+  assert.equal(wallpaperState.ok, true);
+  assert.equal(wallpaperState.installed, false, 'Fresh Core must not install Wallpaper implicitly');
+  assert.equal(wallpaperState.enabled, false, 'Fresh Core must keep Wallpaper disabled');
+  assert.equal(fs.existsSync(path.join(process.env.VIGIL_USER_DATA, 'wallpaper-engine')), false,
+    'Uninstalled Wallpaper must not create its data or engine directory');
   const initial = await evaluate("Boolean(document.querySelector('#hero')&&!document.querySelector('#hero').hidden&&document.querySelector('#ta')&&document.querySelector('#msgs').children.length===0)");
   assert.ok(initial, 'Fresh launch did not show an empty welcome page and composer');
 
@@ -140,7 +146,7 @@ async function start() {
   }
   console.log(JSON.stringify({ result: 'passed', mode, conversation_id: conversationId, brain_home: home,
     brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored',
-    durable_chat_history: mode === 'restart' }));
+    wallpaper_uninstalled_and_idle: true, durable_chat_history: mode === 'restart' }));
 }
 
 async function stop() {

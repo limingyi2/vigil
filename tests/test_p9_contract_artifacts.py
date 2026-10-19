@@ -27,10 +27,14 @@ def _resolve_ref(root_schema, ref):
 
 
 def _matches(instance, schema, root_schema):
+    if isinstance(schema, bool):
+        return schema
     if "$ref" in schema:
         return _matches(instance, _resolve_ref(root_schema, schema["$ref"]), root_schema)
     if "oneOf" in schema:
         return sum(_matches(instance, option, root_schema) for option in schema["oneOf"]) == 1
+    if "not" in schema and _matches(instance, schema["not"], root_schema):
+        return False
     if "allOf" in schema and not all(_matches(instance, option, root_schema) for option in schema["allOf"]):
         return False
     if "type" in schema:
@@ -107,6 +111,10 @@ class P9ContractArtifactTests(unittest.TestCase):
         for manifest in self.examples.values():
             self.assertTrue(_matches(manifest, self.schema, self.schema))
 
+    def test_electron_runtime_schema_matches_documented_schema(self):
+        runtime_schema = json.loads((ROOT / "client/electron/extension-manifest.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(runtime_schema, self.schema)
+
     def test_unknown_permission_kind_and_missing_required_field_are_rejected(self):
         wallpaper = self.examples["desktop-extension"]
         for mutation in (
@@ -129,6 +137,7 @@ class P9ContractArtifactTests(unittest.TestCase):
         bridge = self.examples["channel-bridge"]
         self.assertFalse(_matches({**desktop, "permissions": ["brain.chat.invoke"]}, self.schema, self.schema))
         self.assertFalse(_matches({**bridge, "permissions": ["desktop.wallpaper.control"]}, self.schema, self.schema))
+        self.assertFalse(_matches({**bridge, "renderer": {"script": "a.js", "style": "a.css"}}, self.schema, self.schema))
         self.assertFalse(_matches({**desktop, "protocol": {**desktop["protocol"], "name": "vigil-channel-bridge"}}, self.schema, self.schema))
 
     def test_minimum_core_and_protocol_compatibility(self):

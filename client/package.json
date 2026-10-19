@@ -10,7 +10,9 @@
     "e2e": "node tools/e2e.js",
     "agent": "electron tools/agent-dryrun.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "test:p9-extension": "node tools/test-manifest-schema.js && node tools/test-extension-manager.js",
+    "extension:wallpaper": "node tools/build-wallpaper-extension.js"
   },
   "build": {
     "appId": "com.vigil.client",
@@ -20,12 +22,15 @@
       "electron/**",
       "src/**",
       "assets/**",
-      "vendor/dsh-wallpaper-engine/**",
       "version.json",
       "package.json",
+      "build-info.json",
+      "!electron/wallpaper-host.js",
+      "!src/plugins/wallpaper.js",
+      "!src/plugins/wallpaper.css",
+      "!vendor/dsh-wallpaper-engine/**",
       "!src/_harness.html",
-      "!src/js/_devstub.js",
-      "build-info.json"
+      "!src/js/_devstub.js"
     ],
     "asarUnpack": [
       "**/node_modules/keytar/**"
@@ -54,6 +59,8 @@
     "afterPack": "./tools/build-hooks.js"
   },
   "dependencies": {
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
     "keytar": "^7.9.0",
     "ws": "^8.22.0"
   },

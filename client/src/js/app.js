@@ -335,7 +335,7 @@
     } else {
       void go(state.page).then(() => perf('first-usable'));
     }
-    if (!settingsWindow && window.VigilWallpaper) setTimeout(() => window.VigilWallpaper.init(), 0);
+    if (!settingsWindow) void loadWallpaperExtension();
     if (!settingsWindow) void loadPluginFrontends();
 
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
@@ -388,6 +388,23 @@
     }, 10000);
 
     refreshStats();
+  }
+
+  async function loadWallpaperExtension() {
+    try {
+      const api = window.vigil?.wallpaperExtension;
+      if (!api) return;
+      const state = await api.state();
+      if (!state?.ok || !state.enabled) return;
+      const loaded = await api.load();
+      if (!loaded?.ok) throw new Error(loaded?.err || '扩展加载失败');
+      let style = document.getElementById('wallpaper-extension-style');
+      if (!style) { style = document.createElement('style'); style.id = 'wallpaper-extension-style'; document.head.appendChild(style); }
+      style.textContent = loaded.style;
+      window.VigilWallpaper?.init();
+    } catch (e) {
+      console.warn('[Wallpaper 扩展] 已跳过，普通聊天继续运行：', e.message || e);
+    }
   }
 
   // ── 首启向导（填 key 即用）─────────────────────────────────

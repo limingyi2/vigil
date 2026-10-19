@@ -1,6 +1,6 @@
-# P9 扩展通信与兼容契约（提案，P9.0）
+# P9 扩展通信与兼容契约（P9.0 契约，P9.1 Wallpaper 实施状态）
 
-状态：供审核的目标契约；**本阶段没有实现安装器、扩展进程隔离或新 RPC**。现存路由和 UI 仍按本文“当前已证实”部分运行。
+状态：本文件定义跨组件兼容契约。P9.1 已实现 Wallpaper 的本地安装、启停、健康检查、版本暂存/切换与 fail-closed Manifest 校验；未实现扩展进程沙箱、签名发行验证或通用 RPC。WeChat Bridge 继续独立运行，不受 Wallpaper 生命周期管理。
 
 ## 1. 当前基线和边界
 
@@ -15,11 +15,11 @@ flowchart LR
   NodeForward[client/electron/forward.js] -. 当前未由 main.js 启用 .-> Forward
 ```
 
-当前 Electron 启动时加载 `client/src/plugins/wallpaper.js`，主进程创建 `client/electron/wallpaper-host.js`，其宿主在首次请求时启动并从 `client/vendor/dsh-wallpaper-engine/` 加载运行库；数据位于 Electron `userData/wallpaper-engine`。Electron 构建 glob 包含 `electron/**`、`src/**`、Wallpaper vendor，故 Wallpaper 客户端代码与引擎当前在核心安装包中。Brain 的 `brain/plugin_host.py` 会扫描 `brain/plugins/`，`brain/plugins/wallpaper/__init__.py` 注册旧 `/api/plugin/wallpaper/...` 路由，构建 spec 也递归收集该目录。旧 Brain 插件与 Electron 当前 Wallpaper 页面并无已确认的调用关系；保留旧路由直到外部调用者清点完成。
+P9.1 起 Electron Core 不再静态加载 Wallpaper 前端资源，也不再把壁纸宿主和 vendor 引擎打进 Core；只有安装并启用独立桌面扩展后，主进程才创建宿主并加载扩展 UI。状态位于 `userData/extensions/state.json`，程序版本放在独立版本目录，用户数据继续位于 `userData/wallpaper-engine`。Brain 的 `brain/plugin_host.py` 仍会扫描 `brain/plugins/`，`brain/plugins/wallpaper/__init__.py` 注册旧 `/api/plugin/wallpaper/...` 路由，构建 spec 也递归收集该目录。旧 Brain 插件与桌面扩展没有已确认的等价/调用关系；保留旧路由直到外部调用者清点完成。
 
-当前渲染器通过 preload 暴露 `wallpaper.request/importFile/directory`，主进程接收相应 IPC。宿主只监听 loopback，使用随机 session secret/capability；但主进程 Wallpaper IPC handler 尚无明确的扩展身份或 sender/frame 授权检查。新扩展不得直接复用这些高权限入口；未来须由 Core 校验调用来源、权限和目标操作。
+主窗口 preload 只暴露 Wallpaper 专用方法；主进程校验主窗口与主 frame 来源、扩展启用状态及已授予权限后再代理到 loopback 宿主。宿主继续使用随机 session secret/capability 并限定 HTTP 操作。P9.1 的 UI 脚本在主渲染器中执行，仍能看到 preload 暴露的其他 Core API；因此这属于受控 IPC 代理，不是扩展代码沙箱，不能把任意第三方扩展视为可信。扩展发行签名、独立渲染进程隔离是后续安全工作。
 
-WeChat Bridge 是运行在独立桥接机器上的渠道服务。公开 GitHub 仓库 `limingyi2/zhixia-wechat-bridge` 的 `master` 是独立发行项目的源码仓库；Vigil 仓库的 `wechat-bridge/wxauto_bridge.py` 是独立副本/快照，当前 Git blob 与公开 `master` 的同名文件不同（本次读取到的远端 blob 为 `13790ddba69a9a9536d753943cc6ff7f9eb535b9`，本地 blob 为 `a4d650a939117a5aa7dbec9bd795a8978ec335e1`）。这证明副本存在漂移；仓库间自动同步/发布规则尚未找到，P9.1 前必须明确后续修改的权威源和同步责任。实际部署路径依赖桥接机配置，Vigil 的 `deploy/wechat/deploy_bridge_m4.py` 与 `restart_bridge_m4.py` 是运维脚本，含旧路径假设；P9.0 不运行它们。当前 Vigil 副本中，Bridge 经 `/api/chat`、`/api/plugins` 和配置凭据连接 Brain；用户聊天使用 `src=wechat` 或 `src=wechat_group`。Brain 当前把未认可的 src 归一化为 `wechat`，所以今后协议必须明确渠道标识注册/白名单规则，不可依赖任意字符串形成隔离边界。
+WeChat Bridge 是运行在独立桥接机器上的渠道服务。公开 GitHub 仓库 `limingyi2/zhixia-wechat-bridge` 是独立发行源码权威；`wechat-bridge/UPSTREAM.json` 固定记录了核验 revision 和两个仓库的 `wxauto_bridge.py` blob，当前 upstream master 仍为 `6bd975084e1379a90e3979127d3aafda4b586af5`，Vigil 本地归档快照与之不同。自动同步/发布流程和真实部署机版本仍未知。`brain/plugins/gate.py` 是 Vigil Brain 插件宿主权威 gate；`wechat-bridge/brain-plugin/gate.py` 保留为不随 Bridge 发行的旧宿主参考，双方共同的 OPEN/PASS 判定由静态契约测试覆盖，但宿主否决返回约定仍不同。实际部署路径依赖桥接机配置，Vigil 的 `deploy/wechat/deploy_bridge_m4.py` 与 `restart_bridge_m4.py` 仍含旧路径假设；P9.1 不运行它们。Bridge 仍通过 `/api/chat`、`/api/plugins` 与 Brain 通信，用户聊天使用 `src=wechat` 或 `src=wechat_group`。Brain 当前把未认可的 src 归一化为 `wechat`，渠道白名单仍需后续补齐。
 
 `brain/ws_forward.py` 是 Brain 当前可选 WebSocket 服务端；微信路由为 local 且相关在线条件成立时使用。`client/electron/forward.js` 是可单独调用的 Node 客户端，但当前 `client/electron/main.js` 不加载或启动它。双 Brain 转发是单独可选能力，既不是 Wallpaper 桌面扩展，也不是 WeChat Bridge 渠道桥接本身。
 

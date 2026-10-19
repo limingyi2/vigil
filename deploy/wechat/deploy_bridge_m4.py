@@ -3,16 +3,40 @@
 sender_id is an optional kwarg). Password comes from ZX_PW env var only,
 never written anywhere. ASCII only."""
 import os
+from pathlib import Path
+import subprocess
 import sys
 
 import paramiko
 
 PW = os.environ.get("ZX_PW")
 HOST = os.environ.get("ZX_BRIDGE_HOST", "")
+LOCAL = Path(os.environ.get("ZX_BRIDGE_SOURCE", "")).resolve()
+EXPECTED_REVISION = os.environ.get("ZX_BRIDGE_SOURCE_REVISION", "")
+if not LOCAL.is_file() or not EXPECTED_REVISION:
+    print("Set ZX_BRIDGE_SOURCE and ZX_BRIDGE_SOURCE_REVISION from a reviewed upstream checkout")
+    sys.exit(2)
+try:
+    revision = subprocess.check_output(
+        ["git", "-C", str(LOCAL.parent), "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+    ).decode().strip()
+    remote = subprocess.check_output(
+        ["git", "-C", str(LOCAL.parent), "remote", "get-url", "origin"], stderr=subprocess.DEVNULL
+    ).decode().strip().lower().removesuffix(".git")
+    source_root = Path(subprocess.check_output(
+        ["git", "-C", str(LOCAL.parent), "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
+    ).decode().strip()).resolve()
+except (OSError, subprocess.CalledProcessError):
+    print("Bridge source must be a checked-out upstream Git repository")
+    sys.exit(2)
+if (not (remote.endswith("/limingyi2/zhixia-wechat-bridge")
+         or remote.endswith(":limingyi2/zhixia-wechat-bridge"))
+        or revision != EXPECTED_REVISION or LOCAL != source_root / "wxauto_bridge.py"):
+    print("Bridge source repository or revision does not match the reviewed upstream pin")
+    sys.exit(2)
 if not PW or not HOST:
     print("ZX_PW / ZX_BRIDGE_HOST not set")
     sys.exit(2)
-LOCAL = r"F:\Vigil\wechat_bridge\wxauto_bridge.py"
 REMOTE = "C:/zx/wxauto_bridge.py"
 BAK = "C:/zx/wxauto_bridge.py.bak_m4_20261009"
 

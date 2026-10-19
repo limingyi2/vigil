@@ -6,7 +6,9 @@ REM  bridge needs this tunnel. Started detached, survives reboots
 REM  only if you add it to Task Scheduler yourself (see run_tunnel.ps1).
 REM  Keep this window OPEN while running -- closing it stops the tunnel.
 REM ============================================================
-cd /d "F:\vigil"
+set "VIGIL_HOME=%~dp0..\.."
+for %%I in ("%VIGIL_HOME%") do set "VIGIL_HOME=%%~fI"
+cd /d "%VIGIL_HOME%"
 
 REM ============================================================
 REM  云机地址从**环境变量**读，不写死在文件里 —— 仓库是 PUBLIC。
@@ -38,13 +40,13 @@ set /a T=0
 :WAIT
 timeout /t 2 /nobreak >nul
 set /a T+=1
-.venv-wx\Scripts\python.exe -c "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',18787))==0 else 1)"
+python -c "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',18787))==0 else 1)"
 if %T% lss 10 goto WAIT
 echo   Tunnel is up.
 echo.
 echo   Now run VigilSelfTest.bat in another window.
 echo   OR: just run the bridge directly:
-echo     .venv-wx\Scripts\python.exe brain\wechat_bot\wxauto_bridge.py --with "??????"
+echo     python "%VIGIL_HOME%\bridge\wxauto_bridge.py" --with "GROUP_NAME"
 echo.
 echo   Close this window to stop the tunnel.
 echo.

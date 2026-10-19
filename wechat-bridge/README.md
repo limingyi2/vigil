@@ -4,7 +4,7 @@
 名字由人格自己定义（本项目当前用的是"麦麦"），不是项目名。
 
 桥接服务可部署在独立 Windows 运行机；云主机或虚拟机的实际部署状态
-需要查看相应环境。本次 P9.0 只做源码审计，没有连接或验证远端运行机。
+需要查看相应环境。P9.1 只核验源码与公开仓库 revision，没有连接或验证远端运行机。
 
 ## 快速上手
 
@@ -60,15 +60,16 @@ vm/                           虚拟机侧脚本
 `brain/wechat_bot/`。`vm/` 脚本负责桥接运行机的安装/启动，`deploy/wechat/`
 下的部分部署脚本保留有旧运行路径假设，执行前必须按目标环境重新审查。
 
-WeChat Bridge 也有独立公开仓库 [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)，
-它是独立渠道服务的发行项目源码仓库。Vigil 仓库的同名源码副本与其 `master` 当前不同；
-两处的自动同步/发布流程尚未建立或核实。后续改动前需确认生产部署采用哪一份，不能假定修改一边会自动同步另一边。
+WeChat Bridge 是独立进程，独立发行仓库 [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)
+是桥接服务源码和发行包的权威来源。Vigil 中的 `wechat-bridge/` 是归档兼容快照，不是 Electron/Core 的运行依赖，
+也不会随 Core 安装包发布。快照与上游的核验版本及文件摘要记录在 [`UPSTREAM.json`](UPSTREAM.json)；
+更新快照必须显式更新来源 revision、摘要和兼容测试。生产运行版本仍须由桥接运行机自己的部署记录核实，
+本仓库不据此声称已部署上游当前版本。
 
-`brain/plugins/gate.py` 是当前 Brain 插件宿主中的 gate 实现；
-`wechat-bridge/brain-plugin/gate.py` 是随桥接项目保存的旧副本，行为与当前版本不同。
-旧副本未按当前 `Turn.veto()` 宿主契约更新，不应直接覆盖或安装到当前 Brain。
-P9.0 记录差异，不自动复制、删除或部署任一版本。WeChat Bridge 独立发行与 Brain
-内 gate 插件是两个不同交付物。
+`brain/plugins/gate.py` 是 Vigil 当前 Brain 插件宿主的权威 gate；
+`wechat-bridge/brain-plugin/gate.py` 是历史兼容参考，保留旧宿主返回值约定，不属于 Bridge 发行包，
+也不应安装到当前 Brain。两者不做整文件覆盖同步：共享的 OPEN/PASS 决策契约由 `tests/test_p9_bridge_contract.py`
+回归，Brain 侧否决适配仍使用当前 `Turn.veto()`。Bridge 独立发行与 Brain 内 gate 插件是两个不同交付物。
 
 ## 安全闸
 

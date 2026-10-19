@@ -32,14 +32,14 @@ def run_logged(command, *, env, log_path, timeout):
     return result
 
 
-def main(installer, expected_commit, output):
+def main(installer, expected_commit, output, expected_version='1.1.0'):
     assert os.name == 'nt', 'This acceptance check must run on an isolated Windows runner'
     installer = Path(installer).resolve()
     output = Path(output).resolve()
     manifest_path = installer.parent / 'release-manifest.json'
     contents_path = installer.with_suffix('.contents.json')
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    assert manifest['candidate'] is True and manifest['ver'] == '1.1.0'
+    assert manifest['candidate'] is True and manifest['ver'] == expected_version
     assert manifest['source_commit'] == expected_commit, 'Candidate source commit mismatch'
     assert manifest['setup_file'] == installer.name
     installer_hash = sha256(installer)
@@ -169,9 +169,10 @@ if __name__ == '__main__':
     parser.add_argument('installer')
     parser.add_argument('--expected-source-commit', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--expected-version', default='1.1.0')
     args = parser.parse_args()
     try:
-        main(args.installer, args.expected_source_commit, args.output)
+        main(args.installer, args.expected_source_commit, args.output, args.expected_version)
     except Exception as error:
         output = Path(args.output).resolve()
         output.parent.mkdir(parents=True, exist_ok=True)

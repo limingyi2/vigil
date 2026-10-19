@@ -11,10 +11,13 @@ REM  NOTE: this file must stay pure ASCII. The Chinese chat name is
 REM  built here with chr() instead of typed inline -- a non-ASCII
 REM  byte in a .bat breaks the structure under GBK.
 REM ============================================================
-cd /d "F:\vigil"
+set "VIGIL_HOME=%~dp0..\.."
+for %%I in ("%VIGIL_HOME%") do set "VIGIL_HOME=%%~fI"
+set "PYTHONPATH=%VIGIL_HOME%\pkgs"
+cd /d "%VIGIL_HOME%"
 
 REM ---- 1. is the tunnel up? ----
-.venv-wx\Scripts\python.exe -c "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',18787))==0 else 1)"
+python -c "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(0 if s.connect_ex(('127.0.0.1',18787))==0 else 1)"
 if errorlevel 1 (
   echo.
   echo   The tunnel is NOT up, so the brain is unreachable and she will
@@ -28,7 +31,7 @@ echo   Tunnel is up.
 
 REM ---- 2. File Transfer Assistant, built from code points (ASCII-safe) ----
 set "TARGET="
-.venv-wx\Scripts\python.exe -c "import sys; sys.stdout.write(chr(0x6587)+chr(0x4EF6)+chr(0x4F20)+chr(0x8F93)+chr(0x52A9)+chr(0x624B))" > "%TEMP%\_zx_t.txt"
+python -c "import sys; sys.stdout.write(chr(0x6587)+chr(0x4EF6)+chr(0x4F20)+chr(0x8F93)+chr(0x52A9)+chr(0x624B))" > "%TEMP%\_zx_t.txt"
 set /p TARGET=<"%TEMP%\_zx_t.txt"
 del "%TEMP%\_zx_t.txt"
 
@@ -39,7 +42,7 @@ echo   The bridge watches that window and replies there.
 echo   Press Ctrl+C to stop.
 echo.
 
-.venv-wx\Scripts\python.exe brain\wechat_bot\wxauto_bridge.py --with "%TARGET%"
+python "%VIGIL_HOME%\bridge\wxauto_bridge.py" --with "%TARGET%"
 
 echo.
 echo   Exited.
