@@ -709,10 +709,10 @@ function connectionBase() {
   return fixed ? fixed.base : sidecar.base();
 }
 
-// 解包运行的端到端测试可以指向一个已经在跑的真实 Brain —— 否则每次跑
-// 渲染层用例都得先打一个 160MB 的包。只认回环地址，打包后的发行版忽略它。
+// 隔离 E2E 可让 Core 指向独立启动的 fixture Brain；只在显式测试模式下
+// 接受此覆盖，并且仅认回环地址。正常打包启动始终使用随包 sidecar。
 function testBrain() {
-  if (app.isPackaged) return null;
+  if (process.env.VIGIL_TEST_MODE !== '1') return null;
   const raw = String(process.env.VIGIL_TEST_BRAIN || '').trim();
   if (!raw) return null;
   try {
