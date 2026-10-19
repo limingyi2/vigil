@@ -1,6 +1,6 @@
 # P9.1 完成报告（候选阶段）
 
-状态：本地实现与候选构建验收中；不代表正式发布。基线为 P9.0 `14030d38af96b924fb7433d4096ea6548c53586e`，工作目录为隔离 worktree。执行开始时本地 `dev` 与 `origin/dev` 的关系及 `origin/dev` HEAD 已按任务要求核对；本次代码由本地未推送的 P9.0 提交派生。提交 SHA、安装包摘要与生命周期验收结果将在构建后补记。
+状态：P9.1 候选已通过隔离安装验收；不代表正式发布。基线为 P9.0 `14030d38af96b924fb7433d4096ea6548c53586e`，工作目录为隔离 worktree。本次提交由本地 P9.0 基线派生，候选实际源提交、大小和 SHA-256 以同目录 `release-manifest.json` 为准。
 
 ## 已实现
 
@@ -27,6 +27,7 @@
 - Draft 2020-12 Manifest 示例及拒绝用例、扩展管理器安装/启停/重启/失败回滚/数据保留、实际构建 Wallpaper 包集成测试通过。
 - Electron Chat-v2 回归通过，使用真实 Electron 主窗口与本地 fake host/extension package；覆盖普通聊天、会话、设置及 Wallpaper 页面/宿主状态。
 - Electron 模型设置、插件市场、P72 工作区取消回归通过。
+- Windows x64 候选 `Vigil.Setup.1.1.7.exe` 隔离验收通过：静默安装及包内文件 hash 校验、Electron/Brain ready、fake Provider 首次聊天、应用重启后同一会话与历史恢复、静默卸载、74 个用户数据文件及外置哨兵均保持原样。全程使用独立临时用户目录；无真实 API 请求。
 
 失败或跳过：
 
@@ -41,10 +42,11 @@
 - 旧 `.vigil/wallpaper/config.json` 仅有迁移文档约束，未实现自动探测/迁移；同路径的 `userData/wallpaper-engine` 资产不搬移、不删除。
 - Bridge 快照有意不替换为 upstream 新版本；上线同步需在权威仓库按独立发布流程完成，并重新审查安全与部署兼容。
 - npm 安装报告有既有依赖安全公告（1 critical、10 high、5 moderate）；本阶段未做无关升级。
+- 旧版本 Windows 安装器在原工作区不存在，无法做前后 installer 文件大小的直接比较。构建清单记录本候选准确体积；Core 的 `app.asar` 确认 806 项内 Wallpaper 宿主/前端/vendor 为 0 项。拆出的旧壁纸前端与 vendor 当前源码共 4,349,940 字节（64 个 vendor 文件及两个前端文件），仅作未压缩源码体积参考，不冒充安装包节省量。
 
 ## 回滚
 
-代码回滚使用本次 P9.1 提交的反向提交；旧 Brain Wallpaper 路由及 Bridge 快照仍保留。Wallpaper 扩展禁用后 UI 不加载，用户数据保留；升级失败时管理器保留旧版本并恢复旧 active version。候选安装包不发布正式 Release。隔离安装生命周期结果与 SHA-256、文件大小、构建源提交待最终构建后追加。
+代码回滚使用本次 P9.1 提交的反向提交；旧 Brain Wallpaper 路由及 Bridge 快照仍保留。Wallpaper 扩展禁用后 UI 不加载，用户数据保留；升级失败时管理器保留旧版本并恢复旧 active version。候选安装包不发布正式 Release。构建源提交、SHA-256、字节数及隔离生命周期完整日志写入候选目录的 manifest 与验收报告。
 
 ## P9.2 建议最小范围
 
