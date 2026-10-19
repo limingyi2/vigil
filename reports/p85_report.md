@@ -6,14 +6,14 @@
 
 | 文件 | 改动及原因 |
 |---|---|
-| `brain/conversation_context.py` | 统一动态预算，按本地/云端选择近期历史；修复旧裁剪逻辑不能可靠保留最新消息的问题。摘要改为严格 JSON schema，校验必需字段、真实来源、明确决定原文与精确标识符。按输入上限每轮处理一批，超长消息保存片段进度；完整保留 pending，超过旧软上限不再丢弃。候选状态原子写入成功才提交，失败保留旧摘要、pending 和水位线。旧自然语言摘要保留在升级状态；旧结构化摘要按完整段落存档，不截断数字/SHA/路径。保留独立的用户原文证据账本，时间和来源可追踪，冲突版本都保留、较新明确决定优先显示。 |
+| `brain/conversation_context.py` | 统一动态预算，按本地/云端选择近期历史；修复旧裁剪逻辑不能可靠保留最新消息的问题。摘要改为严格 JSON schema，校验必需字段、真实来源、明确决定原文与精确标识符。按输入上限每轮处理一批，超长消息保存片段进度；完整保留 pending，超过旧软上限不再丢弃。候选状态原子写入成功才提交，失败保留旧摘要、pending 和水位线。微信拆条回复使用原有 split_messages 规则匹配连续多行原文，也兼容旧 pending；旧自然语言摘要保留在升级状态；旧结构化摘要按完整段落存档，不截断数字/SHA/路径。保留独立的用户原文证据账本，时间和来源可追踪，冲突版本都保留、较新明确决定优先显示。 |
 | `brain/history_retrieval.py`（新增） | 仅从 `_log_for()` 的真实 JSONL 建立独立、隔离的增量索引，持久化字节游标、行号、角色、时间、片段 ID、内容和记录哈希。BM25 与向量余弦排名经 RRF 去重融合，注入前回读原文校验。Embedding 为独立单后端实现，不导入长期记忆/知识库的多后端回退链路。 |
 | `brain/brain.py` | 本地 provider 构造失败禁止云端兜底；实际输出上限与预留保持一致；固定输入超容量时明确返回错误；清空历史同时清除内存历史、摘要和检索索引。继续复用 draft/stream 的现有 builder。 |
 | `brain/server.py` | Agent run 的工具定义与已完成 run 历史在同一个 builder 中计预算，记录 `last_context_info`；创建 run 不发摘要请求。 |
 | `brain/agent_runs.py` | 给 Agent 请求设置与上下文预留一致的输出上限，不改派发协议或工具流程。 |
 | `brain/config/config.example.json` | Ollama 示例改为 12288；添加预算、分批和历史检索的可选配置。未修改实际 config.json。 |
 | `brain/_test_p84_context.py` | 18 项原验收保持执行；FakeProvider 改用带真实合成来源的结构化协议。旧“超长摘要截断”验收升级为“拒绝超长输出并完整保留 pending”。 |
-| `tests/test_p85_context_history.py`（新增） | 38 项专门验收；隔离 VIGIL_HOME/数据目录、FakeProvider、合成聊天、socket 网络拦截。包含 P8.4 的子进程验收入口，现有 CI `pytest tests` 会实际执行，无需改 workflow。 |
+| `tests/test_p85_context_history.py`（新增） | 39 项专门验收；隔离 VIGIL_HOME/数据目录、FakeProvider、合成聊天、socket 网络拦截。包含 P8.4 的子进程验收入口，现有 CI `pytest tests` 会实际执行，无需改 workflow。 |
 | `client/package.json`、`client/package-lock.json`、`client/version.json` | 桌面版本 1.1.5 / code 26；修正 lockfile 原先仍为 1.1.0 的版本元数据。 |
 | `reports/p85_report.md`、`reports/p85-evidence/*` | 本报告、真实模型观察和机器可读测试结果；安装包交付信息追加在单独交付记录。 |
 
@@ -33,14 +33,15 @@ Token 预算是启发式估算，不冒充真实 tokenizer；真实 usage 单独
 
 ## 真实测试结果
 
-- P8.5：**38/38 通过**，包括 P8.4 的 **18/18** 子进程验收。额外定向执行 P8.5 + Agent run/HTTP：**71/71 通过**。
-- 项目全量 `python -B -m pytest tests brain -q --tb=short -ra`：**1327 收集，1310 通过，17 跳过，0 失败，0 错误**。详见 `p85-evidence/full-regression.xml`。跳过项为已有的 Windows junction/symlink/mkfifo 权限、未随仓库分发的旧母本/手机资源、无本地 venv 等条件；未将它们计为通过。
+- P8.5：**39/39 通过**，包括 P8.4 的 **18/18** 子进程验收。额外定向执行 P8.5 + Agent run/HTTP：**72/72 通过**。
+- 项目全量 `python -B -m pytest tests brain -q --tb=short -ra`：**1328 收集，1311 通过，17 跳过，0 失败，0 错误**。详见 `p85-evidence/full-regression.xml`。跳过项为已有的 Windows junction/symlink/mkfifo 权限、未随仓库分发的旧母本/手机资源、无本地 venv 等条件；未将它们计为通过。
+- 打包运行时 Python 3.12.14 同组 72 个测试 case 全部通过，JUnit 连同 8 个 unittest subTest 子项计为 80；全量回归使用 Python 3.13。
 - 前端 CI 对应 3 组 Node 回归：**24/24 通过**。
 - Python 全仓编译与 `git diff --check`：通过（发布前再次检查版本文件）。
 - 20/50/100/200 轮合成对话，在第 5/30/70 轮埋入数字、日期、版本、路径及 SHA，存在的 **9 个历史回查样本全部恢复原文**；单独 SHA/路径/端口/版本 BM25 命中通过。压缩前后原始日志字节及 SHA-256 相同。
 - 语义改写命中、RRF 排序去重、向量模型/维度切换在 Fake Embedding 后端通过；本地适配器 HTTP seam 只允许 loopback，socket 全部阻断外部网络；缺模型、超时、无效维度均降级 BM25。
 - JSON 无效、缺字段、伪造来源、非原文禁止事项、模型超时、候选状态写盘失败、实际 `os.replace` 失败均验证旧状态保留。
-- 516 条 pending 不丢失，按 4096 上限逐批处理；单条超长消息通过片段水位恢复，重复原文映射不同来源行。重启恢复摘要、索引及未完成 pending。
+- 微信一条内存回复对应多条原始存档的摘要映射通过，原始文件不变；516 条 pending 不丢失，按 4096 上限逐批处理；单条超长消息通过片段水位恢复，重复原文映射不同来源行。重启恢复摘要、索引及未完成 pending。
 
 全量回归保留了失败过程：第一次包含编译生成的插件 `__pycache__` 与旧版测试夹具问题；第二次因给整个旧测试集强制设置空 VIGIL_HOME/UTF-8 导致预置人设、插件和 Windows 子进程解码失败。缓存已无损移入 worktree 临时目录；最终恢复既有全量测试环境，用 `-B` 避免生成目录污染。新增测试仍各自强制隔离临时 VIGIL_HOME。最终全量是真实零失败结果，未修改旧测试断言来掩盖这些环境错误。
 

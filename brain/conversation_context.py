@@ -323,33 +323,50 @@ def _source_batch(brain, key, pending, budget, cursor=0):
     path = brain._log_for(key[1], None if key[2] == 'legacy' else key[2])
     index, _ = sync_index(path, key)
     docs = index['docs']
+    records = {}
+    for doc in docs:
+        records.setdefault(doc['line_start'], []).append(doc)
     used = set()
     batch, consumed, cost = [], [], 0
     for pending_msg in pending:
         content = pending_msg.get('content') or ''
         # In-memory history carries a presentation timestamp; JSONL stores raw text.
         bare = re.sub(r'^\[\d\d-\d\d \d\d:\d\d\]\s*', '', content)
-        matches = [d for d in docs if d['line_start'] > cursor and d['role'] == pending_msg.get('role') and
-                   d['id'] not in used and d['content'] in bare]
-        if not matches:
-            raise ValueError('pending_source_not_found')
-        # Repeated identical messages must map to distinct archive records. A
-        # pending entry may span several fragments from a single JSONL record.
-        line = matches[0]['line_start']
-        matches = [d for d in matches if d['line_start'] == line]
-        verified = ''.join(resolve(path, d) for d in matches)
-        if verified != bare:
-            raise ValueError('pending_source_incomplete')
+        pieces = [bare]
+        if key[1] != 'pc' and pending_msg.get('role') == 'assistant':
+            # The established WeChat writer splits a single in-memory reply
+            # into several archive records. Reuse that exact split contract.
+            from brain import split_messages
+            pieces = split_messages(bare)
+        matches = []
+        previous_line = cursor
+        virtual_offset = 0
+        for piece in pieces:
+            group = next((group for line, group in records.items()
+                          if line > previous_line and group[0]['role'] == pending_msg.get('role')
+                          and not any(d['id'] in used for d in group)
+                          and ''.join(d['content'] for d in group) == piece), None)
+            if not group:
+                raise ValueError('pending_source_not_found')
+            if matches and group[0]['line_start'] != previous_line + 1:
+                raise ValueError('pending_source_incomplete')
+            for doc in group:
+                if resolve(path, doc) != doc['content']:
+                    raise ValueError('pending_source_changed')
+                matches.append((doc, virtual_offset))
+            previous_line = group[0]['line_start']
+            virtual_offset += len(piece)
+        bare = ''.join(pieces)
         skip = int(pending_msg.get('fragment_offset', 0))
-        for doc in matches:
+        for doc, base_offset in matches:
             used.add(doc['id'])
-            if doc['end'] <= skip:
+            if base_offset + doc['end'] <= skip:
                 continue
             text = resolve(path, doc)
             # Subdivide very long sentences at whitespace/punctuation only. A
             # single enormous identifier is deferred, never cut into false facts.
             for start, end in fragments(text, 350):
-                absolute_end = doc['start'] + end
+                absolute_end = base_offset + doc['start'] + end
                 if absolute_end <= skip:
                     continue
                 quote = text[start:end]

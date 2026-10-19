@@ -456,6 +456,24 @@ def test_identical_messages_advance_distinct_source_lines(setup):
     assert not state_for(b)['pending']
 
 
+def test_wechat_split_archive_reply_is_one_pending_message(setup):
+    b, p = setup
+    b.use_src('wechat', b._cur_conversation)
+    for i in range(20):
+        b._commit_turn('确认实验 %d' % i, '第一条回复 %d。\n第二条含端口 18787。' % i,
+                       src='wechat', conversation_id=b._cur_conversation, life=False)
+    archive = Path(b._log_for('wechat', b._cur_conversation))
+    raw = archive.read_bytes()
+    before = len(state_for(b)['pending'])
+    _, info = build(b)
+    assert not info.get('summarize_failed'), info
+    st = state_for(b)
+    assert st['structured_summary'] and len(st['pending']) < before
+    refs = st['source_evidence']
+    assert any(r['role'] == 'assistant' and '18787' in r['quote'] for r in refs)
+    assert archive.read_bytes() == raw
+
+
 def test_old_large_summary_segments_and_literal_preservation(setup):
     b, _ = setup
     feed(b, 80, {0: '确认数字 9876543210 SHA 7d961619608c54053e198ef283e00b0a93b56ca6 禁止修改 master'})
