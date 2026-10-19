@@ -6,6 +6,7 @@ inherit limits solely because their model ID resembles an official model.
 import copy
 import hashlib
 import json
+import re
 import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
@@ -15,6 +16,12 @@ from .base import ProviderResponseError
 _CACHE = {}
 _LOCK = threading.Lock()
 PARAMETERS = ('max_tokens', 'max_completion_tokens', 'max_output_tokens')
+_CONTEXT_LIMIT = re.compile(
+    r'context[_ -]?length|maximum context|context window|prompt.{0,24}too long|'
+    r'too many tokens|input tokens?.{0,32}(limit|maximum|exceed)|'
+    r'maximum.{0,24}tokens?.{0,24}(context|input)|上下文.{0,16}(超|长度|限制)|'
+    r'(输入|提示词).{0,16}(token|长度).{0,12}(超|限制)|'
+    r'输入超过已配置模型容量|上下文空间不足', re.I)
 
 
 def endpoint_id(endpoint):
@@ -60,6 +67,8 @@ def capabilities(cfg, provider=None):
         source='administrator' if any(v is not None for v in opts.values()) else 'unknown',
         updated_at=time.time())
     record['confirmed'] = record['max_output_tokens'] is not None
+    record['capacity_verified'] = record['context_tokens'] is not None
+    record['input_limit_verified'] = record['input_tokens'] is not None
     with _LOCK:
         # Bound cache growth when models/endpoints are frequently changed.
         if len(_CACHE) >= 256:
@@ -77,12 +86,25 @@ def prepare(payload, cfg, *, step_tokens=None, remaining_tokens=None):
     cap = capabilities(cfg)
     limits = [v for v in (cap['max_output_tokens'], _positive(step_tokens),
                          _positive(remaining_tokens)) if v is not None]
-    # Conservative estimate, explicitly not represented as exact token usage.
-    estimated_input = len(json.dumps(out.get('messages', []), ensure_ascii=False).encode('utf-8'))
+    # Use the same character-based token estimate as the shared context builder.
+    # UTF-8 byte length is not a token count (especially for CJK prompts).
+    from conversation_context import estimate_tokens, MSG_OVERHEAD, MARGIN_TOKENS
+    messages = out.get('messages', [])
+    request_shape = {'messages': messages}
+    if out.get('tools'):
+        request_shape['tools'] = out['tools']
+    estimated_input = estimate_tokens(json.dumps(request_shape, ensure_ascii=False))
+    if isinstance(messages, list):
+        estimated_input += len(messages) * MSG_OVERHEAD
     if cap['input_tokens'] and estimated_input > cap['input_tokens']:
         raise ProviderResponseError('输入超过已配置模型容量')
     if cap['context_tokens']:
-        available = cap['context_tokens'] - estimated_input
+        compression_cfg = cfg.get('context_compression') or {}
+        try:
+            margin = max(0, int(compression_cfg.get('margin_tokens', MARGIN_TOKENS)))
+        except (TypeError, ValueError):
+            margin = MARGIN_TOKENS
+        available = cap['context_tokens'] - estimated_input - margin
         if available <= 0:
             raise ProviderResponseError('上下文空间不足')
         limits.append(available)
@@ -91,6 +113,21 @@ def prepare(payload, cfg, *, step_tokens=None, remaining_tokens=None):
     elif cap['requires_output_limit']:
         out[cap['output_parameter']] = cap['compat_output_tokens']
     return out
+
+
+def is_context_limit_error(exc):
+    """True only for explicit provider/context-length rejection messages."""
+    parts = [str(exc or '')]
+    body = getattr(exc, 'body', None)
+    if body:
+        parts.append(str(body))
+    response = getattr(exc, 'response', None)
+    if response is not None:
+        try:
+            parts.append(str(response.text or ''))
+        except Exception:
+            pass
+    return bool(_CONTEXT_LIMIT.search('\n'.join(parts)))
 
 
 def normalize(data):

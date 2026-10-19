@@ -7,6 +7,8 @@ no workspace stay ordinary chats, and nothing here grants file or command
 access — the local guard in ``electron/localtool.js`` still decides that.
 """
 import os
+import ntpath
+import posixpath
 import re
 import sqlite3
 import threading
@@ -29,28 +31,35 @@ def valid_id(value):
 def normalize_path(value):
     """→ (display_path, compare_key). ('', '') when the path is not absolute.
 
-    Windows paths are compared case-insensitively through ``os.path.normcase``;
-    the stored display value keeps the user's own spelling.
+    Windows paths use ``ntpath`` and compare case-insensitively on every host;
+    POSIX paths use ``posixpath`` and keep their case-sensitive spelling.
     """
     text = str(value or "").strip().strip('"').strip("'").strip()
     if not text or len(text) > MAX_PATH:
         return "", ""
     if any(ord(ch) < 32 for ch in text):
         return "", ""
-    if not (os.path.isabs(text) or re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith("\\\\")):
+    if not (posixpath.isabs(text) or re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith("\\\\")):
         return "", ""
-    display = os.path.normpath(text)
-    if display in (".", "..") or not os.path.isabs(display):
+    windows_path = bool(re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith("\\\\"))
+    pathmod = ntpath if windows_path else posixpath
+    display = pathmod.normpath(text)
+    if display in (".", "..") or not pathmod.isabs(display):
         return "", ""
-    key = os.path.normcase(display).rstrip("\\/")
+    key = (ntpath.normcase(display) if windows_path else posixpath.normcase(display)).rstrip("\\/")
+    if not key and display in ("/", "\\"):
+        key = display
     if not key:
         return "", ""
     return display, key
 
 
 def display_name(display):
-    tail = os.path.basename(str(display or "").rstrip("\\/"))
-    return tail or str(display or "")
+    value = str(display or "")
+    if re.fullmatch(r"[A-Za-z]:[\\/]+", value) or value in ("/", "\\"):
+        return value
+    tail = re.split(r"[\\/]", value.rstrip("\\/"))[-1]
+    return tail or value
 
 
 @contextmanager

@@ -1183,6 +1183,7 @@ class Brain:
             # XML 模式下，工具结果已经拼到用户消息里了，下一轮不挂工具表，
             # 避免模型继续调用工具陷入死循环。
             _next_no_tools = False
+            _context_recovered = False
             for _round in range(_max_rounds):
                 if time.time() - _t0 > _budget_s:
                     self.last_err = "工具循环超过 %.0fs 预算：%s" % (_budget_s, "、".join(used))
@@ -1200,7 +1201,28 @@ class Brain:
                     _payload["tool_choice"] = "auto"
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
-                _j = mp.chat(prepare(_payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=90)
+                try:
+                    _j = mp.chat(prepare(_payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=90)
+                except Exception as _request_error:
+                    from model_providers.execution import is_context_limit_error
+                    if _round != 0 or _context_recovered or not is_context_limit_error(_request_error):
+                        raise
+                    from conversation_context import build_context as _build_ctx
+                    _retry_budget = max(1, int(_cinfo.get('input_budget') or 1) * 3 // 4)
+                    _hist, _retry_info = _build_ctx(
+                        self, user_text, system_text=''.join(parts), tool_specs=tool_specs,
+                        src=self._cur_src, conversation_id=self._cur_conversation,
+                        budget_limit=_retry_budget, force_compact=True)
+                    if _retry_info.get('fixed_overflow'):
+                        raise ValueError('请求内容超过服务商允许的长度，请减少本次输入后重试')
+                    _cinfo = dict(_retry_info, context_recovery_attempt=1)
+                    self.last_context_info = _cinfo
+                    msgs = ([{'role': 'system', 'content': ''.join(parts)}] + list(_hist)
+                            + [{'role': 'user', 'content': self._user_msg_with_rules(user_text)}])
+                    _payload['messages'] = msgs
+                    _context_recovered = True
+                    self.last_cloud_requests += 1
+                    _j = mp.chat(prepare(_payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=90)
                 self.last_cloud_seconds = round(
                     self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
@@ -1375,6 +1397,10 @@ class Brain:
             self.last_usage = {"in": _uin, "out": _uout}
             self.last_err = "%s: %s" % (type(e).__name__, str(e)[:120])
             print("[大脑] 原生FC失败：%s" % self.last_err, flush=True)
+            from model_providers.execution import is_context_limit_error
+            if is_context_limit_error(e):
+                self.last_tools_used = []
+                return '请求内容超过服务商允许的长度，已尝试缩短历史内容但仍未成功；请减少本次输入后重试'
             if tool_specs:
                 # A provider that rejects the native tools schema must be
                 # identified as a capability mismatch.  Do not silently retry
@@ -1465,22 +1491,57 @@ class Brain:
 
         try:
             from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
-            for event in completion_events(mp, prepare(payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=120):
-                if event['type'] == 'think_delta':
-                    think_buf.append(event['text'])
-                    yield {'type': 'think', 'text': event['text']}
-                elif event['type'] == 'text_delta':
-                    text_buf.append(event['text'])
-                    yield {'type': 'text', 'text': event['text']}
-                elif event['type'] == 'completion':
-                    result = event['result']
-                    usage = result['usage'] or {}
-                    _uin = usage.get('prompt_tokens') or 0
-                    _uout = usage.get('completion_tokens') or 0
-                    if not result['complete']:
-                        yield {'type': 'error', 'class': result['reason'],
-                               'msg': ERROR_MESSAGES.get(result['reason'], '模型响应不完整')}
-                        return
+            for attempt in range(2):
+                try:
+                    for event in completion_events(mp, prepare(
+                            payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=120):
+                        if event['type'] == 'think_delta':
+                            think_buf.append(event['text'])
+                            yield {'type': 'think', 'text': event['text']}
+                        elif event['type'] == 'text_delta':
+                            text_buf.append(event['text'])
+                            yield {'type': 'text', 'text': event['text']}
+                        elif event['type'] == 'completion':
+                            result = event['result']
+                            usage = result['usage'] or {}
+                            _uin = usage.get('prompt_tokens') or 0
+                            _uout = usage.get('completion_tokens') or 0
+                            if not result['complete']:
+                                yield {'type': 'error', 'class': result['reason'],
+                                       'msg': ERROR_MESSAGES.get(result['reason'], '模型响应不完整')}
+                                return
+                    break
+                except Exception as e:
+                    from model_providers.execution import is_context_limit_error
+                    if attempt == 0 and not think_buf and not text_buf and is_context_limit_error(e):
+                        from conversation_context import build_context as _build_ctx
+                        retry_budget = max(1, int(_cinfo.get('input_budget') or 1) * 3 // 4)
+                        try:
+                            _hist, _retry_info = _build_ctx(
+                                self, user_text, system_text=''.join(parts), src=self._cur_src,
+                                conversation_id=self._cur_conversation, budget_limit=retry_budget,
+                                force_compact=True)
+                        except Exception as build_error:
+                            print('[上下文] 超限恢复构建失败：%s' % str(build_error)[:100], flush=True)
+                            _retry_info = {'fixed_overflow': True}
+                        if _retry_info.get('fixed_overflow'):
+                            self.last_context_info = dict(_cinfo, context_recovery_attempt=1)
+                            yield {'type': 'error', 'reason': 'context_overflow',
+                                   'message': '请求内容超过服务商允许的长度，已尝试缩短历史内容；请减少本次输入后重试'}
+                            return
+                        _cinfo = dict(_retry_info, context_recovery_attempt=1)
+                        self.last_context_info = _cinfo
+                        payload['messages'] = ([{'role': 'system', 'content': ''.join(parts)}]
+                            + list(_hist) + [{'role': 'user', 'content': self._user_msg_with_rules(user_text)}])
+                        continue
+                    if is_context_limit_error(e):
+                        yield {'type': 'error', 'reason': 'context_overflow',
+                               'message': '请求内容超过服务商允许的长度，已尝试缩短历史内容；请减少本次输入后重试'}
+                    else:
+                        from model_providers.base import ProviderResponseError
+                        reason = 'invalid_structure' if isinstance(e, ProviderResponseError) else 'connection_lost'
+                        yield {'type': 'error', 'class': reason, 'msg': ERROR_MESSAGES[reason]}
+                    return
         except Exception as e:
             from model_providers.base import ProviderResponseError
             reason = 'invalid_structure' if isinstance(e, ProviderResponseError) else 'connection_lost'

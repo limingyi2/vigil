@@ -112,6 +112,10 @@ class WorkspaceTests(unittest.TestCase):
     def test_display_name_and_reject_bad_input(self):
         self.assertEqual(workspaces.display_name('C:\\work\\demo'), 'demo')
         self.assertEqual(workspaces.display_name('C:\\'), 'C:\\')
+        self.assertEqual(workspaces.display_name('/home/user/demo'), 'demo')
+        self.assertEqual(workspaces.display_name('/'), '/')
+        self.assertEqual(workspaces.normalize_path('C:\\work\\demo')[0], 'C:\\work\\demo')
+        self.assertEqual(workspaces.normalize_path('/home/user/demo')[0], '/home/user/demo')
         self.assertEqual(workspaces.normalize_path('bad\x00path'), ('', ''))
         self.assertEqual(workspaces.normalize_path('x' * 2000), ('', ''))
 

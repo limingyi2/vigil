@@ -444,7 +444,7 @@ def t_user_overflow_reported():
     fake = FakeProvider([])
     b = make_brain(fake)
     b.use_src("pc", None)
-    huge = "任务" * 40000          # 远超任何预算
+    huge = "任务" * 80000          # 远超任一云端预设的输入预算
     hist, info = cc.build_context(b, huge, system_text="sys", src="pc",
                                   conversation_id=None)
     assert info.get("user_overflow"), info

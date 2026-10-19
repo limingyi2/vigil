@@ -113,8 +113,8 @@ def test_local_budget_and_all_components(setup):
     assert not p.calls and len(msgs) == 8
 
 
-@pytest.mark.parametrize('caps,expected', [({}, 5888), ({'context_tokens': 16384}, 14080),
-    ({'context_tokens': 200000}, 128000), ({'context_tokens': 32768, 'input_tokens': 12000}, 9696)])
+@pytest.mark.parametrize('caps,expected', [({}, 125696), ({'context_tokens': 16384}, 14080),
+    ({'context_tokens': 200000}, 125696), ({'context_tokens': 32768, 'input_tokens': 12000}, 12000)])
 def test_cloud_safe_capacity_intersection(setup, caps, expected):
     b, p = setup
     p.kind = 'cloud'
@@ -122,7 +122,7 @@ def test_cloud_safe_capacity_intersection(setup, caps, expected):
                  context_compression={'cloud_work_tokens': 131072})
     _, info = build(b)
     assert info['input_budget'] == expected
-    assert info['capacity_source'] == ('configured' if caps else 'unknown_default')
+    assert info['capacity_source'] == ('configured' if caps.get('context_tokens') else 'selected_unverified')
 
 
 def test_recent_window_differs_by_mode_and_reduces_under_pressure(setup):
@@ -486,12 +486,13 @@ def test_old_large_summary_segments_and_literal_preservation(setup):
     assert '禁止修改 master' in str(messages)
 
 
-def test_unknown_capacity_cannot_be_raised_by_work_budget(setup):
+def test_unknown_capacity_uses_saved_selection_instead_of_forcing_default(setup):
     b, p = setup
     p.kind = 'cloud'
-    b.api.update(model_mode='cloud', context_compression={'default_capacity': 131072, 'cloud_work_tokens': 131072})
+    b.api.update(model_mode='cloud', context_compression={'default_capacity': 8192,
+        'cloud_work_tokens': 131072, 'cloud_context_tier': 300000})
     _, info = build(b)
-    assert info['capacity'] == 8192 and info['input_budget'] == 5888
+    assert info['capacity'] == 300000 and info['input_budget'] == 297696
 
 
 def test_agent_run_actual_entry_uses_shared_budget_for_tools_and_previous_runs(setup, monkeypatch):

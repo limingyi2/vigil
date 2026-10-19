@@ -42,21 +42,21 @@ def test_exact_decimal_mapping(mode, tier, trigger, target):
     api = cc.set_cloud_tier({'model_mode': mode, 'model_capabilities': {'context_tokens': 1000000}}, tier)
     b = Brain(api)
     info = cc.budgets(b, api['context_compression'])
-    assert info['input_budget'] == tier
+    assert info['input_budget'] == tier - info['reserve_out'] - info['margin']
     assert info['trigger_tokens'] == trigger and info['target_tokens'] == target
     assert info['input_budget'] + info['reserve_out'] + info['margin'] <= 1000000
     assert cc.cloud_policy(api)['effective'] == tier
 
 
-@pytest.mark.parametrize('capacity,expected,label', [(300000, 300000, '300K'), (200000, 128000, '128K'),
-    (100000, 96000, '96K'), (96000, 96000, '96K'), (16384, None, '受限 16,384 Token'),
-    (None, None, '保守 8,192 Token')])
+@pytest.mark.parametrize('capacity,expected,label', [(300000, 300000, '300K'), (200000, 200000, '受限 200,000 Token'),
+    (100000, 100000, '受限 100,000 Token'), (96000, 96000, '96K'), (16384, 16384, '受限 16,384 Token'),
+    (None, 300000, '300K')])
 def test_actual_capacity_limits_presets(capacity, expected, label):
     api = cc.set_cloud_tier({'model_capabilities': {'context_tokens': capacity}}, 300000)
     policy = cc.cloud_policy(api)
     assert policy['effective'] == expected and policy['label'] == label
     info = cc.budgets(Brain(api), api['context_compression'])
-    assert info['input_budget'] + info['reserve_out'] + info['margin'] <= (capacity or 8192)
+    assert info['input_budget'] + info['reserve_out'] + info['margin'] <= (capacity or 300000)
     assert info['target_tokens'] <= info['trigger_tokens'] <= info['input_budget']
 
 
@@ -64,8 +64,108 @@ def test_input_ceiling_and_output_reserve_intersection():
     api = cc.set_cloud_tier({'model_capabilities': {
         'context_tokens': 300000, 'input_tokens': 50000, 'max_output_tokens': 8192}}, 300000)
     info = cc.budgets(Brain(api), api['context_compression'])
-    assert info['input_budget'] == 50000 - 8192 - 256
+    assert info['input_budget'] == 50000
     assert info['reserve_out'] == 8192
+
+
+@pytest.mark.parametrize('tier', [96000, 128000, 300000])
+def test_unknown_capacity_uses_selected_target_and_full_shared_budget(tier):
+    api = cc.set_cloud_tier({'provider': 'custom'}, tier)
+    policy = cc.cloud_policy(api)
+    info = cc.budgets(Brain(api), api['context_compression'])
+    assert policy['capacity_known'] is False
+    assert policy['window_tokens'] == tier and policy['label'] == str(tier // 1000) + 'K'
+    assert info['capacity_source'] == 'selected_unverified'
+    assert info['capacity'] == tier
+    assert info['input_budget'] + info['reserve_out'] + info['margin'] <= tier
+
+
+def test_input_ceiling_without_verified_context_does_not_become_context_capacity():
+    api = cc.set_cloud_tier({'model_capabilities': {'input_tokens': 50000}}, 300000)
+    policy = cc.cloud_policy(api)
+    info = cc.budgets(Brain(api), api['context_compression'])
+    assert policy['capacity_known'] is False and policy['window_tokens'] == 300000
+    assert info['input_budget'] == 50000
+
+
+def test_request_preparation_estimates_tokens_instead_of_utf8_bytes():
+    from model_providers.execution import prepare
+    payload = {'messages': [{'role': 'user', 'content': '你' * 5000}]}
+    prepared = prepare(payload, {'context_compression': {'margin_tokens': 100},
+        'model_capabilities': {'input_tokens': 6000, 'context_tokens': 10000}}, step_tokens=2000)
+    assert prepared['max_tokens'] == 2000
+
+
+def test_context_error_classifier_requires_explicit_length_signal():
+    from model_providers.base import ProviderHTTPError
+    from model_providers.execution import is_context_limit_error
+    assert is_context_limit_error(ProviderHTTPError('request failed', status=400,
+        body='maximum context length is 128000 tokens'))
+    assert is_context_limit_error(ProviderHTTPError('请求失败', status=400,
+        body='输入 token 数超过服务商限制'))
+    for error in [ProviderHTTPError('unauthorized', status=401, body='invalid api key'),
+                  ProviderHTTPError('rate limited', status=429, body='too many requests'),
+                  ProviderHTTPError('insufficient balance', status=402, body='payment required'),
+                  OSError('network connection lost')]:
+        assert not is_context_limit_error(error)
+
+
+@pytest.mark.parametrize('body,expected_calls', [
+    ('maximum context length exceeded', 2),
+    ('invalid api key', 1),
+    ('rate limit exceeded', 1),
+    ('insufficient balance', 1),
+])
+def test_stream_context_recovery_is_single_and_never_changes_saved_tier(setup, monkeypatch, body, expected_calls):
+    from contextlib import contextmanager
+    from model_providers.base import ProviderHTTPError
+
+    b, provider = setup
+    provider.kind = 'cloud'
+    b.api.update(model_mode='cloud', model_capabilities={}, history_retrieval={'enabled': False},
+                 context_compression={'cloud_context_tier': 300000})
+    saved_tier = b.api['context_compression']['cloud_context_tier']
+
+    class Response:
+        def __init__(self, error):
+            self.error = error
+        def raise_for_status(self):
+            if self.error:
+                raise self.error
+        def iter_lines(self):
+            yield b'data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":null}]}'
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}'
+            yield b'data: [DONE]'
+
+    class StreamingProvider:
+        kind = 'cloud'
+        supports_stream = True
+        calls = []
+        @contextmanager
+        def stream(self, payload, timeout=120):
+            self.calls.append(copy.deepcopy(payload))
+            error = ProviderHTTPError('request rejected', status=400 if body != 'invalid api key' else 401,
+                                      body=body) if len(self.calls) == 1 else None
+            yield Response(error)
+
+    stream_provider = StreamingProvider()
+    b._provider = lambda cfg=None: stream_provider
+    b._provider_ready = lambda *args, **kwargs: True
+    b._build_system_parts = lambda *args: (['system'], False)
+    b._user_msg_with_rules = lambda text: text
+    b.recent_hist = lambda keep=16: [
+        {'role': 'user', 'content': 'older ' * 38000},
+        {'role': 'assistant', 'content': 'newer ' * 38000},
+    ]
+    events = list(b.stream_chat('hello'))
+    assert len(stream_provider.calls) == expected_calls
+    assert b.api['context_compression']['cloud_context_tier'] == saved_tier
+    if expected_calls == 2:
+        assert len(stream_provider.calls[1]['messages']) < len(stream_provider.calls[0]['messages'])
+        assert b.last_context_info['context_recovery_attempt'] == 1
+        assert any(event.get('type') == 'done' and event.get('text') == 'recovered' for event in events)
+    else:
+        assert not any(event.get('type') == 'done' for event in events)
 
 
 @pytest.mark.parametrize('tier', [96000, 128000, 300000])
@@ -127,7 +227,8 @@ def test_selection_overrides_legacy_cloud_thresholds_without_mutating_local():
     api = cc.set_cloud_tier({'model_capabilities': {'context_tokens': 500000},
         'context_compression': {'cloud_work_tokens': 131072, 'cloud_trigger_tokens': 98304,
                                 'cloud_target_tokens': 65536, 'local_work_tokens': 9000}}, 300000)
-    assert cc.budgets(Brain(api), api['context_compression'])['input_budget'] == 300000
+    info = cc.budgets(Brain(api), api['context_compression'])
+    assert info['input_budget'] == 300000 - info['reserve_out'] - info['margin']
     assert api['context_compression']['cloud_work_tokens'] == 131072
 
 
@@ -178,7 +279,8 @@ def test_runtime_whitelist_and_hot_refresh_reach_actual_brain_budgets():
     for tier in cc.CLOUD_TIERS:
         ns['_refresh_api_cfg'](cc.set_cloud_tier(source, tier))
         assert brain.api is shared
-        assert cc.budgets(brain, brain.api['context_compression'])['input_budget'] == tier
+        info = cc.budgets(brain, brain.api['context_compression'])
+        assert info['input_budget'] == tier - info['reserve_out'] - info['margin']
         assert brain.api['history_retrieval']['enabled'] is False
         assert brain.api['ollama']['num_ctx'] == 12288
 
@@ -219,12 +321,12 @@ def test_real_http_save_restart_and_public_status(tmp_path, monkeypatch):
         assert request('POST', '/api/models/context', {'tier': 131072})[0] == 400
         assert not Path(model_hub.CONFIG_PATH).exists()
         status, result = request('POST', '/api/models/context', {'tier': 300000})
-        assert status == 200 and result['context_window']['effective'] == 128000
+        assert status == 200 and result['context_window']['effective'] == 200000
         saved = model_hub.load()
         assert saved['context_compression']['cloud_context_tier'] == 300000
         assert saved['ollama'] == {'num_ctx': 12288} and saved['api_key'] == 'fixture-secret'
         status, result = request('GET', '/api/models/saved')
-        assert status == 200 and result['context_window']['label'] == '128K'
+        assert status == 200 and result['context_window']['label'] == '受限 200,000 Token'
         assert result['history_retrieval']['label'] == 'BM25 关键词检索'
         assert 'fixture-secret' not in json.dumps(result)
         assert request('GET', '/api/stats')[1]['history_retrieval']['label'] == 'BM25 关键词检索'

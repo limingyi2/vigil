@@ -11,8 +11,8 @@
   摘要失败时 pending 与旧摘要原样不动，水位线不推进。
 - Token 决策一律用估算值（estimate_tokens，启发式、宁高勿低），
   摘要请求的真实 usage 单独记进 stats —— 两者不混用，字节数永远不当 token。
-- 上下文容量：本地 Ollama 用真实 num_ctx；云端用配置里的
-  context_tokens/input_tokens；都没有才退保守默认值并标注来源。
+- 上下文容量：本地 Ollama 用真实 num_ctx；云端以用户选择的窗口为目标，
+  仅在存在已确认 context_tokens 时按该容量限制。input_tokens 是独立输入上限。
 - 摘要是**直连 provider 的单次请求**（独立超时、每轮至多 1 次），
   绝不递归进 Brain.chat —— 那会拿聊天锁、写历史、还能再触发压缩，死循环。
 """
@@ -79,8 +79,7 @@ def estimate_messages(msgs):
 # --- 容量与预留 ---
 
 def capacity(brain):
-    """(tokens, source)：本地 Ollama 用真实 num_ctx；云端用显式配置；
-    都没有退保守默认并标 unknown_default —— 调用方据此知道该不该信。"""
+    """(tokens, source)：Ollama 用真实 num_ctx；云端未知时采用用户所选目标。"""
     api0 = brain._api_snapshot()
     try:
         mp = brain._provider(api0)
@@ -93,12 +92,14 @@ def capacity(brain):
     try:
         from model_providers.execution import capabilities
         cap = capabilities(api0)
-        values = [cap.get(k) for k in ("context_tokens", "input_tokens")]
-        values = [v for v in values if isinstance(v, int) and 0 < v <= 10000000]
-        if values:
-            return min(values), "configured"
+        context_tokens = cap.get("context_tokens")
+        if isinstance(context_tokens, int) and not isinstance(context_tokens, bool) and 0 < context_tokens <= 10000000:
+            return context_tokens, "configured"
     except Exception:
         pass
+    if not _local(brain):
+        policy = cloud_policy(api0)
+        return policy['window_tokens'], "selected_unverified"
     try:
         d = int(_cfg(brain).get("default_capacity") or DEFAULT_CAPACITY)
         if d > 0:
@@ -301,23 +302,23 @@ CLOUD_TIERS = {96000: (72000, 48000), 128000: (96000, 64000),
 
 
 def cloud_policy(api):
-    """A saved preference is not proof of model capacity. No network probing."""
+    """Limit the selected target only when a model context capacity is configured."""
     from model_providers.execution import capabilities
     cfg = api.get('context_compression') or {}
     requested = cfg.get('cloud_context_tier', 128000)
     if type(requested) is not int or requested not in CLOUD_TIERS:
         requested = 128000
     limits = capabilities(dict(api, model_mode='cloud'))
-    known = [limits[k] for k in ('context_tokens', 'input_tokens') if limits.get(k)]
-    capacity0 = min(known) if known else min(_integer(cfg, 'default_capacity', DEFAULT_CAPACITY), DEFAULT_CAPACITY)
-    tiers = [tier for tier in CLOUD_TIERS if tier <= min(requested, capacity0)]
-    effective = max(tiers) if tiers else None
-    window = effective or min(requested, capacity0)
-    trigger, target = CLOUD_TIERS.get(effective, (window * 3 // 4, window // 2))
-    label = str(effective // 1000) + 'K' if effective else ('保守 ' if not known else '受限 ') + format(window, ',') + ' Token'
-    reason = 'unknown_capacity' if not known else ('model_capacity' if window < requested else '')
-    return dict(selected=requested, effective=effective, window_tokens=window,
-                model_capacity=capacity0, capacity_known=bool(known), limited=bool(reason),
+    capacity0 = limits.get('context_tokens')
+    known = isinstance(capacity0, int) and not isinstance(capacity0, bool) and 0 < capacity0 <= 10000000
+    window = min(requested, capacity0) if known else requested
+    trigger, target = window * 3 // 4, window // 2
+    label = (str(window // 1000) + 'K' if window in CLOUD_TIERS else
+             '受限 ' + format(window, ',') + ' Token' if known and window < requested else
+             str(requested // 1000) + 'K')
+    reason = 'model_capacity' if known and window < requested else ''
+    return dict(selected=requested, effective=window, window_tokens=window,
+                model_capacity=capacity0 if known else None, capacity_known=known, limited=bool(reason),
                 reason=reason, label=label, work_tokens=window, trigger_tokens=trigger, target_tokens=target)
 
 
@@ -337,16 +338,23 @@ def budgets(brain, cfg):
     margin = _integer(cfg, 'margin_tokens', MARGIN_TOKENS)
     policy = None if local else cloud_policy(brain._api_snapshot())
     work_limit = _integer(cfg, 'local_work_tokens', 9000) if local else policy['work_tokens']
-    # Respect a legacy lower ceiling until the user explicitly selects a tier.
-    if not local and 'cloud_context_tier' not in cfg:
-        work_limit = min(work_limit, _integer(cfg, 'cloud_work_tokens', work_limit))
-    working = min(max(0, cap-reserve-margin), work_limit)
-    # input_tokens is an independent input ceiling, not an output allowance.
+    if local:
+        working = min(max(0, cap-reserve-margin), work_limit)
+    else:
+        # The selected tier and confirmed model capacity describe total
+        # windows. Reserve output and estimation headroom after intersecting.
+        working = max(0, min(cap, policy['window_tokens']) - reserve - margin)
+        # Older installations may have a smaller saved input budget. Keep it
+        # until a user explicitly chooses one of the new total-window tiers.
+        if 'cloud_context_tier' not in cfg:
+            working = min(working, _integer(cfg, 'cloud_work_tokens', working))
+    # input_tokens is a separate input ceiling. The window margin and output
+    # reserve have already been removed above; do not subtract them twice.
     try:
         from model_providers.execution import capabilities
         limits = capabilities(brain._api_snapshot())
         if limits.get('input_tokens'):
-            working = min(working, max(0, limits['input_tokens']-margin))
+            working = min(working, limits['input_tokens'])
     except Exception:
         pass
     trigger = min(working, _integer(cfg, 'local_trigger_tokens', 7500) if local else policy['trigger_tokens'])
@@ -494,8 +502,10 @@ def maybe_summarize(brain, cfg, *, key, state, info):
             raise ValueError('provider_not_ready')
         limits = budgets(brain, cfg)
         output = min(limits['reserve_out'], _integer(cfg, 'summary_output_tokens', 2048))
+        # input_budget already reserves the output allowance and safety margin,
+        # including any independent provider input ceiling.
         maximum = min(_integer(cfg, 'summary_batch_tokens', 4096 if limits['local'] else 12000),
-                      max(0, limits['capacity'] - output - limits['margin']))
+                      limits['input_budget'])
         # Old summary grows in whole, durable segments, never by truncating facts.
         old = candidate.get('structured_summary')
         old_text = json.dumps(old, ensure_ascii=False) if old else ''
@@ -639,7 +649,7 @@ def _render_summary(state, budget, info):
 
 def build_context(brain, user_text, *, system_text='', tool_specs=None,
                   src=None, conversation_id=None, allow_summarize=True,
-                  extra_history=None):
+                  extra_history=None, budget_limit=None, force_compact=False):
     """The single context builder for draft, streaming and Agent run.
 
     System, tools, decorated user input, summary, evidence and recent history all
@@ -650,6 +660,11 @@ def build_context(brain, user_text, *, system_text='', tool_specs=None,
         return list(brain.recent_hist()), {'disabled': True, 'compacted': False}
     cfg = _cfg(brain)
     info = budgets(brain, cfg)
+    if budget_limit is not None:
+        info['input_budget'] = min(info['input_budget'], max(0, int(budget_limit)))
+        info['trigger_tokens'] = min(info['trigger_tokens'], info['input_budget'])
+        info['target_tokens'] = min(info['target_tokens'], info['input_budget'] * 3 // 5)
+        info['recovery_budget_limit'] = info['input_budget']
     info['compacted'] = False
     est_system = estimate_tokens(system_text) + MSG_OVERHEAD
     est_tools = estimate_tokens(json.dumps(tool_specs, ensure_ascii=False)) if tool_specs else 0
@@ -668,7 +683,7 @@ def build_context(brain, user_text, *, system_text='', tool_specs=None,
         state = load_state(key)
         preliminary = _render_summary(state, available, {})
         total = fixed + estimate_messages(hist + preliminary)
-        pressure = total >= info['trigger_tokens']
+        pressure = force_compact or total >= info['trigger_tokens']
         if allow_summarize and not info.get('fixed_overflow') and state.get('pending') and (
                 pressure or len(state['pending']) >= _integer(cfg, 'summarize_after_dropped', 12)):
             state = maybe_summarize(brain, cfg, key=key, state=state, info=info)

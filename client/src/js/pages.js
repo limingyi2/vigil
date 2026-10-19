@@ -495,20 +495,17 @@
       const policy = data.context_window;
       const value = view.querySelector('#mqContextValue');
       const note = view.querySelector('#mqContextNote');
-      const retrieval = view.querySelector('#mqRetrievalStatus');
       if (value) value.textContent = policy ? policy.label : '读取中…';
       if (contextToggle) contextToggle.disabled = !policy || switching;
-      if (note) note.textContent = !policy ? '当前 Brain 尚未提供上下文档位' : policy.limited
-        ? (policy.reason === 'unknown_capacity' ? '模型容量未知，当前使用保守窗口。' : '已按模型实际容量限制窗口。')
-          + '所选 ' + (policy.selected / 1000) + 'K，实际生效：' + policy.label
-        : '实际生效：' + policy.label + ' · 系统自动预留输出空间';
+      if (note) note.textContent = !policy ? '当前无法读取上下文窗口设置' : policy.limited
+        ? '已按模型容量调整为 ' + policy.label + '。'
+        : 'Vigil 按此目标管理当前请求；服务商可能另有限制。';
       contextMenu.querySelectorAll('[data-context-tier]').forEach((button) => {
         const checked = !!policy && Number(button.dataset.contextTier) === policy.selected;
         button.setAttribute('aria-checked', String(checked));
         button.querySelector('.mq-check').innerHTML = checked ? icon('check', 'sm') : '';
         button.disabled = switching;
       });
-      if (retrieval) retrieval.textContent = (data.history_retrieval || {}).label || '状态暂不可用';
     }
     function toggleContext(show, focus) {
       contextMenu.hidden = !show;
@@ -613,8 +610,7 @@
     async function load() {
       const r = pick(await get('/api/models/saved'));
       if (!r || !r.ok) { say('读不到模型清单：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
-      data = { models: r.models || [], current: r.current || {},
-        context_window: r.context_window, history_retrieval: r.history_retrieval };
+      data = { models: r.models || [], current: r.current || {}, context_window: r.context_window };
       label();
       draw();
       if (open) placePop();
@@ -1211,7 +1207,6 @@
       '            <div id="mqContextMenu" class="mq-context-menu" role="menu" aria-label="云端上下文窗口" hidden>' +
                      [96000,128000,300000].map((tier) => '<button type="button" role="menuitemradio" aria-checked="false" data-context-tier="' + tier + '"><span class="mq-check" aria-hidden="true"></span>' + (tier / 1000) + 'K</button>').join('') +
       '            </div><p id="mqContextNote" class="mq-detail-note" role="status"></p>' +
-      '            <div class="mq-retrieval"><span>历史检索</span><span id="mqRetrievalStatus">读取中…</span></div>' +
       '          </div>' +
       '        </div>' +
       '        <div class="lpadd mqfoot">' +
@@ -1312,7 +1307,6 @@
       '<div class="kv sub"><span>└ 出</span><b data-chat-stat="out">' + esc(fmtNum(cOut)) + '</b></div>' +
       '<div class="kv"><span>平均延迟</span><b data-chat-stat="latency">' + esc(st.avg_ms ? (st.avg_ms / 1000).toFixed(1) + 's' : '—') + '</b></div>' +
       '<div class="kv"><span>记忆命中</span><b data-chat-stat="memory">' + esc((st.mem_hit_turns || 0) + ' / ' + (st.turns || 0)) + '</b></div>' +
-      '<div class="kv"><span>历史检索</span><b data-chat-stat="retrieval">' + esc((st.history_retrieval || {}).label || '读取中…') + '</b></div>' +
       '</div>' +
       '<div class="card" style="margin-bottom:10px"><div class="gtitle" style="padding:0 0 6px">Token 趋势 · 最近 60 轮</div>' +
       '<div class="sparkbox" id="tokSpark"><span class="muted" style="font-size:11.5px">…</span></div>' +

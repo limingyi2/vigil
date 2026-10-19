@@ -66,12 +66,13 @@ const savedPayload = () => ({
     && row.base === current.base && row.model === current.model })),
   current: { ...current },
   context_window: contextPolicy(),
-  history_retrieval: { method: 'bm25', label: 'BM25 关键词检索', vector_available: false },
 });
 function contextPolicy() {
-  const effective = [96000,128000,300000].filter(v => v <= Math.min(contextTier,contextCapacity)).pop();
-  return { selected: contextTier, effective, label: effective ? effective/1000+'K' : '保守 8,192 Token',
-    limited: effective !== contextTier, reason: contextCapacity ? 'model_capacity' : 'unknown_capacity' };
+  const effective = contextCapacity ? Math.min(contextTier,contextCapacity) : contextTier;
+  const preset = [96000,128000,300000].includes(effective);
+  return { selected: contextTier, effective,
+    label: preset ? effective/1000+'K' : '受限 '+effective.toLocaleString('en-US')+' Token',
+    limited: effective < contextTier, reason: effective < contextTier ? 'model_capacity' : '' };
 }
 const runStatus = () => ({ok:true, mode:runMode, cloud:{model:current.model},
   local:{model:'fixture-local',num_ctx:12288,num_predict:2048,installed:['fixture-local'],reachable:true}});
@@ -86,8 +87,7 @@ function apiFixture(method, rawPath, body) {
   if (method === 'GET' && p === '/api/persona')
     return { ok: true, status: 200, json: { ok: true, key: 'default', name: 'Vigil', templates: [] } };
   if (method === 'GET' && p === '/api/stats')
-    return { ok: true, status: 200, json: { ok: true, model: current.model || '未配置', turns: 0,
-      history_retrieval:{label:'BM25 关键词检索',vector_available:false} } };
+    return { ok: true, status: 200, json: { ok: true, model: current.model || '未配置', turns: 0 } };
   if (method === 'GET' && p === '/api/run-mode')
     return {ok:true,status:200,json:runStatus()};
   if (method === 'POST' && p === '/api/run-mode') {
@@ -240,14 +240,14 @@ async function run() {
     await waitFor(`document.querySelector('#mqContextValue').textContent==='${tier/1000}K'`, 'saved context '+tier);
     assert.equal(await evalIn(mainWindow, "document.querySelectorAll('#mqContextMenu [aria-checked=\"true\"]').length"),1);
   }
-  assert.equal(await evalIn(mainWindow,"document.querySelector('#mqRetrievalStatus').textContent"),'BM25 关键词检索');
+  assert.equal(await evalIn(mainWindow,"document.body.innerText.includes('BM25') || document.body.innerText.includes('向量检索') || document.body.innerText.includes('历史检索')"),false);
   contextCapacity=100000;
   await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
-  await waitFor("document.querySelector('#mqContextValue').textContent==='96K'",'capacity downgrade');
-  assert.ok(await evalIn(mainWindow,"document.querySelector('#mqContextNote').textContent.includes('实际生效：96K')"));
+  await waitFor("document.querySelector('#mqContextValue').textContent==='受限 100,000 Token'",'capacity limit');
+  assert.ok(await evalIn(mainWindow,"document.querySelector('#mqContextNote').textContent.includes('受限 100,000 Token')"));
   contextCapacity=0;
   await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
-  await waitFor("document.querySelector('#mqContextValue').textContent.includes('保守')",'unknown model capacity');
+  await waitFor("document.querySelector('#mqContextValue').textContent==='300K'",'unknown capacity uses selected target');
   contextCapacity=500000;
   await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
   await waitFor("document.querySelector('#mqContextValue').textContent==='300K'",'restored capable model');
@@ -265,7 +265,7 @@ async function run() {
   await evalIn(mainWindow,"document.querySelector('#mqContextToggle').click()");
   await evalIn(mainWindow,"document.querySelector('#mqContextMenu button').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))");
   assert.equal(await evalIn(mainWindow,"document.activeElement.dataset.contextTier"),'300000');
-  console.log('PASS three cloud context tiers, capacity downgrade, BM25 status and mode switches preserve chat');
+  console.log('PASS three cloud context tiers, capacity limits, retrieval implementation remains hidden, mode switches preserve chat');
   await evalIn(mainWindow, "document.documentElement.dataset.theme='dark'");
   const evidenceDir = path.resolve(client, '..', '.local-dev', 'context-evidence');
   fs.mkdirSync(evidenceDir, { recursive: true });

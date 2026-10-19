@@ -278,7 +278,6 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .mq-context-menu { margin:3px 0 4px 18px; padding-left:5px; border-left:1px solid var(--chat-line); }
 .chatwrap .mq-context-menu[hidden] { display:none; }
 .chatwrap .mq-detail-note { margin:4px 9px 8px; color:var(--chat-muted); font-size:11px; line-height:1.5; }
-.chatwrap .mq-retrieval { display:flex; justify-content:space-between; gap:12px; padding:6px 9px; color:var(--chat-muted); font-size:11px; }
 .chatwrap .mq-detail-row:disabled,.chatwrap .mq-context-menu button:disabled { opacity:.55; cursor:default; }
 /* ═══ 运行模式标记（云端 / 本地 / 混合）════════════════════════════ */
 .chatwrap .mode-chip { gap:7px; }

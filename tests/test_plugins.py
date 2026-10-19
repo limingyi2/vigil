@@ -18,6 +18,8 @@ class TestPluginScriptRunsClean(unittest.TestCase):
         这里用子进程跑它，把它的 sys.exit(1) 变成一个测试失败。"""
         import subprocess
         py = os.path.join(ROOT, "venv", "Scripts", "python.exe")
+        if not os.path.isfile(_SCRIPT):
+            self.skipTest("本地插件自测脚本位于被忽略的 .workbuddy/ 目录，当前环境未提供")
         if not os.path.isfile(py):
             self.skipTest("venv 不在，跳过")
         r = subprocess.run([py, _SCRIPT], capture_output=True, text=True,

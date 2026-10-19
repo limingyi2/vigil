@@ -200,6 +200,9 @@ class CodexAdapter:
                 proc._codex_reader = threading.Thread(target=self._read, args=(proc, generation), daemon=True)
                 proc._codex_stderr_reader = threading.Thread(target=self._drain_stderr, args=(proc,), daemon=True)
                 proc._codex_reader.start(); proc._codex_stderr_reader.start()
+                proc._codex_exit_watcher = threading.Thread(
+                    target=self._watch_process_exit, args=(proc,), daemon=True)
+                proc._codex_exit_watcher.start()
                 initialized = self._rpc("initialize", {
                     "clientInfo": {"name": "vigil_agent_center", "version": "0.1.0"},
                     "capabilities": {"experimentalApi": True},
@@ -240,6 +243,19 @@ class CodexAdapter:
                 pass
         finally:
             proc.stderr.close()
+
+    @staticmethod
+    def _watch_process_exit(proc):
+        """Close the owned Windows job as soon as its leader exits.
+
+        A child can inherit stdout/stderr and keep the reader threads blocked
+        after the CLI leader has died. Closing only this adapter's job handle
+        terminates that owned process tree and lets the pipes reach EOF.
+        """
+        try:
+            proc.wait()
+        finally:
+            close_job(proc)
 
     def _read(self, proc, generation):
         try:
