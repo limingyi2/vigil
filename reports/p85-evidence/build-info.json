@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "version": "1.1.5",
+  "code": 26,
+  "commit": "0c1c75a9cb60885c228f60b3b0a55da684570ad8",
+  "source_digest": "a9256ccff2bb98d024fcd8d703ac085c29b099e9d28c8adedc90f43145e57896",
+  "protocol": 1,
+  "capabilities": [
+    "creator_jobs",
+    "agent_runs",
+    "models_saved",
+    "chat_stream"
+  ],
+  "candidate": false
+}
