@@ -10,9 +10,37 @@
     "_说明": "model_mode=local/hybrid 时用。地址不用带 /v1（程序走原生 /api/chat）；模型从 Ollama /api/tags 选",
     "base": "http://127.0.0.1:11434",
     "model": "qwen27b-efficientthink:latest",
-    "num_ctx": 16384,
+    "num_ctx": 12288,
     "num_predict": 2048,
     "think": true
+  },
+  "context_compression": {
+    "enabled": true,
+    "local_work_tokens": 9000,
+    "local_trigger_tokens": 7500,
+    "local_target_tokens": 6000,
+    "cloud_work_tokens": 131072,
+    "cloud_trigger_tokens": 98304,
+    "cloud_target_tokens": 65536,
+    "local_recent_turns": 4,
+    "cloud_recent_turns": 8,
+    "summary_batch_tokens": 4096,
+    "summary_output_tokens": 2048,
+    "summarize_timeout": 45,
+    "summarize_after_dropped": 12,
+    "pending_max_messages": 500,
+    "margin_tokens": 256,
+    "default_capacity": 8192
+  },
+  "history_retrieval": {
+    "enabled": true,
+    "local_max_tokens": 800,
+    "cloud_max_tokens": 2000,
+    "max_results": 4,
+    "embedding_model": "",
+    "embedding_base": "",
+    "embedding_batch": 24,
+    "embedding_timeout": 4
   },
   "delegation": {
     "_说明": "仅 hybrid 生效：允许云端主脑把只读子任务委派给本机 Ollama。默认关闭，要显式打开；allowed_roots 是沙箱白名单根目录，委派只能读写这些目录内的文件（第一版只读）。router_enabled=true 时简单本地查询（消息里带授权目录的明确路径）直接由本机处理、跳过云端，可设 false 关掉走纯云端决策",

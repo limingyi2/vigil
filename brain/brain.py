@@ -521,6 +521,8 @@ class Brain:
             from model_providers import get_provider
             return get_provider(src)
         except Exception as e:
+            if str((src or {}).get("model_mode", "")).strip().lower() == "local":
+                raise RuntimeError("本地模型提供者不可用，已禁止云端回退") from e
             print("[大脑] model_providers 装载失败，退回云端直调：%s"
                   % str(e)[:100], flush=True)
             from model_providers.cloud import CloudProvider
@@ -1122,6 +1124,8 @@ class Brain:
             print("[上下文] 构建失败，回退旧路径：%s" % str(_e)[:100], flush=True)
             _hist, _cinfo = list(self.recent_hist()), {"fallback": True}
         self.last_context_info = _cinfo
+        if _cinfo.get("fixed_overflow"):
+            raise ValueError("系统提示、工具与当前消息超过输入预算，请缩短输入或调整模型容量")
         msgs = [{"role": "system", "content": "".join(parts)}]
         msgs.extend(_hist)
         # 说话规则贴在他原话后面（**不是 system**）—— 见 _user_msg_with_rules
@@ -1196,7 +1200,7 @@ class Brain:
                     _payload["tool_choice"] = "auto"
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
-                _j = mp.chat(prepare(_payload, _api0), timeout=90)
+                _j = mp.chat(prepare(_payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=90)
                 self.last_cloud_seconds = round(
                     self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
@@ -1432,6 +1436,10 @@ class Brain:
             print("[上下文] 构建失败，回退旧路径：%s" % str(_e)[:100], flush=True)
             _hist, _cinfo = list(self.recent_hist()), {"fallback": True}
         self.last_context_info = _cinfo
+        if _cinfo.get("fixed_overflow"):
+            yield {"type": "error", "reason": "context_overflow",
+                   "message": "系统提示与当前消息超过输入预算，请缩短输入或调整模型容量"}
+            return
         msgs = [{"role": "system", "content": "".join(parts)}]
         msgs.extend(_hist)
         msgs.append({"role": "user", "content": self._user_msg_with_rules(user_text)})
@@ -1457,7 +1465,7 @@ class Brain:
 
         try:
             from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
-            for event in completion_events(mp, prepare(payload, _api0), timeout=120):
+            for event in completion_events(mp, prepare(payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=120):
                 if event['type'] == 'think_delta':
                     think_buf.append(event['text'])
                     yield {'type': 'think', 'text': event['text']}
@@ -1809,6 +1817,11 @@ class Brain:
         分渠道+分人设后只清那一份 —— 在 App 里清记录不该把微信侧、
         也不该把别人设的对话抹掉。
         """
+        import conversation_context
+        channel = norm_src(src or DEFAULT_SRC)
+        self._hists[(channel, conversation_id)] = [{
+            "role": "system", "content": self._persona_text_for(channel)}]
+        conversation_context.clear_scope(self._persona_key_for(channel), channel, conversation_id)
         try:
             os.remove(self._log_for(src, conversation_id))
             return True

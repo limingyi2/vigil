@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import traceback
+import re
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _TMP = tempfile.mkdtemp(prefix="vigil_p84_")
@@ -73,6 +74,24 @@ class FakeProvider(object):
         item = self.script.pop(0) if self.script else _final("默认回复")
         if isinstance(item, Exception):
             raise item
+        # P8.5: the summary provider fixture now speaks the strict structured
+        # protocol. Its scripted facts must still be grounded in synthetic logs.
+        if '结构化对话摘要器' in payload.get('messages', [{}])[0].get('content', ''):
+            import conversation_context as cc
+            data = json.loads(payload['messages'][-1]['content'])
+            body = item['choices'][0]['message']['content']
+            refs = []
+            for literal in re.findall(r'[A-Za-z0-9_]+(?:[.:/\\-][A-Za-z0-9_]+)*', body):
+                match = next((m for m in data['new_messages'] if literal in m['quote']), None)
+                if match and match['id'] not in refs:
+                    refs.append(match['id'])
+            refs = refs or [data['new_messages'][0]['id']]
+            summary = {f: [] for f in cc.FIELDS}
+            summary['source_refs'] = refs
+            summary['facts'] = [{'text': item['choices'][0]['message']['content'],
+                                 'source_refs': refs}]
+            item = dict(item, choices=[{'message': {'content': json.dumps(summary, ensure_ascii=False)},
+                                        'finish_reason': 'stop'}])
         return item
 
 
@@ -181,6 +200,8 @@ def _feed(b, n, fact_turn=None, conversation_id=None):
         u = "第%d句" % i
         if i == fact_turn:
             u = "第%d句：版本号 1.2.3，SHA abc123def，配置在 F:/proj/config.yaml" % i
+        if i == 0:
+            u += ' 端口 18787；仓库 G:/repoA；工具清单 C:/tools.json；蓝图 D:/bp.png；入口仓库 G:/repoR；num_ctx 16384'
         b._commit_turn(u, "答%d" % i, src="pc", conversation_id=conversation_id)
 
 
@@ -233,12 +254,15 @@ def t_summary_length_cap_safe_clip():
     fake = FakeProvider([_final("长" * 5000 + " 1.2.3")])
     b = make_brain(fake)
     b.use_src("pc", None)
-    _feed(b, 30)
+    _feed(b, 30, fact_turn=3)
+    before = cc.pending_count(b._persona_key_for("pc"), "pc", "legacy")
     hist, info = cc.build_context(b, "问", system_text="sys",
                                   src="pc", conversation_id=None)
     st = cc.stats_for(b._persona_key_for("pc"), "pc", "legacy")
     lim = cc.summary_max_chars()
     assert len(st.get("summary") or "") <= lim + 4, (len(st.get("summary") or ""), lim)
+    assert info.get("summarize_failed"), "P8.5 超长输出必须拒绝，不能截断标识符"
+    assert cc.pending_count(b._persona_key_for("pc"), "pc", "legacy") == before
 
 
 # ---------- 5. 多会话隔离 ----------

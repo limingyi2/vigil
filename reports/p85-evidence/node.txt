@@ -1,0 +1,32 @@
+✔ native project picker exposes only the directory-selection IPC (3.2686ms)
+✔ Branch Atlas frontend parses and uses the native picker plus read-only inspect route (0.7632ms)
+✔ 100 shared chat/Creator rounds release IPC and subscriber callbacks (1.4052ms)
+✔ shared subscriptions isolate errors, reentrant removal and duplicate callbacks (0.9342ms)
+✔ detaching a chat bubble removes its subscription and observer immediately (7.3467ms)
+✔ terminal cleanup is idempotent and later events cannot affect completed turns (1.7164ms)
+✔ Creator terminal snapshot shows stage, code, parser facts, advice and log ID as text (79.5298ms)
+✔ each Creator failure stage remains distinguishable on reload (2.0885ms)
+✔ Creator 404 is a durable failed request with HTTP status and actual destination (1.6402ms)
+✔ Creator rejects confirmed client errors but preserves uncertain network/server outcomes (1.5134ms)
+✔ API pick preserves transport status and safe destination without trusting JSON ok on HTTP failure (1.0259ms)
+✔ Creator files render compact previews and lazy-render independent source panels (2.706ms)
+✔ Creator full source can be copied without expanding its preview (1.373ms)
+✔ Creator approval and install clicks consume the returned one-time approval (1.8049ms)
+✔ Creator approval transport failure displays destination and error, then re-enables approval (1.7709ms)
+✔ Creator install failure prevents blind retry and asks for fresh approval (1.9112ms)
+✔ production chat disposes both terminal events, exceptions, fallback and missing-done timeout (0.8337ms)
+✔ GitHub latest manifest and installer download verify redirects, asset name, size and SHA-256 (11.6062ms)
+✔ GitHub updater rejects candidate manifests, wrong asset names and untrusted hosts (0.3422ms)
+✔ public update source rejects candidates and untrusted download origins (2.5337ms)
+✔ exact paired build and required protocol/capabilities are mandatory (0.2838ms)
+✔ missing or changed Brain artifact fails before spawn (7.5905ms)
+✔ the client only ever connects to the bundled brain (2.0535ms)
+✔ rollback snapshot preserves a complete pair, checks hashes, never contains user home (19.3578ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1678.2177

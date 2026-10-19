@@ -1,0 +1,47 @@
+{
+  "elapsed_seconds": 20.28,
+  "model": "qwen27b-efficientthink:latest",
+  "info": {
+    "capacity": 12288,
+    "capacity_source": "ollama_num_ctx",
+    "reserve_out": 2048,
+    "margin": 256,
+    "input_budget": 9000,
+    "trigger_tokens": 7500,
+    "target_tokens": 6000,
+    "local": true,
+    "compacted": true,
+    "est_system": 8,
+    "est_tools": 0,
+    "est_user": 14,
+    "fixed_tokens": 22,
+    "summarize_requests": 1,
+    "summary_batch_messages": 2,
+    "summary_batch_tokens": 951,
+    "summary_pending": 0,
+    "summary_omitted_items": 0,
+    "retrieval": {
+      "triggered": true,
+      "hits": 2,
+      "method": "bm25",
+      "vector_available": false,
+      "index_status": "ready",
+      "budget": 800,
+      "vector_reason": "embedding_not_configured",
+      "candidates": 2
+    },
+    "trimmed_from": 2,
+    "trimmed_to": 2,
+    "estimated_input_tokens": 483,
+    "budget_exceeded": false
+  },
+  "structured_summary_saved": true,
+  "fact_recovered_in_context": true,
+  "archive_lines": 4,
+  "usage": {
+    "dropped_total": 2,
+    "requests": 1,
+    "tokens_in": 389,
+    "tokens_out": 401
+  }
+}
