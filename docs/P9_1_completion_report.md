@@ -26,12 +26,11 @@
 - P9 文档/Schema/Bridge 契约：12 项通过。
 - Draft 2020-12 Manifest 示例及拒绝用例、扩展管理器安装/启停/重启/失败回滚/数据保留、实际构建 Wallpaper 包集成测试通过。
 - Electron Chat-v2 回归通过，使用真实 Electron 主窗口与本地 fake host/extension package；覆盖普通聊天、会话、设置及 Wallpaper 页面/宿主状态。
-- Electron 模型设置、插件市场、P72 工作区取消回归通过。
+- Electron 模型设置、插件市场、Agent Center（25 项，0 错误）、P72 工作区取消回归通过。Agent Center fixture 补齐了 API handler 的 `URL`/`connectionBase` 依赖和 Wallpaper 扩展 preload stub。
 - Windows x64 候选 `Vigil.Setup.1.1.7.exe` 隔离验收通过：静默安装及包内文件 hash 校验、Electron/Brain ready、fake Provider 首次聊天、应用重启后同一会话与历史恢复、静默卸载、74 个用户数据文件及外置哨兵均保持原样。全程使用独立临时用户目录；无真实 API 请求。
 
 失败或跳过：
 
-- `test-agent-center-electron.js` 在当前隔离 Electron 执行环境以退出码 1 结束，未产生可用的测试结果；不能计为通过，需后续独立排查。
 - `test-wallpaper-v2-electron.js` 需要系统 `ffmpeg`，当前环境未安装，跳过真实 ffmpeg/视频路径验收。Electron fake host 的 UI/生命周期测试不代表真实 Steam Workshop 或 GPU/WebGL 首帧验收。
 - 未连接真实 WeChat、未发送消息、未访问远端 Bridge/部署机、未调用模型 API；对应生产环境验收未执行。
 

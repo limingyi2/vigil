@@ -41,8 +41,9 @@ async function setup(){
   const begin=source.indexOf("ipcMain.handle('api',");
   const apiCode=source.slice(begin,source.indexOf('// 流式聊天：',begin));
   const deps={http,https,URL,Buffer};vm.runInNewContext(requestCode,deps);
-  vm.runInNewContext(apiCode,{ipcMain,readCfg:()=>({base:'http://127.0.0.1:'+ready.port,src:'pc'}),
-    sidecar:{ready:()=>false},DEFAULT_BASE:'',CLIENT_SRC:'pc',getToken:async()=>token,
+  vm.runInNewContext(apiCode,{ipcMain,URL,readCfg:()=>({base:'http://127.0.0.1:'+ready.port,src:'pc'}),
+    sidecar:{ready:()=>false},connectionBase:()=> 'http://127.0.0.1:'+ready.port,
+    DEFAULT_BASE:'',CLIENT_SRC:'pc',getToken:async()=>token,
     request:async(method,url,body,auth,timeout)=>{
       const p=new URL(url).pathname;requests.push({method,path:new URL(url).pathname+new URL(url).search,authenticated:auth===ready.token});
       if(p.startsWith('/api/agent-center/'))return deps.request(method,url,body,auth,timeout);
@@ -56,6 +57,9 @@ async function setup(){
   }
   require('../electron/agent-center-notifications').register({ipcMain,Notification:RecordedNotification,getWindow:()=>win,indexPath:path.join(client,'src/index.html')});
   const handlers={'cfg:get':()=>({wizard_done:true,roots:[]}), 'cfg:set':()=>({}), 'app:version':()=> 'P2 local fixture',
+    'app:instance-id':()=> 'P2 local fixture',
+    'wallpaper-extension:state':()=>({ok:true,installed:false,enabled:false,activeVersion:null}),
+    'wallpaper-extension:load':()=>({ok:false,installed:false,enabled:false}),
     'shell:open':(_,url)=>{externalLinks.push(url);return{ok:true};},
     'plugins:load':()=>({ok:true}),'auto:connect':()=>({ok:false}), 'sidecar:status':()=>({status:'stopped'}),
     'token:get':()=> '已保存','local:caps':()=>[],'local:defaults':()=>({roots:[],commands:[]}),
