@@ -87,5 +87,11 @@
 
 ## 7. 交付
 
-- dev 提交：见 git log（本次 P8.4 提交 SHA）
-- 候选安装包：`Vigil.Setup.1.1.4.exe`（源提交、大小、SHA-256 见 manifest 与文末）
+- dev 提交：`320d17c`（P8.4 实现）+ `2c04c5b`（版本号 1.1.4/code 25），已推 GitHub（SSH 走 443：22 端口直连被断）
+- 全量回归：tests/ + brain/ 全量 **exit=0**（`reports/p84_regression2.txt`；首轮 exit=1 是沙箱拦截 pytest 临时垃圾目录的批量删除，非测试失败，挪开 `pytest-of-limingyi` 后复跑通过）
+- 候选安装包：`client/dist-release/Vigil.Setup.1.1.4.exe`
+  - 源提交 `2c04c5bb6b3c8e4b240faa4ff12a43c2c8bf9ba2`，candidate=true
+  - 大小 163,090,503 字节
+  - SHA-256 `1e483977648de3a865927dcb503c7f5fd29c40120a994d7e938ce39d2139c04c`（manifest 一致 + 独立复核一致）
+  - 旧 1.1.3 包未覆盖（保留在 `client/dist-release-old3/`），回滚直接装旧包
+- 本轮结束点：主对话可连续保留上下文、按会话隔离、按需自动压缩，原始聊天记录不变。等待用户实际安装验收。
