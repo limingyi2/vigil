@@ -42,7 +42,7 @@ class TestPluginMedia(unittest.TestCase):
                     self.assertEqual(int(handler.response_headers['Content-Length']), len(expected))
 
     def test_wallpaper_nested_assets_and_traversal(self):
-        spec = importlib.util.spec_from_file_location('wallpaper_test', BRAIN / 'plugins/wallpaper/__init__.py')
+        spec = importlib.util.spec_from_file_location('wallpaper_test', BRAIN.parent / 'market/plugins/wallpaper/__init__.py')
         wallpaper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(wallpaper)
         with tempfile.TemporaryDirectory() as tmp, patch.object(wallpaper, '_find_we_workshop', return_value=tmp):
