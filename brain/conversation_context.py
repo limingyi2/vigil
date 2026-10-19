@@ -296,13 +296,51 @@ def _local(brain):
     return str(brain._api_snapshot().get('model_mode', '')).strip().lower() == 'local'
 
 
+CLOUD_TIERS = {96000: (72000, 48000), 128000: (96000, 64000),
+               300000: (225000, 150000)}
+
+
+def cloud_policy(api):
+    """A saved preference is not proof of model capacity. No network probing."""
+    from model_providers.execution import capabilities
+    cfg = api.get('context_compression') or {}
+    requested = cfg.get('cloud_context_tier', 128000)
+    if type(requested) is not int or requested not in CLOUD_TIERS:
+        requested = 128000
+    limits = capabilities(dict(api, model_mode='cloud'))
+    known = [limits[k] for k in ('context_tokens', 'input_tokens') if limits.get(k)]
+    capacity0 = min(known) if known else min(_integer(cfg, 'default_capacity', DEFAULT_CAPACITY), DEFAULT_CAPACITY)
+    tiers = [tier for tier in CLOUD_TIERS if tier <= min(requested, capacity0)]
+    effective = max(tiers) if tiers else None
+    window = effective or min(requested, capacity0)
+    trigger, target = CLOUD_TIERS.get(effective, (window * 3 // 4, window // 2))
+    label = str(effective // 1000) + 'K' if effective else ('保守 ' if not known else '受限 ') + format(window, ',') + ' Token'
+    reason = 'unknown_capacity' if not known else ('model_capacity' if window < requested else '')
+    return dict(selected=requested, effective=effective, window_tokens=window,
+                model_capacity=capacity0, capacity_known=bool(known), limited=bool(reason),
+                reason=reason, label=label, work_tokens=window, trigger_tokens=trigger, target_tokens=target)
+
+
+def set_cloud_tier(api, tier):
+    if type(tier) is not int or tier not in CLOUD_TIERS:
+        raise ValueError('上下文窗口只支持 96K、128K、300K')
+    cfg = dict(api.get('context_compression') or {})
+    cfg['cloud_context_tier'] = tier
+    return dict(api, context_compression=cfg)
+
+
 def budgets(brain, cfg):
     cap, source = capacity(brain)
     reserve = max(1, _reserve_out(brain))
     local = _local(brain)
     prefix = 'local_' if local else 'cloud_'
     margin = _integer(cfg, 'margin_tokens', MARGIN_TOKENS)
-    working = min(max(0, cap-reserve-margin), _integer(cfg, prefix+'work_tokens', 9000 if local else 131072))
+    policy = None if local else cloud_policy(brain._api_snapshot())
+    work_limit = _integer(cfg, 'local_work_tokens', 9000) if local else policy['work_tokens']
+    # Respect a legacy lower ceiling until the user explicitly selects a tier.
+    if not local and 'cloud_context_tier' not in cfg:
+        work_limit = min(work_limit, _integer(cfg, 'cloud_work_tokens', work_limit))
+    working = min(max(0, cap-reserve-margin), work_limit)
     # input_tokens is an independent input ceiling, not an output allowance.
     try:
         from model_providers.execution import capabilities
@@ -311,8 +349,8 @@ def budgets(brain, cfg):
             working = min(working, max(0, limits['input_tokens']-margin))
     except Exception:
         pass
-    trigger = min(working, _integer(cfg, prefix+'trigger_tokens', 7500 if local else 98304))
-    target = min(trigger, _integer(cfg, prefix+'target_tokens', 6000 if local else 65536))
+    trigger = min(working, _integer(cfg, 'local_trigger_tokens', 7500) if local else policy['trigger_tokens'])
+    target = min(trigger, _integer(cfg, 'local_target_tokens', 6000) if local else policy['target_tokens'])
     return dict(capacity=cap, capacity_source=source, reserve_out=reserve, margin=margin,
                 input_budget=working, trigger_tokens=trigger, target_tokens=target, local=local)
 

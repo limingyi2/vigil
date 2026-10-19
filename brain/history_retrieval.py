@@ -271,6 +271,24 @@ def should_retrieve(query):
         r'(多少|哪个|什么|哪天|结果|版本|路径|SHA|数字).*(之前|实验|决定)|(?:\b[0-9a-f]{7,40}\b|[A-Za-z]:[/\\]|\bv\d+\.\d+)', query, re.I))
 
 
+def retrieval_status(api, last=None):
+    """Public diagnostics only; inspecting settings must never call a backend."""
+    if (api.get('history_retrieval') or {}).get('enabled', True) is False:
+        return dict(method='disabled', label='历史检索已关闭', vector_available=False)
+    try:
+        backend = Embedder(api)
+    except Exception:
+        return dict(method='bm25', label='BM25 关键词检索', vector_available=False,
+                    reason='embedding_unavailable')
+    last = last or {}
+    if last.get('embedding_identity') == backend.tag and last.get('vector_available'):
+        return dict(method='bm25+vector+rrf', label='BM25 + 语义向量检索', vector_available=True)
+    if last.get('embedding_identity') == backend.tag and last.get('vector_reason'):
+        return dict(method='bm25', label='BM25 关键词检索', vector_available=False,
+                    reason='embedding_unavailable')
+    return dict(method='bm25', label='BM25 关键词检索（向量待验证）', vector_available=None)
+
+
 def retrieve(brain, query, key, token_budget):
     from conversation_context import estimate_messages
     opts = (brain.api or {}).get('history_retrieval') or {}
@@ -288,6 +306,7 @@ def retrieve(brain, query, key, token_budget):
             semantic = []
             try:
                 backend = Embedder(brain._api_snapshot())
+                info['embedding_identity'] = backend.tag
                 semantic = vector_ranks(state, query, backend, batch=max(1, min(100, int(opts.get('embedding_batch', 24)))))
                 atomic_json(index_path(key), state)
                 info.update(vector_available=True, vector_indexed=sum('vector' in d for d in state['docs']),

@@ -3055,6 +3055,19 @@ def start_remote_api(brain):
                     except Exception as e:
                         errlog.log_exc("api/run-mode", e)
                         self._json(200, {"ok": False, "err": "切换失败：%s" % str(e)[:120]})
+                elif path == "/api/models/context":
+                    try:
+                        from conversation_context import set_cloud_tier, cloud_policy
+                        nc = set_cloud_tier(api_config, body.get('tier'))
+                        if not model_hub.save(nc):
+                            raise OSError('config_write_failed')
+                        api_config.update(nc)
+                        _refresh_api_cfg(api_config)
+                        self._json(200, {'ok': True, 'context_window': cloud_policy(nc)})
+                    except ValueError as e:
+                        self._json(400, {'ok': False, 'err': str(e)})
+                    except Exception:
+                        self._json(500, {'ok': False, 'err': '上下文窗口保存失败'})
                 elif path == "/api/models/apply":
                     # 写盘之后要 clear + update 内存那份（Brain 拿的是启动时
                     # load_config() 的字典），不然换了模型她还用旧的
@@ -3729,8 +3742,11 @@ def start_remote_api(brain):
                 # 所以打开聊天页马上就能用，断网也在。
                 # 响应里不含密钥原文，只带是否已配置和不可反推的掩码。
                 try:
-                    self._json(200, dict({"ok": True},
-                                         **model_hub.public_saved(api_config)))
+                    from conversation_context import cloud_policy
+                    from history_retrieval import retrieval_status
+                    self._json(200, dict({"ok": True, "context_window": cloud_policy(api_config),
+                        "history_retrieval": retrieval_status(API_CFG, (getattr(brain, 'last_context_info', {}) or {}).get('retrieval'))},
+                        **model_hub.public_saved(api_config)))
                 except Exception as e:
                     errlog.log_exc("api/models/saved", e)
                     self._json(200, {"ok": False, "err": str(e)[:120],
@@ -3770,6 +3786,11 @@ def start_remote_api(brain):
             elif path == "/api/stats":
                 # 用量与状态：App 设置页拿它显示"今天聊了多少轮、花了多少 token"
                 out = _stats_today()
+                from history_retrieval import retrieval_status
+                from conversation_context import cloud_policy
+                out['context_window'] = cloud_policy(API_CFG)
+                out['history_retrieval'] = retrieval_status(API_CFG,
+                    (getattr(brain, 'last_context_info', {}) or {}).get('retrieval'))
                 try:
                     import agenda
                     out["agenda"] = agenda.stats()

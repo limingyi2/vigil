@@ -16,6 +16,9 @@ let mainWindow = null;
 let settingsWindow = null;
 let modelRows = [];
 let current = { provider: 'custom', provider_name: '自定义', base: '', model: '', name: '', has_key: false };
+let contextTier = 128000;
+let contextCapacity = 500000;
+let runMode = 'cloud';
 const cliArgs = process.argv.slice(2);
 const restartMode = cliArgs.includes('--verify-restart');
 const stateArgIndex = cliArgs.indexOf('--fixture-state');
@@ -26,6 +29,7 @@ if (restartMode) {
   const saved = JSON.parse(fs.readFileSync(fixtureStatePath, 'utf8'));
   modelRows = saved.modelRows;
   current = saved.current;
+  contextTier = saved.contextTier;
 }
 
 app.setPath('userData', path.join(tmp, 'electron'));
@@ -61,9 +65,18 @@ const savedPayload = () => ({
   models: modelRows.map(row => ({ ...row, active: row.provider === current.provider
     && row.base === current.base && row.model === current.model })),
   current: { ...current },
+  context_window: contextPolicy(),
+  history_retrieval: { method: 'bm25', label: 'BM25 关键词检索', vector_available: false },
 });
+function contextPolicy() {
+  const effective = [96000,128000,300000].filter(v => v <= Math.min(contextTier,contextCapacity)).pop();
+  return { selected: contextTier, effective, label: effective ? effective/1000+'K' : '保守 8,192 Token',
+    limited: effective !== contextTier, reason: contextCapacity ? 'model_capacity' : 'unknown_capacity' };
+}
+const runStatus = () => ({ok:true, mode:runMode, cloud:{model:current.model},
+  local:{model:'fixture-local',num_ctx:12288,num_predict:2048,installed:['fixture-local'],reachable:true}});
 const persistFixtureState = () => {
-  if (fixtureStatePath) fs.writeFileSync(fixtureStatePath, JSON.stringify({ modelRows, current }));
+  if (fixtureStatePath) fs.writeFileSync(fixtureStatePath, JSON.stringify({ modelRows, current, contextTier }));
 };
 
 function apiFixture(method, rawPath, body) {
@@ -73,7 +86,18 @@ function apiFixture(method, rawPath, body) {
   if (method === 'GET' && p === '/api/persona')
     return { ok: true, status: 200, json: { ok: true, key: 'default', name: 'Vigil', templates: [] } };
   if (method === 'GET' && p === '/api/stats')
-    return { ok: true, status: 200, json: { ok: true, model: current.model || '未配置', turns: 0 } };
+    return { ok: true, status: 200, json: { ok: true, model: current.model || '未配置', turns: 0,
+      history_retrieval:{label:'BM25 关键词检索',vector_available:false} } };
+  if (method === 'GET' && p === '/api/run-mode')
+    return {ok:true,status:200,json:runStatus()};
+  if (method === 'POST' && p === '/api/run-mode') {
+    runMode = body.mode;
+    return {ok:true,status:200,json:{ok:true,status:runStatus(),warnings:[]}};
+  }
+  if (method === 'POST' && p === '/api/models/context') {
+    contextTier = body.tier; persistFixtureState();
+    return {ok:true,status:200,json:{ok:true,context_window:contextPolicy()}};
+  }
   if (method === 'GET' && p === '/api/history')
     return { ok: true, status: 200, json: { items: [] } };
   if (method === 'GET' && p === '/api/plugins/frontend')
@@ -157,6 +181,8 @@ async function run() {
     await evalIn(mainWindow, "document.querySelector('#modelBtn').click()");
     await waitFor("document.querySelector('#mqList').textContent.includes('隔离测试模型')", 'model after client process restart');
     await waitFor("document.querySelector('#modelBtn').textContent.includes('隔离测试模型')", 'active model after client process restart');
+    await waitFor("document.querySelector('[data-context-tier=\"300000\"]').getAttribute('aria-checked')==='true'", 'context tier after process restart');
+    assert.equal(await evalIn(mainWindow, "document.querySelector('#mqContextValue').textContent"), '300K');
     console.log('PASS a fresh Electron process reads the persisted model and active selection');
     return;
   }
@@ -207,8 +233,41 @@ async function run() {
   assert.ok(pickerAnchor.popup.width<=361, JSON.stringify(pickerAnchor));
   assert.ok(pickerAnchor.popup.bottom<=pickerAnchor.button.top, JSON.stringify(pickerAnchor));
   assert.equal(pickerAnchor.searchHidden,true);
+  await evalIn(mainWindow, "document.querySelector('#mqContextToggle').click()");
+  assert.deepEqual(await evalIn(mainWindow, "Array.from(document.querySelectorAll('#mqContextMenu button')).map(b=>b.textContent.trim())"), ['96K','128K','300K']);
+  for (const tier of [96000,128000,300000]) {
+    await evalIn(mainWindow, `document.querySelector('[data-context-tier="${tier}"]').click()`);
+    await waitFor(`document.querySelector('#mqContextValue').textContent==='${tier/1000}K'`, 'saved context '+tier);
+    assert.equal(await evalIn(mainWindow, "document.querySelectorAll('#mqContextMenu [aria-checked=\"true\"]').length"),1);
+  }
+  assert.equal(await evalIn(mainWindow,"document.querySelector('#mqRetrievalStatus').textContent"),'BM25 关键词检索');
+  contextCapacity=100000;
+  await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
+  await waitFor("document.querySelector('#mqContextValue').textContent==='96K'",'capacity downgrade');
+  assert.ok(await evalIn(mainWindow,"document.querySelector('#mqContextNote').textContent.includes('实际生效：96K')"));
+  contextCapacity=0;
+  await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
+  await waitFor("document.querySelector('#mqContextValue').textContent.includes('保守')",'unknown model capacity');
+  contextCapacity=500000;
+  await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
+  await waitFor("document.querySelector('#mqContextValue').textContent==='300K'",'restored capable model');
+  await evalIn(mainWindow,"document.querySelector('#mqContextToggle').click()");
+  // Keep the same chat nodes and draft through all execution modes.
+  await evalIn(mainWindow,"document.querySelector('#msgs').insertAdjacentHTML('beforeend','<div id=preserved-message>已存在的会话消息</div>');document.querySelector('#ta').value='未发送草稿';window.__chatNode=document.querySelector('#msgs');true");
+  for (const mode of ['local','hybrid','cloud']) {
+    await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modeChip').click()");
+    await evalIn(mainWindow,`document.querySelector('#plusPop [data-mode="${mode}"]').click()`);
+    await waitFor(`document.querySelector('#modeChip').dataset.mode==='${mode}'`, 'mode '+mode);
+    assert.equal(await evalIn(mainWindow,"document.querySelector('#msgs')===window.__chatNode && !!document.querySelector('#preserved-message') && document.querySelector('#ta').value==='未发送草稿'"),true);
+  }
+  await evalIn(mainWindow,"document.querySelector('#plusPop').hidden=true;document.querySelector('#modelBtn').click()");
+  await waitFor("!document.querySelector('#modelPop').hidden",'context menu after mode switching');
+  await evalIn(mainWindow,"document.querySelector('#mqContextToggle').click()");
+  await evalIn(mainWindow,"document.querySelector('#mqContextMenu button').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))");
+  assert.equal(await evalIn(mainWindow,"document.activeElement.dataset.contextTier"),'300000');
+  console.log('PASS three cloud context tiers, capacity downgrade, BM25 status and mode switches preserve chat');
   await evalIn(mainWindow, "document.documentElement.dataset.theme='dark'");
-  const evidenceDir = path.resolve(client, '..', 'reports', 'p6.2-evidence');
+  const evidenceDir = path.resolve(client, '..', '.local-dev', 'context-evidence');
   fs.mkdirSync(evidenceDir, { recursive: true });
   mainWindow.show(); await delay(180);
   await delay(2600);

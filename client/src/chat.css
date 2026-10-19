@@ -270,6 +270,16 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .modelpop .mqfoot { display:flex; align-items:center; gap:8px; margin:0; padding:7px 12px 9px; border-top:1px solid var(--chat-line); flex:none; }
 .chatwrap .modelpop .mqfoot .btn { padding:4px 6px; font-size:11.5px; }
 .chatwrap .modelpop .mqfoot .muted { flex:1; min-width:0; font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chatwrap .mq-details { border-top:1px solid var(--chat-line); margin-top:6px; padding-top:6px; }
+.chatwrap .mq-detail-row,.chatwrap .mq-context-menu button { display:flex; align-items:center; gap:10px; width:100%; min-height:34px; border:0; border-radius:7px; padding:6px 9px; background:transparent; color:var(--chat-text); font:inherit; font-size:12px; cursor:pointer; }
+.chatwrap .mq-detail-row b { margin-left:auto; font-size:12px; font-weight:500; }
+.chatwrap .mq-detail-row:hover,.chatwrap .mq-context-menu button:hover,.chatwrap .mq-context-menu [aria-checked="true"] { background:var(--chat-hover); }
+.chatwrap .mq-detail-row:focus-visible,.chatwrap .mq-context-menu button:focus-visible { outline:2px solid var(--chat-accent); outline-offset:-2px; }
+.chatwrap .mq-context-menu { margin:3px 0 4px 18px; padding-left:5px; border-left:1px solid var(--chat-line); }
+.chatwrap .mq-context-menu[hidden] { display:none; }
+.chatwrap .mq-detail-note { margin:4px 9px 8px; color:var(--chat-muted); font-size:11px; line-height:1.5; }
+.chatwrap .mq-retrieval { display:flex; justify-content:space-between; gap:12px; padding:6px 9px; color:var(--chat-muted); font-size:11px; }
+.chatwrap .mq-detail-row:disabled,.chatwrap .mq-context-menu button:disabled { opacity:.55; cursor:default; }
 /* ═══ 运行模式标记（云端 / 本地 / 混合）════════════════════════════ */
 .chatwrap .mode-chip { gap:7px; }
 .chatwrap .mode-chip .mode-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--chat-muted); }

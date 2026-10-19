@@ -463,6 +463,8 @@
     const searchEl = view.querySelector('#mqSearch');
     const searchToggle = view.querySelector('#mqSearchToggle');
     const msgEl = view.querySelector('#mqMsg');
+    const contextToggle = view.querySelector('#mqContextToggle');
+    const contextMenu = view.querySelector('#mqContextMenu');
 
     let data = { models: [], current: {} };
     let open = false;
@@ -489,7 +491,64 @@
       const top = topEl();
       if (top && c.model) { top.textContent = c.model; top.title = c.model; }
     }
+    function drawDetails() {
+      const policy = data.context_window;
+      const value = view.querySelector('#mqContextValue');
+      const note = view.querySelector('#mqContextNote');
+      const retrieval = view.querySelector('#mqRetrievalStatus');
+      if (value) value.textContent = policy ? policy.label : '读取中…';
+      if (contextToggle) contextToggle.disabled = !policy || switching;
+      if (note) note.textContent = !policy ? '当前 Brain 尚未提供上下文档位' : policy.limited
+        ? (policy.reason === 'unknown_capacity' ? '模型容量未知，当前使用保守窗口。' : '已按模型实际容量限制窗口。')
+          + '所选 ' + (policy.selected / 1000) + 'K，实际生效：' + policy.label
+        : '实际生效：' + policy.label + ' · 系统自动预留输出空间';
+      contextMenu.querySelectorAll('[data-context-tier]').forEach((button) => {
+        const checked = !!policy && Number(button.dataset.contextTier) === policy.selected;
+        button.setAttribute('aria-checked', String(checked));
+        button.querySelector('.mq-check').innerHTML = checked ? icon('check', 'sm') : '';
+        button.disabled = switching;
+      });
+      if (retrieval) retrieval.textContent = (data.history_retrieval || {}).label || '状态暂不可用';
+    }
+    function toggleContext(show, focus) {
+      contextMenu.hidden = !show;
+      contextToggle.setAttribute('aria-expanded', String(show));
+      placePop();
+      if (show && focus) (contextMenu.querySelector('[aria-checked="true"]') || contextMenu.querySelector('button')).focus();
+    }
+    async function selectContext(tier) {
+      if (switching || (h.isBusy && h.isBusy())) { say('请等当前回复完成再调整窗口', true); return; }
+      switching = true; drawDetails(); say('正在保存上下文窗口…');
+      try {
+        const r = pick(await post('/api/models/context', { tier }));
+        if (!r || !r.ok) { say('保存失败：' + ((r && (r.err || r._err)) || '未知错误'), true); return; }
+        data.context_window = r.context_window;
+        say('已保存 · 实际生效：' + r.context_window.label);
+      } catch (_) { say('上下文窗口保存失败，请重试', true); }
+      finally { switching = false; drawDetails(); placePop(); }
+    }
+    if (contextToggle) {
+      contextToggle.addEventListener('click', () => toggleContext(contextMenu.hidden, false));
+      contextToggle.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); toggleContext(true, true); }
+      });
+      contextMenu.querySelectorAll('[data-context-tier]').forEach((button) => {
+        button.addEventListener('click', () => selectContext(Number(button.dataset.contextTier)));
+      });
+      contextMenu.addEventListener('keydown', (e) => {
+        const buttons = Array.from(contextMenu.querySelectorAll('button'));
+        const i = buttons.indexOf(document.activeElement);
+        if (e.key === 'Escape' || e.key === 'ArrowLeft') {
+          e.preventDefault(); e.stopPropagation(); toggleContext(false); contextToggle.focus();
+        } else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
+          e.preventDefault();
+          buttons[e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1
+            : (i + (e.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length].focus();
+        }
+      });
+    }
     function draw() {
+      drawDetails();
       const q = String((searchEl && searchEl.value) || '').trim().toLowerCase();
       const all = data.models || [];
       const rows = all.filter((m) => !q
@@ -554,7 +613,8 @@
     async function load() {
       const r = pick(await get('/api/models/saved'));
       if (!r || !r.ok) { say('读不到模型清单：' + ((r && (r._err || r.err)) || '未知错误'), true); return; }
-      data = { models: r.models || [], current: r.current || {} };
+      data = { models: r.models || [], current: r.current || {},
+        context_window: r.context_window, history_retrieval: r.history_retrieval };
       label();
       draw();
       if (open) placePop();
@@ -597,6 +657,8 @@
         say('切换失败：' + (e && e.message ? e.message : e), true);
       } finally {
         switching = false;
+        drawDetails();
+        if (open) placePop();
       }
     }
     function placePop() {
@@ -613,7 +675,7 @@
       pop.style.top = (top - cr.top) + 'px';
       pop.style.bottom = 'auto';
     }
-    function closePop() { open = false; pop.hidden = true; }
+    function closePop() { open = false; pop.hidden = true; toggleContext(false); }
     function openPop() {
       open = true; pop.hidden = false;
       placePop();
@@ -1143,6 +1205,14 @@
       '        <div class="lpbody">' +
       '          <input class="input" id="mqSearch" placeholder="搜索模型或服务商…" aria-label="搜索模型" hidden>' +
       '          <div id="mqList"></div>' +
+      '          <div class="mq-details">' +
+      '            <button class="mq-detail-row" id="mqContextToggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="mqContextMenu">' +
+      '              <span>上下文窗口</span><b id="mqContextValue">读取中…</b><span aria-hidden="true">›</span></button>' +
+      '            <div id="mqContextMenu" class="mq-context-menu" role="menu" aria-label="云端上下文窗口" hidden>' +
+                     [96000,128000,300000].map((tier) => '<button type="button" role="menuitemradio" aria-checked="false" data-context-tier="' + tier + '"><span class="mq-check" aria-hidden="true"></span>' + (tier / 1000) + 'K</button>').join('') +
+      '            </div><p id="mqContextNote" class="mq-detail-note" role="status"></p>' +
+      '            <div class="mq-retrieval"><span>历史检索</span><span id="mqRetrievalStatus">读取中…</span></div>' +
+      '          </div>' +
       '        </div>' +
       '        <div class="lpadd mqfoot">' +
       '          <button class="btn ghost md" id="mqManage" type="button">添加或管理模型</button>' +
@@ -1194,7 +1264,7 @@
     const mq = modelQuickBind(view, ctx, {
       isBusy: () => busy,
       // 本地/混合模式下这个按钮改开模式菜单：云端清单里的选择在那两种模式里不生效
-      blockOpen: () => !!(runStatus && runStatus.mode !== 'cloud'),
+      blockOpen: () => !!(runStatus && runStatus.mode === 'local'),
       onBlocked: () => { openPlusPop(); },
       afterLoad: () => syncComposerModelLabel(),
       onSwitched: (c) => {
@@ -1242,6 +1312,7 @@
       '<div class="kv sub"><span>└ 出</span><b data-chat-stat="out">' + esc(fmtNum(cOut)) + '</b></div>' +
       '<div class="kv"><span>平均延迟</span><b data-chat-stat="latency">' + esc(st.avg_ms ? (st.avg_ms / 1000).toFixed(1) + 's' : '—') + '</b></div>' +
       '<div class="kv"><span>记忆命中</span><b data-chat-stat="memory">' + esc((st.mem_hit_turns || 0) + ' / ' + (st.turns || 0)) + '</b></div>' +
+      '<div class="kv"><span>历史检索</span><b data-chat-stat="retrieval">' + esc((st.history_retrieval || {}).label || '读取中…') + '</b></div>' +
       '</div>' +
       '<div class="card" style="margin-bottom:10px"><div class="gtitle" style="padding:0 0 6px">Token 趋势 · 最近 60 轮</div>' +
       '<div class="sparkbox" id="tokSpark"><span class="muted" style="font-size:11.5px">…</span></div>' +
@@ -1265,6 +1336,7 @@
       put('total', fmtNum(inTok + outTok)); put('in', fmtNum(inTok)); put('out', fmtNum(outTok));
       put('latency', st.avg_ms ? (st.avg_ms / 1000).toFixed(1) + 's' : '—');
       put('memory', (st.mem_hit_turns || 0) + ' / ' + (st.turns || 0));
+      put('retrieval', (st.history_retrieval || {}).label || '状态暂不可用');
       put('agenda-total', ((st.agenda && st.agenda.total) || 0) + ' 条');
       put('agenda-pending', (st.agenda && st.agenda.pending) || 0); put('agenda-missed', (st.agenda && st.agenda.missed) || 0);
     });

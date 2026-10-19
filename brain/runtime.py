@@ -74,7 +74,8 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
                 "persona_file", "provider", "api_keys", "api_key_bases",
                 "model_mode", "ollama", "wechat_route", "wechat_enabled",
-                "model_capabilities", "model_stream", "display_records", "agent_execution")
+                "model_capabilities", "model_stream", "display_records", "agent_execution",
+                "context_compression", "history_retrieval")
 
 
 def api_cfg_subset(src):

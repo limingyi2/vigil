@@ -1064,6 +1064,23 @@ def apply_cfg(cfg, p):
             cfg["delegation"] = cur_dl
             changed.append("本地委派设置已更新")
 
+    # Capabilities belong to a provider + endpoint + model, never its name alone.
+    # Remember the old record and restore only an exact identity on switching.
+    from model_providers.execution import endpoint_id
+    def identity(value):
+        return json.dumps([_configured_provider(value), endpoint_id(value.get('api_base')),
+                           str(value.get('model') or '')], ensure_ascii=False)
+    previous_id, next_id = identity(source_cfg), identity(cfg)
+    if previous_id != next_id:
+        records = dict(source_cfg.get('model_capabilities_by_model') or {})
+        if source_cfg.get('model_capabilities'):
+            records[previous_id] = dict(source_cfg['model_capabilities'])
+        if records:
+            cfg['model_capabilities_by_model'] = records
+        if next_id in records:
+            cfg['model_capabilities'] = dict(records[next_id])
+        else:
+            cfg.pop('model_capabilities', None)
     return cfg, changed
 
 
@@ -1079,8 +1096,8 @@ def save(cfg):
     except Exception:
         pass
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    from history_retrieval import atomic_json
+    atomic_json(CONFIG_PATH, cfg)
     return True
 
 

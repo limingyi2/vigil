@@ -114,7 +114,7 @@ def test_local_budget_and_all_components(setup):
 
 
 @pytest.mark.parametrize('caps,expected', [({}, 5888), ({'context_tokens': 16384}, 14080),
-    ({'context_tokens': 200000}, 131072), ({'context_tokens': 32768, 'input_tokens': 12000}, 9696)])
+    ({'context_tokens': 200000}, 128000), ({'context_tokens': 32768, 'input_tokens': 12000}, 9696)])
 def test_cloud_safe_capacity_intersection(setup, caps, expected):
     b, p = setup
     p.kind = 'cloud'
