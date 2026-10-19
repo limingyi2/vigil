@@ -13,6 +13,29 @@ OUT = ROOT / 'dist/brain-release/vigil-brain'
 BUILD_WORK = ROOT / 'build/brain-release'
 CLIENT_DIST = ROOT / 'client/dist-release'
 CAPS = ['creator_jobs', 'agent_runs', 'models_saved', 'chat_stream']
+NON_SOURCE_REPORTS = {
+    'docs/P9.2B_ACCEPTANCE_REPORT.md',
+    'docs/P9.2B_DISABLE_DIAGNOSTIC_FOLLOWUP.md',
+    'docs/P9.2_PLUGIN_UI_INJECTION_INVENTORY.md',
+    'docs/P9.2_WECHAT_BRIDGE_PLAN.md',
+    'docs/P9_WALLPAPER_WECHAT_SPLIT_AUDIT.md',
+    'docs/P9.2B_WALLPAPER_CLIENT_INTEGRATION_REPORT.md',
+}
+
+
+def configure_outputs(candidate_id=None):
+    """Use immutable candidate-specific paths so prior reports and builds survive."""
+    global OUT, BUILD_WORK, CLIENT_DIST
+    if candidate_id is None:
+        OUT = ROOT / 'dist/brain-release/vigil-brain'
+        BUILD_WORK = ROOT / 'build/brain-release'
+        CLIENT_DIST = ROOT / 'client/dist-release'
+        return
+    if not __import__('re').fullmatch(r'[a-z0-9][a-z0-9.-]{0,63}', candidate_id):
+        raise ValueError('Invalid candidate id')
+    OUT = ROOT / 'dist/brain-release-candidates' / candidate_id / 'vigil-brain'
+    BUILD_WORK = ROOT / 'build/brain-release-candidates' / candidate_id
+    CLIENT_DIST = ROOT / 'client/dist-release-candidates' / candidate_id
 
 
 def git(*args):
@@ -23,6 +46,8 @@ def digest():
     names = subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT).decode().split('\0')
     h = hashlib.sha256()
     for name in sorted(set(filter(None, names))):
+        if name in ('brain/build-info.json', 'client/build-info.json') or name in NON_SOURCE_REPORTS:
+            continue
         p = ROOT / name
         if p.is_file():
             h.update(name.encode() + b'\0' + p.read_bytes() + b'\0')
@@ -54,7 +79,8 @@ def verify_release_manifest(installer, manifest_path, build):
     return manifest
 
 
-def verify(candidate=False):
+def verify(candidate=False, candidate_id=None):
+    configure_outputs(candidate_id)
     build = json.loads((ROOT / 'client/build-info.json').read_text(encoding='utf-8'))
     manifest = json.loads((OUT / 'brain-manifest.json').read_text(encoding='utf-8'))
     if not candidate and (build['candidate'] or git('status', '--porcelain')):
@@ -76,7 +102,8 @@ def verify(candidate=False):
     return build
 
 
-def build(candidate=False, brain_only=False):
+def build(candidate=False, brain_only=False, candidate_id=None):
+    configure_outputs(candidate_id)
     if not candidate and git('status', '--porcelain'):
         raise RuntimeError('Commit and test source before building an official installer')
     package = json.loads((ROOT / 'client/package.json').read_text(encoding='utf-8'))
@@ -87,6 +114,8 @@ def build(candidate=False, brain_only=False):
                 source_digest=digest(), protocol=1, capabilities=CAPS, candidate=candidate)
     for rel in ['brain/build-info.json', 'client/build-info.json']:
         (ROOT / rel).write_text(json.dumps(info, indent=2), encoding='utf-8')
+    if candidate_id and any(p.exists() or p.is_symlink() for p in (OUT, BUILD_WORK, CLIENT_DIST)):
+        raise RuntimeError('Candidate output already exists; choose a new candidate id')
     if OUT.exists():
         assert OUT.resolve() == (ROOT / 'dist/brain-release/vigil-brain').resolve() and ROOT in OUT.resolve().parents
         shutil.rmtree(OUT)
@@ -100,7 +129,9 @@ def build(candidate=False, brain_only=False):
     (OUT / 'brain-manifest.json').write_text(json.dumps(dict(info, files=files), indent=2), encoding='utf-8')
     verify(candidate)
     if not brain_only:
-        env = dict(os.environ, VIGIL_BUILD_PYTHON=sys.executable, VIGIL_BUILD_CANDIDATE='1' if candidate else '0')
+        env = dict(os.environ, VIGIL_BUILD_PYTHON=sys.executable,
+                   VIGIL_BUILD_CANDIDATE='1' if candidate else '0',
+                   VIGIL_CANDIDATE_ID=candidate_id or '')
         npm = shutil.which('npm')
         through_npm = bool(npm)
         if npm:
@@ -117,10 +148,23 @@ def build(candidate=False, brain_only=False):
             if resolved != CLIENT_DIST or CLIENT_DIST.parent.resolve() != (ROOT / 'client').resolve() or not CLIENT_DIST.is_dir():
                 raise RuntimeError('Unsafe existing release output directory')
             shutil.rmtree(CLIENT_DIST)
-        if through_npm:
-            command += ['--', '--config.directories.output=dist-release']
+        output_rel = str(CLIENT_DIST.relative_to(ROOT / 'client')).replace('\\', '/')
+        brain_rel = os.path.relpath(OUT, ROOT / 'client').replace('\\', '/')
+        if candidate_id:
+            build_config = dict(package.get('build') or {})
+            build_config['directories'] = dict(build_config.get('directories') or {}, output=output_rel)
+            resources = list(build_config.get('extraResources') or [])
+            if not resources or not isinstance(resources[0], dict):
+                raise RuntimeError('Candidate requires a configured Brain extraResource')
+            resources[0] = dict(resources[0], **{'from': brain_rel})
+            build_config['extraResources'] = resources
+            candidate_config = BUILD_WORK / 'electron-builder-candidate.json'
+            candidate_config.write_text(json.dumps(build_config, indent=2), encoding='utf-8')
+            command += ['--config', str(candidate_config)]
+        elif through_npm:
+            command += ['--', '--config.directories.output=' + output_rel]
         else:
-            command += ['--config.directories.output=dist-release']
+            command += ['--config.directories.output=' + output_rel]
         subprocess.run(['cmd', '/c', *command] if os.name == 'nt' else command,
             cwd=ROOT / 'client', env=env, check=True)
         verify(candidate)
@@ -139,10 +183,13 @@ def build(candidate=False, brain_only=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--candidate', action='store_true', help='Unpublished acceptance artifact, never a formal release')
+    parser.add_argument('--candidate-id', help='Unique, immutable output namespace for this candidate')
     parser.add_argument('--brain-only', action='store_true')
     parser.add_argument('--verify', action='store_true')
     args = parser.parse_args()
+    if args.candidate_id:
+        configure_outputs(args.candidate_id)
     if args.verify:
-        verify(args.candidate)
+        verify(args.candidate, args.candidate_id)
     else:
-        build(args.candidate, args.brain_only)
+        build(args.candidate, args.brain_only, args.candidate_id)

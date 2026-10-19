@@ -40,6 +40,7 @@ import contextvars
 import hashlib
 import importlib
 import importlib.util
+import json
 import os
 import re
 import sys
@@ -181,6 +182,10 @@ class Plugin(object):
         # 前端注入资源（可选）：目录型插件同目录下的 frontend.js / frontend.css
         self.frontend_js = ""
         self.frontend_css = ""
+        raw_ui_permissions = getattr(mod, "UI_PERMISSIONS", []) or []
+        self.frontend_permissions = [str(value) for value in raw_ui_permissions] if isinstance(raw_ui_permissions, (list, tuple, set)) else []
+        raw_ui_surfaces = getattr(mod, "UI_SURFACES", []) or []
+        self.frontend_surfaces = [str(value) for value in raw_ui_surfaces if str(value) == "content-background"] if isinstance(raw_ui_surfaces, (list, tuple, set)) else []
         plugin_dir = os.path.dirname(path)
         for _fname, _attr in [("frontend.js", "frontend_js"),
                                ("frontend.css", "frontend_css")]:
@@ -340,7 +345,7 @@ def listing():
     return out
 
 
-def frontend_assets():
+def frontend_assets(src=None):
     """所有带前端资源的插件，给 /api/plugins/frontend 用。
 
     返回 {"version": <资源指纹>, "plugins": [{name, js, css, enabled}, ...]}
@@ -350,7 +355,7 @@ def frontend_assets():
     items = []
     try:
         import features
-        on_map = features.all_features()
+        on_map = features.all_features(src)
     except Exception:
         on_map = {}
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
@@ -362,11 +367,14 @@ def frontend_assets():
             "js": p.frontend_js,
             "css": p.frontend_css,
             "enabled": enabled,
+            "permissions": list(getattr(p, "frontend_permissions", ())),
+            "ui": {"surfaces": list(getattr(p, "frontend_surfaces", ()))},
         })
     digest = hashlib.sha256()
     for item in items:
         for value in (item["name"], "1" if item["enabled"] else "0",
-                      item["js"], item["css"]):
+                      item["js"], item["css"], json.dumps(sorted(item["permissions"])),
+                      json.dumps(sorted(item["ui"]["surfaces"]))):
             digest.update(value.encode("utf-8"))
             digest.update(b"\0")
     return {"version": digest.hexdigest()[:16], "plugins": items}

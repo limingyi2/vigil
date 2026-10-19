@@ -88,8 +88,8 @@ async function run() {
   await restarted.uninstall();
   assert.equal((await restarted.getState()).installed, false);
   assert.equal(fs.readFileSync(preserved, 'utf8'), '{"fixture":true}', 'user data must survive uninstall');
-  assert.equal(fs.existsSync(path.join(userData, 'extensions', 'programs', EXTENSION_ID, '1.1.7')), true,
-    'rollback program versions are retained');
+  assert.equal(fs.existsSync(path.join(userData, 'extensions', 'programs', EXTENSION_ID, '1.1.7')), false,
+    'uninstall removes executable program resources');
 
   for (const [name, options, expected] of [
     ['unknown-permission', { permission: 'filesystem.all' }, /清单无效/],

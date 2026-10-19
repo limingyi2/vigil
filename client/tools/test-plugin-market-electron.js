@@ -27,6 +27,7 @@ function response(method,raw){
 async function run(){
   ipcMain.handle('api',(_,req)=>response(req.method,req.path));
   for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','plugins:load':{ok:true},'auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'},'wallpaper:request':{ok:true,data:{settings:{},wallpapers:[]}},'wallpaper-extension:state':{ok:true,installed:false,enabled:false}}))ipcMain.handle(name,()=>value);
+  ipcMain.handle('plugin-ui:list',()=>[]);
   ipcMain.handle('api:stream',()=>({ok:false,err:'unused'}));
   ipcMain.handle('cfg:set',()=>({wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}));
   win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});

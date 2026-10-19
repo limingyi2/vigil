@@ -43,6 +43,7 @@ const manifest = {
   kind: 'desktop-extension',
   entry: 'wallpaper-host.js',
   renderer: { script: 'wallpaper.js', style: 'wallpaper.css' },
+  ui: { surfaces: ['content-background'] },
   min_core: version,
   protocol: { name: 'vigil-desktop-extension', major: 1, min_minor: 0 },
   artifacts: [{

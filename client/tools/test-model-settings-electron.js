@@ -168,6 +168,7 @@ async function run() {
   ipcMain.handle('updater:check', () => ({ ok: true, update: false }));
   ipcMain.handle('sidecar:status', () => ({ status: 'stopped' }));
   ipcMain.handle('plugins:load', () => ({ ok: true }));
+  ipcMain.handle('plugin-ui:list', () => []);
   ipcMain.handle('settings:open', async (_event, options) => {
     if (settingsWindow && !settingsWindow.isDestroyed()) return { ok: true, existing: true };
     settingsWindow = makeWindow();

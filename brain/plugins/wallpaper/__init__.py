@@ -25,6 +25,7 @@ from pathlib import Path
 
 # ── 插件元信息 ──────────────────────────────────────────────
 NAME = "wallpaper"
+UI_PERMISSIONS = ["brain.plugin.wallpaper.api"]
 VERSION = "3.0.0"
 DESC = "Wallpaper Engine 壁纸接入：扫描 Steam 创意工坊，把视频/网页/场景壁纸渲染到客户端背景"
 

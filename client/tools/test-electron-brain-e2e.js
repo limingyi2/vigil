@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const WebSocket = require('ws');
 
 const client = path.resolve(__dirname, '..');
@@ -22,6 +22,8 @@ const modelRequests = [];
 const modelWaiters = [];
 let modelServer, brain, electron, cdp;
 let cdpSeq = 0;
+let coreTarget = null;
+const diag = (...args) => { if (process.env.VIGIL_DIAG_PLUGIN_LIFECYCLE === '1') console.log('[e2e-lifecycle-diag]', new Date().toISOString(), ...args); };
 const cdpPending = new Map();
 let passCount = 0;
 
@@ -63,6 +65,7 @@ async function startModel() {
     const userText = String(lastUser && lastUser.content || '');
     const call = { payload, messages, userText, toolNames: (payload.tools || []).map(t => t.function && t.function.name) };
     modelRequests.push(call);
+    diag('Fake Provider request', JSON.stringify({ userText, stream: !!payload.stream, tools: call.toolNames }));
     for (let i = modelWaiters.length - 1; i >= 0; i--) {
       if (modelWaiters[i].predicate(call)) modelWaiters.splice(i, 1)[0].resolve(call);
     }
@@ -72,6 +75,18 @@ async function startModel() {
       if (userText === '晚安') {
         res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: '断连前片段' } }] }) + '\n\n');
         await new Promise(resolve => res.once('close', resolve));
+        return;
+      }
+      if (userText.startsWith('E2E_SEED_HISTORY_')) {
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'SEEDED_HISTORY_OK' } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' } ] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
+        return;
+      }
+      if (userText === 'AFTER_PLUGIN_DISABLE') {
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'CORE_AFTER_PLUGIN_DISABLE_OK' } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
         return;
       }
       const creatorOutput = JSON.stringify({files:{'p6_session.py':[
@@ -108,6 +123,9 @@ async function startModel() {
       return json(res, 200, { choices: [{ message: { role: 'assistant', content: 'SEEDED_HISTORY_OK' } }] });
     }
 
+    if (userText === 'AFTER_PLUGIN_DISABLE') {
+      return json(res, 200, { choices: [{ message: { role: 'assistant', content: 'CORE_AFTER_PLUGIN_DISABLE_OK' } }] });
+    }
     if (!call.toolNames.includes('smoke_ping')) {
       return json(res, 500, { error: { message: 'smoke_ping schema missing' } });
     }
@@ -134,7 +152,7 @@ function writeFixtures(modelBase, brainPort) {
   const brainConfig = {
     api_base: modelBase, api_key: 'fixture-only', model: 'local-fake-provider',
     provider: 'custom', model_mode: 'cloud', chat_mode: 'api', brain_token: token,
-    agent_execution: { enabled: false }, features: { tools: true },
+    agent_execution: { enabled: false }, features: { tools: true, vigil_smoke: true },
     persona_file: 'personas/default.json',
   };
   fs.writeFileSync(path.join(home, 'config', 'config.json'), JSON.stringify(brainConfig), 'utf8');
@@ -145,6 +163,7 @@ function writeFixtures(modelBase, brainPort) {
     'from pathlib import Path',
     'NAME = "vigil_smoke"',
     'DESC = "isolated Electron Brain integration fixture"',
+    'FEATURE = "vigil_smoke"',
     'def smoke_ping(mode):',
     '    with open(os.environ["VIGIL_E2E_PLUGIN_TRACE"], "a", encoding="utf-8") as f:',
     '        f.write(json.dumps({"tool":"smoke_ping","mode":mode}) + "\\n")',
@@ -155,11 +174,15 @@ function writeFixtures(modelBase, brainPort) {
     '',
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(pluginDir, 'frontend.js'), [
+    'if (window.parent !== window) { window.VigilPlugin.setSurfaceActive(true); document.body.style.background = "rgb(22, 90, 150)"; document.body.dataset.surfaceRuntime = JSON.stringify({require:typeof require,process:typeof process,fs:typeof fs,parentDom:(()=>{try{return !!parent.document.querySelector("#ta")}catch(_){return "blocked"}})()}); }',
     'window.VigilPlugin.registerPage({',
     '  id: "e2e-plugin-page", name: "E2E Plugin", icon: "plug",',
-    '  render(ctx) { ctx.panel.innerHTML = "<section id=\\"e2e-plugin-visible\\">Directory plugin frontend loaded</section>"; }',
+    '  render(ctx) { ctx.view.innerHTML = "<section id=\\"e2e-plugin-visible\\">Directory plugin frontend loaded</section>"; }',
     '});',
   ].join('\n'), 'utf8');
+  if (!process.argv.includes('--wallpaper-surface-only')) {
+    fs.writeFileSync(path.join(pluginDir, '__init__.py'), fs.readFileSync(path.join(pluginDir, '__init__.py'), 'utf8') + '\nUI_SURFACES = ["content-background"]\n', 'utf8');
+  }
   fs.writeFileSync(path.join(pluginDir, 'frontend.css'), '#e2e-plugin-visible { color: rgb(1, 2, 3); }', 'utf8');
   // P8.1: the desktop client only talks to its bundled Brain. An unpackaged run
   // may point at an already-running one through VIGIL_TEST_BRAIN (loopback only),
@@ -210,7 +233,9 @@ function cdpSend(method, params = {}) {
   });
 }
 async function evaluate(expression) {
-  const result = await cdpSend('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  let result;
+  try { result = await cdpSend('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); }
+  catch (error) { throw new Error(error.message + '; expression=' + expression.slice(0, 240)); }
   if (result.exceptionDetails) throw new Error('Renderer evaluation failed: ' + (result.exceptionDetails.text || expression));
   return result.result && result.result.value;
 }
@@ -227,10 +252,13 @@ async function connectRenderer(debugPort) {
       const pages = await (await fetch('http://127.0.0.1:' + debugPort + '/json/list')).json();
       const page = pages.find(p => p.type === 'page' && String(p.url || '').includes('index.html'));
       if (page) {
+        coreTarget = page;
+        diag('Core target selected', JSON.stringify({id:page.id,type:page.type,url:page.url,title:page.title,webSocketDebuggerUrl:page.webSocketDebuggerUrl}));
         cdp = new WebSocket(page.webSocketDebuggerUrl, { origin: 'http://localhost' });
         await new Promise((resolve, reject) => { cdp.once('open', resolve); cdp.once('error', reject); });
         cdp.on('message', data => {
           let msg; try { msg = JSON.parse(String(data)); } catch (_) { return; }
+          if (msg.method && ['Runtime.exceptionThrown','Log.entryAdded','Inspector.targetCrashed','Page.frameNavigated','Page.lifecycleEvent'].includes(msg.method)) diag('Core CDP event', msg.method, JSON.stringify(msg.params).slice(0,1000));
           if (msg.id && cdpPending.has(msg.id)) {
             const item = cdpPending.get(msg.id); cdpPending.delete(msg.id); clearTimeout(item.timer);
             msg.error ? item.reject(new Error(msg.error.message)) : item.resolve(msg.result || {});
@@ -238,6 +266,8 @@ async function connectRenderer(debugPort) {
         });
         await cdpSend('Runtime.enable');
         await cdpSend('Page.enable');
+        await cdpSend('Log.enable').catch(()=>{});
+        await cdpSend('Inspector.enable').catch(()=>{});
         return;
       }
     } catch (_) {}
@@ -245,26 +275,104 @@ async function connectRenderer(debugPort) {
   }
   throw new Error('Could not attach to actual Electron renderer');
 }
+async function evaluateGuest(debugPort, expression) {
+  const deadline = Date.now() + 10000;
+  let page;
+  while (Date.now() < deadline) {
+    const pages = await (await fetch('http://127.0.0.1:' + debugPort + '/json/list')).json();
+    page = pages.find(p => p.type === 'page' && String(p.url || '').startsWith('vigil-plugin://'));
+    if (page) break;
+    await wait(50);
+  }
+  if (!page) throw new Error('Isolated plugin renderer was not created on port ' + debugPort + '; targets=' + JSON.stringify(await targets(debugPort)));
+  const socket = new WebSocket(page.webSocketDebuggerUrl, { origin: 'http://localhost' });
+  await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+  let id = 0;
+  const pending = new Map();
+  socket.on('message', raw => {
+    let message; try { message = JSON.parse(String(raw)); } catch (_) { return; }
+    const item = pending.get(message.id);
+    if (item) { pending.delete(message.id); message.error ? item.reject(new Error(message.error.message)) : item.resolve(message.result || {}); }
+  });
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const commandId = ++id; pending.set(commandId, { resolve, reject });
+    socket.send(JSON.stringify({ id: commandId, method, params }));
+  });
+  try {
+    const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || expression);
+    return result.result && result.result.value;
+  } finally { socket.close(); }
+}
+async function targets(debugPort) {
+  return (await (await fetch('http://127.0.0.1:' + debugPort + '/json/list')).json());
+}
+async function waitForTarget(debugPort, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const page = (await targets(debugPort)).find(predicate);
+    if (page) return page;
+    await wait(100);
+  }
+  return null;
+}
+async function evaluateTarget(page, expression) {
+  const socket = new WebSocket(page.webSocketDebuggerUrl, { origin: 'http://localhost' });
+  await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+  let id = 0;
+  const pending = new Map();
+  socket.on('message', raw => {
+    let message; try { message = JSON.parse(String(raw)); } catch (_) { return; }
+    const item = pending.get(message.id);
+    if (item) { pending.delete(message.id); message.error ? item.reject(new Error(message.error.message)) : item.resolve(message.result || {}); }
+  });
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const commandId = ++id; pending.set(commandId, { resolve, reject });
+      socket.send(JSON.stringify({ id: commandId, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
+    });
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || expression);
+    return result.result && result.result.value;
+  } finally { socket.close(); }
+}
+async function lifecycleSnapshot(label, debugPort) {
+  if (process.env.VIGIL_DIAG_PLUGIN_LIFECYCLE !== '1') return;
+  const boundedJson = async route => {
+    const controller = new AbortController(); const timer = setTimeout(()=>controller.abort(), 1200);
+    try { const response = await fetch('http://127.0.0.1:' + debugPort + route,{signal:controller.signal}); return await response.json(); }
+    catch(error) { return {error:error.name + ': ' + error.message}; }
+    finally { clearTimeout(timer); }
+  };
+  const pages = await boundedJson('/json/list');
+  const version = await boundedJson('/json/version');
+  diag(label, 'electronPid=' + electron?.pid, 'coreWs=' + cdp?.readyState,
+    'selected=' + JSON.stringify(coreTarget && {id:coreTarget.id,url:coreTarget.url}),
+    'targets=' + JSON.stringify(Array.isArray(pages) ? pages.map(p=>({id:p.id,type:p.type,url:p.url,title:p.title,ws:p.webSocketDebuggerUrl})) : pages),
+    'browser=' + JSON.stringify(version));
+}
 async function startElectron(brainBase) {
   const debugPort = await freePort();
   const packaged = process.argv.includes('--packaged');
+  const candidateId = String(process.env.VIGIL_CANDIDATE_ID || '');
+  const packagedRoot = candidateId
+    ? path.join(client, 'dist-release-candidates', candidateId)
+    : path.join(client, 'dist-release');
   const electronExe = packaged
-    ? path.join(client, 'dist-release', 'win-unpacked', 'Vigil.exe')
+    ? path.join(packagedRoot, 'win-unpacked', 'Vigil.exe')
     : require(path.join(client, 'node_modules', 'electron'));
   if (packaged && !fs.existsSync(electronExe)) throw new Error('Candidate packaged executable not found: ' + electronExe);
   const env = { ...process.env, VIGIL_USER_DATA: profile, VIGIL_TEST_MODE: '1',
     VIGIL_TEST_BRAIN: brainBase, VIGIL_TEST_TOKEN: token,
     ELECTRON_ENABLE_LOGGING: '1', ELECTRON_DISABLE_SECURITY_WARNINGS: '1' };
   const logFile = fs.openSync(path.join(root, 'electron.log'), 'w');
-  // 两个开关都是必须的：传 --disable-gpu 会让这台机器的 GPU 进程反复崩
-  // （exit_code=-1073741819 → FATAL），不带 --no-sandbox 则 GPU 子进程被外层
-  // 沙箱掐掉、渲染进程跟着崩，CDP 永远连不上。
+  // Do not disable Chromium's sandbox in this security regression test.
   const args = ['--remote-debugging-port=' + debugPort, '--remote-allow-origins=*',
-    '--no-sandbox', '--disable-features=CalculateNativeWinOcclusion'];
+    '--disable-features=CalculateNativeWinOcclusion'];
   if (!packaged) args.push(client);
   electron = spawn(electronExe, args, {
     cwd: client, env, stdio: ['ignore', logFile, logFile], windowsHide: true,
   });
+  if (process.env.VIGIL_DIAG_PLUGIN_LIFECYCLE === '1') electron.once('exit', (code, signal) => diag('Electron child exited', JSON.stringify({code,signal,pid:electron.pid})));
   fs.closeSync(logFile); // Release the parent's duplicate handle when the child exits.
   const ready = connectRenderer(debugPort);
   await ready;
@@ -277,6 +385,42 @@ async function startElectron(brainBase) {
     'actual renderer chat view should be ready');
   await evaluate("window.__vigilE2EEvents=[]; window.vigil.onStreamEvent(e=>window.__vigilE2EEvents.push(e)); true");
   return { debugPort, brainBase };
+}
+async function prepareWallpaperFixture() {
+  const extensionSource = path.join(root, 'wallpaper-extension');
+  const build = spawnSync(process.execPath, [path.join(client, 'tools/build-wallpaper-extension.js'), extensionSource], {
+    cwd: client, encoding: 'utf8', windowsHide: true,
+  });
+  if (build.status !== 0) throw new Error('Could not build isolated Wallpaper fixture: ' + (build.stderr || build.stdout));
+  const stateDir = path.join(profile, 'extensions');
+  const version = require(path.join(extensionSource, 'manifest.json')).version;
+  const installed = path.join(stateDir, 'programs', 'com.vigil.wallpaper', version);
+  fs.mkdirSync(path.dirname(installed), { recursive: true });
+  fs.cpSync(extensionSource, installed, { recursive: true, errorOnExist: true, force: false, dereference: false });
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ schema: 1, wallpaper: {
+    installed: true, enabled: true, activeVersion: version,
+    grantedPermissions: ['desktop.wallpaper.control', 'desktop.ui.contribute'],
+  } }), 'utf8');
+  const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
+  const imagePath = path.join(root, 'wallpaper-fixture.png');
+  const makeImage = spawnSync(python, ['-c', 'from PIL import Image; Image.new("RGB", (640, 360), (22, 90, 150)).save(r"' + imagePath.replace(/\\/g, '\\\\') + '")'], {
+    encoding: 'utf8', windowsHide: true,
+  });
+  if (makeImage.status !== 0) throw new Error('Could not create isolated Wallpaper fixture image: ' + makeImage.stderr);
+  const { createWallpaperHost } = require(path.join(extensionSource, 'wallpaper-host.js'));
+  const host = createWallpaperHost({ dataDir: path.join(profile, 'wallpaper-engine'), vendorDir: path.join(extensionSource, 'vendor', 'dsh-wallpaper-engine') });
+  try {
+    await host.importFile(imagePath);
+    const inventory = (await host.request('GET', '/inventory')).data;
+    const image = (inventory.wallpapers || []).find(item => item.type === 'image');
+    if (!image) throw new Error('Wallpaper fixture import did not produce an image: ' + JSON.stringify(inventory).slice(0, 600));
+    const mediaResponse = await fetch(image.media);
+    if (!mediaResponse.ok || !(mediaResponse.headers.get('content-type') || '').startsWith('image/')) throw new Error('Wallpaper fixture media could not be read: HTTP ' + mediaResponse.status + ' ' + image.media);
+    await mediaResponse.arrayBuffer();
+    const saved = (await host.request('GET', '/settings')).data;
+    await host.request('PUT', '/settings', { ...(saved.settings || {}), id: image.id });
+  } finally { host.close(); }
 }
 async function submit(text) {
   await evaluate(`(()=>{const t=document.querySelector('#ta'); t.value=${JSON.stringify(text)}; t.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('#sendBtn').click(); return true})()`);
@@ -336,25 +480,176 @@ async function safeCleanup() {
 async function run() {
   const modelBase = await startModel();
   const { base: brainBase, pluginTrace } = await startBrain(modelBase);
-  await startElectron(brainBase);
-  await waitFor("!!document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]')", 'directory plugin page registration');
-  await evaluate("document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]').click()");
-  await waitFor("!!document.querySelector('#e2e-plugin-visible')", 'directory plugin page render');
-  assert.equal(await evaluate("document.querySelector('#e2e-plugin-visible').textContent"), 'Directory plugin frontend loaded');
-  assert.equal(await evaluate("getComputedStyle(document.querySelector('#e2e-plugin-visible')).color"), 'rgb(1, 2, 3)');
-  pass('directory plugin frontend.js registers a page and frontend.css is applied in real Electron');
+  if (process.argv.includes('--wallpaper-surface-only')) await prepareWallpaperFixture();
+  let { debugPort } = await startElectron(brainBase);
+  if (process.argv.includes('--wallpaper-surface-only')) {
+    await waitFor("document.body.classList.contains('plugin-surface-active') && !!document.querySelector('#plugin-surface-host iframe')", 'Wallpaper content surface registration', 30000);
+    const surfaceFrame = await evaluate("(()=>{const f=document.querySelector('#plugin-surface-host iframe');let blocked=false;try{void f.contentWindow.document.body}catch(_){blocked=true}return {src:f.src,sandbox:f.getAttribute('sandbox'),blocked,transparent:getComputedStyle(document.querySelector('.app')).backgroundColor}})()");
+    assert.match(surfaceFrame.src, /^vigil-plugin:\/\/p-[a-f0-9]{20}\/surface\.html$/);
+    assert.equal(surfaceFrame.sandbox, 'allow-scripts'); assert.equal(surfaceFrame.blocked, true);
+    assert.equal(surfaceFrame.transparent, 'rgba(0, 0, 0, 0)');
+    const surfaceTarget = await waitForTarget(debugPort, target => target.type === 'iframe' && String(target.url || '').includes('/surface.html'), 15000);
+    assert.ok(surfaceTarget, 'Wallpaper must render in a separate Chromium iframe target');
+    await waitForTarget(debugPort, target => target.id === surfaceTarget.id && target.url.includes('/surface.html'));
+    const imageLoad = JSON.parse(await evaluateTarget(surfaceTarget, "new Promise(resolve=>{const end=Date.now()+15000;const check=()=>{const i=document.querySelector('.vwp-stage img');if(i?.complete&&i.naturalWidth)return resolve(JSON.stringify({kind:'loaded',width:i.naturalWidth}));if(Date.now()>end)return resolve(JSON.stringify({kind:i?'timeout':'missing',width:i?.naturalWidth||0}));setTimeout(check,100)};check()})"));
+    assert.equal(imageLoad.kind, 'loaded'); assert.equal(imageLoad.width, 640);
+    let probe = await evaluateTarget(surfaceTarget, "JSON.stringify({url:location.href,node:typeof require,process:typeof process,fs:typeof fs,coreDom:(()=>{try{return !!parent.document.querySelector('#ta')}catch(_){return 'blocked'}})(),width:document.querySelector('.vwp-stage')?.getBoundingClientRect().width,height:document.querySelector('.vwp-stage')?.getBoundingClientRect().height,image:document.querySelector('.vwp-stage img')?.naturalWidth,fit:getComputedStyle(document.querySelector('.vwp-stage img')||document.body).objectFit,active:document.body.classList.contains('vwp-active'),webgl:(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl2')||c.getContext('webgl');return {available:!!g,version:g?.getParameter(g.VERSION)||''}})()})");
+    probe = JSON.parse(probe);
+    assert.equal(probe.node, 'undefined'); assert.equal(probe.process, 'undefined'); assert.equal(probe.fs, 'undefined');
+    assert.equal(probe.coreDom, 'blocked'); assert.ok(probe.width > 800 && probe.height > 500, 'Wallpaper stage must follow the full resized client viewport');
+    assert.equal(probe.image, 640, 'imported image must decode at its source resolution on first load');
+    assert.equal(probe.fit, 'cover'); assert.equal(probe.active, true);
+    assert.equal(probe.webgl.available, true, 'isolated Wallpaper surface must be able to create a WebGL context');
+    const layer = await evaluate("(()=>{const f=document.querySelector('#plugin-surface-host iframe');const app=document.querySelector('.app');const input=document.querySelector('#ta').getBoundingClientRect();return {pointer:getComputedStyle(f).pointerEvents,appZ:getComputedStyle(app).zIndex,inputHit:document.elementFromPoint(input.left+input.width/2,input.top+input.height/2)?.id}})()");
+    assert.deepEqual(layer, { pointer: 'none', appZ: '1', inputHit: 'ta' }, 'Core input must remain the interactive layer above Wallpaper');
+    pass('Wallpaper Engine renderer displays a sharp, correctly fitted image behind the Core UI');
+    await submit('WALLPAPER_ACTIVE_CORE_CHAT'); await requestStarted(call => call.userText === 'WALLPAPER_ACTIVE_CORE_CHAT');
+    await waitFor("document.querySelector('#msgs').innerText.includes('VIGIL_PLUGIN_CALL_OK') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'Core chat while Wallpaper is active');
+    pass('Core chat controls remain usable while Wallpaper is active');
+    const opened = await evaluate("window.vigil.plugins.openUi('desktop-wallpaper')"); assert.equal(opened.ok, true);
+    await waitFor("window.vigil.plugins.runtimeTest().then(r=>r.ok && r.renderers.some(renderer=>renderer.id==='desktop-wallpaper' && renderer.ready))", 'Wallpaper management renderer startup');
+    const managementRuntime = await evaluate('window.vigil.plugins.runtimeTest()');
+    const management = managementRuntime.renderers.find(renderer => renderer.id === 'desktop-wallpaper');
+    assert.ok(management && management.pid !== managementRuntime.corePid);
+    const managementProbe = JSON.parse(await evaluateGuest(managementRuntime.pluginDebugPort,
+      "new Promise(resolve=>{const end=Date.now()+10000;const check=()=>{const img=document.querySelector('.vwp-player img');if(img?.complete&&img.naturalWidth)return resolve(JSON.stringify({mode:window.__VIGIL_PLUGIN_UI_MODE__,stage:!!document.querySelector('.vwp-stage'),preview:img.naturalWidth,node:typeof require,process:typeof process}));if(Date.now()>end)return resolve(JSON.stringify({mode:window.__VIGIL_PLUGIN_UI_MODE__,stage:!!document.querySelector('.vwp-stage'),preview:img?.naturalWidth||0,node:typeof require,process:typeof process}));setTimeout(check,100)};check()})"));
+    assert.deepEqual(managementProbe, { mode: 'management', stage: false, preview: 640, node: 'undefined', process: 'undefined' });
+    pass('Wallpaper management UI shows a preview without starting a second playback surface');
+    await evaluateGuest(managementRuntime.pluginDebugPort, "document.querySelector('#vwp-close').click(); true");
+    await waitFor("!document.body.classList.contains('plugin-surface-active')", 'Wallpaper selection disabled from management UI');
+    await evaluateGuest(managementRuntime.pluginDebugPort, "document.querySelector('#vwp-grid [data-id]')?.click(); true");
+    await waitFor("document.body.classList.contains('plugin-surface-active')", 'Wallpaper selection restored from management UI');
+    pass('Wallpaper selection changes update the client background through the Broker');
+    const disabled = await evaluate('window.vigil.wallpaperExtension.disable()');
+    assert.equal(disabled.enabled, false);
+    await waitFor("!document.querySelector('#plugin-surface-host iframe') && !document.body.classList.contains('plugin-surface-active')", 'Wallpaper view and permissions revoked');
+    await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
+    await submit('AFTER_PLUGIN_DISABLE'); await requestStarted(call => call.userText === 'AFTER_PLUGIN_DISABLE');
+    await waitFor("document.querySelector('#msgs').innerText.includes('CORE_AFTER_PLUGIN_DISABLE_OK') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'Core Fake Provider chat after Wallpaper disable');
+    pass('Core Fake Provider chat completes after Wallpaper is disabled');
+    const enabled = await evaluate('window.vigil.wallpaperExtension.enable()'); assert.equal(enabled.enabled, true);
+    await waitFor("document.body.classList.contains('plugin-surface-active') && !!document.querySelector('#plugin-surface-host iframe')", 'Wallpaper surface restored after re-enable', 30000);
+    const dataFilesBefore = fs.readdirSync(path.join(profile, 'wallpaper-engine'), { recursive: true }).length;
+    const removed = await evaluate('window.vigil.wallpaperExtension.uninstall()'); assert.equal(removed.installed, false);
+    await waitFor("!document.querySelector('#plugin-surface-host iframe')", 'Wallpaper surface removed after uninstall');
+    const dataFilesAfter = fs.readdirSync(path.join(profile, 'wallpaper-engine'), { recursive: true }).length;
+    assert.ok(dataFilesBefore > 0 && dataFilesAfter === dataFilesBefore, 'uninstall must preserve Wallpaper user materials and settings');
+    pass('Wallpaper disable, re-enable, uninstall cleanup and user-data retention pass');
+    console.log('PASS Wallpaper surface integration total: ' + passCount);
+    return;
+  }
+  await waitFor("!!document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]')", 'directory plugin page registration');
+  await waitFor("document.body.classList.contains('plugin-surface-active') && !!document.querySelector('#plugin-surface-host iframe')", 'plugin content background surface registration');
+  const surfaceFrame = await evaluate("(()=>{const f=document.querySelector('#plugin-surface-host iframe');let blocked=false;try{void f.contentWindow.document.body}catch(_){blocked=true}return {sandbox:f.getAttribute('sandbox'),src:f.src,blocked,transparent:getComputedStyle(document.querySelector('.app')).backgroundColor}})()");
+  assert.equal(surfaceFrame.sandbox, 'allow-scripts', 'content surface must be sandboxed without same-origin access');
+  assert.equal(surfaceFrame.blocked, true, 'Core DOM must not be readable from the plugin surface');
+  assert.equal(surfaceFrame.transparent, 'rgba(0, 0, 0, 0)', 'Core shell must let the plugin background show through');
+  const surfaceTarget = await waitForTarget(debugPort, target => target.type === 'iframe' && String(target.url || '').includes('/surface.html'));
+  assert.ok(surfaceTarget, 'content surface must appear as its own Chromium iframe target');
+  const surfaceProbe = await evaluateTarget(surfaceTarget, "JSON.stringify({runtime:document.body.dataset.surfaceRuntime,coreDom:document.querySelector('#ta'),body:document.body.style.backgroundColor,origin:location.origin})");
+  const surface = JSON.parse(surfaceProbe);
+  assert.deepEqual(JSON.parse(surface.runtime), { require: 'undefined', process: 'undefined', fs: 'undefined', parentDom: 'blocked' });
+  assert.equal(surface.body, 'rgb(22, 90, 150)', 'separate surface renderer must paint its background content');
+  pass('generic plugin surface renders behind Core in a sandboxed isolated iframe');
+  assert.equal(await evaluate("typeof window.VigilPlugin === 'undefined' && typeof window.VigilAPI === 'undefined'"), true,
+    'Core renderer must not expose plugin execution API');
+  assert.equal(await evaluate("!!document.getElementById('plugin-css-vigil_smoke')"), false,
+    'plugin CSS must not enter Core document');
+  await evaluate("document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]').click()");
+  await evaluate("document.querySelector('#view button')?.click()");
+  await waitFor("window.vigil.plugins.runtimeTest().then(r=>r.ok && r.renderers.some(renderer=>renderer.id==='brain-vigil_smoke' && renderer.ready && renderer.url.startsWith('vigil-plugin://')))", 'plugin renderer loaded in isolated process', 15000);
+  const livePreferences = await evaluate("window.vigil.plugins.runtimeTest()");
+  diag('isolated host runtime', JSON.stringify(livePreferences));
+  assert.equal(livePreferences.noSandboxSwitch, false, 'Electron test must run with Chromium sandbox enabled');
+  const pluginRenderer = livePreferences.renderers.find(renderer => renderer.id === 'brain-vigil_smoke');
+  assert.ok(pluginRenderer, 'isolated Electron process must identify the live plugin WebContents');
+  assert.notEqual(pluginRenderer.pid, livePreferences.corePid, 'plugin renderer must use a process separate from Core renderer');
+  assert.equal(pluginRenderer.preferences.nodeIntegration, false);
+  assert.equal(pluginRenderer.preferences.contextIsolation, true);
+  assert.equal(pluginRenderer.preferences.sandbox, true);
+  assert.equal(pluginRenderer.preferences.webSecurity, true);
+  let pluginDebugPort = livePreferences.pluginDebugPort;
+  assert.ok(Number.isInteger(pluginDebugPort) && pluginDebugPort > 0, 'test plugin host must expose its isolated CDP endpoint');
+  const guestBoundary = await evaluateGuest(pluginDebugPort, "JSON.stringify({url:location.href,ready:document.readyState,title:document.title,body:document.body?.innerHTML,content:document.querySelector('#plugin-view')?.innerText,markup:document.querySelector('#plugin-view')?.innerHTML,color:document.querySelector('#e2e-plugin-visible')?getComputedStyle(document.querySelector('#e2e-plugin-visible')).color:null,requireType:typeof require,processType:typeof process,fsType:typeof fs,bridge:Object.keys(window.vigilPlugin||{}),api:Object.keys(window.VigilAPI||{}),coreDom:!!document.querySelector('#ta')})");
+  diag('isolated renderer DOM probe', guestBoundary);
+  const guest = JSON.parse(guestBoundary);
+  assert.match(guest.content, /Directory plugin frontend loaded/);
+  assert.equal(guest.color, 'rgb(1, 2, 3)', 'plugin CSS must affect only the isolated renderer');
+  assert.equal(guest.requireType, 'undefined');
+  assert.equal(guest.processType, 'undefined');
+  assert.equal(guest.fsType, 'undefined');
+  assert.deepEqual(guest.api.sort(), ['get', 'post']);
+  assert.equal(guest.coreDom, false);
+  assert.deepEqual(guest.bridge.sort(), ['get', 'post', 'registerPage', 'resourceUrl']);
+  pass('directory plugin UI runs in an independent Electron renderer without Node or Core DOM');
+  const cspProbe = await evaluateGuest(pluginDebugPort, "new Promise(resolve=>{const done=e=>resolve({directive:e.violatedDirective,blocked:e.blockedURI});document.addEventListener('securitypolicyviolation',done,{once:true});const image=new Image();image.src='http://127.0.0.1:9/e2e-probe';setTimeout(()=>resolve(null),1200)})");
+  assert.ok(cspProbe && cspProbe.directive.startsWith('img-src') && cspProbe.blocked.startsWith('http://127.0.0.1:9'),
+    'plugin CSP must deny access to arbitrary loopback services');
+  pass('plugin CSP blocks unauthorized local resource access');
+  const denied = await evaluateGuest(pluginDebugPort, "window.vigilPlugin.get('/api/models').then(r=>JSON.stringify(r))");
+  assert.equal(JSON.parse(denied).ok, false, 'unscoped Brain API request must be denied by Broker');
+  const traversal = await evaluateGuest(pluginDebugPort, "window.vigilPlugin.get('/api/plugin/vigil_smoke/%2e%2e/models').then(r=>JSON.stringify(r))");
+  assert.equal(JSON.parse(traversal).ok, false, 'path traversal must be denied by Broker');
+  const forged = await evaluateGuest(pluginDebugPort, "window.vigilPlugin.get('/api/plugin/wallpaper/config').then(r=>JSON.stringify(r))");
+  assert.equal(JSON.parse(forged).ok, false, 'a plugin renderer cannot borrow another plugin identity or grants');
+  pass('plugin Broker rejects undeclared API operations and traversal');
+  const crashed = await evaluate("window.vigil.plugins.crashTest('brain-vigil_smoke')");
+  assert.equal(crashed.ok, true, 'test host must crash only the isolated plugin renderer');
+  await wait(500);
+  assert.equal(await evaluate('6 * 7'), 42, 'Core CDP must remain available after plugin renderer crash');
+  await waitFor("window.vigil.plugins.runtimeTest().then(r=>r.ok && r.renderers.length===0)", 'crashed isolated host retirement', 15000);
+  const recovered = await evaluate("window.vigil.plugins.openUi('brain-vigil_smoke')");
+  assert.equal(recovered.ok, true, 'enabled plugin must reopen in a fresh isolated Electron host');
+  await wait(500);
+  const recoveredRuntime = await evaluate('window.vigil.plugins.runtimeTest()');
+  pluginDebugPort = recoveredRuntime.pluginDebugPort;
+  assert.ok(Number.isInteger(pluginDebugPort) && pluginDebugPort > 0, 'restarted plugin host must expose its isolated CDP endpoint');
+  const crashedRuntime = await evaluate('window.vigil.plugins.runtimeTest()');
+  assert.equal(crashedRuntime.renderers.some(renderer => renderer.id === 'brain-vigil_smoke' && renderer.ready), true,
+    'crashed plugin renderer must be removed and restarted in the isolated host');
+  await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
+  await submit('AFTER_PLUGIN_CRASH');
+  await requestStarted(call => call.userText === 'AFTER_PLUGIN_CRASH');
+  await waitFor("document.querySelector('#msgs').innerText.includes('VIGIL_PLUGIN_CALL_OK') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'Core tool chat after plugin renderer crash');
+  pass('plugin renderer crash leaves Core chat usable and plugin UI recovers');
+  await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
+  await waitFor("document.querySelector('#ta') && document.querySelector('#sendBtn')", 'Core chat before plugin disable');
+  const disabled = await evaluate("API.post('/api/plugins/channels',{name:'vigil_smoke',channels:[]}).then(r=>JSON.stringify(r))");
+  diag('disable API response', disabled);
+  await lifecycleSnapshot('after disable response', debugPort);
+  assert.equal(JSON.parse(disabled).ok, true, 'Core-owned plugin disable should complete');
+  await wait(250);
+  await lifecycleSnapshot('250ms after disable response', debugPort);
+  await waitFor("!document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]')", 'disabled plugin page unregister');
+  assert.equal(await evaluate('1 + 1'), 2, 'Core remains available after plugin disable');
+  assert.deepEqual((await evaluate('window.vigil.plugins.runtimeTest()')).renderers, [], 'disabled plugin host must contain no renderer');
+  if (process.argv.includes('--quick-lifecycle')) {
+    await submit('AFTER_PLUGIN_DISABLE');
+    await requestStarted(call => call.userText === 'AFTER_PLUGIN_DISABLE');
+    await waitFor("document.querySelector('#msgs').innerText.includes('CORE_AFTER_PLUGIN_DISABLE_OK') && document.querySelector('#sendBtn').getAttribute('aria-busy')==='false'", 'Fake Provider chat after plugin disable');
+    pass('Core completes Fake Provider chat after plugin disable');
+  }
+  const reenabled = await evaluate("API.post('/api/plugins/channels',{name:'vigil_smoke',channels:['pc']}).then(r=>JSON.stringify(r))");
+  assert.equal(JSON.parse(reenabled).ok, true, 'Core-owned plugin enable should complete');
+  await waitFor("!!document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]')", 're-enabled plugin page registration');
+  pass('plugin UI unregisters on disable and registers again after enable');
+  if (process.argv.includes('--quick-lifecycle')) {
+    console.log('PASS quick plugin lifecycle smoke total: ' + passCount);
+    return;
+  }
   await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
 
-  // A new Electron process always opens the welcome page. Listing sessions on
-  // an empty Brain must not create the legacy placeholder or select a chat.
+  // A new Electron process always opens the welcome page. The required chat
+  // after renderer recovery remains saved without selecting it automatically.
   await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'cold-start welcome page');
   assert.equal(await evaluate('API.state.chatConversationId'), '', 'cold start must have no active conversation');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '');
   if (captureScreenshots) await screenshot('p6.3-cold-start-home');
   let listResponse = await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}});
   let listed = await listResponse.json();
-  assert.deepEqual(listed.items, [], 'opening the welcome page must not create an empty Brain conversation');
-  pass('cold start with no history opens a clean welcome page without creating a conversation');
+  assert.equal(listed.items.length, 1, 'post-crash chat should be the only saved conversation');
+  assert.equal(listed.items[0].title, 'AFTER_PLUGIN_CRASH');
+  pass('cold start opens a clean welcome page and preserves the post-crash chat without selecting it');
 
   // Seed an old transcript, then create nine real chats through the renderer.
   // Empty conversation rows are intentionally hidden until their first turn.
@@ -370,20 +665,20 @@ async function run() {
   }
   listResponse = await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}});
   listed = await listResponse.json();
-  assert.equal(listed.items.length, 10, 'legacy transcript plus nine saved sessions should be listed');
+  assert.equal(listed.items.length, 11, 'post-crash chat, legacy transcript, and nine saved sessions should be listed');
   const legacyId = listed.items.find(item => item.legacy).id;
   const legacyFirstPrompt = 'LEGACY_FIRST_PROMPT';
   await evaluate("document.querySelector('#newTopicBtn').click()");
   await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'return to welcome before renderer refresh');
   await evaluate("document.querySelector('#reloadBtn').click()");
-  await waitFor("document.querySelectorAll('[data-session]').length===10 && !document.querySelector('#hero').hidden", 'ten saved sessions on welcome page');
-  assert.equal(await evaluate('API.state.chatConversationId'), '', 'ten saved sessions must not auto-select the last chat');
+  await waitFor("document.querySelectorAll('[data-session]').length===11 && !document.querySelector('#hero').hidden", 'eleven saved sessions on welcome page');
+  assert.equal(await evaluate('API.state.chatConversationId'), '', 'saved sessions must not auto-select the last chat');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'home must not show saved messages or Creator cards');
   if (captureScreenshots) await screenshot('p6.3-ten-history-home');
   await evaluate(`document.querySelector('[data-session="${legacyId}"]').click()`);
   await waitFor(`API.state.chatConversationId===${JSON.stringify(legacyId)} && document.querySelector('#msgs').innerText.includes(${JSON.stringify(legacyFirstPrompt)})`, 'legacy history explicitly opened');
   assert.equal(await evaluate(`document.querySelector('[data-session="${legacyId}"] .tx b')?.textContent || ''`), legacyFirstPrompt.slice(0, 7));
-  pass('ten saved conversations remain visible on welcome; legacy opens only after explicit selection');
+  pass('saved conversations remain visible on welcome; legacy opens only after explicit selection');
 
   await evaluate("document.querySelector('#newTopicBtn').click()");
   await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'new conversation welcome state');
@@ -426,7 +721,7 @@ async function run() {
   await evaluate("document.querySelector('#newTopicBtn').click()");
   await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'empty B welcome page');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'new B welcome must be blank');
-  assert.equal((await (await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}})).json()).items.length, 11,
+  assert.equal((await (await fetch(brainBase + '/api/conversations?src=pc', {headers:{Authorization:'Bearer ' + token}})).json()).items.length, 12,
     'clicking new conversation alone must not create a Brain row');
   await submit('B_ONLY');
   const bOnlyCall = await requestStarted(x => x.userText === 'B_ONLY');
@@ -482,11 +777,13 @@ async function run() {
   cdp = null;
   await stopChild(electron, true); electron = null;
   await wait(500);
-  await startElectron(brainBase);
+  ({ debugPort } = await startElectron(brainBase));
+  await waitFor("!!document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]')", 'plugin page restored after app restart');
   await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'cold launch after an existing session');
   assert.equal(await evaluate('API.state.chatConversationId'), '', 'normal app relaunch must return to welcome');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'normal relaunch must not show old messages/cards');
-  assert.equal(await evaluate("document.querySelectorAll('[data-session]').length"), 12, 'all twelve saved conversations remain listed');
+  await waitFor("document.querySelectorAll('[data-session]').length===13", 'all thirteen saved conversations after cold launch');
+  assert.equal(await evaluate("document.querySelectorAll('[data-session]').length"), 13, 'all thirteen saved conversations remain listed');
   if (captureScreenshots) await screenshot('p6.3-restart-home-with-history');
   await evaluate(`document.querySelector('[data-session="${conversationA}"]').click()`);
   await waitFor("document.querySelector('#msgs').innerText.includes('A_ONLY') && document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')",
@@ -510,6 +807,20 @@ async function run() {
   assert.equal(failureState.busy, 'false', 'tool error response must release the running state');
   pass('plugin execution failure reaches model and renderer without success marker');
 
+  await evaluate("document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]').click()");
+  await evaluate("document.querySelector('#view button')?.click()");
+  await wait(300);
+  const removed = await evaluate("API.post('/api/plugins/uninstall',{name:'vigil_smoke',purge_data:false}).then(r=>JSON.stringify(r))");
+  assert.equal(JSON.parse(removed).ok, true, 'Core-owned plugin uninstall should complete while preserving plugin data');
+  await waitFor("!document.querySelector('#gnav [data-page=\\\"plugin-ui-brain-vigil_smoke\\\"]')", 'uninstalled plugin page unregister');
+  assert.equal((await targets(debugPort)).some(page => String(page.url || '').startsWith('vigil-plugin://')), false,
+    'uninstalled plugin renderer must be destroyed');
+  assert.equal(await evaluate("Boolean(document.querySelector('#ta') && document.querySelector('#sendBtn'))"), true,
+    'Core chat remains available after plugin renderer teardown');
+  diag('uninstall completed; Core chat controls are present');
+  pass('uninstall revokes UI and preserves normal Core chat');
+
+  diag('submitting post-uninstall chat');
   await submit('晚安');
   await requestStarted(x => x.payload.stream === true && x.userText === '晚安');
   await wait(250);
@@ -525,7 +836,12 @@ async function run() {
 
 run().catch(error => {
   console.error(error && error.stack || error);
+  if (error && error.cause) console.error('Failure cause:', error.cause.stack || error.cause);
   try { if (fs.existsSync(path.join(root, 'brain.log'))) console.error('Brain log retained until cleanup: ' + path.join(root, 'brain.log')); } catch (_) {}
+  try {
+    const electronLog = path.join(root, 'electron.log');
+    if (fs.existsSync(electronLog)) console.error('Electron log:\n' + fs.readFileSync(electronLog, 'utf8').slice(-12000));
+  } catch (_) {}
   process.exitCode = 1;
 }).finally(async () => {
   // Closing the browser target may close CDP before its response arrives, leaving
@@ -543,5 +859,6 @@ run().catch(error => {
   }
   for (const item of cdpPending.values()) { clearTimeout(item.timer); item.reject(new Error('test ended')); }
   cdpPending.clear();
-  try { await safeCleanup(); } catch (e) { console.error('Temp cleanup failed: ' + e.message); process.exitCode = 1; }
+  if (process.env.VIGIL_KEEP_TEST_ARTIFACTS === '1') console.error('Test artifacts retained: ' + root);
+  else try { await safeCleanup(); } catch (e) { console.error('Temp cleanup failed: ' + e.message); process.exitCode = 1; }
 });
