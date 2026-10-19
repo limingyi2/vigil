@@ -358,7 +358,14 @@
       setStatus();
       refreshStats();
       perf('brain-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
-      if (state.page === 'chat') void go('chat');
+      if (state.page === 'chat') {
+        // Connection can finish after the first usable chat page is visible.
+        // Refresh its initial history only while it is still untouched; an
+        // unconditional rerender can detach an in-flight reply bubble/listener.
+        const messages = document.getElementById('msgs');
+        const composer = document.getElementById('ta');
+        if (!messages || (!messages.children.length && !(composer && composer.value))) void go('chat');
+      }
       if (!settingsWindow) maybeWizard();
     });
 
