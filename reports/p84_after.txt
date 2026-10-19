@@ -1,0 +1,108 @@
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 流式成功后进内存历史并影响下一轮
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 连续三轮流式可引用前两轮
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 流式失败/截断不写历史
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 流式成功写磁盘存档
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 短对话不触发压缩
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 40 条长对话关键事实可召回
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 20/50/100 条长对话稳定
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 摘要超长安全截断
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 两个 PC 会话互不串话
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 重启后摘要恢复
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 读不了 config.json：[Errno 2] No such file or directory: 'C:\\Users\\limingyi\\AppData\\Local\\Temp\\vigil_p84_wnxy5_3c\\config\\config.json'
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS FC 工具配对不破坏
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 摘要失败原文完好
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS provider 未就绪不发请求
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 清空会话压缩状态清除
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 本地模式摘要走本地 provider
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[上下文] 单条消息约 72001 tokens 超过可用预算 5887（不截断，照发）
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 单条消息超长明确报告
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 开关关闭回到旧行为
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[大脑] 渠道 wechat -> 人设 default
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+[人设] 读不到 C:\Users\limingyi\AppData\Local\Temp\vigil_p84_wnxy5_3c\config\personas\default.json —— 现在用的是内置空模板（她没有名字和背景）。检查 config.json 的 persona_file 指向对不对。
+PASS 三入口同一构建函数
+
+通过 18 / 18

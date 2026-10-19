@@ -1524,14 +1524,26 @@ def start_remote_api(brain):
                     messages = [{'role': 'system', 'content': ''.join(parts)}]
                     if len(brain.hist) <= 1:
                         brain.seed_history(src=src, conversation_id=body.get('brain_conversation_id'))
-                    messages.extend(copy.deepcopy(brain.recent_hist()))
-                    # Completed runs can inform the next request in this owner/session.
-                    # Partial/error/tool transcripts stay outside model history.
-                    for previous in reversed(agent_runs.listing(self._display_owner(body))[:8]):
-                        if previous['status'] == 'succeeded' and previous.get('result'):
-                            messages.extend([{'role': 'user', 'content': previous['intent']},
-                                             {'role': 'assistant', 'content': previous['result']}])
-                    messages.append({'role': 'user', 'content': brain._user_msg_with_rules(text)})
+                    # P8.4：与 draft_native / stream_chat 同一份上下文构建
+                    # （含滚动摘要注入）。allow_summarize=False —— 创建
+                    # run 时不额外发摘要请求，只用已有状态。
+                    try:
+                        from conversation_context import build_context as _build_ctx
+                        _hist, _ci = _build_ctx(
+                            brain, text, system_text=''.join(parts),
+                            src=src,
+                            conversation_id=body.get('brain_conversation_id'),
+                            allow_summarize=False)
+                    except Exception:
+                        _hist = brain.recent_hist()
+                    messages.extend(copy.deepcopy(_hist))
+                # Completed runs can inform the next request in this owner/session.
+                # Partial/error/tool transcripts stay outside model history.
+                for previous in reversed(agent_runs.listing(self._display_owner(body))[:8]):
+                    if previous['status'] == 'succeeded' and previous.get('result'):
+                        messages.extend([{'role': 'user', 'content': previous['intent']},
+                                         {'role': 'assistant', 'content': previous['result']}])
+                messages.append({'role': 'user', 'content': brain._user_msg_with_rules(text)})
             return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body),
                                      brain=brain, messages=messages)
 

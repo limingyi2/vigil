@@ -491,6 +491,8 @@ class Brain:
         # 每轮现取：工厂构造不联网，且 /api/models/apply 热改 model_mode 后
         # 下一轮立即生效，不用重启大脑。
         self.last_provider_kind = ""
+        # P8.4：本轮上下文构建的观测（容量来源/是否压缩/摘要请求数/失败原因）
+        self.last_context_info = {}
 
     def _api_snapshot(self):
         """本轮用的配置快照（浅拷贝）。
@@ -601,6 +603,14 @@ class Brain:
         try:
             os.remove(self._log_for(src, key[1]))
         except OSError:
+            pass
+        # 压缩状态跟着会话走：清空会话时滚动摘要/pending 一并清除，
+        # 否则旧摘要会"复活"（原文没了摘要还在，等于凭空记忆）
+        try:
+            import conversation_context
+            conversation_context.clear_scope(self._persona_key_for(src),
+                                             src, key[1])
+        except Exception:
             pass
         return max(0, n)
 
@@ -886,6 +896,49 @@ class Brain:
                         "content": c or "（发了一张图）"})
         return out
 
+    # --- 这一轮收进历史：普通 / 流式共用（P8.4）---
+    def _trim_hist_offer(self):
+        """hist 超上限时裁掉最旧的，滑出的消息交给压缩器进 pending。"""
+        if len(self.hist) > self.history_turns + 1:
+            dropped = self.hist[1:len(self.hist) - self.history_turns]
+            self.hist = [self.hist[0]] + self.hist[-self.history_turns:]
+            try:
+                import conversation_context
+                conversation_context.offer_dropped(
+                    self, self._cur_src, self._cur_conversation, dropped)
+            except Exception as _e:
+                print("[上下文] 滑出消息入 pending 失败（不影响聊天）：%s"
+                      % str(_e)[:100], flush=True)
+
+    def _commit_turn(self, user_text, ans, img=None, attachments=None,
+                     src=None, conversation_id=None, log=True, life=True,
+                     append_user=True):
+        """成功回答后的统一落账：内存 hist → 生活流水 → 磁盘存档。
+
+        之前普通 chat() 和 stream_chat() 各写各的：流式只写磁盘存档、
+        从不进 self.hist —— 重启之前她对面刚说过的话在下一轮 recent_hist()
+        里根本不存在（症状：流式聊完立刻问"我刚才说了什么"，答不上来）。
+        收口成一个函数，两条路不可能再分叉。失败/截断/拒答的轮次**不走
+        这里**（调用方保证），不完整的答案绝不入账。
+        """
+        if append_user:
+            self.hist.append({"role": "user",
+                              "content": self._stamp() + user_text})
+        if (ans or "").strip():
+            self.hist.append({"role": "assistant",
+                              "content": self._stamp() + ans})
+        self._trim_hist_offer()
+        self.last_active = datetime.datetime.now()
+        if life and self.life is not None:
+            self.life.log_chat("user", user_text)
+            self.life.log_chat("assistant", ans or "")
+        if log:
+            self._log_turn(user_text, ans or "", img=img,
+                           attachments=attachments,
+                           src=src or self._cur_src,
+                           conversation_id=conversation_id
+                           or self._cur_conversation)
+
     # --- 公共：组装 system 资料块（draft_native 用）---
     def _build_system_parts(self, user_text, memory_block):
         """组装人设+此刻+记忆+历史摘要+生活+约定+贴纸+插件行为引导。
@@ -1038,13 +1091,6 @@ class Brain:
         if life:
             parts.append("\n" + LIFE_RULES)
 
-        msgs = [{"role": "system", "content": "".join(parts)}]
-        for m in self.recent_hist():
-            msgs.append(m)
-        # 说话规则贴在他原话后面（**不是 system**）—— 见 _user_msg_with_rules
-        msgs.append({"role": "user",
-                     "content": self._user_msg_with_rules(user_text)})
-
         import tools as _tools
         import plugin_host as _ph
         # features.tools 总开关：关了就不挂工具表（退化成普通聊天）。
@@ -1063,6 +1109,25 @@ class Brain:
             # 所以宁可多挂。
             if _tools_on and _tools.schema_needed(user_text):
                 tool_specs = _tools.all_specs(brain=self, src=ctx_src or self._cur_src)
+
+        # P8.4：历史段统一走压缩器（摘要注入/预算裁剪），三条入口同一份逻辑。
+        # 失败回退旧行为 —— 压缩器任何问题都不能让她说不出话。
+        try:
+            from conversation_context import build_context as _build_ctx
+            _hist, _cinfo = _build_ctx(
+                self, user_text, system_text="".join(parts),
+                tool_specs=tool_specs, src=self._cur_src,
+                conversation_id=self._cur_conversation)
+        except Exception as _e:
+            print("[上下文] 构建失败，回退旧路径：%s" % str(_e)[:100], flush=True)
+            _hist, _cinfo = list(self.recent_hist()), {"fallback": True}
+        self.last_context_info = _cinfo
+        msgs = [{"role": "system", "content": "".join(parts)}]
+        msgs.extend(_hist)
+        # 说话规则贴在他原话后面（**不是 system**）—— 见 _user_msg_with_rules
+        msgs.append({"role": "user",
+                     "content": self._user_msg_with_rules(user_text)})
+
         ctx = _ph.Turn(text=user_text, src=ctx_src or self._cur_src, brain=self)
 
         self.last_sizes = {
@@ -1356,9 +1421,19 @@ class Brain:
         if life:
             parts.append("\n" + LIFE_RULES)
 
+        # P8.4：历史段统一走压缩器（与 draft_native 同一份逻辑）
+        try:
+            from conversation_context import build_context as _build_ctx
+            _hist, _cinfo = _build_ctx(self, user_text,
+                                       system_text="".join(parts),
+                                       src=self._cur_src,
+                                       conversation_id=self._cur_conversation)
+        except Exception as _e:
+            print("[上下文] 构建失败，回退旧路径：%s" % str(_e)[:100], flush=True)
+            _hist, _cinfo = list(self.recent_hist()), {"fallback": True}
+        self.last_context_info = _cinfo
         msgs = [{"role": "system", "content": "".join(parts)}]
-        for m in self.recent_hist():
-            msgs.append(m)
+        msgs.extend(_hist)
         msgs.append({"role": "user", "content": self._user_msg_with_rules(user_text)})
 
         _know = _is_knowledge_q(user_text)
@@ -1411,12 +1486,14 @@ class Brain:
         self.last_usage = {"in": _uin, "out": _uout}
         self.last_tools_used = []
 
-        # 存进历史（和 chat 方法一致）
-        try:
-            self._log_turn(user_text, full_text, img=None, src=self._cur_src,
-                           conversation_id=self._cur_conversation)
-        except Exception:
-            pass
+        # 🔴 P8.4 根因修复：成功收尾才落账，且必须进**内存 hist**（下一轮
+        # recent_hist() 立刻可见）+ 磁盘存档。之前只写磁盘存档、从不进
+        # self.hist —— 重启之前她"不记得"刚流式说过的话。error/截断/断开
+        # 的路径在上面 return，不会走到这里；SSE 中途断开时生成器被
+        # GeneratorExit 关掉，同样到不了这里 —— 不完整的答案绝不入账。
+        if full_text.strip():
+            self._commit_turn(user_text, full_text, src=self._cur_src,
+                              conversation_id=self._cur_conversation)
 
         yield {"type": "done", "text": full_text, "think": full_think}
 
@@ -1606,28 +1683,30 @@ class Brain:
         # 主动搭话的输入是「说/无」决策提示词，不能进历史 —— 否则正常聊天会
         # 模仿这个格式、回出「说 xxx」开头。历史里只留她的正文，答「无」就都不记。
         if proactive:
+            # 主动搭话的输入是「说/无」决策提示词，不能进历史 —— 否则正常聊天会
+            # 模仿这个格式、回出「说 xxx」开头。历史里只留她的正文，答「无」就都不记。
             # her_speech 上面已经剥过前缀了，别再来一遍
             _clean = her_speech or ""
             if _clean and _clean != "无" and not _failed:
                 self.hist.append({"role": "assistant",
                                   "content": self._stamp() + _clean})
+                self._trim_hist_offer()
+            self.last_active = datetime.datetime.now()   # 记时间，供"离开时长"用
+            # 当天的对话流水（生活补算要用 —— 不然接不上她经历过什么）
+            if self.life is not None and not _failed:
+                self.life.log_chat("user", user_text)
+                self.life.log_chat("assistant", ans)
+            # 聊天记录存档，重启后聊天窗能接着看。摘要这类内部调用不进
+            if log and not _failed:
+                self._log_turn(user_text, ans, img=img, src=self._cur_src,
+                               conversation_id=self._cur_conversation)
         else:
+            # 普通轮次收口与流式共用 _commit_turn（P8.4：两条路不再分叉）
+            self.last_active = datetime.datetime.now()
             if not _failed:
-                self.hist.append({"role": "user",
-                                  "content": self._stamp() + user_text})
-                self.hist.append({"role": "assistant",
-                                  "content": self._stamp() + ans})
-        if len(self.hist) > self.history_turns + 1:
-            self.hist = [self.hist[0]] + self.hist[-self.history_turns:]
-        self.last_active = datetime.datetime.now()   # 记时间，供"离开时长"用
-        # 当天的对话流水（生活补算要用 —— 不然接不上她经历过什么）
-        if self.life is not None and not _failed:
-            self.life.log_chat("user", user_text)
-            self.life.log_chat("assistant", ans)
-        # 聊天记录存档，重启后聊天窗能接着看。摘要这类内部调用不进
-        if log and not _failed:
-            self._log_turn(user_text, ans, img=img, src=self._cur_src,
-                           conversation_id=self._cur_conversation)
+                self._commit_turn(user_text, ans, img=img, src=self._cur_src,
+                                  conversation_id=self._cur_conversation,
+                                  log=log)
         return ans, self.last_mode
 
     # --- 聊天记录存档（跨重启） ---

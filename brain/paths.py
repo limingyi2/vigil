@@ -57,6 +57,9 @@ MANAGEMENT_PATH = os.path.join(DATA_DIR, "management.json")  # 服务器与 Agen
 AGENT_CENTER_DIR = os.path.join(DATA_DIR, "agent_center")  # 独立 Codex 监督数据
 RUN_DIR = os.path.join(DATA_DIR, "run")
 CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
+# 主对话滚动摘要的持久化状态（P8.4 conversation_context），按
+# persona×src×conversation 分文件
+CONTEXT_COMPACTION_DIR = os.path.join(DATA_DIR, "context_compactions")
 
 # --- 渠道隔离 ---
 # 她同时在手机 App 和微信上跟同一个人说话，两边要是共用一份历史，
@@ -148,7 +151,8 @@ WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
 # 会自动建出来的目录
 _DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR,
          MEMORY_DIR, LIFE_DIR, SUMMARY_DIR, UPLOAD_DIR,
-         STICKERS_DIR, RUN_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR)
+         STICKERS_DIR, RUN_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR,
+         CONTEXT_COMPACTION_DIR)
 
 
 def ensure():
