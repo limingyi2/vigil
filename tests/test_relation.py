@@ -315,9 +315,13 @@ class TestAssistantChannel(unittest.TestCase):
         return ps.build_system_text({"name": "Vigil", "relation": "搭档"},
                                     src=src)
 
-    def test_pc_gets_the_assistant_rules(self):
+    def test_pc_gets_the_natural_agent_rules(self):
         t = self._txt("pc")
-        self.assertIn("你是 AI 助手", t)
+        self.assertTrue(t.endswith(ps.ASSISTANT_RULES))
+        self.assertIn("自然、友好、专业的 AI Agent", t)
+        self.assertIn("回应寒暄", t)
+        self.assertIn("讨论想法", t)
+        self.assertIn("严谨地读代码", t)
 
     def test_pc_does_not_get_the_companion_rules(self):
         """陪伴底线与助手底线互斥 —— 两套同时在场等于没指定身份。
@@ -338,10 +342,17 @@ class TestAssistantChannel(unittest.TestCase):
         """
         self.assertNotIn("【你和他是什么关系】", self._txt("pc"))
 
-    def test_assistant_may_admit_being_a_program(self):
-        """陪伴底线里明写"你不知道自己是程序"，助手渠道必须反过来。"""
-        self.assertIn("允许谈", ps.ASSISTANT_RULES)
+    def test_assistant_rules_preserve_truthfulness_and_safety(self):
+        """PC Agent 保留诚实、权限和工具安全规则。"""
+        self.assertIn("直接、如实地回答", ps.ASSISTANT_RULES)
+        self.assertIn("遵守权限和工具安全要求", ps.ASSISTANT_RULES)
+        self.assertIn("不编造事实", ps.ASSISTANT_RULES)
         self.assertNotIn("你不知道自己是程序", ps.ASSISTANT_RULES)
+
+    def test_pc_rules_allow_normal_conversation(self):
+        t = self._txt("pc")
+        for phrase in ("不寒暄", "不陪聊", "不提供情绪", "不用接话"):
+            self.assertNotIn(phrase, t)
 
     def test_other_channels_keep_the_companion_rules(self):
         """换渠道不能把手机/微信那边也变成助手。"""

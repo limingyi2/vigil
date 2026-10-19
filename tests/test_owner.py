@@ -81,6 +81,37 @@ def test_gate_off_specs_empty_for_wechat():
     assert len(localtools.specs(src="app")) == len(localtools.REMOTE_TOOLS)
 
 
+def test_pc_agent_can_execute_an_approved_local_tool():
+    """普通 PC Agent 请求可走现有工具队列，微信总闸不影响它。"""
+    import threading
+    import time
+
+    assert "local_system_info" in localtools.specs(src="pc")
+    result = {}
+    started = threading.Event()
+    localtools.take("test-device", [])  # fake a connected desktop poller
+
+    def invoke():
+        localtools.set_context("pc", "")
+        started.set()
+        result["text"] = localtools.call("local_system_info", {}, wait=5)
+
+    worker = threading.Thread(target=invoke)
+    worker.start()
+    assert started.wait(1)
+    request = None
+    deadline = time.monotonic() + 2
+    while request is None and time.monotonic() < deadline:
+        request = localtools.take("test-device", ["local_system_info"])
+        if request is None:
+            time.sleep(.01)
+    assert request and request["name"] == "local_system_info"
+    assert localtools.resolve(request["call_id"], "OS: test fixture", device_id="test-device")
+    worker.join(2)
+    assert not worker.is_alive()
+    assert "OS: test fixture" in result["text"]
+
+
 def test_gate_off_call_denied_for_owner(owner_only):
     """执行层是独立的第二道：哪怕旧队列/热加载窗口漏进来，call() 也拒。"""
     localtools.set_context("wechat", OWNER)

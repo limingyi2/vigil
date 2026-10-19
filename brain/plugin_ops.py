@@ -430,7 +430,10 @@ def install_market_directory(repo, relative, name, note="market"):
         os.makedirs(_PLUG_DIR, exist_ok=True)
         stage = tempfile.mkdtemp(prefix="_tmp_install_", dir=_PLUG_DIR)
         staged = os.path.join(stage, name)
-        shutil.copytree(src, staged, symlinks=True)
+        # Generated interpreter caches are not source and can otherwise make
+        # an otherwise valid local market package fail staged validation.
+        shutil.copytree(src, staged, symlinks=True,
+                        ignore=shutil.ignore_patterns("__pycache__"))
         # Validate the immutable staging copy under its target identity too.
         report = check_plugin_directory(staged)
         if not report["ok"]:

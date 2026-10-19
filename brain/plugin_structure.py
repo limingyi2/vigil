@@ -385,6 +385,13 @@ def check_plugin_directory(path, require_chat_tools=False):
         report["errors"].append(_issue("read_directory", "读不了插件目录：%s" % exc))
         return report
 
+    # Python may create this generated directory merely by importing a plugin
+    # during development. It is not plugin source and must not make a valid
+    # package fail inspection; symlinks and all other nested directories stay
+    # subject to the normal strict checks.
+    entries = [e for e in entries if not (
+        e.name == "__pycache__" and e.is_dir(follow_symlinks=False)
+        and not e.is_symlink())]
     names = []
     for entry in entries:
         names.append(entry.name)

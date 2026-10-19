@@ -13,8 +13,8 @@ NAME = "plugin_market"
 DESC = "插件市场：浏览/安装/卸载插件"
 FEATURE = "plugin_market"
 
-# 市场仓库本地路径（可通过 config 的 market_repo 覆盖）
-DEFAULT_REPO = r"F:\vigil-plugins"
+# 市场仓库由 config/config.json 中的 market_repo 指定。安装版从其自身 CONFIG_DIR 读取。
+DEFAULT_REPO = ""
 
 
 def _repo_path():
@@ -24,8 +24,13 @@ def _repo_path():
         cfg_path = os.path.join(str(CONFIG_DIR), "config.json")
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        p = cfg.get("market_repo") or DEFAULT_REPO
-        return str(p)
+        p = cfg.get("market_repo")
+        if not isinstance(p, str) or not p.strip():
+            return DEFAULT_REPO
+        p = os.path.expanduser(os.path.expandvars(p.strip()))
+        if not os.path.isabs(p):
+            p = os.path.join(str(CONFIG_DIR), p)
+        return os.path.abspath(p)
     except Exception:
         return DEFAULT_REPO
 
@@ -58,16 +63,27 @@ def _list_local():
 
 
 def _read_market():
-    """读取市场仓库的 market.json。"""
+    """读取市场仓库的 market.json，并区分未配置、读取失败和空市场。"""
     repo = _repo_path()
+    if not repo:
+        return {"state": "not_configured", "plugins": []}
+    if not os.path.isdir(repo):
+        return {"state": "read_failed", "plugins": [], "err": "配置的市场仓库目录不存在"}
     mpath = os.path.join(repo, "market.json")
     if not os.path.isfile(mpath):
-        return {"version": "0", "updated": "", "plugins": []}
+        return {"state": "read_failed", "plugins": [], "err": "市场仓库中缺少 market.json"}
     try:
         with open(mpath, "r", encoding="utf-8") as f:
-            return json.load(f)
+            market = json.load(f)
+        if not isinstance(market, dict) or not isinstance(market.get("plugins"), list):
+            return {"state": "read_failed", "plugins": [], "err": "market.json 格式无效：plugins 必须是数组"}
+        if any(not isinstance(item, dict) or not isinstance(item.get("name"), str)
+               for item in market["plugins"]):
+            return {"state": "read_failed", "plugins": [], "err": "market.json 格式无效：插件条目缺少名称"}
+        market["state"] = "empty" if not market["plugins"] else "ready"
+        return market
     except Exception as e:
-        return {"version": "0", "updated": "", "plugins": [], "err": str(e)[:80]}
+        return {"state": "read_failed", "plugins": [], "err": "market.json 无法读取：%s" % str(e)[:80]}
 
 
 def api_list(body, query):
@@ -81,7 +97,14 @@ def api_list(body, query):
         plugins.append(item)
     return {
         "ok": True,
-        "repo": _repo_path(),
+        "state": market.get("state", "read_failed"),
+        "state_message": {
+            "not_configured": "尚未配置本地插件市场仓库",
+            "read_failed": market.get("err") or "市场仓库读取失败",
+            "empty": "市场仓库可用，但没有已发布插件",
+            "ready": "插件市场已就绪",
+        }.get(market.get("state"), "市场仓库读取失败"),
+        "repo_configured": bool(_repo_path()),
         "market_version": market.get("version", ""),
         "updated": market.get("updated", ""),
         "plugins": plugins,
@@ -172,20 +195,32 @@ def _reload_plugins():
 def api_refresh(body, query):
     """POST /api/market/refresh —— git pull 更新本地市场仓库。"""
     repo = _repo_path()
-    if not os.path.isdir(os.path.join(repo, ".git")):
-        return {"ok": False, "err": "市场仓库不是 git 仓库：%s" % repo}
+    if not repo:
+        return {"ok": False, "state": "not_configured", "err": "尚未配置本地插件市场仓库"}
+    if not os.path.isdir(repo):
+        return {"ok": False, "state": "read_failed", "err": "配置的市场仓库目录不存在"}
     try:
+        check = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if check.returncode or check.stdout.strip() != "true":
+            return {"ok": False, "state": "read_failed", "err": "配置的市场目录不是 Git 仓库"}
         result = subprocess.run(
-            ["git", "pull"],
+            ["git", "-C", repo, "pull", "--ff-only"],
             cwd=repo,
             capture_output=True,
             text=True,
             timeout=30,
         )
         output = (result.stdout or "") + (result.stderr or "")
-        return {"ok": result.returncode == 0, "output": output[:300]}
+        refreshed = _read_market() if result.returncode == 0 else None
+        return {"ok": result.returncode == 0,
+                "state": refreshed.get("state") if refreshed else "read_failed",
+                "state_message": refreshed.get("err") if refreshed else None,
+                "output": output[:300]}
     except Exception as e:
-        return {"ok": False, "err": str(e)[:80]}
+        return {"ok": False, "state": "read_failed", "err": str(e)[:80]}
 
 
 ROUTES = [

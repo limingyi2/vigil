@@ -4708,7 +4708,7 @@
     const draw = async (message = '') => {
       const s = await api.state();
       ctx.view.innerHTML = '<div class="wrap cfg-wrap"><section class="panel-card"><h2>Wallpaper Engine</h2>' +
-        '<p>' + esc(message || (s.error || (s.enabled ? '已启用' : s.installed ? '已安装，当前停用' : '未安装'))) + '</p>' +
+        '<p>' + esc(message || (s.error || (s.enabled ? '已启用' : s.installed ? '已安装，当前停用' : '未安装。Wallpaper 不随 Vigil Core 内置提供；需要时可选择由受信任来源获取的扩展包。'))) + '</p>' +
         '<p class="muted">扩展程序与用户数据分开保存。禁用或卸载不会删除 userData/wallpaper-engine 中的配置和素材。</p>' +
         '<div class="row-actions"><button class="btn primary" id="wallpaperInstall">' + (s.installed ? '安装更新' : '选择扩展包并安装') + '</button>' +
         (s.enabled ? '<button class="btn" id="wallpaperDisable">禁用</button>' : '<button class="btn" id="wallpaperEnable" ' + (!s.installed ? 'disabled' : '') + '>启用</button>') +
@@ -4828,7 +4828,6 @@
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地大脑', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
-      {title:'壁纸与外观', desc:'壁纸扩展与显示效果', icon:'img', page:'system', sub:'desktop_extensions'},
       {title:'桌面扩展', desc:'独立安装、启停和更新桌面扩展', icon:'puzzle', page:'system', sub:'desktop_extensions'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
@@ -5336,8 +5335,9 @@
 
     ctx.view.innerHTML =
       '<div class="wrap">' +
+      '<div id="pmStatus" class="muted" role="status" style="margin-bottom:12px"></div>' +
       '<div id="pmGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px"></div>' +
-      '<div id="pmEmpty" class="muted" style="text-align:center;padding:40px;display:none">市场为空</div>' +
+      '<div id="pmEmpty" class="muted" role="status" style="text-align:center;padding:40px;display:none"></div>' +
       '</div>';
 
     let marketData = null;
@@ -5354,6 +5354,7 @@
         marketData = r.json;
         ctx.topbar.querySelector('#pmRepo').textContent =
           '已安装 ' + (r.json.installed_count || 0) + ' 个';
+        ctx.view.querySelector('#pmStatus').textContent = r.json.state === 'ready' ? '' : (r.json.state_message || '市场状态未知');
         draw();
       } catch (e) {
         grid.innerHTML = '<div class="muted">加载失败：' + esc(e.message) + '</div>';
@@ -5366,6 +5367,7 @@
       const plugins = (marketData && marketData.plugins) || [];
       if (!plugins.length) {
         grid.innerHTML = '';
+        empty.textContent = (marketData && marketData.state_message) || '市场状态未知';
         empty.style.display = 'block';
         return;
       }
@@ -5426,8 +5428,11 @@
       btn.disabled = true;
       btn.textContent = '刷新中...';
       try {
-        await API.post('/api/market/refresh', {});
-      } catch (_) { /* 刷新失败不阻塞 */ }
+        const result = await API.post('/api/market/refresh', {});
+        if (!result || !result.ok || !result.json || !result.json.ok) {
+          toast((result && result.json && result.json.err) || (result && result.err) || '刷新失败');
+        }
+      } catch (e) { toast('刷新失败：' + e.message); }
       await load();
       btn.disabled = false;
       btn.textContent = '刷新市场';

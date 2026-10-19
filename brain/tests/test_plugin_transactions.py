@@ -182,6 +182,15 @@ class TransactionTests(unittest.TestCase):
         self.assertIn('new', (self.plugins / 'demo' / '__init__.py').read_text())
         self.assertTrue(result['restart_needed'])
 
+    def test_market_install_ignores_generated_python_cache(self):
+        source = self.source()
+        cache = source / '__pycache__'
+        cache.mkdir()
+        (cache / '__init__.cpython-312.pyc').write_bytes(b'generated fixture cache')
+        result = self.market_install()
+        self.assertTrue(result['ok'], result)
+        self.assertFalse((self.plugins / 'demo' / '__pycache__').exists())
+
     def test_invalid_market_paths(self):
         self.source()
         for relative in ('../outside', '/tmp/outside', 'C:/plugins/demo',
