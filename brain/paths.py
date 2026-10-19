@@ -36,8 +36,10 @@ CONFIG_DIR = os.path.join(ROOT, "config")
 DATA_DIR = os.path.join(ROOT, "data")
 LOGS_DIR = os.path.join(ROOT, "logs")
 ARCHIVE_DIR = os.path.join(ROOT, "archive")
-# 代码目录，不归上面四类管。插件跟核心代码一起走版本管理，所以放这儿
+# 核心插件源码目录：随项目版本管理，但市场下载的插件不写入这里。
 PLUGINS_DIR = os.path.join(ROOT, "plugins")
+# 市场安装目录：属于运行时数据，开发源码与安装包均不收录这里的内容。
+PLUGIN_INSTALL_DIR = os.path.join(DATA_DIR, "installed_plugins")
 
 # --- config/：你会手动改的 ---
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")

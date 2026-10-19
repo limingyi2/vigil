@@ -47,12 +47,14 @@ import threading
 import traceback
 
 try:
-    from paths import PLUGINS_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
+    from paths import PLUGINS_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
     _DIR = str(PLUGINS_DIR)
+    _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)
     _DDIR = str(PLUGIN_DATA_DIR)
     _ROOT = str(CONFIG_DIR)
 except Exception:
     _DIR = r"C:\vigil\plugins"
+    _INSTALLED_DIR = r"C:\vigil\data\installed_plugins"
     _DDIR = r"C:\vigil\data\plugins"
     _ROOT = r"C:\vigil\config"
 
@@ -253,41 +255,49 @@ def re_name_ok(n):
     return bool(n) and all(c.isalnum() or c in "_-" for c in n)
 
 
-def load(force=False):
-    """扫 plugins/ 目录装载全部插件。进程启动时调一次，改完插件可再调（热重载）。
+def _scan_plugin_directory(directory):
+    """Read plugin source files from one directory without mixing it with user installs."""
+    found = {}
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return found
+    for fn in names:
+        fpath = os.path.join(directory, fn)
+        # Directory plugin: name/__init__.py, with optional frontend resources.
+        if os.path.isdir(fpath):
+            init_file = os.path.join(fpath, "__init__.py")
+            if os.path.isfile(init_file):
+                plugin = _load_one(init_file)
+                if plugin:
+                    found[plugin.name] = plugin
+            continue
+        # Single-file plugin.
+        if not fn.endswith(".py") or fn.startswith("_"):
+            continue
+        plugin = _load_one(fpath)
+        if plugin:
+            found[plugin.name] = plugin
+    return found
 
-    只认 .py、跳过 __init__.py 与下划线开头的文件（那些是模块不是插件）。
-    目录不存在就当没有插件 —— plugins/ 是空的也完全不影响聊天。
+
+def load(force=False):
+    """Load core plugins first, then runtime-installed plugins as overrides.
+
+    Market installs live under data/installed_plugins, never in the tracked source
+    directory. That directory is intentionally excluded from release packaging.
     """
     global _loaded
     with _lock:
-        found = {}
-        try:
-            names = sorted(os.listdir(_DIR))
-        except OSError:
-            names = []
-        for fn in names:
-            fpath = os.path.join(_DIR, fn)
-            # 目录型插件：xxx/__init__.py（可以带 frontend.js / frontend.css）
-            if os.path.isdir(fpath):
-                init_file = os.path.join(fpath, "__init__.py")
-                if os.path.isfile(init_file):
-                    p = _load_one(init_file)
-                    if p:
-                        found[p.name] = p
-                continue
-            # 单文件插件：xxx.py
-            if not fn.endswith(".py") or fn.startswith("_"):
-                continue
-            p = _load_one(fpath)
-            if p:
-                found[p.name] = p
-        # 换掉的模块要从 sys.modules 摘掉，否则热重载拿到的是旧代码
-        # 模块名统一是 zxplug_ + 插件名（单文件和目录型都一样）
-        _keep = set("zxplug_" + v.name for v in found.values())
-        for k in [k for k in sys.modules if k.startswith("zxplug_")]:
-            if k not in _keep:
-                sys.modules.pop(k, None)
+        found = _scan_plugin_directory(_DIR)
+        if os.path.abspath(_INSTALLED_DIR) != os.path.abspath(_DIR):
+            # Installed plugins override a same-named core plugin intentionally.
+            found.update(_scan_plugin_directory(_INSTALLED_DIR))
+        # Remove stale module objects from sys.modules after hot reload.
+        keep = set("zxplug_" + plugin.name for plugin in found.values())
+        for key in [key for key in sys.modules if key.startswith("zxplug_")]:
+            if key not in keep:
+                sys.modules.pop(key, None)
         _registry.clear()
         _registry.update(found)
         _reindex_tools()

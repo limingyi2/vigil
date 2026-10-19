@@ -5,7 +5,7 @@ const path=require('path'),os=require('os'),assert=require('assert/strict');
 const client=path.resolve(__dirname,'..');
 const tmp=require('fs').mkdtempSync(path.join(os.tmpdir(),'vigil-plugin-market-'));
 app.setPath('userData',path.join(tmp,'userdata'));
-let win,installed=false,marketConfigured=false,installCalls=0,resolveInstall;
+let win,installed=false,installCalls=0,resolveInstall;
 const alerts=[];
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const ev=source=>win.webContents.executeJavaScript(source,true);
@@ -16,8 +16,8 @@ function response(method,raw){
   if(p==='/api/history')return{ok:true,status:200,json:{items:[],display_turns:[]}};
   if(p==='/api/stats')return{ok:true,status:200,json:{model:'fixture'}};
   if(p==='/api/plugins/frontend')return{ok:true,status:200,json:{version:1,plugins:[]}};
-  if(p==='/api/market/list')return{ok:true,status:200,json:{state:marketConfigured?'ready':'not_configured',state_message:marketConfigured?'插件市场已就绪':'尚未配置本地插件市场仓库',plugins:marketConfigured?[{name:'fixture_plugin',version:'1.0',author:'fixture',desc:'isolated',tags:[],installed}]:[],installed_count:installed?1:0}};
-  if(p==='/api/market/refresh')return{ok:true,status:200,json:{ok:false,state:'not_configured',err:'尚未配置本地插件市场仓库'}};
+  if(p==='/api/market/list')return{ok:true,status:200,json:{state:'ready',state_message:'插件市场已就绪',plugins:[{name:'fixture_plugin',version:'1.0',author:'fixture',desc:'isolated',tags:[],installed},{name:'wallpaper',version:'3.0.0',author:'Vigil',desc:'Wallpaper Engine fixture',tags:['Wallpaper Engine'],installed:false}],installed_count:installed?1:0}};
+  if(p==='/api/market/refresh')return{ok:true,status:200,json:{ok:true,state:'ready',state_message:'插件市场已就绪'}};
   if(p==='/api/market/install'){
     installCalls++;
     return new Promise(resolve=>{resolveInstall=resolve;});
@@ -26,7 +26,7 @@ function response(method,raw){
 }
 async function run(){
   ipcMain.handle('api',(_,req)=>response(req.method,req.path));
-  for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','plugins:load':{ok:true},'auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'},'wallpaper:request':{ok:true,data:{settings:{},wallpapers:[]}},'wallpaper-extension:state':{ok:true,installed:false,enabled:false}}))ipcMain.handle(name,()=>value);
+  for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','plugins:load':{ok:true},'auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}}))ipcMain.handle(name,()=>value);
   ipcMain.handle('api:stream',()=>({ok:false,err:'unused'}));
   ipcMain.handle('cfg:set',()=>({wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}));
   win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
@@ -34,7 +34,8 @@ async function run(){
   await until('document.querySelector("#gnav [data-page=\\"settings\\"]")');
   await ev('document.querySelector("#gnav [data-page=\\"settings\\"]").click()');
   await until('document.querySelectorAll(".settings-tile").length>0');
-  assert.equal(await ev('Array.from(document.querySelectorAll(".settings-tile b")).filter(x=>x.textContent==="插件与扩展").length'),1);
+  assert.equal(await ev('Array.from(document.querySelectorAll(".settings-tile b")).filter(x=>x.textContent==="插件市场").length'),1);
+  assert.equal(await ev('Array.from(document.querySelectorAll(".settings-tile b")).filter(x=>x.textContent==="插件与扩展").length'),0);
   assert.equal(await ev('Array.from(document.querySelectorAll(".settings-tile b")).filter(x=>x.textContent==="壁纸与外观").length'),0);
   assert.equal(await ev('Array.from(document.querySelectorAll(".settings-tile b")).filter(x=>x.textContent==="桌面扩展").length'),0);
   console.log('PASS settings home has one generic plugin/extensions entry');
@@ -42,22 +43,11 @@ async function run(){
   await ev('document.querySelector("#gnav [data-page=\\"ability\\"]").click()');
   await until('document.querySelector(".li[data-k=\\"plugin_market\\"]")');
   assert.equal(await ev('document.querySelectorAll(".li[data-k=\\"wechat\\"]").length'),0,'Core settings no longer register a fixed WeChat Bridge page');
-  await ev('document.querySelector(".li[data-k=\\"extensions\\"]").click()');
-  await until('document.querySelector("#wallpaperInstall")');
-  assert.ok(await ev('document.querySelector("#topbar").textContent.includes("插件与扩展")'));
-  console.log('PASS generic extension manager remains reachable and displays installed-extension lifecycle controls');
-  await ev('document.querySelector(".li[data-k=\\"plugin_market\\"]").click()');
-  await until('document.querySelector("#pmStatus").textContent.includes("尚未配置")');
-  await ev('document.querySelector("#pmRefresh").click()');
-  await until('Array.from(document.querySelectorAll("#toast > div")).some(x=>x.textContent.includes("尚未配置"))');
-  console.log('PASS market distinguishes missing configuration and reports refresh failure');
-  marketConfigured=true;
-  await ev('document.querySelector("#gnav [data-page=\\"chat\\"]").click()');
-  await until('document.querySelector("#gnav [data-page=\\"ability\\"]")');
-  await ev('document.querySelector("#gnav [data-page=\\"ability\\"]").click()');
-  await until('document.querySelector(".li[data-k=\\"plugin_market\\"]")');
+  assert.equal(await ev('document.querySelectorAll(".li[data-k=\\"extensions\\"]").length'),0,'Desktop extension page is removed');
   await ev('document.querySelector(".li[data-k=\\"plugin_market\\"]").click()');
   await until('document.querySelector("#pmGrid [data-action=\\"install\\"]")');
+  assert.ok(await ev('document.querySelector("#pmGrid").textContent.toLowerCase().includes("wallpaper")'));
+  console.log('PASS plugin market is connected and lists Wallpaper without local repo configuration');
   const clickInstall='document.querySelector("#pmGrid [data-action=\\"install\\"]").click()';
   await ev(clickInstall);
   await until('document.querySelector("#pmGrid [data-action=\\"install\\"]").disabled');

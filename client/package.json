@@ -1,6 +1,6 @@
 {
   "name": "vigil-client",
-  "version": "1.1.7",
+  "version": "1.1.8-p9.3.20261020",
   "private": true,
   "description": "Vigil 桌面客户端：聊天 + 管理面板 + 本地操控（骨架阶段）",
   "main": "electron/main.js",
@@ -10,9 +10,7 @@
     "e2e": "node tools/e2e.js",
     "agent": "electron tools/agent-dryrun.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win",
-    "test:p9-extension": "node tools/test-manifest-schema.js && node tools/test-extension-manager.js && node tools/test-plugin-ui-boundaries.js",
-    "extension:wallpaper": "node tools/build-wallpaper-extension.js"
+    "dist": "electron-builder --win"
   },
   "build": {
     "appId": "com.vigil.client",
@@ -20,15 +18,12 @@
     "electronDist": "node_modules/electron/dist",
     "files": [
       "electron/**",
+      "!electron/extension-manifest.schema.json",
       "src/**",
       "assets/**",
       "version.json",
       "package.json",
       "build-info.json",
-      "!electron/wallpaper-host.js",
-      "!src/plugins/wallpaper.js",
-      "!src/plugins/wallpaper.css",
-      "!vendor/dsh-wallpaper-engine/**",
       "!src/_harness.html",
       "!src/js/_devstub.js"
     ],

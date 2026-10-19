@@ -28,9 +28,9 @@ import restart_state
 
 try:
     import paths
-    _PLUG_DIR = str(paths.PLUGINS_DIR)
+    _PLUG_DIR = str(paths.PLUGIN_INSTALL_DIR)
 except Exception:
-    _PLUG_DIR = os.path.join(os.getcwd(), "plugins")
+    _PLUG_DIR = os.path.join(os.getcwd(), "data", "installed_plugins")
 
 REGISTRY = os.path.join(_PLUG_DIR, "_registry.json")
 

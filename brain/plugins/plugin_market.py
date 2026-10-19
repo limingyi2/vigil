@@ -4,17 +4,26 @@
 市场源是本地 git 仓库（默认 F:\\vigil-plugins），market.json 列插件清单。
 安装 = 从本地仓库复制插件目录到 brain/plugins/；卸载 = 删除目录。
 """
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 NAME = "plugin_market"
 DESC = "插件市场：浏览/安装/卸载插件"
 FEATURE = "plugin_market"
 
-# 市场仓库由 config/config.json 中的 market_repo 指定。安装版从其自身 CONFIG_DIR 读取。
+# 显式配置 market_repo 时使用本地 Git 仓库；默认从公开 GitHub 市场读取。
 DEFAULT_REPO = ""
+REMOTE_REPO = "limingyi2/vigil"
+REMOTE_REF = "dev"
+REMOTE_MARKET_URL = "https://raw.githubusercontent.com/%s/%s/market.json" % (REMOTE_REPO, REMOTE_REF)
+REMOTE_FILE_LIMIT = 2 * 1024 * 1024
 
 
 def _repo_path():
@@ -36,12 +45,12 @@ def _repo_path():
 
 
 def _plugins_dir():
-    """本地插件目录（brain/plugins/）。"""
+    """运行时安装目录；市场插件不写入跟踪源码的 brain/plugins/。"""
     try:
-        from paths import PLUGINS_DIR
-        return str(PLUGINS_DIR)
+        from paths import PLUGIN_INSTALL_DIR
+        return str(PLUGIN_INSTALL_DIR)
     except Exception:
-        return r"C:\vigil\plugins"
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "installed_plugins"))
 
 
 def _list_local():
@@ -62,11 +71,85 @@ def _list_local():
     return installed
 
 
+def _fetch_bytes(url, limit):
+    """仅从 HTTPS raw.githubusercontent.com 读取文件，并限制下载体积。"""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "raw.githubusercontent.com":
+        raise ValueError("插件市场只允许从 HTTPS GitHub Raw 源下载")
+    request = Request(url, headers={"User-Agent": "Vigil-Plugin-Market/1.0"})
+    with urlopen(request, timeout=6) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("远程文件超过大小限制")
+    return data
+
+
+def _read_remote_market():
+    """默认公开目录；安装版不需要配置开发机上的本地 clone。"""
+    try:
+        market = json.loads(_fetch_bytes(REMOTE_MARKET_URL, 512 * 1024).decode("utf-8-sig"))
+        if not isinstance(market, dict) or not isinstance(market.get("plugins"), list):
+            return {"state": "read_failed", "plugins": [], "err": "GitHub market.json 格式无效"}
+        if any(not isinstance(item, dict) or not isinstance(item.get("name"), str)
+               for item in market["plugins"]):
+            return {"state": "read_failed", "plugins": [], "err": "GitHub market.json 插件条目无效"}
+        market["state"] = "empty" if not market["plugins"] else "ready"
+        market["source_kind"] = "github"
+        return market
+    except Exception as exc:
+        return {"state": "read_failed", "plugins": [], "source_kind": "github",
+                "err": "GitHub 插件市场读取失败：%s" % str(exc)[:100]}
+
+
+def _install_remote_directory(meta, name):
+    """下载 market.json 指定的 GitHub 文件，校验 Git blob SHA-1 后走现有安装事务。"""
+    source = meta.get("source")
+    if not isinstance(source, dict) or source.get("type") != "github":
+        return False, {"err": "市场条目没有可信的 GitHub 源"}
+    repo = str(source.get("repo") or "")
+    ref = str(source.get("ref") or "")
+    relative = str(source.get("path") or meta.get("path") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        return False, {"err": "市场源仓库名无效"}
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", ref):
+        return False, {"err": "市场源版本无效"}
+    if (not relative or relative.startswith(("/", "\\", "~")) or ":" in relative
+            or "\\" in relative or any(part in ("", ".", "..") for part in relative.split("/"))):
+        return False, {"err": "市场源路径无效"}
+    files = source.get("files")
+    if not isinstance(files, dict) or not files or "__init__.py" not in files or len(files) > 64:
+        return False, {"err": "市场源文件清单无效"}
+    try:
+        import plugin_ops
+        with tempfile.TemporaryDirectory(prefix="vigil-market-source-") as temp_root:
+            staged_source = os.path.join(temp_root, name)
+            os.makedirs(staged_source, exist_ok=True)
+            for filename, expected_sha in files.items():
+                if (not isinstance(filename, str)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", filename)
+                        or not filename.endswith((".py", ".js", ".css", ".json", ".md", ".txt"))
+                        or not isinstance(expected_sha, str)
+                        or not re.fullmatch(r"[a-fA-F0-9]{40}", expected_sha)):
+                    raise ValueError("市场源包含无效文件名或校验值")
+                url = "https://raw.githubusercontent.com/%s/%s/%s/%s" % (
+                    repo, quote(ref, safe=""), quote(relative, safe="/"), quote(filename, safe=""))
+                data = _fetch_bytes(url, REMOTE_FILE_LIMIT)
+                header = b"blob " + str(len(data)).encode("ascii") + b"\0"
+                actual_sha = hashlib.sha1(header + data).hexdigest()
+                if actual_sha.lower() != expected_sha.lower():
+                    raise ValueError("文件校验失败：" + filename)
+                with open(os.path.join(staged_source, filename), "wb") as stream:
+                    stream.write(data)
+            return plugin_ops.install_market_directory(temp_root, name, name)
+    except Exception as exc:
+        return False, {"err": "远程插件下载或校验失败：%s" % str(exc)[:120]}
+
+
 def _read_market():
     """读取市场仓库的 market.json，并区分未配置、读取失败和空市场。"""
     repo = _repo_path()
     if not repo:
-        return {"state": "not_configured", "plugins": []}
+        return _read_remote_market()
     if not os.path.isdir(repo):
         return {"state": "read_failed", "plugins": [], "err": "配置的市场仓库目录不存在"}
     mpath = os.path.join(repo, "market.json")
@@ -81,6 +164,7 @@ def _read_market():
                for item in market["plugins"]):
             return {"state": "read_failed", "plugins": [], "err": "market.json 格式无效：插件条目缺少名称"}
         market["state"] = "empty" if not market["plugins"] else "ready"
+        market["source_kind"] = "local"
         return market
     except Exception as e:
         return {"state": "read_failed", "plugins": [], "err": "market.json 无法读取：%s" % str(e)[:80]}
@@ -104,7 +188,8 @@ def api_list(body, query):
             "empty": "市场仓库可用，但没有已发布插件",
             "ready": "插件市场已就绪",
         }.get(market.get("state"), "市场仓库读取失败"),
-        "repo_configured": bool(_repo_path()),
+        "repo_configured": bool(_repo_path()) or market.get("source_kind") == "github",
+        "source": market.get("source_kind", "local"),
         "market_version": market.get("version", ""),
         "updated": market.get("updated", ""),
         "plugins": plugins,
@@ -134,11 +219,17 @@ def api_install(body, query):
         return {"ok": False, "err": "市场里找不到插件 %s" % name}
 
     import plugin_ops
-    # Shared validator/transaction. Never import a new plugin during install.
-    ok, result = plugin_ops.install_market_directory(
-        _repo_path(), meta.get("path", "plugins/" + name), name)
+    # Never import newly downloaded code during the install transaction.
+    repo = _repo_path()
+    if repo:
+        ok, result = plugin_ops.install_market_directory(
+            repo, meta.get("path", "plugins/" + name), name)
+    else:
+        ok, result = _install_remote_directory(meta, name)
     if ok:
-        result["msg"] = "文件安装成功，请重启大脑生效"
+        result["msg"] = "插件已安装到独立运行时目录；重启本地 Brain 后生效"
+        result["restart_needed"] = True
+        result["name"] = name
     else:
         result["ok"] = False
     return result
@@ -196,7 +287,14 @@ def api_refresh(body, query):
     """POST /api/market/refresh —— git pull 更新本地市场仓库。"""
     repo = _repo_path()
     if not repo:
-        return {"ok": False, "state": "not_configured", "err": "尚未配置本地插件市场仓库"}
+        market = _read_remote_market()
+        state = market.get("state", "read_failed")
+        message = market.get("err") or (
+            "插件市场已就绪" if state == "ready" else
+            "市场可用，但没有已发布插件" if state == "empty" else
+            "GitHub 插件市场读取失败")
+        return {"ok": state in ("ready", "empty"), "state": state,
+                "state_message": message, "source": "github"}
     if not os.path.isdir(repo):
         return {"ok": False, "state": "read_failed", "err": "配置的市场仓库目录不存在"}
     try:

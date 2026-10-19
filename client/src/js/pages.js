@@ -4656,45 +4656,6 @@
     conn();
   }
 
-  async function renderExtensions(ctx) {
-    ctx.topbar.className = 'topbar';
-    ctx.topbar.innerHTML = '<h1>插件与扩展</h1>';
-    ctx.view.innerHTML = '<div class="wrap">正在读取扩展状态…</div>';
-    const api = window.vigil?.wallpaperExtension;
-    if (!api) { ctx.view.innerHTML = '<div class="wrap">桌面扩展管理仅在 Electron 客户端可用。</div>'; return; }
-    const draw = async (message = '') => {
-      const s = await api.state();
-      ctx.view.innerHTML = '<div class="wrap cfg-wrap"><section class="panel-card"><h2>Wallpaper Engine</h2>' +
-        '<p>' + esc(message || (s.error || (s.enabled ? '已启用' : s.installed ? '已安装，当前停用' : '未安装。Wallpaper 不随 Vigil Core 内置提供；需要时可选择由受信任来源获取的扩展包。'))) + '</p>' +
-        '<p class="muted">扩展程序与用户数据分开保存。禁用或卸载不会删除 userData/wallpaper-engine 中的配置和素材。</p>' +
-        '<div class="row-actions"><button class="btn primary" id="wallpaperInstall">' + (s.installed ? '安装更新' : '选择扩展包并安装') + '</button>' +
-        (s.enabled ? '<button class="btn" id="wallpaperDisable">禁用</button>' : '<button class="btn" id="wallpaperEnable" ' + (!s.installed ? 'disabled' : '') + '>启用</button>') +
-        (s.installed ? '<button class="btn oline" id="wallpaperUninstall">卸载</button>' : '') +
-        '</div></section><p class="muted">扩展包需由 Vigil 构建工具生成；安装时会验证 Manifest、协议、权限和每个文件的 SHA-256。</p></div>';
-      const install = ctx.view.querySelector('#wallpaperInstall');
-      if (install) install.onclick = async () => {
-        install.disabled = true;
-        const result = await api.install();
-        if (result.ok && !result.canceled) { await draw(result.enabled ? '扩展已更新并通过健康检查。' : '扩展已安装；选择“启用”后才会启动壁纸服务。'); if (result.enabled) location.reload(); }
-        else { install.disabled = false; if (!result.canceled) await draw(result.err || '安装失败'); }
-      };
-      const enable = ctx.view.querySelector('#wallpaperEnable');
-      if (enable) enable.onclick = async () => {
-        enable.disabled = true;
-        const result = await api.enable();
-        if (result.ok) location.reload(); else { await draw(result.err || '启用失败，扩展保持停用'); }
-      };
-      const disable = ctx.view.querySelector('#wallpaperDisable');
-      if (disable) disable.onclick = async () => { const result = await api.disable(); if (result.ok) location.reload(); else await draw(result.err || '禁用失败'); };
-      const uninstall = ctx.view.querySelector('#wallpaperUninstall');
-      if (uninstall) uninstall.onclick = async () => {
-        if (!await confirmDialog('卸载 Wallpaper 扩展？用户配置和素材会保留。')) return;
-        const result = await api.uninstall(); if (result.ok) location.reload(); else await draw(result.err || '卸载失败');
-      };
-    };
-    await draw();
-  }
-
   // ═══ 9. 功能分组页（按功能分类的聚合壳）════════════════════
   // 顶部导航五项：01 工作台 02 对话与人格 03 能力与扩展 04 连接与系统 05 数据。
   // 原有九个页面**一个不少**，全部按功能归入三组，作为组内功能项
@@ -4711,7 +4672,6 @@
       { k: 'tools', num: '032', name: '本地操控', path: '/local', icon: 'term', render: renderTools },
       { k: 'life', num: '033', name: '生活面板', path: '/life', icon: 'heart', render: renderLife },
       { k: 'plugin_market', num: '034', name: '插件市场', path: '/plugins/market', icon: 'puzzle', render: renderPluginMarket },
-      { k: 'extensions', num: '035', name: '插件与扩展', path: '/extensions', icon: 'puzzle', render: renderExtensions },
     ] },
     { id: 'system', name: '连接与系统', num: '04', icon: 'set', items: [
       { k: 'settings', num: '041', name: '连接与设备', path: '/connection', icon: 'set', render: renderSettings },
@@ -4781,7 +4741,7 @@
       ctx.navigate('chat');
     });
     const cards = [
-      {title:'插件与扩展', desc:'管理本机安装的插件与桌面扩展', icon:'puzzle', page:'ability', group:'extensions'},
+      {title:'插件市场', desc:'从可信来源安装和管理 Brain 插件', icon:'puzzle', page:'ability', group:'plugin_market'},
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地大脑', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
@@ -5365,6 +5325,22 @@
             const r = await API.post('/api/market/' + action, { name: name });
             if (r && r.ok && r.json && r.json.ok) {
               await load();
+              if (name === 'wallpaper' && window.vigil?.sidecar?.restart && window.vigil?.sidecar?.onState) {
+                toast('Wallpaper 已安装，正在重启本地 Brain…');
+                let reloaded = false;
+                window.vigil.sidecar.onState((status) => {
+                  if (!reloaded && status && status.status === 'ready') {
+                    reloaded = true;
+                    window.location.reload();
+                  }
+                });
+                const restarted = await window.vigil.sidecar.restart();
+                if (!restarted || !restarted.ok || restarted.external) {
+                  toast('插件已安装；请重启本地 Brain 后刷新客户端');
+                }
+              } else if (r.json.msg) {
+                toast(r.json.msg);
+              }
             } else {
               toast((r && r.json && r.json.err) || '操作失败');
               btn.disabled = false;

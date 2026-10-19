@@ -19,16 +19,21 @@ def test_market_repo_is_resolved_from_runtime_config_dir_not_developer_path():
             assert market._repo_path() == str(config_dir / "plugin-market")
 
 
-def test_market_not_configured_is_explicit():
+def test_github_market_is_the_default_when_no_local_override_exists():
     with tempfile.TemporaryDirectory() as home:
         config_dir = Path(home) / "config"
         config_dir.mkdir()
         (config_dir / "config.json").write_text("{}", encoding="utf-8")
+        fake = {"state": "ready", "version": "1", "source_kind": "github",
+                "plugins": [{"name": "wallpaper", "version": "3.0.0"}]}
         with patch.object(paths, "CONFIG_DIR", str(config_dir)):
-            assert market._repo_path() == ""
-            result = market.api_list({}, {})
-            assert result["state"] == "not_configured"
-            assert "尚未配置" in result["state_message"]
+            with patch.object(market, "_read_remote_market", return_value=fake):
+                assert market._repo_path() == ""
+                result = market.api_list({}, {})
+                assert result["state"] == "ready"
+                assert result["source"] == "github"
+                assert result["repo_configured"] is True
+                assert [item["name"] for item in result["plugins"]] == ["wallpaper"]
 
 
 def test_market_read_failure_and_valid_empty_list_are_distinct():
@@ -55,8 +60,12 @@ def test_malformed_manifest_is_read_failure_not_empty_market():
 
 def test_refresh_requires_configured_local_git_repo_and_uses_fast_forward_only():
     with patch.object(market, "_repo_path", return_value=""):
-        result = market.api_refresh({}, {})
-        assert result["state"] == "not_configured"
+        with patch.object(market, "_read_remote_market", return_value={
+                "state": "ready", "plugins": [], "source_kind": "github"}):
+            result = market.api_refresh({}, {})
+            assert result["ok"] is True
+            assert result["state"] == "ready"
+            assert result["source"] == "github"
 
     with tempfile.TemporaryDirectory() as home:
         with patch.object(market, "_repo_path", return_value=home), \

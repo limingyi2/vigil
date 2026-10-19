@@ -1,0 +1,48 @@
+name: Windows plugin-market candidate
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/windows-market-candidate.yml'
+      - 'brain/**'
+      - 'client/**'
+      - 'market.json'
+      - 'market/**'
+      - 'deploy/brain/vigil-brain.spec'
+      - 'scripts/build_release.py'
+      - 'docs/04-插件市场使用指南.md'
+      - 'docs/USER_GUIDE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Brain build dependencies
+        run: python -m pip install -r brain/requirements.txt pyinstaller pypdf
+      - name: Install client dependencies
+        run: npm ci --prefix client
+      - name: Build the candidate installer (no extended acceptance suite)
+        run: python scripts/build_release.py --candidate
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-windows-plugin-market-code30
+          path: |
+            client/dist-release/Vigil.Setup.1.1.8-p9.3.20261020.exe
+            client/dist-release/release-manifest.json
+            client/dist-release/Vigil.Setup.1.1.8-p9.3.20261020.contents.json
+          if-no-files-found: error
+          retention-days: 14

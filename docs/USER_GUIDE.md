@@ -195,7 +195,7 @@ PROVIDERS = {
   全程确认气泡 + 操作日志 + 撤销）、生活面板、Brain Python 插件管理。
   现有 Python 插件机制不是 Electron 桌面扩展安装器，也不提供远程 Bridge 生命周期管理。
 - **连接与系统**：本地大脑状态/重启、模型与服务商、云端同步、危险操作
-- **壁纸**：桌面端本机接入 Wallpaper Engine，支持图片、网页与 scene.pkg 实时场景
+- **Wallpaper Engine**：使用原来的 Brain Python 插件，从「能力与扩展 → 插件市场」安装；插件源不随客户端或 Brain 安装包内置，下载后的插件独立存放在运行时数据目录。
 - **常驻**：托盘图标（左键显示/隐藏，右键退出）、推送更新
 
 ### 推送更新（桌面客户端自己的一套）
@@ -215,14 +215,15 @@ PROVIDERS = {
 
 Vigil 有三种扩展入口：Python 后端插件、目录型市场插件、Node 侧 JS 技能。
 后端运行插件安装在 `brain/plugins/`，可以声明工具、路由、提示词钩子和前端资源。
-Brain 插件市场从本地 Git 仓库读取 `market.json`，仓库路径由运行目录的
-`config/config.json` 中 `market_repo` 指定；相对路径按该 `config/` 目录解析。未配置时不
-会探测开发机路径，市场页会说明尚未配置。刷新会在该仓库执行 fast-forward-only `git pull`。
-市场安装仍只从这个本地仓库复制并静态校验插件；不会直接安装任意远端代码。当前 GitHub
-仓库内容和交付流程的审计状态见 [`docs/04-插件市场使用指南.md`](04-插件市场使用指南.md)。
+Brain 插件市场默认从公开 GitHub 的 `market.json` 读取目录；如果在运行目录的
+`config/config.json` 中显式配置 `market_repo`，则改用该本地 Git 仓库并通过
+fast-forward-only `git pull` 刷新。远程条目会校验文件 Git blob SHA-1，再由 Brain 安装器做
+静态结构检查和事务提交。市场插件安装到 `brain/data/installed_plugins/`，不会写进跟踪源码的
+`brain/plugins/`，也不会被后续 GitHub 源码提交或正式安装包收录。Wallpaper 是普通 Brain
+Python 插件，不是 Electron 桌面扩展；具体路径与边界见
+[`docs/04-插件市场使用指南.md`](04-插件市场使用指南.md)。
 
-没有市场条目时，也可以直接往 `brain/plugins/` 放一个 `.py` 文件。该机制只适用于
-Brain Python 插件；Wallpaper 桌面扩展和独立渠道桥接仍需要各自的受限协议、权限与生命周期。
+核心内置插件源码放在 `brain/plugins/`；通过市场安装的插件放在独立运行时目录。
 
 最小可用的插件：
 

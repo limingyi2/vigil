@@ -59,6 +59,7 @@ deploy/generated-images/
 
 # ===== 运行时数据：记忆 / 日记 / 聊天记录 / 上传 =====
 brain/data/
+brain/data/installed_plugins/
 data/
 # 日志：本地起一次大脑就生成一份，入库只会越来越胖
 brain/logs/

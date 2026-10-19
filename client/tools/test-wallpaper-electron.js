@@ -12,7 +12,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-wallpaper-test-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 app.disableHardwareAcceleration();
 const root = path.resolve(__dirname, '../..');
-const plugin = path.join(root, 'brain/plugins/wallpaper');
+const plugin = path.join(root, 'market/plugins/wallpaper');
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let backend, media, win;
 

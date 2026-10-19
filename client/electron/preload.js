@@ -139,19 +139,6 @@ contextBridge.exposeInMainWorld('vigil', {
     load: () => ipcRenderer.invoke('plugins:load'),
     resourceUrl: (path) => ipcRenderer.invoke('plugins:resource-url', path),
   },
-  wallpaper: {
-    request: (method, resource, body) => ipcRenderer.invoke('wallpaper:request', { method, resource, body }),
-    importFile: () => ipcRenderer.invoke('wallpaper:import'),
-    directory: () => ipcRenderer.invoke('wallpaper:directory'),
-  },
-  wallpaperExtension: {
-    state: () => ipcRenderer.invoke('wallpaper-extension:state'),
-    install: () => ipcRenderer.invoke('wallpaper-extension:install'),
-    enable: () => ipcRenderer.invoke('wallpaper-extension:enable'),
-    disable: () => ipcRenderer.invoke('wallpaper-extension:disable'),
-    uninstall: () => ipcRenderer.invoke('wallpaper-extension:uninstall'),
-    load: () => ipcRenderer.invoke('wallpaper-extension:load'),
-  },
   // Narrow native capability for first-party local project tools; returns a selected folder only.
   projectPicker: {
     pickDirectory: () => ipcRenderer.invoke('project-picker:directory'),

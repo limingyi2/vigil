@@ -25,10 +25,6 @@ if (process.platform === 'win32') app.setAppUserModelId('com.vigil.client');
 // selected chat, while a normal app launch starts at the welcome page.
 const APP_PROCESS_INSTANCE_ID = crypto.randomUUID();
 
-// Keep Chromium's hardware acceleration enabled so WebGL wallpapers and glass
-// surfaces use the selected GPU. SwiftShader remains available as a fallback.
-app.commandLine.appendSwitch('enable-unsafe-swiftshader');
-
 const PERF_START_AT = Date.now();
 function perfLog(stage, detail = '') {
   const suffix = detail ? ' ' + detail : '';
@@ -618,9 +614,6 @@ function openSettingsWindow(options) {
 const localtool = require('./localtool');
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
-const { WallpaperExtensionManager } = require('./extension-manager');
-let wallpaperExtensions = null;
-let wallpaperReady = Promise.resolve();
 const pluginMedia = require('./plugin-media').createPluginMedia({
   getBase: () => connectionBase(),
   getToken,
@@ -825,8 +818,6 @@ ipcMain.handle('plugins:load', async () => {
     const plugins = Array.isArray(r.json.plugins) ? r.json.plugins : [];
     let loaded = 0;
     for (const p of plugins) {
-      // Wallpaper Engine runs on this machine independently of cloud/local brain plugins.
-      if (p.name === 'wallpaper') continue;
       if (!p.enabled || !p.js) continue;
       const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
       const wrapped =
@@ -848,79 +839,8 @@ ipcMain.handle('plugins:resource-url', async (_e, resource) => {
   try { return { ok: true, url: await pluginMedia.url(resource) }; }
   catch (e) { return { ok: false, err: e.message }; }
 });
-function assertWallpaperCaller(event) {
-  if (!win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== event.sender.mainFrame) {
-    throw new Error('壁纸扩展调用来源无效');
-  }
-  const url = event.senderFrame.url || '';
-  if (!url.startsWith('file://') || !url.endsWith('/src/index.html')) throw new Error('壁纸扩展只能从主窗口调用');
-  if (!wallpaperExtensions) throw new Error('扩展管理器尚未就绪');
-}
-ipcMain.handle('wallpaper-extension:state', async (event) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); return await wallpaperExtensions.getState(); }
-  catch (e) { return { ok: false, err: e.message }; }
-});
-ipcMain.handle('wallpaper-extension:install', async (event) => {
-  try {
-    await wallpaperReady;
-    assertWallpaperCaller(event);
-    const result = await dialog.showOpenDialog(win, { title: '选择 Wallpaper 扩展包文件夹', properties: ['openDirectory'] });
-    if (result.canceled || !result.filePaths?.[0]) return { ok: true, canceled: true };
-    const permission = await dialog.showMessageBox(win, {
-      type: 'question', title: '授予 Wallpaper 扩展权限',
-      message: '此扩展请求访问壁纸宿主操作并向 Vigil 界面添加壁纸控件。',
-      detail: '仅允许由本窗口发起的壁纸请求和界面扩展。扩展代码仍运行在 Vigil 渲染进程中，请只安装可信来源的扩展。',
-      buttons: ['取消', '允许并安装'], defaultId: 1, cancelId: 0, noLink: true,
-    });
-    if (permission.response !== 1) return { ok: true, canceled: true };
-    return await wallpaperExtensions.installFromDirectory(result.filePaths[0], {
-      grantedPermissions: ['desktop.wallpaper.control', 'desktop.ui.contribute'],
-    });
-  } catch (e) { return { ok: false, err: e.message }; }
-});
-ipcMain.handle('wallpaper-extension:enable', async (event) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); return await wallpaperExtensions.enable(); }
-  catch (e) { return { ok: false, err: e.message }; }
-});
-ipcMain.handle('wallpaper-extension:disable', async (event) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); return await wallpaperExtensions.disable(); }
-  catch (e) { return { ok: false, err: e.message }; }
-});
-ipcMain.handle('wallpaper-extension:uninstall', async (event) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); return await wallpaperExtensions.uninstall(); }
-  catch (e) { return { ok: false, err: e.message }; }
-});
-ipcMain.handle('wallpaper-extension:load', async (event) => {
-  try {
-    await wallpaperReady;
-    assertWallpaperCaller(event);
-    const assets = await wallpaperExtensions.rendererAssets();
-    const source = '(function(){try{\n' + assets.script + '\n}catch(e){console.error("[Wallpaper 扩展]",e);}})();';
-    await win.webContents.executeJavaScript(source);
-    return { ok: true, style: assets.style, version: assets.version };
-  } catch (e) { return { ok: false, err: String(e.message || e).slice(0, 180) }; }
-});
-ipcMain.handle('wallpaper:request', async (event, { method, resource, body }) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); return { ok: true, ...(await wallpaperExtensions.request(method, resource, body)) }; }
-  catch (e) { return { ok: false, err: e.message }; }
-});
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:instance-id', () => APP_PROCESS_INSTANCE_ID);
-ipcMain.handle('wallpaper:import', async (event) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); } catch (e) { return { ok: false, err: e.message }; }
-  const result = await dialog.showOpenDialog(win, { title: '导入壁纸', properties: ['openFile'],
-    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png'] }] });
-  if (result.canceled) return { ok: true, canceled: true };
-  try { return { ok: true, data: await wallpaperExtensions.importFile(result.filePaths[0]) }; }
-  catch (e) { return { ok: false, err: e.message }; }
-});
-ipcMain.handle('wallpaper:directory', async (event) => {
-  try { await wallpaperReady; assertWallpaperCaller(event); } catch (e) { return { ok: false, err: e.message }; }
-  const result = await dialog.showOpenDialog(win, { title: '选择壁纸工程目录（包含 project.json 的文件夹）', properties: ['openDirectory'] });
-  if (result.canceled) return { ok: true, canceled: true };
-  try { return { ok: true, ...(await wallpaperExtensions.request('POST', '/upload-dir', { dir: result.filePaths[0], migrate: false })) }; }
-  catch (e) { return { ok: false, err: e.message }; }
-});
 ipcMain.handle('project-picker:directory', async () => {
   if (!win || win.isDestroyed()) return { ok: false, err: '窗口尚未准备好' };
   try {
@@ -1200,10 +1120,6 @@ if (!app.requestSingleInstanceLock()) {
     oplog.init(app.getPath('userData'));
     // 旧版配置里可能写着远程地址 / 设备 token / 云端同步：先归档，再启动大脑。
     migrateCfg();
-    wallpaperExtensions = new WallpaperExtensionManager({ userData: app.getPath('userData'), coreVersion: app.getVersion() });
-    wallpaperReady = wallpaperExtensions.restore().then(s => {
-      if (s.error) console.warn('[Wallpaper 扩展]', s.error);
-    }).catch(e => console.warn('[Wallpaper 扩展] restore failed:', e.message));
     const updates=require('./update-transaction');
     let recoveryShown=false;
     sidecar.onState(async s=>{
@@ -1235,7 +1151,7 @@ if (!app.requestSingleInstanceLock()) {
 
 // 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
 // 也会走 before-quit —— 那时必须放行 close，不然关不了机）
-app.on('before-quit', () => { quitting = true; pluginMedia.close(); wallpaperExtensions?.close(); });
+app.on('before-quit', () => { quitting = true; pluginMedia.close(); });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

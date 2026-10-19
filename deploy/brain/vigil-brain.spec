@@ -8,8 +8,9 @@
      exe 所在目录就是她的"家"：config/ data/ logs/ 都落这儿。
 
 设计决定（spike 版）：
-- plugins/ 以**源码**随包分发，首启由 server_launch 种到 exe 旁 ——
-  插件是按文件路径动态加载的（spec_from_file_location），必须给真实 .py；
+- brain/plugins/ 只包含随核心发布的内置插件源码；市场插件源放在仓库 market/，
+  不进入 Brain 包。运行时下载的插件写入 data/installed_plugins，也不进入包。
+- 内置插件按文件路径动态加载（spec_from_file_location），必须给真实 .py；
 - kb 包只被插件动态 import，静态分析够不着 → 全部列进 hiddenimports；
 - fastembed/onnxruntime 排除：懒加载失败会自动降级，记忆嵌入走云端 API。
 """

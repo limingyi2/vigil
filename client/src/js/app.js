@@ -217,7 +217,6 @@
 
       // 注入 CSS
       for (const p of plugins) {
-        if (p.name === 'wallpaper') continue;
         if (!p.enabled) continue;
         if (p.css) {
           const style = document.getElementById('plugin-css-' + p.name) || document.createElement('style');

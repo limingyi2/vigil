@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "updated": "2026-10-20",
+  "plugins": [
+    {
+      "name": "wallpaper",
+      "version": "3.0.0",
+      "author": "Vigil",
+      "desc": "Wallpaper Engine（Steam）壁纸库、背景播放和外观设置。使用原来的 Brain Python 插件。",
+      "tags": [
+        "Wallpaper Engine",
+        "桌面壁纸",
+        "媒体"
+      ],
+      "path": "market/plugins/wallpaper",
+      "source": {
+        "type": "github",
+        "repo": "limingyi2/vigil",
+        "ref": "dev",
+        "path": "market/plugins/wallpaper",
+        "files": {
+          "__init__.py": "50aa5b57dd31f2a0259255a69103a0bd3659abf6",
+          "frontend.js": "e3a48ba382465f03811eed280c1ef794d42c08d9",
+          "frontend.css": "f47f702c9e228987fda8003f90c62449e71a619f"
+        }
+      }
+    }
+  ]
+}
