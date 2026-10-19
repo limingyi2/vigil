@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "description": "Vigil Agent preflight benchmark. Commands are argv arrays, never shell strings. Run from repository root.",
+  "suites": {
+    "smoke": [
+      "agent-run-lifecycle",
+      "plan-observability",
+      "runtime-trace"
+    ],
+    "regression": [
+      "agent-run-lifecycle",
+      "plan-observability",
+      "runtime-trace",
+      "local-tool-boundaries",
+      "provider-contract",
+      "conversation-isolation",
+      "run-mode-http",
+      "codex-reasoning-events"
+    ]
+  },
+  "tests": [
+    {
+      "id": "agent-run-lifecycle",
+      "title": "Agent run lifecycle and HTTP contract",
+      "area": "execution/state",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_p2_agent_runs.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "plan-observability",
+      "title": "Plan observability",
+      "area": "planning/trace",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_plan_observability.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "runtime-trace",
+      "title": "Runtime trace",
+      "area": "events/diagnostics",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_runtime_trace.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "local-tool-boundaries",
+      "title": "Local tool boundaries",
+      "area": "tools/security",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_localtools.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "provider-contract",
+      "title": "Model provider contract",
+      "area": "provider/streaming",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_model_providers.py",
+        "brain/tests/test_run_modes_http.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "conversation-isolation",
+      "title": "Conversation isolation",
+      "area": "history/state",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_conversation_isolation.py",
+        "tests/test_request_context.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "run-mode-http",
+      "title": "Agent run mode HTTP contract",
+      "area": "execution/http",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "brain/tests/test_run_modes_http.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "id": "codex-reasoning-events",
+      "title": "Codex reasoning event handling",
+      "area": "streaming/recovery",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "brain/tests/test_codex_reasoning_summary.py",
+        "brain/tests/test_codex_timeline.py"
+      ],
+      "timeout_seconds": 300
+    }
+  ],
+  "behavior_scenarios": [
+    {
+      "id": "large-tool-result",
+      "area": "tools/context",
+      "mode": "manual-or-future-e2e",
+      "goal": "A tool returns a result larger than the current output cap. The agent should preserve progress, retrieve relevant chunks, and clearly report any truncation instead of silently losing the task.",
+      "acceptance": [
+        "Trigger source is identified in diagnostics",
+        "No silent success after truncation",
+        "Agent can continue using bounded chunks",
+        "Memory use remains bounded"
+      ]
+    },
+    {
+      "id": "stream-disconnect",
+      "area": "streaming/recovery",
+      "mode": "manual-or-future-e2e",
+      "goal": "Disconnect the UI stream while an agent task is running, then reconnect.",
+      "acceptance": [
+        "Run identity remains stable",
+        "Snapshot accurately reports current state",
+        "No duplicate side-effecting tool call",
+        "Missing transient reasoning is not falsely claimed as recovered"
+      ]
+    },
+    {
+      "id": "cancel-running-task",
+      "area": "execution/cancel",
+      "mode": "manual-or-future-e2e",
+      "goal": "Cancel during model generation and during a long-running tool.",
+      "acceptance": [
+        "Cancellation reaches the active operation where supported",
+        "Terminal state is explicit",
+        "No later step is dispatched after cancellation",
+        "Core chat remains usable"
+      ]
+    },
+    {
+      "id": "provider-timeout",
+      "area": "provider/errors",
+      "mode": "fake-provider",
+      "goal": "Simulate connect timeout, mid-stream disconnect, empty response, and malformed event.",
+      "acceptance": [
+        "Failure category is specific",
+        "No task remains indefinitely running",
+        "Retry follows idempotency policy"
+      ]
+    },
+    {
+      "id": "large-codebase-read",
+      "area": "repository-tools",
+      "mode": "manual-or-future-e2e",
+      "goal": "Ask the agent to inspect several large files without editing them.",
+      "acceptance": [
+        "Uses bounded or chunked reads",
+        "Cites concrete file/function evidence",
+        "Does not modify files",
+        "Completes within configured budgets"
+      ]
+    },
+    {
+      "id": "permission-boundary",
+      "area": "security",
+      "mode": "automated-plus-manual",
+      "goal": "Attempt an unauthorized tool call and a path traversal.",
+      "acceptance": [
+        "Operation is denied",
+        "No out-of-scope file is changed",
+        "Denial is visible in trace",
+        "Normal authorized operation still works"
+      ]
+    }
+  ],
+  "notes": [
+    "The automated runner executes only the tests listed under tests[]. It does not execute behavior_scenarios automatically.",
+    "Test pass results are not yet established by this manifest; run the harness in the actual checkout.",
+    "Never include API keys, real user conversations, personal files, or production data in reports."
+  ]
+}
