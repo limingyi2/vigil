@@ -326,6 +326,6 @@ Round 16 automated regression on clean HEAD `dad8311c6f82ade44bd101490a8acf53b20
 ## 2026-10-20 — 执行器命令白名单与交付复核（Rounds 20–21）
 
 - **Round 20：** `python scripts/agent_eval.py --state-dir <local-state> run --case agent-eval-runner --label phase2-whitelist-isolation-round20` PASS；测试自身 `python -m pytest tests/test_agent_eval_runner.py -ra` 10 passed。`agent_eval.py validate` 验证 14 个自动案例、4 suites、10 test sets、10 behavior scenarios；dry-run 展示的 argv 仅来自清单。runner 测试检查禁止 arbitrary shell/未声明命令的边界，测试执行器不获修改 Git 或源码的权限。
-- **Round 21：** 对最新 E2E 夹具再次执行完整 Electron/Brain/Fake Provider 流程，18/18 PASS、退出码 0；清单校验、CLI help/list、dry-run、报告比较及任务续接记录均通过。真实 Provider、长时事件积压、完整终态交叉矩阵及受当前用户客户端进程保护的 NSIS upgrade/rollback 仍 BLOCKED 或 NOT RUN，详见阶段报告。
+- **Round 21：** 对 clean HEAD `bc8691b185677987180482647bb5192c22bd7a8b` 执行清单校验和 regression，12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN；与 Round 18 实际比较为 12 项 UNCHANGED、两项持续 NOT RUN。完整 Electron/Brain/Fake Provider E2E 的 18/18、退出码 0 结果属于 Round 17，不重复计为 Round 21。真实 Provider、长时事件积压、完整终态交叉矩阵及受当前用户客户端进程保护的 NSIS upgrade/rollback 仍 BLOCKED 或 NOT RUN，详见阶段报告。
 - **提交范围：** 仅隔离 E2E 测试夹具、案例证据、能力基线、改进日志和本机验收记录；没有修改 Vigil 业务实现。
 - **Clean HEAD 复核：** 提交 `bc8691b185677987180482647bb5192c22bd7a8b` 上再次 `agent_eval.py validate` PASS，regression 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132334-b40af455.json`。与 Round 18 的实际同选择对比仍为 12 项 UNCHANGED，另两项 NOT RUN；比较报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/round21-clean-head-comparison.json`。
