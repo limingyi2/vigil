@@ -136,6 +136,17 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('POST', path+'/cancel', {'src': 'pc'})[0], 404)
         self.assertEqual(self.request('POST', path+'/cancel', {'src': 'pc', 'session_id': 'private_session'})[1]['status'], 'cancelled')
 
+        conversation_owner = display_turns.owner(('brain', ''), 'pc', 'conversation_owned')
+        conversation_run = runs.create({'request_id': 'http_conversation_cancel', 'intent': 'cancel me', 'src': 'pc'},
+            {}, conversation_owner, start=False)
+        conversation_path = '/api/agent/runs/' + conversation_run['run_id'] + '/cancel'
+        self.assertEqual(self.request('POST', conversation_path, {'src': 'pc'})[0], 404,
+            'a cancellation without its conversation owner must not cross session boundaries')
+        code, cancelled = self.request('POST', conversation_path,
+            {'src': 'pc', 'conversation_id': 'conversation_owned'})
+        self.assertEqual(code, 200)
+        self.assertEqual(cancelled['status'], 'cancelled')
+
     def test_subscription_disconnect_does_not_rerun_or_cancel(self):
         entered, release = threading.Event(), threading.Event()
         def block():

@@ -76,6 +76,15 @@ async function startModel() {
       if (modelWaiters[i].predicate(call)) modelWaiters.splice(i, 1)[0].resolve(call);
     }
 
+    // The fixture has accepted and recorded the request, but the response is
+    // lost before Brain can observe it. A repeated durable request_id must
+    // return the existing failed/uncertain run instead of issuing it again.
+    if (userText.includes('P1_PROVIDER_RESPONSE_LOST')) {
+      await wait(50);
+      res.destroy();
+      return;
+    }
+
     if (payload.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'close' });
       if (userText === '晚安') {
@@ -115,6 +124,13 @@ async function startModel() {
           res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
           res.end('data: [DONE]\n\n');
         }
+        return;
+      }
+      if (userText.includes('P1_AGENT_CANCEL_IN_TOOL')) {
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
+          id: 'p1-cancel-in-tool', type: 'function', function: { name: 'smoke_ping', arguments: '{"mode":"slow_cancel"}' } }] } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
         return;
       }
       if (userText.includes('P1_AGENT_EVENT_BURST')) {
@@ -243,6 +259,12 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     '            if release.exists(): break',
     '            time.sleep(0.01)',
     '        else: raise RuntimeError("fixture release wait timed out")',
+    '    if mode == "slow_cancel":',
+    '        release = Path(os.environ["VIGIL_E2E_PLUGIN_RELEASE"] )',
+    '        for _ in range(1500):',
+    '            if release.exists(): break',
+    '            time.sleep(0.01)',
+    '        else: raise RuntimeError("fixture cancel wait timed out")',
     '    return "VIGIL_PLUGIN_CALL_OK"',
     'TOOLS = {"smoke_ping": smoke_ping}',
     'TOOL_SPECS = {"smoke_ping": {"desc":"E2E plugin call", "params":[("mode","test mode",True,"string")], "arg_param":"mode"}}',
@@ -468,10 +490,64 @@ async function createAgentRun(intent, requestId, budget) {
   assert.ok(response.json?.run_id, 'Brain must return a durable Agent run id');
   return response.json;
 }
-async function agentSnapshot(runId) {
-  const response = await evaluate(`vigil.api('GET','/api/agent/runs/${encodeURIComponent(runId)}')`);
+async function agentSnapshot(runId, conversationId) {
+  const query = conversationId ? `?src=pc&conversation_id=${encodeURIComponent(conversationId)}` : '';
+  const response = await evaluate(`vigil.api('GET','/api/agent/runs/${encodeURIComponent(runId)}${query}')`);
   assert.equal(response.status, 200, 'Electron API bridge must read Agent run status');
   return response.json;
+}
+async function exerciseUiSlowToolCancel(pluginTrace) {
+  const traceBeforeToolCancel = providerTrace(pluginTrace).length;
+  const providerCallsBeforeToolCancel = modelRequests.length;
+  const toolCancelIntent = 'P1_AGENT_CANCEL_IN_TOOL 请调用 smoke_ping 执行隔离慢工具';
+  await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
+  await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'chat welcome before UI slow-tool cancellation');
+  await evaluate("document.querySelector('#newTopicBtn').click()");
+  const toolCancelRequest = requestStarted(x => x.userText.includes('P1_AGENT_CANCEL_IN_TOOL'));
+  await submit(toolCancelIntent);
+  await toolCancelRequest;
+  await assertToolCall(pluginTrace, 'slow_cancel');
+  await waitFor('document.querySelector("#msgs .turn:not(.me) .agent-cancel")', 'real renderer Agent cancel control during slow tool');
+  const runEvent = await evaluate("(window.__vigilE2EEvents||[]).filter(e=>e.type==='agent_run').at(-1)");
+  assert.ok(runEvent?.run_id, 'renderer stream must receive the durable run identity before presenting cancel');
+  const toolCancelRunId = runEvent.run_id;
+  const toolCancelConversationId = await evaluate('API.state.chatConversationId');
+  assert.ok(toolCancelConversationId, 'Agent chat UI must own a conversation before the run starts');
+  const toolRunning = await agentSnapshot(toolCancelRunId, toolCancelConversationId);
+  assert.equal(toolRunning.status, 'running');
+  assert.equal(toolRunning.steps.at(-1)?.tool, 'smoke_ping');
+  assert.equal(toolRunning.steps.at(-1)?.status, 'running');
+  await evaluate('document.querySelector("#msgs .turn:not(.me) .agent-cancel").click()');
+  await wait(300);
+  const afterUiCancel = await agentSnapshot(toolCancelRunId, toolCancelConversationId);
+  const uiCancelState = await evaluate(`(()=>{const rows=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));const r=rows.find(x=>x.input===${JSON.stringify(toolCancelIntent)});const b=document.querySelector('#msgs .turn:not(.me) .agent-cancel');return {recordStatus:r?.status,busy:document.querySelector('#sendBtn')?.getAttribute('aria-busy'),cancelButton:Boolean(b),cancelButtonDisabled:b?.disabled,tail:document.querySelector('#msgs')?.innerText.slice(-180)}})()`);
+  console.log('UI_SLOW_CANCEL_DIAGNOSTIC ' + JSON.stringify({runStatus:afterUiCancel.status,step:afterUiCancel.steps.at(-1),ui:uiCancelState}));
+  assert.equal(afterUiCancel.status, 'cancelled', 'clicking renderer cancel must be confirmed by Brain');
+  await waitFor(`(()=>{const rows=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));const r=rows.find(x=>x.input===${JSON.stringify(toolCancelIntent)});return r?.status==='cancelled' && !document.querySelector('#msgs .turn:not(.me) .agent-cancel') && document.querySelector('#sendBtn')?.getAttribute('aria-busy')==='false'})()`,
+    'renderer cancellation terminal state while the slow tool is still running', 5000);
+  const cancelledDuringTool = await agentSnapshot(toolCancelRunId, toolCancelConversationId);
+  assert.equal(cancelledDuringTool.status, 'cancelled');
+  assert.equal(cancelledDuringTool.steps.at(-1)?.result_state, 'in_flight',
+    'cancel acknowledges terminal scheduling state while accurately exposing the already-dispatched tool');
+  fs.writeFileSync(pluginReleasePath, 'finish the already-dispatched isolated fixture');
+  let toolCancelFinal;
+  const toolSettleDeadline = Date.now() + 10000;
+  do {
+    toolCancelFinal = await agentSnapshot(toolCancelRunId, toolCancelConversationId);
+    if (toolCancelFinal.steps.at(-1)?.result_state === 'returned') break;
+    await wait(50);
+  } while (Date.now() < toolSettleDeadline);
+  assert.equal(toolCancelFinal.status, 'cancelled');
+  assert.equal(toolCancelFinal.steps.at(-1)?.result_state, 'returned',
+    'cancellation must preserve the result of an already in-flight operation without changing the cancelled terminal state');
+  const toolCancelModelCalls = modelRequests.filter(x => x.userText.includes('P1_AGENT_CANCEL_IN_TOOL')).length;
+  assert.equal(toolCancelModelCalls, 1);
+  assert.equal(providerTrace(pluginTrace).length, traceBeforeToolCancel + 1,
+    'the in-flight tool is not replayed and no later tool dispatch occurs');
+  assert.equal(modelRequests.length, providerCallsBeforeToolCancel + 1,
+    'the cancelled run must not issue a model follow-up after the in-flight tool returns');
+  fs.rmSync(pluginReleasePath, { force: true });
+  pass('renderer cancels an already-dispatched side-effecting tool, preserves terminal state, and prevents follow-up dispatch');
 }
 async function brainAgentSnapshot(brainBase, runId, conversationId) {
   const query = new URLSearchParams({ src: 'pc', ...(conversationId ? { conversation_id: conversationId } : {}) });
@@ -575,10 +651,15 @@ async function safeCleanup() {
 
 async function run() {
   const modelBase = await startModel();
-  const { base: brainBase, pluginTrace } = await startBrain(modelBase);
+  const focusedSlowToolCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-slow-tool';
+  const { base: brainBase, pluginTrace } = await startBrain(modelBase, undefined, { agentEnabled: focusedSlowToolCancel });
   await startElectron(brainBase);
   let brainPort = Number(new URL(brainBase).port);
   const focusedReconnect = process.env.VIGIL_E2E_SCENARIO === 'agent-chat-reconnect';
+  if (focusedSlowToolCancel) {
+    await exerciseUiSlowToolCancel(pluginTrace);
+    return;
+  }
   if (!focusedReconnect) {
   await waitFor("!!document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]')", 'directory plugin page registration');
   await evaluate("document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]').click()");
@@ -766,7 +847,7 @@ async function run() {
   assert.equal(await evaluate("document.querySelector('#sendBtn').getAttribute('aria-busy')"), 'false',
     'interrupted chat must not remain permanently running');
   pass('Brain process disconnect is surfaced as interrupted and unlocks chat');
-  await startBrain(modelBase, brainPort);
+  await startBrain(modelBase, brainPort, { agentEnabled: true });
   if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close();
   cdp = null;
   await stopChild(electron, true); electron = null;
@@ -787,6 +868,22 @@ async function run() {
   assert.equal(modelRequests.length, requestsAfterOnce, 'duplicate request id must not make another Provider request');
   assert.equal(providerTrace(pluginTrace).length, traceBeforeOnce + 1, 'duplicate request id must not repeat the plugin side effect');
   pass('Electron→Brain Agent run is durable and duplicate request IDs do not repeat a tool side effect');
+
+  const lostRequestId = 'p1_provider_lost_' + require('node:crypto').randomUUID();
+  const lostRequest = requestStarted(x => x.userText.includes('P1_PROVIDER_RESPONSE_LOST'));
+  const lostRun = await createAgentRun('P1_PROVIDER_RESPONSE_LOST 处理结果丢失，不调用工具', lostRequestId);
+  await lostRequest;
+  const lostFinal = await waitAgentRun(lostRun.run_id, ['failed', 'cancelled', 'interrupted'], 10000);
+  assert.notEqual(lostFinal.status, 'succeeded', 'an accepted request with a lost response cannot claim success');
+  assert.equal(lostFinal.error?.reason, 'connection_lost', JSON.stringify(lostFinal.error));
+  const lostCallCount = modelRequests.filter(x => x.userText.includes('P1_PROVIDER_RESPONSE_LOST')).length;
+  const lostToolCount = providerTrace(pluginTrace).length;
+  const lostDuplicate = await createAgentRun('P1_PROVIDER_RESPONSE_LOST 处理结果丢失，不调用工具', lostRequestId);
+  assert.equal(lostDuplicate.run_id, lostRun.run_id, 'same request_id must resolve to the durable uncertain run');
+  assert.equal(modelRequests.filter(x => x.userText.includes('P1_PROVIDER_RESPONSE_LOST')).length, lostCallCount,
+    'retrying an uncertain request must not replay a Provider operation');
+  assert.equal(providerTrace(pluginTrace).length, lostToolCount, 'a lost Provider response must not dispatch a tool');
+  pass('accepted Provider request with a lost response stays failed/uncertain and is not replayed on duplicate request_id');
 
   const traceBeforeUnknown = providerTrace(pluginTrace).length;
   const unknownId = 'p1_unknown_tool_' + require('node:crypto').randomUUID();
@@ -822,6 +919,8 @@ async function run() {
     'a tool returned after cancellation must not be dispatched');
   cancelGate = null;
   pass('live Electron cancellation leaves an explicit cancelled Brain state and prevents the next tool dispatch');
+
+  await exerciseUiSlowToolCancel(pluginTrace);
 
   const traceBeforeTimeout = providerTrace(pluginTrace).length;
   const timeoutId = 'p1_timeout_run_' + require('node:crypto').randomUUID();

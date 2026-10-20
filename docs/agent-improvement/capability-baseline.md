@@ -108,9 +108,9 @@
 | ID | 优先级 | 当前证据 | 状态 |
 |---|---:|---|---|
 | AG-002 | P1 | Electron/Brain/Fake Provider 300 delta 流；断开后从事件 cursor 重连，超过 256 事件窗口时取得一致终态 snapshot；Agent Center 的 Electron/preload fixture 25 项通过，覆盖断开/重连、generation 和 gap 重同步 | **部分验证**。Agent Center fixture 不是本地 Agent run/真实 Codex；本地客户端自动重连、长时持续压力和代理故障未验证 |
-| AG-003 | P1 | Electron API bridge 发起取消/1 秒超时；Agent 运行时 Electron 退出后 Brain 单次完成，重启后恢复同一 succeeded run；Brain 重启后工具=`unknown`；Brain disconnect 后 UI 解锁 | **部分验证**。UI 控件取消、长工具取消与所有终态在窗口退出时的完整状态矩阵未验证 |
-| AG-005 | P1 | 同 request ID 不重复模型/工具调用；插件先写入副作用后结果不明并强杀 Brain，重启恢复为 interrupted/unknown 且不重放 | **部分验证**。验证范围限本地 Fake Provider/插件；真实 Provider、外部服务副作用和请求已接收后丢响应未验证 |
-| AG-008 | P1 | fresh NSIS 安装/首次聊天/重启/卸载保留 70 个 profile 文件 PASS；官方 1.0.2→候选升级迁移、Brain mismatch 阻断、精确 rollback 与失败 checkpoint 保护 PASS；241 unpacked files、804 ASAR entries、禁止内容扫描 0 命中（证据见 phase2 报告） | **本次限定路径已验证**。其他旧版本跨度、真实用户设备文件系统、安装器 verbose log 未验证 |
+| AG-003 | P1 | Electron API bridge 取消/1 秒超时；Electron 退出期间 Brain 完成并恢复；Brain 重启后工具=`unknown`；renderer UI 点击取消/刷新恢复；慢 side-effecting plugin 已 in-flight 时取消，终态保持 cancelled、步骤结算为 returned 且没有模型 follow-up | **部分验证**。尚未覆盖 UI 点击取消与慢工具同场组合、窗口退出期间的全终态矩阵；已派发副作用可能继续运行，UI 会明确说明 |
+| AG-005 | P1 | 同 request ID 不重复模型/工具调用；本地插件副作用未知后 Brain 重启为 interrupted/unknown 不重放；Fake Provider 已收请求后销毁响应 socket，run=`connection_lost`，相同 request_id 不重发 Provider/工具 | **部分验证**。仅本地 Fake Provider/插件；真实 Provider 接收后丢响应、第三方副作用和跨系统幂等仍未验证 |
+| AG-008 | P1 | 旧候选 fresh NSIS 安装/首次聊天/重启/卸载保留 70 个 profile 文件 PASS；官方 1.0.2→旧候选升级迁移、Brain mismatch 阻断、精确 rollback 与失败 checkpoint 保护 PASS。当前 `2eb46d4` 候选 build/manifest/privacy audit 和 unpacked 首启/聊天/重启 PASS；当前 installer SHA 记录在本机 phase2 最终报告 | **部分验证**。当前 HEAD 的 NSIS 生命周期受宿主正在运行的 Vigil 阻塞；旧版本跨度、真实用户设备文件系统、安装器 verbose log 未验证 |
 
 当前不允许提出“全部 P1 关闭”或完整产品交付结论。真实模型认证/限流/空响应的专用故障注入、Electron 窗口退出、长时事件队列压力和安装器升级回滚范围见 `phase2-real-runtime-acceptance.md`。
 
@@ -134,4 +134,12 @@
 | Windows 候选运行时/安装升级 | 本轮提交的配对候选 `win-unpacked` 启动、bundled Brain health、Fake Provider 首次聊天及 Electron 重启历史恢复 PASS；静态清单 682 ASAR entries / 241 unpacked files，隐私扫描 0 命中 | build-info、release manifest、Brain manifest、关键文件哈希和候选 runtime 日志均在本机验收报告 | NSIS 安装、1.0.2→当前候选升级/回滚、卸载未运行：宿主上用户 Vigil 正在运行；此前 lifecycle 结果只对应旧源码 |
 | 真实 Provider | 未连接 | 使用 Fake Provider 完成控制流与故障注入 | 真实认证、限流、空响应和服务端错误均 BLOCKED（无授权隔离凭据） |
 
-当前 P1：AG-002/AG-003/AG-005 仍是**部分验证**；AG-008 当前源码候选已通过构建/身份/静态清单及 unpacked runtime 首启/聊天/重启检查，但 NSIS 安装生命周期受宿主正在运行的 Vigil 阻塞；此前指定 1.0.2 upgrade 结果仍只对旧源码候选成立。本文不宣称所有 P1 关闭。全仓 Python 结果和本轮候选详细 SHA 记在阶段验收报告；没运行或阻塞的场景仍分别标为 NOT RUN/BLOCKED。
+当前 P1：AG-002/AG-003/AG-005 仍是**部分验证**；AG-008 当前 `2eb46d4` 源码候选已通过构建/身份/静态清单及 unpacked runtime 首启/聊天/重启检查，但 NSIS 安装生命周期受宿主正在运行的 Vigil 阻塞；此前指定 1.0.2 upgrade 结果只对其对应旧候选成立。更新的 renderer cancel、慢工具取消、Provider response-loss 证据与未覆盖矩阵见 `phase2-real-runtime-acceptance.md`。本文不宣称所有 P1 关闭。全仓 Python 结果和本轮候选详细 SHA 记在阶段验收报告；没运行或阻塞的场景仍分别标为 NOT RUN/BLOCKED。
+
+
+## 2026-10-20 更新：AG-003 conversation-owner 取消实测
+
+- 最新修复前基线：renderer 点击取消聊天创建的 Agent run 时，Brain 返回 404，run 保持 `running`；原始日志在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-slow-tool-cancel-diagnostic.log`。
+- 修复后：活动 turn 与历史 turn cancel 请求带上 run 创建时相同的 `src`/`conversation_id`。真实 renderer + 本地 Brain 的慢工具取消场景将 run/UI 转为 cancelled；工具结果结算后没有模型续调或额外工具副作用。完整 E2E 18/18 PASS，backend owner/lifecycle 34 项与 8 subtests PASS，renderer fixture 7/7 PASS。详见 `phase2-real-runtime-acceptance.md` Round 11。
+- 最新 `agent_eval regression`：12 PASS、0 FAIL、0 TIMEOUT、0 BLOCKED、2 NOT RUN；报告在用户本地 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T124640-15c7dafd.json`。本报告是 dirty tree 上的验证，不代表已提交 HEAD。
+- AG-003 仍为 P1/部分验证；完整 Electron/Brain 终态矩阵及真实 Provider 未覆盖。AG-002 持续压力、AG-005 外部副作用与真实 Provider、AG-008 当前源码 NSIS 安装器生命周期仍是待验证/阻塞项。禁止将这些子场景推断为 PASS。

@@ -35,8 +35,8 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | ID | 优先级 | 证据状态 | 剩余验收 |
 |---|---:|---|---|
 | AG-002 SSE 重连、游标缺口、快照与队列压力 | P1 | 部分验证：真实 Electron/Brain/Fake Provider 运行 300 delta；在 SSE 首事件游标后断开并重连；超过 256 事件保留窗口时收到与终态一致的 authoritative snapshot；Agent Center Electron renderer/preload fixture 覆盖断开、显式重连、连接 generation 变更和 cursor gap 重同步（25/25） | Agent Center 使用结构化 Codex fixture，不代表本地 Agent run 或真实 Codex 服务；本地 Brain/Electron 自动恢复策略、持续高压、长时间积压和网络代理异常未完整验证 |
-| AG-003 Electron/Brain 状态一致性 | P1 | 部分验证：通过真实 Electron API bridge 发起取消和 1 秒 Provider 请求超时；Agent 运行期间强制退出 Electron 后 Brain 继续完成一次，重新启动后恢复同一终态；Brain 重启后不确定工具步骤为 unknown；聊天断连后 UI 解锁 | UI 控件取消、长工具取消、窗口退出时 Brain 同步失败/取消/超时矩阵和真实 Provider 终态仍未完整验证 |
-| AG-005 不确定请求及非幂等副作用 | P1 | 部分验证：真实 Electron/Brain + Fake Provider + 隔离插件副作用文件；重复 request ID 不重复 Provider/tool 执行；工具已记录副作用、结果未返回时强杀 Brain，重启后状态为 interrupted/unknown 且未重放 | 仅证明本地插件 fixture 与同一 request ID 的安全恢复策略；真实外部副作用、Provider 已接收但响应丢失及跨系统幂等仍待验证 |
+| AG-003 Electron/Brain 状态一致性 | P1 | 部分验证：本地 Agent E2E 覆盖取消/超时/Brain 重启/Electron 退出；生产 renderer + sandbox preload fixture 实际点击 Agent 取消并验证刷新后仍可取消；最新真实 renderer/Brain E2E 在慢插件已派发且仍 in-flight 时点击取消，Brain 与 UI 均转为 cancelled，工具结算后不再请求模型或派发下一工具 | 完整 UI/Brain 完成、失败、取消、超时、重连、重启终态矩阵仍未完整验证 |
+| AG-005 不确定请求及非幂等副作用 | P1 | 部分验证：真实 Electron/Brain + Fake Provider；服务端已收并记录请求后销毁响应 socket，run 进入 `connection_lost`；同 request ID 不重新请求 Provider，也不触发工具。另有工具执行后 Brain 崩溃恢复为 `interrupted/unknown` 且不重放 | 真实 Provider 接收后丢响应、跨系统外部副作用和多组件幂等仍未验证；Fake Provider 结果不代表外部服务 |
 | AG-008 安装包清单及用户数据保护 | P1 | **指定路径已验证通过**：fresh NSIS 安装/首次启动/Brain health/Fake Provider 聊天/Electron 重启/卸载保留 70 个 profile 文件；官方 1.0.2→候选迁移、Brain 不匹配阻断、精确回滚和升级 checkpoint 故障保护均 PASS；包清单扫描 0 禁止内容匹配 | 仅证明本次隔离环境、1.0.2 基线及候选版本；其他旧版升级跨度、真实用户机器/文件系统及安装器 verbose log 未验证 |
 
 以上风险均没有因不完整覆盖而标为完成。本阶段没有修改 Vigil 业务逻辑；没有修改 `master`、合并 PR、发布正式版本或覆盖正式安装。
@@ -88,3 +88,26 @@ pytest 报告、任务状态、比较结果、E2E 原始日志和候选包均在
 - 报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-runtime-39ae579.json`，原始日志在相邻的 `candidate-profile-39ae579-retry/local/`。
 - 此项是未安装的 unpacked candidate 运行检查。NSIS 注册、安装、旧版本升级/回滚和卸载仍未执行，因为宿主有用户 Vigil 进程在运行；不能把本项当作安装器生命周期通过。
 - 首次尝试把相对 worktree 路径传给 harness，路径比较断言失败；改传绝对路径后 first/restart 均通过。另一个通用 `--packaged` Agent proxy 测试因发行版有意忽略 `VIGIL_TEST_BRAIN` 而不适用于 bundled Brain；该 harness 边界与最终 candidate runtime 结果分开记录。
+
+### AG-003/005 追加验证（2026-10-20）
+
+- `node client/tools/test-p2-electron.js` 使用生产 renderer、sandbox preload 和隔离 API fixture；**7 项 PASS**，包含 UI 点击取消、Brain 确认状态、renderer reload 后恢复同一 run 并再次可取消，未创建重复 executor，renderer errors=0。日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-renderer-cancel-final.log`。
+- 扩展 `client/tools/test-electron-brain-e2e.js`：Fake Provider 在接收完整 Agent 请求并记录后销毁响应 socket。Brain 记录 `connection_lost`；重复相同 request ID 返回同一 run，不再发 Provider 请求且没有工具副作用。完整真实 Electron + 本地 Brain + Fake Provider E2E **17/17 PASS**，包含既有成功/失败/取消/超时/窗口退出/游标缺口/工具不确定结果及 SSE 重连。日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag005-provider-response-loss-e2e.log`。
+- 本轮 `agent_eval.py validate` 通过；Regression **12 PASS、0 FAIL/TIMEOUT/BLOCKED、2 NOT RUN**，244 passed、3 skipped；报告 `run-20261020T123152-babde176.json`。Node 语法检查通过。报告路径位于 Codex Windows package 的 LocalCache state 根目录下，checkout 外。
+- 新增 manifest `scope_note` 记录 Provider response-loss 子场景和 renderer cancel 子场景的已验证范围；Behavior Scenario 整体仍是 `NOT RUN`，因为 connect-timeout、空响应、畸形事件和“UI 点击取消 + 慢工具”组合仍未完成。**不将部分覆盖扩大写成整个场景 PASS。**
+- 修复前没有已确认产品 Bug：本轮目标是补足 P1 可复现证据；现有运行对上述 Fake Provider/本地 UI 路径未发现回归。AG-003/AG-005 仍为部分验证，真实 Provider 与跨系统外部副作用仍待授权隔离环境。没有修改 Agent/Provider/工具业务实现。
+
+### AG-003 慢工具取消补充（Round 10）
+
+- Fake Provider 返回一个会记录 side effect 并等待隔离 release marker 的慢插件调用；测试在调用仍 `in_flight` 时经本地 Electron bridge 取消，确认 run 立即为 `cancelled`，随后释放 fixture 并等待工具结果返回。最终状态仍为 cancelled，步骤记录 `result_state=returned`，Provider 只收到了首次请求，未发生模型 follow-up 或额外工具调用。
+- 第一次完整 E2E 的夹具在 cancel 返回后立即要求工具结果已 settle，观察到 `in_flight` 与预期异步生命周期相符，断言过早并失败；失败输出保留在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-long-tool-cancel-final.log`。夹具改为先断言 in-flight，再在 10 秒界限内轮询 settlement；随后完整 E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-long-tool-cancel-fixed-rerun.log`。这是测试时序修正，不是产品代码修复。
+- 该结果证明取消阻止后续调度，不证明能强制终止已经执行的系统副作用。Round 11 已补上 UI 直接点击取消与慢工具正在执行的组合；风险维持 P1/部分验证。
+
+
+### AG-003 会话所有者取消缺陷修复与多轮回归（Round 11）
+
+- **复现与根因：** 使用真实 Electron renderer 和隔离本地 Brain，聊天触发的 Agent run 在工具执行中时点击取消，Brain `/api/agent/runs/<id>/cancel` 返回 404，renderer 恢复取消按钮且 run 仍为 running。证据日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-slow-tool-cancel-diagnostic.log`。`brain/server.py::_display_owner(body)` 按 conversation owner 解析运行归属；页面两处取消请求都发送空 body，因而使用默认 `main` owner，和该聊天创建 run 时的 owner 不同。
+- **最小修复：** `client/src/js/pages.js` 的活动 turn 和历史 turn cancel 均传入创建 run 时相同的 `src` 与 `conversation_id`。新增 HTTP 测试证明缺失 owner 为 404、正确 conversation owner 取消成功；Electron renderer fixture 断言活动/重载取消请求携带正确 owner。只修改取消请求身份传递，没有改 Agent 执行/权限策略或工具副作用策略。
+- **前后对照：** 修复前真实 UI 取消未改变 Brain 状态（404/running）；修复后实际 renderer 在慢插件仍 in-flight 时取消，Brain 和 UI 均显示 cancelled，输入框解锁，插件返回后仍为 cancelled，无模型 follow-up 或额外工具派发。完整 Electron + Brain + Fake Provider E2E **18/18 PASS**：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ag005-full-e2e-postfix.log`。
+- **关联验证：** 隔离 Python `python -m pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra`：34 passed + 8 subtests，0 skipped；`node client/tools/test-p2-electron.js`：7 PASS；最终 `agent_eval validate` PASS，`run --suite regression --label phase2-ag003-owner-fix-final`：12 PASS、0 FAIL/TIMEOUT/BLOCKED、2 NOT RUN，报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T124640-15c7dafd.json`。其中未选中的 `tool-call-permissions` 与 `full-local-pytest` 明确为 NOT RUN；本轮之前的全仓 pytest 结果详见历史轮次，不冒充本轮执行。
+- **剩余范围：** AG-003 仍为 P1/部分验证，完整终态矩阵和真实外部 Provider 未覆盖。AG-002 的持续高压与真实代理故障、AG-005 的真实 Provider/第三方非幂等副作用仍待专用环境；AG-008 的当前源码 NSIS 生命周期仍受宿主正在运行的用户客户端限制。真实 Provider 认证/限流/空响应为 BLOCKED（无隔离凭据）。没有安装覆盖当前用户客户端。

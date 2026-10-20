@@ -248,3 +248,20 @@
 - **关联回归：** Agent HTTP/lifecycle `34 passed + 8 subtests`；Node `node --test` **56 PASS / 0 FAIL / 0 SKIP**；agent_eval regression **12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN**，报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval/reports/run-20261020T120733-ccfedf90.json`；同一状态目录下全仓 Python `full-local` 聚合案例 PASS，pytest **1,388 passed / 19 skipped / 0 failed**，96.406s，报告 `run-20261020T120827-24a9957d.json`。19 个 skipped 保持 skipped。
 - **候选运行与剩余风险：** 对候选 `win-unpacked` 直接执行项目现有安装运行时 harness，临时 profile 中 bundled Brain health、Fake Provider 首次聊天和 Electron 重启后的同一会话恢复 PASS；完整结果 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-runtime-39ae579.json`。早期复用 dev E2E 时，发行版按安全设计忽略 `VIGIL_TEST_BRAIN`，所以代理没有收到 run；这是夹具不匹配，改用 bundled Brain harness 后通过。NSIS 安装、upgrade/rollback/uninstall 仍因同宿主的用户 Vigil 进程运行而未执行；AG-008 仍部分验证。
 - **候选包构建和静态检查：** 在独立 detached worktree 构建配对 Windows 候选并通过 identity / manifest / 静态包清单检查（682 ASAR entries、241 unpacked files、敏感或用户数据扫描 0 命中）；最终 installer SHA 与阻塞原因见 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-final-runtime-acceptance-6462021.json`。
+
+## 2026-10-20 — AG-003 UI cancel 与 AG-005 Provider response-loss（Round 9）
+
+- **修改前表现：** P1 Agent E2E 经 Electron bridge 直接调用 cancel API；没有端到端证据覆盖用户点击 renderer 取消按钮。AG-005 已覆盖本地工具执行后 Brain crash 的 unknown/no-replay，但没有覆盖 Provider 已收请求、响应丢失时的 retry 语义。
+- **根因/复现条件：** 这是验收覆盖缺口，不是已证实产品缺陷。Fake Provider fixture 在接收并记录完整请求后销毁 response socket，可确定模拟“远端可能已处理、调用方未收到结果”。原 Agent run ledger 按 request_id 唯一去重，重复请求应返回已有失败记录，不得重新请求 Provider。
+- **修改范围：** 仅扩充 `client/tools/test-electron-brain-e2e.js` 的 loopback Fake Provider 和集成场景；在 `benchmark-cases.json` 保持整体行为场景为 `NOT RUN`，增加 scope_note 区分已验证子场景与未覆盖矩阵；追加本日志和阶段报告。未修改 Agent、Provider、Electron 产品业务实现。
+- **验证命令与结果：** `node client/tools/test-p2-electron.js`：7 项 PASS，生产 renderer + sandbox preload 测试真实 UI cancel、刷新恢复及再次取消；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-renderer-cancel-final.log`。`VIGIL_TEST_PYTHON=<隔离 CPython> node client/tools/test-electron-brain-e2e.js`：**17/17 PASS**；响应断开 run=`failed/connection_lost`，相同 request_id 返回原 run，模型请求计数和工具副作用计数都不增加；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag005-provider-response-loss-e2e.log`。`node --check client/tools/test-electron-brain-e2e.js`、agent_eval manifest validate PASS；Regression 12 PASS、0 FAIL/TIMEOUT/BLOCKED、2 NOT RUN，244 passed/3 skipped，报告 `run-20261020T123152-babde176.json`。
+- **对比/后续：** 修复前上述两个用户路径没有对应运行证据；修复后 Fake Provider/renderer 路径已验证。未观测到需修复的产品 Bug，不因此宣称 real Provider response-loss 或第三方副作用安全。AG-003 仍需 long-tool cancel 与完整状态矩阵；AG-005 仍需授权真实 Provider 和隔离外部副作用服务。失败、跳过、NOT RUN 状态均未改写。
+
+
+## 2026-10-20 — 修复 Agent chat 取消的 conversation owner 丢失（Round 11）
+
+- **修改前表现与根因：** 在真实 Electron renderer 中取消聊天创建的 Agent run 会收到 404，Brain run 保持 `running`，取消按钮重新启用。`_display_owner(body)` 通过 `conversation_id` 解析 run owner，而活动 turn 和历史 turn 的 UI cancel 都提交空 body，错误地落到默认 owner。失败原始日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-slow-tool-cancel-diagnostic.log` 保留。
+- **修复范围：** `client/src/js/pages.js` 两处取消调用现在提交创建任务时的 `src` 和 `conversation_id`；增加 `tests/test_p2_agent_http.py` owner 边界回归和 `client/tools/test-p2-electron.js` renderer 请求契约断言。没有扩大权限、移除取消检查或改变工具副作用处理。
+- **真实复现对比：** 修复前 UI 取消为 404/running；修复后在慢 side-effecting 插件处于 in-flight 时点击真实 UI 取消，状态转为 cancelled，composer 解锁，工具结算后仍保持 cancelled 且不进行 Provider follow-up/下一工具调用。全量隔离 Electron + Brain + Fake Provider E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ag005-full-e2e-postfix.log`。UI/慢工具合并场景现已验证，完整终态矩阵仍待验。
+- **多轮验证：** `node client/tools/test-p2-electron.js` 为 7 PASS；隔离 Python `pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra` 为 34 passed + 8 subtests；`agent_eval.py validate` PASS；最终 regression suite 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN，报告 `C:\Users\26871\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Vigil\stage2-state\phase2-agent-eval-final\reports\run-20261020T124640-15c7dafd.json`。该报告中的未选择案例不计通过。此前 E2E 夹具尝试和复现失败日志均未覆盖。
+- **后续：** AG-003 其余终态组合、AG-002 持续队列压力、AG-005 真实 Provider/外部副作用、AG-008 当前源码安装器升级/回滚仍需分别验证；不得因这些局部覆盖而关闭整个 P1。真实 Provider 场景保持 BLOCKED（没有授权隔离凭据）。

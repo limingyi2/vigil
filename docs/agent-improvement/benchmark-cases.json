@@ -397,7 +397,8 @@
         "Cancellation has explicit terminal state",
         "No next step after cancellation"
       ],
-      "status": "NOT RUN"
+      "status": "NOT RUN",
+      "scope_note": "Renderer cancel and reload recovery passed in the production Electron renderer fixture. The local Brain/Electron E2E also clicks the production renderer cancel button while an already-dispatched side-effecting plugin is in flight, observes cancelled terminal state and unlocked composer, then verifies the settled tool does not trigger model follow-up/tool dispatch. Full terminal-state matrix remains unverified."
     },
     {
       "id": "context-budget",
@@ -438,13 +439,14 @@
       "id": "provider-timeout",
       "area": "provider/errors",
       "environment_type": "fake-provider",
-      "goal": "Inject connect timeout, stream disconnect, empty response and malformed event.",
+      "goal": "Inject connect timeout, accepted-request response loss, stream disconnect, empty response and malformed event.",
       "acceptance": [
         "Failure category is specific",
         "Run cannot remain indefinitely active",
         "Retry policy respects idempotency"
       ],
-      "status": "NOT RUN"
+      "status": "NOT RUN",
+      "scope_note": "The accepted-request response-loss subcase now has isolated real-Electron/Fake-Provider evidence: the socket is destroyed after receipt, the run becomes connection_lost, and duplicate request_id does not replay it. Other scenarios remain NOT RUN as a whole: provider connect timeout, empty response and malformed-event coverage are incomplete."
     },
     {
       "id": "permission-boundary",
