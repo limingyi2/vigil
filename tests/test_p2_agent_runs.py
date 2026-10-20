@@ -188,6 +188,7 @@ class RunTests(unittest.TestCase):
     def test_reasoning_is_transient_and_never_in_checkpoint(self):
         item, _, _ = self.execute([response('done', reasoning='PRIVATE_REASONING')])
         self.assertEqual(item['status'], 'succeeded')
+        self.assertNotIn(item['run_id'], runs.TRANSIENT)
         with open(os.path.join(self.tmp.name, 'agent_runs.sqlite3'), 'rb') as stream:
             self.assertNotIn(b'PRIVATE_REASONING', stream.read())
         self.assertNotIn('PRIVATE_REASONING', json.dumps(item))

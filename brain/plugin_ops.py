@@ -594,7 +594,13 @@ def uninstall(name, purge_data=False):
         os.remove(f)
         hit = f
     if os.path.isdir(d):          # 有目录就一起清，别留半个空壳
-        shutil.rmtree(d, ignore_errors=True)
+        try:
+            shutil.rmtree(d)
+            if os.path.exists(d):
+                raise OSError("plugin directory remains after removal")
+        except OSError:
+            return False, {"err": "插件目录清理失败，卸载未完成",
+                           "removed": os.path.basename(hit) if hit else ""}
         hit = hit or d
     if not hit:
         return False, {"err": "没找到这个插件（可能已经被删了）"}
@@ -631,10 +637,15 @@ def uninstall(name, purge_data=False):
             import paths
             pd = os.path.join(str(paths.DATA_DIR), "plugins", name)
             if os.path.isdir(pd):
-                shutil.rmtree(pd, ignore_errors=True)
-                extra = "，数据也清了"
-        except Exception:
-            pass
+                shutil.rmtree(pd)
+                if os.path.exists(pd):
+                    raise OSError("plugin data directory remains after removal")
+                extra += "，插件数据已清理"
+        except Exception as e:
+            # The plugin code is already uninstalled, but user data must never
+            # be reported as removed unless the purge actually completed.
+            extra += "，插件数据清理未完成，请检查残留数据"
+            print("[插件] 数据目录清理失败：%s" % type(e).__name__, flush=True)
     # 持久记一笔"待重启"。卸载之后磁盘与运行态就不一致了：文件没了，
     # 但已经 import 的那份（连同它 start() 起的线程）还在内存里。
     # 这个不一致要一直提示到用户重启为止 —— 只靠 toast 说一次等于没说。

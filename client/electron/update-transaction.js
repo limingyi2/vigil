@@ -2,6 +2,7 @@
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),{spawn}=require('child_process');
 const {hash}=require('./build-contract');
 function atomic(file,value){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file+'.tmp',JSON.stringify(value,null,2));fs.renameSync(file+'.tmp',file);}
+function contains(root,candidate){const rel=path.relative(root,candidate);return rel===''||(rel!=='..'&&!rel.startsWith('..'+path.sep)&&!path.isAbsolute(rel));}
 function inventory(root){
   const files={};
   function visit(dir){for(const d of fs.readdirSync(dir,{withFileTypes:true})){
@@ -12,7 +13,7 @@ function inventory(root){
 function checkpoint(installDir,userData,target){
   installDir=path.resolve(installDir);userData=path.resolve(userData);
   if(!fs.existsSync(path.join(installDir,'Vigil.exe')))return null;
-  if(userData.startsWith(installDir+path.sep) || installDir.startsWith(userData+path.sep))throw Error('应用目录与用户数据目录必须分离');
+  if(contains(installDir,userData) || contains(userData,installDir))throw Error('应用目录与用户数据目录必须分离');
   const root=path.join(userData,'updates'),id=Date.now()+'-'+crypto.randomBytes(4).toString('hex');
   const backupDir=path.join(root,'rollback-'+id);fs.mkdirSync(root,{recursive:true});
   const files=inventory(installDir);
