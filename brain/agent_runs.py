@@ -59,6 +59,18 @@ def _error(reason):
     return dict(reason=reason, message=MESSAGES.get(reason, MESSAGES['internal_error']))
 
 
+def _bounded_tool_result(text):
+    """Keep oversized tool output useful without growing the run ledger unboundedly."""
+    if len(text) <= MAX_TEXT:
+        return text
+    marker = ("\n[… tool output truncated; middle content omitted. Request a narrower "
+              "result or read the source in chunks …]\n")
+    available = MAX_TEXT - len(marker)
+    head = available // 2
+    tail = available - head
+    return text[:head] + marker + text[-tail:]
+
+
 @contextmanager
 def _db():
     os.makedirs(paths.DATA_DIR, exist_ok=True)
@@ -376,7 +388,9 @@ def _tool(rid, owner, started, call, ctx):
         if not isinstance(result, str) or not result.strip():
             reason = 'tool_unknown'
         elif len(result) > MAX_TEXT:
-            reason = 'resource_limit'
+            # A bounded, explicit preview lets the model narrow its next read;
+            # failing the entire task discards otherwise useful tool progress.
+            result = _bounded_tool_result(result)
     except Exception:
         reason = 'tool_unknown'
     with LOCK, _db() as db:
