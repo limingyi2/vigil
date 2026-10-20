@@ -78,13 +78,13 @@ contextBridge.exposeInMainWorld('vigil', {
     test: () => ipcRenderer.invoke('token:test'),
   },
 
-  // 启动本地大脑 / 查看它为什么没起来（见 main.js 的 sidecar 通道）
+  // 启动本地内核 / 查看它为什么没起来（见 main.js 的 sidecar 通道）
   autoConnect: () => ipcRenderer.invoke('auto:connect'),
 
   // 推送更新：mode 省略=只查状态；'ask'=发现新版就弹窗引导下载安装
   updater: { check: (mode) => ipcRenderer.invoke('updater:check', mode || 'status') },
 
-  // 本地大脑（sidecar）：状态 / 重启 / 向导的模型配置
+  // 本地内核（sidecar）：状态 / 重启 / 向导的模型配置
   sidecar: {
     status: () => ipcRenderer.invoke('sidecar:status'),
     restart: () => ipcRenderer.invoke('sidecar:restart'),

@@ -94,9 +94,10 @@
     } catch (_) { toast('当前记录未能保存到本机，请先复制内容'); }
   }
   function streamBodyHtml(thinkId, textId) {
-    return '<div class="think-block streaming"><button class="think-toggle">' +
-      icon('brain', 'sm') + '思考 <span class="think-caret">▴</span></button>' +
-      '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div></div></div>' +
+    return '<div class="think-block streaming"><button class="think-toggle" type="button">' +
+      icon('brain', 'sm') + '<span class="think-label">思考中</span> <span class="think-caret">▴</span></button>' +
+      '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div>' +
+      '<div class="live-steps" id="liveSteps" hidden></div></div>' +
       '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
       '<div class="foot"><span class="stream-status">正在生成…</span></div>';
   }
@@ -2088,13 +2089,12 @@
       const box = msgs.querySelector('#liveSteps');
       if (!box) return;
       box.hidden = false;
-      const cls = kind === 'danger' ? 'warn' : kind === 'err' ? 'err' : 'neutral';
+      const cls = kind === 'danger' ? 'warn' : kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : 'neutral';
       box.insertAdjacentHTML('beforeend',
-        '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0">' +
-        '<span class="mono muted" style="font-size:11px;flex:none">' + esc(name.replace(/^local_/, '')) + '</span>' +
-        '<span style="font-size:12.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-        esc(String(text || '').slice(0, 90)) + '</span>' +
-        '<span class="sp"></span><span class="tag ' + cls + '">' + esc(kind === 'danger' ? '等你确认' : kind === 'err' ? '失败' : '完成') + '</span>' +
+        '<div>' +
+        '<span class="sname">' + esc(name.replace(/^local_/, '')) + '</span>' +
+        '<span class="stext">' + esc(String(text || '').slice(0, 90)) + '</span>' +
+        '<span class="tag ' + cls + '">' + esc(kind === 'danger' ? '提醒' : kind === 'err' ? '失败' : '完成') + '</span>' +
         '</div>');
       msgs.scrollTop = msgs.scrollHeight;
     }
@@ -2161,9 +2161,9 @@
           jobsToWatch.push(item);
           continue;
         }
-        const message = (item.error ? creatorErrorText(item.error) : '') || ({pending:'请求尚未确认送达，未自动重发',running:'原请求执行中，未自动重发',
-          failed:'请求失败',cancelled:'已取消',interrupted:'请求已中断，未自动重发',succeeded:'任务完成'})[status] || status;
-        items.push({role:'assistant',text:(item.content || '') + '\n\n' + message,t,
+        const message = (item.error ? creatorErrorText(item.error) : '') || ({pending:'排队中…',running:'执行中…',
+          failed:'请求失败',cancelled:'已取消',interrupted:'已中断',succeeded:'任务完成'})[status] || status;
+        items.push({role:'assistant',text:item.content || '',statusNote:status === 'succeeded' ? '' : message,t,
           request_id:item.request_id,partial:status!=='succeeded',
           run:item.run_id ? item : null});
       }
@@ -2214,11 +2214,17 @@
         // 不画头像、不写名字：这是工具界面，不是"跟谁对话"。
         // 她说的在左、你说的在右，不用再靠头像区分。
         if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + atts + '</div></div></div>';
+        // 状态说明（执行中/已取消…）不再塞进正文气泡：小字一行跟在下面，
+        // 取消也只是一条文字链，不是按钮气泡。
+        const runable = m.run && ['queued','running','paused_budget'].includes(m.run.status);
+        const note = (m.statusNote ? '<div class="run-note"><span>' + esc(m.statusNote) + '</span>' +
+          (runable ? '<button class="agent-cancel" data-run="' + esc(m.run.run_id) + '">取消</button>' : '') + '</div>' : '');
+        const body = m.text
+          ? '<div class="txt md">' + t + '</div>' + note
+          : (note || '<div class="txt md"></div>');
         return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
-          '<div class="txt md">' + t + '</div>' +
+          body +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span>' +
-          (m.run && ['queued','running','paused_budget'].includes(m.run.status) ?
-            '<button class="btn oline agent-cancel" data-run="' + esc(m.run.run_id) + '">取消任务</button>' : '') +
           '</div></div></div>';
       }).join('');
       renderedDraftConversationId = loadConversationId;
@@ -2369,7 +2375,9 @@
 
       // 思考过程折叠/展开
       const thinkToggle = msgs.querySelector('#' + turnId + ' .think-toggle');
+      const thinkLabel = msgs.querySelector('#' + turnId + ' .think-label');
       const thinkContent = document.getElementById(thinkId);
+      const turnStart = Date.now();
       thinkToggle && thinkToggle.addEventListener('click', () => {
         thinkContent.hidden = !thinkContent.hidden;
         thinkToggle.querySelector('.think-caret').textContent = thinkContent.hidden ? '▾' : '▴';
@@ -2386,8 +2394,9 @@
       let rafPending = false;
       let agentRunId = null;
       const agentCancel = document.createElement('button');
-      agentCancel.className = 'btn oline agent-cancel';
-      agentCancel.textContent = '取消任务';
+      agentCancel.className = 'agent-cancel';
+      agentCancel.textContent = '取消';
+      agentCancel.type = 'button';
       agentCancel.onclick = async () => {
         if (!agentRunId) return;
         agentCancel.disabled = true;
@@ -2439,7 +2448,17 @@
           setComposerMode('pause');
         } else if (evt.type === 'stage') {
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
+          thinkLabel.textContent = evt.stage === 'waiting_tool' ? '使用工具' : '思考中';
           if (agentRunId) statusEl.appendChild(agentCancel);
+        } else if (evt.type === 'tool') {
+          // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
+          const ok = evt.state === 'returned';
+          addStep(evt.tool || 'tool', ok ? '完成' : evt.state === 'not_dispatched' ? '失败' : '状态未知', ok ? 'ok' : 'err');
+          statusEl.textContent = '调用 ' + (evt.tool || '工具') + ' ';
+          if (agentRunId) statusEl.appendChild(agentCancel);
+        } else if (evt.type === 'tool_reused') {
+          // 看门狗发现她在原地打转（同样的调用拿到同样的结果）。
+          addStep('watchdog', '检测到重复调用，提醒她换个方法', 'danger');
         } else if (evt.type === 'run_snapshot') {
           textBuf = evt.text || '';
           remember({content:textBuf,status:'running'});
@@ -2447,9 +2466,11 @@
           scheduleRender();
         } else if (evt.type === 'think' && evt.text) {
           thinkBuf += evt.text;
+          thinkLabel.textContent = '思考中';
           thinkDirty = true;
           scheduleRender();
         } else if (evt.type === 'text' && evt.text) {
+          if (!textBuf) thinkLabel.textContent = '作答中';
           textBuf += evt.text;
           remember({content:textBuf,status:'running'});
           textDirty = true;
@@ -2466,11 +2487,16 @@
           if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
           // 正文渲染成 Markdown
           textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true });
-          // 思考过程如果为空，隐藏整个思考块
-          if (!thinkBuf.trim()) {
+          // 思考过程如果为空，隐藏整个思考块；有内容则收起，标签换成
+          // "已完成 · Xs"，点一下能展开回看（含工具步骤，仿 WorkBuddy）。
+          const steps = msgs.querySelector('#' + turnId + ' #liveSteps');
+          const stepCount = steps ? steps.children.length : 0;
+          const secs = Math.max(1, Math.round((Date.now() - turnStart) / 1000));
+          if (!thinkBuf.trim() && !stepCount) {
             const tb = msgs.querySelector('#' + turnId + ' .think-block');
             if (tb) tb.remove();
           } else {
+            if (thinkLabel) thinkLabel.textContent = '已完成 · ' + secs + 's' + (stepCount ? ' · ' + stepCount + ' 步' : '');
             thinkToggle.querySelector('.think-caret').textContent = '▾';
             thinkContent.hidden = true;
           }
@@ -2495,6 +2521,7 @@
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
             interrupted:'执行中断'})[evt.status] || '失败';
+          if (thinkLabel) thinkLabel.textContent = statusEl.textContent;
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         }
@@ -3080,7 +3107,7 @@
   // ═══ 2. 人设 ═══════════════════════════════════════════════
   // 卡片式：选一个渠道（App / 微信私聊 / 微信群），点卡片上的「应用」把她在那边换掉。
   // 本机控制台不参与 —— 控制台是干活的工具，不扮演角色（走全局默认）。
-  // 账本只有本机 Brain 这一份：读写的都是随包大脑里的人设文件。
+  // 账本只有本机 Brain 这一份：读写的都是随包内核里的人设文件。
   async function renderPersona(ctx) {
     ctx.view.classList.add('persona-view');
     const CHANS = [['app', 'App', '全局默认（没单独设置的渠道都跟它）'],
@@ -3298,7 +3325,7 @@
       if (cnt) cnt.textContent = (r.total != null) ? r.total : (all.length || '—');
       if (r.ok === false && !all.length) {
         ctx.view.querySelector('#memList').innerHTML =
-          errBox('读不到记忆', r._err || '大脑需要 M5 的 /api/memory/list（重启大脑后生效）');
+          errBox('读不到记忆', r._err || '内核需要 M5 的 /api/memory/list（重启内核后生效）');
         return;
       }
       drawList();
@@ -3519,12 +3546,12 @@
       const r = pick(await post(url, Object.assign({ zip_b64: b64 }, body || {})));
       if (!r.ok) { toast('装失败：' + (r._err || r.err || '')); return; }
       // C1：插件和技能的重启提示不能混用同一句话 —— 两者的"重启"根本不是
-      // 同一个东西。插件要重启**大脑**（start() 起的线程不会自己换掉），
+      // 同一个东西。插件要重启**内核**（start() 起的线程不会自己换掉），
       // 技能要重启**技能宿主**（热重载已让它当下可用，覆盖安装后才需要宿主
       // 进程重启一次才完全干净）。说错对象，用户会去重启错的东西，
       // 然后以为问题已经解决。
       const RN = {
-        plugin: '有后台线程的插件要重启大脑才完全生效',
+        plugin: '有后台线程的插件要重启内核才完全生效',
         skill: '覆盖了已有技能，重启技能宿主后才完全干净',
       };
       toast('已装上（共 ' + (r.count || '?') + ' 个）' +
@@ -3581,22 +3608,22 @@
       v.__items = items;
       // C3：持久的"待重启"提示。判据是服务端磁盘上的两个时间戳
       //（改动时刻 vs 本进程启动时刻），不是 toast、也不是前端变量 ——
-      // 所以刷新页面、重启客户端之后这条都还在，直到大脑真的重启过。
-      // 服务端算不出来时（老大脑没这个字段）就不显示，不猜。
+      // 所以刷新页面、重启客户端之后这条都还在，直到内核真的重启过。
+      // 服务端算不出来时（老内核没这个字段）就不显示，不猜。
       const pend = r.pending_restart || {};
       const pendOn = !!pend.pending;
       const pendWhy = (pend.reasons || []).filter(Boolean).join('；');
       v.innerHTML =
         (pendOn ? '<div class="card" style="margin-bottom:12px;border-color:var(--warn)">' +
           '<div style="display:flex;align-items:center;gap:8px"><b>有改动还没生效</b>' +
-          tag('warn', '待重启大脑') + '</div>' +
+          tag('warn', '待重启内核') + '</div>' +
           '<div class="muted" style="font-size:12px;margin-top:6px">' +
           esc(pendWhy || '插件目录有改动') +
           '。上面这份清单是磁盘上的样子，内存里跑的可能还是旧的那份 —— ' +
-          '重启大脑后两边才一致。</div></div>' : '') +
+          '重启内核后两边才一致。</div></div>' : '') +
         '<div class="sech"><b>添加插件</b><div class="sp"></div><span class="muted">zip 上传</span></div>' +
         '<div class="drop" id="plDrop">' + icon('upload', 'md') +
-        '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 装上自动热重载，不用重启大脑</span></div>' +
+        '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 装上自动热重载，不用重启内核</span></div>' +
         '<div class="sech"><b>已安装的插件</b><div class="sp"></div>' +
         '<span class="tag neutral">' + items.length + ' 个</span>' +
         (pendOn ? tag('warn', '待重启生效') : '') +
@@ -3633,7 +3660,7 @@
         const rr = pick(await post('/api/plugins/uninstall', { name: b.dataset.un, purge_data: false }));
         if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
         toast(rr.restart_needed
-          ? '文件已卸载，但它注册的后台线程还在跑 —— 要重启大脑才真正停止'
+          ? '文件已卸载，但它注册的后台线程还在跑 —— 要重启内核才真正停止'
           : '已卸载（剩 ' + (rr.count != null ? rr.count : '?') + ' 个）');
         plugins();
       }));
@@ -3647,7 +3674,7 @@
       const list = r.skills || [];
       v.__items = list;
       // C3（技能侧）：判据同上，但"重启"指的是**技能宿主**（Node 进程），
-      // 不是大脑。宿主自己启动时会登记 started_at，所以这条提示同样
+      // 不是内核。宿主自己启动时会登记 started_at，所以这条提示同样
       // 会一直显示到宿主真的重启过为止。
       const skPend = r.pending_restart || {};
       const skPendOn = !!skPend.pending;
@@ -3669,7 +3696,7 @@
         '</div>' +
         '<div class="sech"><b>添加技能</b><div class="sp"></div><span class="muted">zip 上传</span></div>' +
         '<div class="drop" id="skDrop">' + icon('puzzle', 'md') +
-        '<b>把技能 .zip 拖到这里</b><span class="muted">或点击选择文件 · 宿主自动热重载，不用重启大脑</span></div>' +
+        '<b>把技能 .zip 拖到这里</b><span class="muted">或点击选择文件 · 宿主自动热重载，不用重启内核</span></div>' +
         '<div class="sech"><b>已安装的技能</b><div class="sp"></div>' +
         '<span class="tag neutral">' + list.length + ' 个</span>' +
         (skPendOn ? tag('warn', '待重启生效') : '') +
@@ -3804,12 +3831,12 @@
     ctx.panel.innerHTML = '<div class="phead"><h2>数据</h2></div><div class="plist">' +
       subs.map(([k, n], i) => li({ icon: k === 'ov' ? 'chart' : k === 'tok' ? 'activity' : k === 'lg' ? 'book' : k === 'tr' ? 'term' : 'chat', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
-    // ── 数据源：只有本机大脑这一份 ──
+    // ── 数据源：只有本机内核这一份 ──
     // 以前这里可以在"云端 / 本机"之间切：微信真身的账在云端，本机只有 pc
     // 渠道。P8.1 起桌面端不再连云端，stats/trace/history/log 全来自本机 Brain。
     const dget = (p) => get(p, { timeoutMs: 8000 });
     const dpost = (p, b) => post(p, b, { timeoutMs: 8000 });
-    // 数据源够不着（大脑没起来）时不渲染一堆假 0，给一句能看懂的话
+    // 数据源够不着（内核没起来）时不渲染一堆假 0，给一句能看懂的话
     const fail = (r) => {
       if (r && r.ok) return false;
       v.innerHTML = '<div class="wrap">' + empty('本机数据源不可达',
@@ -4074,18 +4101,18 @@
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
     // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
-    const subs = [['conn', '本地大脑'], ['model', '模型管理'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
       subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
-    ctx.topbar.innerHTML = topbar('本地大脑', state.base || '');
+    ctx.topbar.innerHTML = topbar('本地内核', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
     const v = ctx.view.querySelector('#sView');
 
-    // 连接与设备：现在只说一件事 —— 本机大脑活着没有、为什么没活。
+    // 连接与设备：现在只说一件事 —— 本机内核活着没有、为什么没活。
     // 没有连接模式、没有远程地址、没有 token 输入框：地址由随包 Brain 决定。
     async function conn() {
-      ctx.topbar.querySelector('h1').textContent = '本地大脑';
+      ctx.topbar.querySelector('h1').textContent = '本地内核';
       v.innerHTML =
         '<div id="scCard"></div>' +
         '<div class="sec">当前状态</div>' +
@@ -4095,7 +4122,7 @@
         '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
         '<button class="btn fill" id="cRetry">重试连接</button>' +
-        '<button class="btn oline" id="cRestart">重启大脑</button>' +
+        '<button class="btn oline" id="cRestart">重启内核</button>' +
         '<span class="muted" id="cRes" style="font-size:12px"></span></div></div>';
 
       const card = v.querySelector('#scCard');
@@ -4105,19 +4132,22 @@
         s = s || {};
         const label = { ready: '运行中', starting: '启动中', failed: '启动失败', stopped: '未启动' }[s.status] || (s.status || '未知');
         const bad = s.status === 'failed' || s.status === 'stopped';
+        // 日志尾里的人设读取行是启动期的常规噪音（微信已分离，人设不再随日志走），
+        // 一行不落 —— 用户只关心内核活着没有、为什么没活着。
+        const tail = (s.logTail || []).filter((l) => !/人设|persona/i.test(String(l))).slice(-6);
         card.innerHTML =
-          '<div class="sec" style="margin-top:0">随包 Brain</div>' +
+          '<div class="sec" style="margin-top:0">随包内核</div>' +
           '<div class="card" style="margin-bottom:14px"' + (bad ? ' data-state="failed"' : '') + '>' +
           '<div class="kv"><span>状态</span><b>' + esc(label) + (s.port ? ' · 127.0.0.1:' + s.port : '') + '</b></div>' +
           '<div class="kv"><span>自动重启</span><b>' + (s.restarts || 0) + ' / 3</b></div>' +
           (s.exe ? '<div class="kv"><span>程序</span><b class="mono" style="font-size:11px">' + esc(s.exe) + '</b></div>' : '') +
           (bad && s.diagnosis
             ? '<div class="card err" style="margin-top:10px"><b>没能启动</b><p style="margin:6px 0 0">' + esc(s.diagnosis) + '</p>' +
-              '<p class="muted" style="margin:6px 0 0">本地 Brain 是唯一的后端；它起不来时聊天、创作、插件都不可用。点上面「重启大脑」重试，装坏了就重装 Vigil。</p></div>'
+              '<p class="muted" style="margin:6px 0 0">本地内核是唯一的后端；它起不来时聊天、创作、插件都不可用。点上面「重启内核」重试，装坏了就重装 Vigil。</p></div>'
             : '') +
-          ((s.logTail || []).length
+          (tail.length
             ? '<div class="muted mono" style="font-size:10.5px;margin-top:8px;line-height:1.5">' +
-              (s.logTail.slice(-6) || []).map((l) => esc(l)).join('<br>') + '</div>'
+              tail.map((l) => esc(l)).join('<br>') + '</div>'
             : '') +
           '</div>';
       };
@@ -4131,7 +4161,7 @@
 
       const say = (t) => { v.querySelector('#cRes').textContent = t; };
       v.querySelector('#cRestart').addEventListener('click', async () => {
-        say('正在重启本地大脑…');
+        say('正在重启本地内核…');
         await global.vigil.sidecar.restart();
       });
       v.querySelector('#cRetry').addEventListener('click', async () => {
@@ -4225,7 +4255,7 @@
         '<button data-mm="local"' + (mode === 'local' ? ' class="on"' : '') + '>本地 Ollama</button>' +
         '<button data-mm="hybrid"' + (mode === 'hybrid' ? ' class="on"' : '') + '>混合（默认 + 本地）</button>' +
         '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:6px">默认：走服务商接口。本地：同一套大脑用本机 Ollama 跑完整工具循环，不经过任何线上接口。混合：主模型仍是默认模型，只把需要翻本地文件的只读子任务交给本机 Ollama。</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:6px">默认：走服务商接口。本地：同一套内核用本机 Ollama 跑完整工具循环，不经过任何线上接口。混合：主模型仍是默认模型，只把需要翻本地文件的只读子任务交给本机 Ollama。</div>' +
         '<div id="olBox" style="margin-top:12px' + ((mode === 'local' || mode === 'hybrid') ? '' : ';display:none') + '">' +
         '<div class="field"><label>Ollama 地址</label>' +
         '<input class="input mono" id="olBase" value="' + esc(ol.base || 'http://127.0.0.1:11434') + '" placeholder="http://127.0.0.1:11434">' +
@@ -4242,7 +4272,7 @@
         '<button class="btn oline md" id="olTest">测试连接</button>' +
         '<span class="muted" id="olRes" style="font-size:12px"></span></div>' +
         '</div>' +
-        // 委派设置：只在混合模式露面（开关门控在大脑侧：hybrid + enabled + 已配本地模型）
+        // 委派设置：只在混合模式露面（开关门控在内核侧：hybrid + enabled + 已配本地模型）
         '<div id="dlBox" style="margin-top:12px' + (mode === 'hybrid' ? '' : ';display:none') + '">' +
         '<div style="border-top:1px solid var(--border,#e5e5e5);padding-top:10px">' +
         '<label class="row" style="margin:0 0 6px"><input type="checkbox" id="dlEnabled"' + (dl.enabled ? ' checked' : '') + '> 允许主模型把只读子任务交给本机</label>' +
@@ -4439,7 +4469,7 @@
           olRes.textContent = '✗ 连不上：' + (rr.err || '检查 Ollama 是否已启动');
         }
       });
-      // 最近委派：本机大脑 data/delegations/ 的落盘记录，每次委派的状态/用量
+      // 最近委派：本机内核 data/delegations/ 的落盘记录，每次委派的状态/用量
       // 都在这（只在本机视图有 dlBox）。
       if (dlBox) {
         const dlList = dlBox.querySelector('#dlList');
@@ -4590,7 +4620,7 @@
           audio: v.querySelector('#mAudio').value,
         };
         if (key) payload.api_key = key;
-        // 运行方式 + Ollama 段（仅本机大脑视图有这张卡）
+        // 运行方式 + Ollama 段（仅本机内核视图有这张卡）
         const mmBtn = v.querySelector('#mMode button.on');
         if (mmBtn) {
           payload.model_mode = mmBtn.dataset.mm;
@@ -4633,15 +4663,15 @@
             delete payload.model_mode;      // 已经生效，不再重复提交
             if (sw.warnings && sw.warnings.length) mRes.textContent = sw.warnings.join('；');
           } else if (sw._status === 404) {
-            // 旧版主脑没有切换门：本地/混合在那边根本不存在，不能假装保存成功；
+            // 旧版主内核没有切换门：本地/混合在那边根本不存在，不能假装保存成功；
             // 回默认则按老接口照常保存 —— 缺一个接口不该把人挡在门外。
             delete payload.model_mode;
             if (wantMode !== 'cloud') {
-              mRes.textContent = '没保存成：这台主脑还没有本地模型能力（版本较旧），更新主脑后再切';
-              toast('主脑不支持本地模型');
+              mRes.textContent = '没保存成：这台主内核还没有本地模型能力（版本较旧），更新主内核后再切';
+              toast('主内核不支持本地模型');
               return;
             }
-            mRes.textContent = '主脑版本较旧：已按默认模型保存';
+            mRes.textContent = '主内核版本较旧：已按默认模型保存';
           } else {
             mRes.textContent = '没保存成：' + (sw.err || sw._err || '运行模式切换失败');
             toast('运行模式没切成：' + (sw.reason || ''));
@@ -4745,7 +4775,7 @@
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
       draw[k] && draw[k]();
     });
-    // 首启向导引导：app.js 检测到"本地大脑在跑但还没配模型 key"时，
+    // 首启向导引导：app.js 检测到"本地内核在跑但还没配模型 key"时，
     // 把 state.settingsSub 指到 'model'，进来就直接是填 key 的表单
     const want = state.settingsSub;
     state.settingsSub = '';
@@ -4847,7 +4877,7 @@
       {title:'插件市场', desc:'从可信来源安装和管理 Brain 插件', icon:'puzzle', page:'ability', group:'plugin_market'},
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
-      {title:'本地大脑', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
+      {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
       {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
@@ -4873,7 +4903,6 @@
     ctx.panel.innerHTML = '<div class="phead"><h2>统一管理</h2></div>' +
       '<div class="plist">' +
       li({ icon: 'mon', title: '节点概览', sub: '所有服务器与本地实例', on: true, attrs: ' data-k="ov"' }) +
-      li({ icon: 'book', title: '配置说明', sub: '如何接入新节点', attrs: ' data-k="doc"' }) +
       '</div>';
     ctx.topbar.innerHTML = topbar('节点概览', '',
       '<button class="btn oline" id="mgRe">' + icon('refresh', 'sm') + '刷新</button>');
@@ -4916,7 +4945,7 @@
       const r = pick(await get('/api/management/overview', CB));
       if (!r || !r.ok) {
         v.innerHTML = '<div class="wrap">' + empty('管理接口不可达',
-          (r && (r._err || (r._status ? 'HTTP ' + r._status : ''))) || '请确认大脑已启动且管理模块已加载') + '</div>';
+          (r && (r._err || (r._status ? 'HTTP ' + r._status : ''))) || '请确认内核已启动且管理模块已加载') + '</div>';
         return;
       }
       const nodes = r.nodes || [];
@@ -4932,26 +4961,11 @@
         (nodes.length ? nodes.map(nodeCard).join('') :
           '<div class="card" style="padding:24px;text-align:center">' +
           icon('mon', 'lg') + '<div style="margin-top:10px;font-size:13.5px">还没有接入任何节点</div>' +
-          '<div class="muted" style="font-size:12px;margin-top:6px">在「配置说明」里查看如何接入云端服务器 B 或本地电脑</div>' +
+          '<div class="muted" style="font-size:12px;margin-top:6px">被管理节点配好 VIGIL_MANAGEMENT_* 环境变量并启动 management_agent 后会自动出现在这里</div>' +
           '</div>');
     }
 
-    function doc() {
-      ctx.topbar.querySelector('h1').textContent = '配置说明';
-      v.innerHTML = '<div class="card" style="padding:18px 20px">' +
-        '<b style="font-size:14px">接入新节点（3 步）</b>' +
-        '<div style="margin-top:14px;line-height:1.9;font-size:13px">' +
-        '<div><b>1. 管理中心（云端服务器 A）配置令牌</b></div>' +
-        '<div class="mono" style="background:var(--bg2);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px">set VIGIL_MANAGEMENT_AGENT_TOKENS={"server-b":"随机长令牌","local-pc":"另一个令牌"}<br>set VIGIL_MANAGEMENT_AGENT_NAMES={"server-b":"云端服务器 B","local-pc":"本地电脑"}</div>' +
-        '<div><b>2. 被管理节点运行 Agent</b></div>' +
-        '<div class="mono" style="background:var(--bg2);padding:8px 12px;border-radius:6px;margin:6px 0;font-size:12px">set VIGIL_MANAGEMENT_URL=http://管理中心地址:8788<br>set VIGIL_MANAGEMENT_NODE_ID=server-b<br>set VIGIL_MANAGEMENT_TOKEN=随机长令牌<br>python brain/management_agent.py</div>' +
-        '<div><b>3. 回到节点概览查看节点状态</b>（每 15 秒自动刷新）；Agent 状态与任务统一在「Agent 工作室」查看。</div>' +
-        '</div>' +
-        '<div class="muted" style="font-size:12px;margin-top:14px">心跳间隔 15 秒 · 45 秒内在线 · 90 秒内延迟 · 超过离线</div>' +
-        '</div>';
-    }
-
-    const draw = (k) => { if (k === 'ov') ov(); else doc(); };
+    const draw = (k) => { ov(); };
     ctx.panel.querySelectorAll('.li[data-k]').forEach(n =>
       n.addEventListener('click', () => {
         ctx.panel.querySelectorAll('.li').forEach(x => x.classList.remove('on'));
@@ -5478,6 +5492,8 @@
 
   global.PAGES = [
     { id: 'chat', name: '工作台', icon: 'chat', render: renderChat },
+    // 插件市场升为一级入口：装插件是高频动作，不该藏在能力与扩展的子页里。
+    { id: 'market', name: '插件市场', icon: 'puzzle', render: renderPluginMarket },
     { id: 'settings', name: '设置', icon: 'set', render: renderSettingsHome },
     ...FUNC_GROUPS.map((g) => ({ id: g.id, name: g.name, icon: g.icon, render: makeGroupPage(g) })),
     { id: 'management', name: '统一管理', icon: 'mon', render: renderManagement },

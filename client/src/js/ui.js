@@ -92,7 +92,7 @@
     const tried = (auto && auto.tried) || [];
     const head = auto && auto.needToken
       ? '地址能连上，但服务端不认这是本机请求 —— 它只把 token 交给回环地址。'
-      : '没找到大脑。它要么没起来，要么不在这几个地址上。';
+      : '没找到内核。它要么没起来，要么不在这几个地址上。';
     return '<b style="font-size:13px">' + esc(head) + '</b>' +
       '<div class="muted" style="font-size:12px;margin-top:6px;line-height:1.7">' +
       '客户端按顺序试：SSH 隧道 <span class="mono">127.0.0.1:18787</span> → 本机 brain <span class="mono">127.0.0.1:8788</span>。' +

@@ -87,7 +87,7 @@ function createTray() {
 
 // ── 推送更新（2026-10-09）：跟手机 App 一套思路 ─────────────────────
 // 云端 C:\Vigil\app\client\ 放安装包 + client_version.json（code 递增），
-// 大脑加两条只读路由 /api/client/version、/api/client/setup。
+// 内核加两条只读路由 /api/client/version、/api/client/setup。
 // 客户端启动 15s 后查一次、之后每小时查一次；有新版先问、同意了后台
 // 下载（sha256 校验），完成后弹窗 —— 走安装向导覆盖装，配置不会丢。
 // 本地包里的 version.json（打进 asar）是"我是谁"：code 就是版本号。
@@ -556,7 +556,7 @@ function createWindow() {
 function openSettingsWindow(options) {
   const opts = options || {};
   const section = String(opts.section || 'model');
-  // 只有一份模型配置（本机大脑），不再有 cloud/local 两个来源的参数
+  // 只有一份模型配置（本机内核），不再有 cloud/local 两个来源的参数
   const target = { section };
   if (settingsWin && !settingsWin.isDestroyed()) {
     if (settingsWin.isMinimized()) settingsWin.restore();
@@ -626,7 +626,7 @@ const pluginMedia = require('./plugin-media').createPluginMedia({
   getToken,
 });
 
-// 本地大脑（sidecar）一起步就养上；找不到 exe 时它自己会保持 failed 并给出原因
+// 本地内核（sidecar）一起步就养上；找不到 exe 时它自己会保持 failed 并给出原因
 sidecar.init(app, readCfg);
 
 // 随包 Brain 的地址就是唯一地址。没有"本地失败就退回某台服务器"这回事：
@@ -726,7 +726,7 @@ ipcMain.on('local:answer', (_e, msg) => {
   }
 });
 
-/** 向本机大脑要活：有活就执行，结果送回同一个大脑。
+/** 向本机内核要活：有活就执行，结果送回同一个内核。
  *  以前还要再轮一遍云端队列（微信消息由云上那只答，工具调用入的是云端
  *  队列）。P8.1 起桌面端只连本机，那条双轮询随远程 Brain 一起去掉了。 */
 async function pollBrain(base, token, device, caps) {
@@ -1005,7 +1005,7 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const r = await request(method, b + withSrc, body, token, requestedTimeout, perfLabel);
   // Report the actual destination, without credentials, query strings or paths.
   const target = new URL(b).origin;
-  if (!r.ok && r.status === 401) return { ...r, target, err: 'token 不对（本机 Brain 的凭据被换过？设置 → 本地大脑 可重启它）' };
+  if (!r.ok && r.status === 401) return { ...r, target, err: 'token 不对（本机 Brain 的凭据被换过？设置 → 本地内核 可重启它）' };
   return { ...r, target };
 });
 
@@ -1087,7 +1087,7 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
 ipcMain.handle('cfg:get', () => ({ ...readCfg(), base: connectionBase() }));
 ipcMain.handle('cfg:set', (_e, patch) => ({ ...writeCfg(patch), base: connectionBase() }));
 
-// ── 本地大脑（sidecar）────────────────────────────────────────────
+// ── 本地内核（sidecar）────────────────────────────────────────────
 ipcMain.handle('sidecar:status', () => sidecar.status());
 ipcMain.handle('sidecar:restart', () => {
   if (testBrain()) return { ok: true, external: true };
@@ -1095,17 +1095,17 @@ ipcMain.handle('sidecar:restart', () => {
   return { ok: true };
 });
 
-// 向导的"填 key 即用"：走大脑现成的 /api/models/apply —— 它会落盘 + 热加载，
+// 向导的"填 key 即用"：走内核现成的 /api/models/apply —— 它会落盘 + 热加载，
 // 内存/磁盘两边一起到位，不用重启 sidecar
 ipcMain.handle('sidecar:apply-model', async (_e, patch) => {
-  if (!sidecar.ready()) return { ok: false, err: '本地大脑没在运行' };
+  if (!sidecar.ready()) return { ok: false, err: '本地内核没在运行' };
   const tok = await getToken();
   const r = await request('POST', sidecar.base() + '/api/models/apply', patch || {}, tok);
   return r.ok ? { ok: true, json: r.json } : { ok: false, err: r.err || ('HTTP ' + r.status), json: r.json };
 });
-// 向导拿服务商清单：让大脑自己报（PROVIDERS 在它那边，别在客户端抄一份）
+// 向导拿服务商清单：让内核自己报（PROVIDERS 在它那边，别在客户端抄一份）
 ipcMain.handle('sidecar:providers', async () => {
-  if (!sidecar.ready()) return { ok: false, err: '本地大脑没在运行' };
+  if (!sidecar.ready()) return { ok: false, err: '本地内核没在运行' };
   const tok = await getToken();
   const r = await request('GET', sidecar.base() + '/api/models', null, tok);
   return r.ok ? { ok: true, json: r.json } : { ok: false, err: r.err || ('HTTP ' + r.status) };
@@ -1158,7 +1158,7 @@ if (!app.requestSingleInstanceLock()) {
     perfLog('electron-ready');
     Menu.setApplicationMenu(null);   // 自绘标题栏，不要系统菜单
     oplog.init(app.getPath('userData'));
-    // 旧版配置里可能写着远程地址 / 设备 token / 云端同步：先归档，再启动大脑。
+    // 旧版配置里可能写着远程地址 / 设备 token / 云端同步：先归档，再启动内核。
     migrateCfg();
     const updates=require('./update-transaction');
     let recoveryShown=false;
