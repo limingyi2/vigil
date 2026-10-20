@@ -296,3 +296,11 @@ Round 13 的干净提交回归：`agent_eval.py validate` PASS；Regression suit
 - **结论：** 未发现模型阶段取消的 Brain/UI 偏差或 late tool side effect。AG-003 仍 P1/部分验证，因完整终态矩阵与真实 Provider 尚未覆盖。
 
 Round 15 automated regression on clean HEAD `3a0de70b519124790e895c9c08552a0b57cf6614`: 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN; `agent_eval validate` also PASS. Report `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T130859-4565f042.json`.
+
+
+## 2026-10-20 — 直接核验 1,200-event SSE 账本有界性（Round 16）
+
+- **修改：** 将已有 1,200-event Agent SSE burst 抽成 `agent-event-burst` focused 场景；在隔离 Brain 完成后，通过同一个隔离 CPython 对其 SQLite 数据库作只读查询，断言每个 run 的持久事件行数=256、序号连续并包含 snapshot 的终态 cursor。没有修改 Brain 或 Electron 产品逻辑。
+- **首次运行：** 默认完整 E2E 的 seed-history 第 8 项未稳定显示完成，发生 UI wait timeout；原日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-bounded-ledger-full-e2e-round16.log` 保留，未调整等待阈值或断言。新增 focused 场景随后通过，再运行默认完整 E2E。
+- **结果：** focused PASS；观察 1,200 text events、cursor 1204、SQLite retained rows=256、连续 seq=949–1204、压力及恢复耗时 15.8s。完整 E2E 18/18 PASS。日志分别为 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-bounded-ledger-focused-round16.log` 和 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-bounded-ledger-full-e2e-round16-rerun.log`。
+- **边界：** 直接证实短时事件窗有界及 gap snapshot，不测长时 backpressure/内存曲线或真实网络代理；AG-002 风险仍部分验证。

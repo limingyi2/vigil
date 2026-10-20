@@ -165,3 +165,10 @@
 - 真实 renderer 对处于 generating 的 Agent run 点击取消；Brain 和 renderer 都记录 `cancelled`，composer busy 状态清除。随后放行 Fake Provider 返回 late tool call，工具未派发、未产生插件副作用、无模型 follow-up。PASS：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log`。
 - 更改后的默认 Electron/Brain/Fake Provider E2E 18/18 PASS，含 1,200 event cursor-gap；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-model-cancel-full-e2e-round15.log`。夹具错误尝试均在本机保留并于修正后重跑。
 - AG-003 完整终态/长时故障矩阵仍不完整，真实 Provider 未验证；当前结论维持 P1/部分验证。
+
+
+## 2026-10-20 更新：SSE SQLite 留存上限实测（Round 16）
+
+- 真实 Electron/Brain/Fake Provider Agent run 输出 1,200 个持久 text events，event cursor 到 1204；断线后旧 cursor 收到正确 snapshot。只读检查 isolated `agent_runs.sqlite3` 发现该 run 仅保留 256 行，seq 连续为 949–1204，账本尾部包含终态 cursor。burst+恢复耗时 15.8 秒。
+- Focused 与默认完整 E2E 均 PASS（完整套件 18/18）。完整套件第一次因已有 seed-history 第 8 项夹具超时，失败日志保留，随后未改断言重跑通过。详见阶段报告 Round 16。
+- 长时间队列积压/内存曲线和真实代理仍未验证；不能从该短 burst 推断持续压力通过。

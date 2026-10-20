@@ -149,3 +149,11 @@ Round 13 清洁 HEAD 回归补充：`agent_eval.py validate` PASS；`agent_eval.
 - **关联范围：** UI 的模型阶段取消与已派发慢工具取消均有直接证据，但完整终态矩阵、真实 Provider 和进程 crash 同时取消仍待测；AG-003 仍是 P1/部分验证。
 
 Round 15 clean HEAD regression: `agent_eval.py validate` PASS; `agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag003-ui-model-cancel-final` at commit `3a0de70b519124790e895c9c08552a0b57cf6614`: 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN. Report `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T130859-4565f042.json`.
+
+
+### AG-002 持久事件账本上限直接核验（Round 16）
+
+- 将 1,200 个文本事件的断线/恢复检查抽为 focused 场景，并在测试完成后只读查询隔离 Brain 的 `agent_runs.sqlite3`。观测 event_cursor=1204、持久事件行数恰好 256、保留 seq 连续范围 949–1204；内容完整的 authoritative snapshot 与终态 run 一致。压力注入及断线恢复耗时 15.8 秒。
+- Focused 命令：`VIGIL_E2E_SCENARIO=agent-event-burst node client/tools/test-electron-brain-e2e.js`，PASS，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-bounded-ledger-focused-round16.log`。默认完整 Electron/Brain/Fake Provider E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-bounded-ledger-full-e2e-round16-rerun.log`，并包含同一 SQLite 行数断言。
+- 首次整套执行在既有 seed-history 第 8 项 UI fixture 超时，尚未到达新增断言；该真实失败保留于 `phase2-ag002-bounded-ledger-full-e2e-round16.log`。focused 目标通过后，完整套件重跑通过；不删减或放宽 seed-history 断言。
+- 这证明瞬时 1,200-event burst 下持久账本严格有界，不等价于长时间/高频 backpressure 内存曲线，也不覆盖真实外部网络。AG-002 仍为 P1/部分验证。

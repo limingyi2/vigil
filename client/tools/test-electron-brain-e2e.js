@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const WebSocket = require('ws');
 
 const client = path.resolve(__dirname, '..');
@@ -633,6 +633,17 @@ function providerTrace(pluginTrace) {
   if (!fs.existsSync(pluginTrace)) return [];
   return fs.readFileSync(pluginTrace, 'utf8').trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
 }
+function retainedAgentEventStats(runId) {
+  const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
+  const database = path.join(home, 'data', 'agent_runs.sqlite3');
+  const query = [
+    'import json, sqlite3, sys',
+    'db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)',
+    'row = db.execute("SELECT COUNT(*), MIN(seq), MAX(seq) FROM events WHERE run_id=?", (sys.argv[2],)).fetchone()',
+    'print(json.dumps({"count": row[0], "min_seq": row[1], "max_seq": row[2]}))',
+  ].join('; ');
+  return JSON.parse(execFileSync(python, ['-c', query, database, runId], { encoding: 'utf8', windowsHide: true }));
+}
 async function disconnectAndResumeAgentEvents(brainBase, runId) {
   const controller = new AbortController();
   const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}/events?src=pc&after=0`, {
@@ -668,6 +679,30 @@ async function disconnectAndResumeAgentEvents(brainBase, runId) {
   assert.equal(events[0]?.payload?.content, snapshot.content);
   assert.ok(snapshot.event_cursor > 256, 'fixture must exceed the bounded persistent event window');
   return { firstCursor: firstEvent.seq, resumedCursor: events[0].seq, snapshot };
+}
+async function exerciseEventBurst(brainBase) {
+  const burstId = 'p1_event_burst_' + require('node:crypto').randomUUID();
+  const burstStartedAt = Date.now();
+  const burstRequest = requestStarted(x => x.userText.includes('P1_AGENT_EVENT_BURST'));
+  const burstRun = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
+  await burstRequest;
+  const resumed = await disconnectAndResumeAgentEvents(brainBase, burstRun.run_id);
+  assert.equal(resumed.snapshot.status, 'succeeded');
+  assert.equal(resumed.snapshot.content, 'x'.repeat(1200));
+  const retained = retainedAgentEventStats(burstRun.run_id);
+  assert.equal(retained.count, 256, 'persistent event rows must remain within the configured 256-event retention window');
+  assert.equal(retained.max_seq, resumed.snapshot.event_cursor, 'retained events must include the authoritative terminal cursor');
+  assert.equal(retained.min_seq, retained.max_seq - 255, 'retained event sequence must be contiguous at the window boundary');
+  console.log('EVENT_BURST_DIAGNOSTIC ' + JSON.stringify({
+    emitted_text_events:1200, cursor:resumed.snapshot.event_cursor, retained_rows:retained.count,
+    first_retained_seq:retained.min_seq, last_retained_seq:retained.max_seq, duration_ms:Date.now()-burstStartedAt,
+  }));
+  const burstRequests = modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length;
+  const burstDuplicate = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
+  assert.equal(burstDuplicate.run_id, burstRun.run_id);
+  assert.equal(modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length, burstRequests,
+    'reconnecting from an event cursor must observe the same run instead of creating another model request');
+  pass('SSE disconnect/resume retains 1,200 events as a bounded 256-row ledger and returns an authoritative gap snapshot');
 }
 async function stopChild(child, force = false) {
   if (!child) return;
@@ -705,8 +740,9 @@ async function run() {
   const modelBase = await startModel();
   const focusedSlowToolCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-slow-tool';
   const focusedModelCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-during-model';
+  const focusedEventBurst = process.env.VIGIL_E2E_SCENARIO === 'agent-event-burst';
   const { base: brainBase, pluginTrace } = await startBrain(modelBase, undefined,
-    { agentEnabled: focusedSlowToolCancel || focusedModelCancel });
+    { agentEnabled: focusedSlowToolCancel || focusedModelCancel || focusedEventBurst });
   await startElectron(brainBase);
   let brainPort = Number(new URL(brainBase).port);
   const reconnectScenario = process.env.VIGIL_E2E_SCENARIO || '';
@@ -717,6 +753,10 @@ async function run() {
   }
   if (focusedModelCancel) {
     await exerciseUiModelCancel(brainBase, pluginTrace);
+    return;
+  }
+  if (focusedEventBurst) {
+    await exerciseEventBurst(brainBase);
     return;
   }
   if (!focusedReconnect) {
@@ -1022,19 +1062,7 @@ async function run() {
   windowExitGate = null;
   pass('an in-flight Agent run finishes once after Electron exit and its terminal result restores after relaunch');
 
-  const burstId = 'p1_event_burst_' + require('node:crypto').randomUUID();
-  const burstRequest = requestStarted(x => x.userText.includes('P1_AGENT_EVENT_BURST'));
-  const burstRun = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
-  await burstRequest;
-  const resumed = await disconnectAndResumeAgentEvents(brainBase, burstRun.run_id);
-  assert.equal(resumed.snapshot.status, 'succeeded');
-  assert.equal(resumed.snapshot.content, 'x'.repeat(1200));
-  const burstRequests = modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length;
-  const burstDuplicate = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
-  assert.equal(burstDuplicate.run_id, burstRun.run_id);
-  assert.equal(modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length, burstRequests,
-    'reconnecting from an event cursor must observe the same run instead of creating another model request');
-  pass('SSE disconnect/resume survives 1,200 persisted events across the bounded event window and returns an authoritative cursor-gap snapshot');
+  await exerciseEventBurst(brainBase);
 
   // Force a Brain process exit after the fixture records a side effect but
   // before it returns. On restart, durable dispatched state must become

@@ -386,7 +386,7 @@
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-focused-final.log",
         "scope": "Real Electron renderer and main process, local Brain, loopback Fake Provider, one injected SSE disconnect; does not cover a real Provider or prolonged pressure."
       },
-      "scope_note": "Two measured scopes pass: the original Electron chat reconnect case survives one injected network cut, and a repeated-cut focused run survives three cuts while preserving all seven streamed chunks and issuing only one Provider request. The full Electron/Brain E2E also crosses the bounded event window with 1,200 persisted text events and returns the authoritative snapshot. Long-duration sustained pressure and real remote-service behavior remain NOT RUN. A bounded-retry exhaustion probe then injected four cuts across one seven-chunk run (three client resumes); after the original Brain run completed, both renderer and Brain eventually reported succeeded. This is a short deterministic probe, not a long-running network outage test.",
+      "scope_note": "Two measured scopes pass: the original Electron chat reconnect case survives one injected network cut, and a repeated-cut focused run survives three cuts while preserving all seven streamed chunks and issuing only one Provider request. The full Electron/Brain E2E also crosses the bounded event window with 1,200 persisted text events and returns the authoritative snapshot. Long-duration sustained pressure and real remote-service behavior remain NOT RUN. A bounded-retry exhaustion probe then injected four cuts across one seven-chunk run (three client resumes); after the original Brain run completed, both renderer and Brain eventually reported succeeded. This is a short deterministic probe, not a long-running network outage test. The 1,200-event test also directly queried the isolated Agent SQLite ledger: it retained exactly 256 contiguous event rows ending at the terminal cursor; the event burst plus snapshot recovery took 15.8 seconds.",
       "stress_evidence": {
         "date": "2026-10-20",
         "command": "$env:VIGIL_E2E_SCENARIO=agent-chat-reconnect-stress; node client/tools/test-electron-brain-e2e.js",
@@ -397,7 +397,7 @@
         "date": "2026-10-20",
         "command": "node client/tools/test-electron-brain-e2e.js",
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log",
-        "result": "PASS: 1,200 persisted text events exceed the 256-event window; reconnect returns a snapshot whose terminal state/content match the run."
+        "result": "PASS: 1,200 persisted text events exceed the 256-event window; SQLite retained exactly 256 contiguous rows ending at cursor 1204; old cursor returned authoritative terminal/content snapshot; 15.8s."
       },
       "retry_exhaustion_evidence": {
         "date": "2026-10-20",
