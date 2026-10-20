@@ -85,18 +85,23 @@ def _list_local():
 
 
 def _candidate_urls(url):
-    """GitHub Raw 地址 → 候选下载地址列表。镜像在前、原始地址兜底；
-    上次成功的源提到最前。清单与制品下载共用这一条路径。"""
+    """GitHub Raw 地址 → 候选下载地址列表。
+
+    ghfast.top 排最前：它是 raw 的实时反代，读到的永远是最新提交 ——
+    jsdelivr 对 @main 分支引用有最长 12 小时的缓存，market.json 刚更新时
+    三家 jsdelivr 会一直吐旧清单，把实时源排在前面避免"市场更新了客户端
+    半天看不见"。下载安全不靠域名靠 SHA-256，镜像被篡改会在校验步被拦下。
+    """
     parsed = urlparse(url)
     urls = [url]
     if parsed.scheme == "https" and parsed.hostname == RAW_HOST:
         segs = parsed.path.lstrip("/").split("/", 3)
         if len(segs) == 4 and all(segs[:3]):
             user, repo, ref, path = segs
-            urls = ["https://%s/gh/%s/%s@%s/%s" % (m, user, repo, ref, path)
-                    for m in MIRROR_HOSTS[:3]]
-            urls.append("https://%s/%s" % (MIRROR_HOSTS[3], url))
-            urls.append(url)
+            urls = (["https://%s/%s" % (MIRROR_HOSTS[3], url)]
+                    + ["https://%s/gh/%s/%s@%s/%s" % (m, user, repo, ref, path)
+                       for m in MIRROR_HOSTS[:3]]
+                    + [url])
     if _preferred_host["host"]:
         urls.sort(key=lambda u: 0 if urlparse(u).hostname == _preferred_host["host"] else 1)
     return urls
