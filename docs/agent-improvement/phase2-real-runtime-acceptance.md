@@ -147,3 +147,5 @@ Round 13 清洁 HEAD 回归补充：`agent_eval.py validate` PASS；`agent_eval.
 - 随后释放 Fake Provider gate，让 Provider 返回一个 late `smoke_ping` tool call；Agent 保持 cancelled，步骤中没有工具调用，隔离插件 trace 未增加，模型请求数仍为 1。该场景覆盖“工具派发前取消”，与慢工具已派发时取消互补。PASS 日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log`。
 - 测试夹具先后有两个未通过尝试：将空输入按钮的 `disabled` 错当作忙碌状态，之后 helper 忘记接收 Brain base 参数；原始日志 `phase2-ag003-ui-model-cancel-round15.log` 和 `phase2-ag003-ui-model-cancel-round15-rerun.log` 保留。修正后 focused 场景通过；同一更改后的默认完整 Electron/Brain/Fake Provider E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-model-cancel-full-e2e-round15.log`。没有发现新的产品缺陷，也没有因夹具失败放宽产品断言。
 - **关联范围：** UI 的模型阶段取消与已派发慢工具取消均有直接证据，但完整终态矩阵、真实 Provider 和进程 crash 同时取消仍待测；AG-003 仍是 P1/部分验证。
+
+Round 15 clean HEAD regression: `agent_eval.py validate` PASS; `agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag003-ui-model-cancel-final` at commit `3a0de70b519124790e895c9c08552a0b57cf6614`: 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN. Report `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T130859-4565f042.json`.
