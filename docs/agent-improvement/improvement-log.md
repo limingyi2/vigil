@@ -45,6 +45,55 @@
 
 ---
 
+## 2026-10-20 — Vigil 全仓质量冲刺追加（Rounds 1–3）
+
+本节追加至已有基础设施建设历史之后。三轮只改动 Agent 工具结果与本地文件读取路径及其测试；不表示全产品达到发布标准。完整范围审计见 `repository-audit.md`。
+
+### Round 1 — AG-001：大型工具结果不再丢弃整次任务进度
+
+- **基线提交：** `480b9d4a69e4134e6cabaa7d7c65aaec0af1f2da`，分支 `codex/vigil-agent-improvement-foundation`。
+- **修改前表现：** Agent lifecycle 新增 oversized tool result 断言后，旧实现将超过 65,536 字符的工具结果以 `resource_limit` 结束运行。失败报告 `run-20261020T030935-d08e9dd6.json` 保留在本地报告目录。
+- **根因证据：** `brain/agent_runs.py::_tool` 将超过 `MAX_TEXT` 的工具结果判为资源错误，导致运行终止；与模型流式输出限制不同，这一限制不必让已有执行进度全部失败。
+- **修改范围：** `_bounded_tool_result()` 仅保留有界 head/tail 并插入明确省略提示；工具执行继续，缓存/ledger 中存储的结果也有界。新增 `test_large_tool_result_is_bounded_and_explicitly_truncated`。没有提高限制或移除资源保护。
+- **修改后结果：** `agent-run-lifecycle` 28 项 PASS，报告 `run-20261020T075337-54ae25ea.json`；全仓 pytest 最终 1,384 passed、19 skipped、0 failed。
+- **前后对比：** 原复现失败到修复后 PASS，compare `compare-17fe2d45f4.json` 将 `FAIL -> PASS` 归类为 `FIXED`，同测试选择/环境。
+- **可续接任务记录：** 本机评测队列 `IMP-0002` 实际经历 `IN_PROGRESS → READY_FOR_VERIFY → COMPLETED`；后测 `run-20261020T101141-34867c51.json` 和 `compare-e64472c5a4.json` 已关联到该任务。任务 JSON 位于用户状态目录，不入库。
+- **尚未验证：** 真实模型是否总能根据截断提示继续检索；模型生成本身超过上限仍安全失败。
+
+### Round 2 — AG-004：远程本地工具支持有界分块读取
+
+- **修改前表现：** `local_file_read` 对大文件只返回前 200KB，工具 schema 不允许指定后续位置；旧插件代理只透传一个位置参数。
+- **根因证据：** `client/electron/localtool.js::tool_file_read` 固定从偏移 0 读取；`brain/localtools.py` 只声明 path；`brain/plugins/remote.py::_mk` 把单参数包装成 `{path: value}`。
+- **修改范围：** 增加可选整数 offset/length（单次最大 204800 字节），严格验证范围，向 schema 传递整数类型和 `multi_args`，代理透传命名参数；超大文件输出范围、下一 offset 和 EOF 提示。新增隔离临时文件 Node 测试及 Python schema/透传契约。
+- **首次测试结果：** 用例首次运行 FAIL（`run-20261020T075259-a3e455e4.json`），错误为测试夹具缺少 `brain/plugins` 导入路径 (`ModuleNotFoundError: remote`)，不是业务断言通过。修正夹具后 local-tool-boundaries 19 项 PASS (`run-20261020T075325-1231da3c.json`)，plugin-contract 38 项（3 skipped）PASS (`run-20261020T075341-ac78a91f.json`)，Node 临时大文件读取 PASS。
+- **尚未验证：** Electron UI/真实模型是否选择后续 offset；实际用户工作区读文件行为需 GUI 环境回归。
+
+### Round 3 — AG-004 子问题：多字节字符边界和短读
+
+- **审查发现：** 按字节切片可能将 UTF‑8 字符分到两个 chunk，Node 的非严格 `Buffer.toString('utf8')` 会产生替换字符，导致拼接结果损坏；并发文件缩短时 `FileHandle.read` 可能短读，预分配 Buffer 尾部会变成 NUL。
+- **根因证据：** 第二轮代码审阅发现 range 边界直接对 byte offset 截取；`read()` 返回的 `bytesRead` 原先未检查。针对旧解码方式的复现命令：`node -e "const b=Buffer.from('汉'.repeat(10)); console.log(JSON.stringify(b.subarray(0,2).toString('utf8')))` 会显示替换字符。
+- **修改范围：** 记录实际 `bytesRead`，将 continuation-byte 起始位置前移，并在截断不完整末尾 code point 时缩短有效范围、让下次读取从有效边界继续；保持每次读取上限。
+- **修改后结果：** 临时 600KB 汉字文件逐块读取并重建原文的 Node 测试通过（无替换字符，字节 offset 连续）；8 个无 Electron 依赖 Node 文件 56/56 PASS。全仓 Python 1,384 passed、19 skipped；regression 12 案例 PASS（240 passed、3 skipped）；security 1 案例 PASS（29 passed）。
+- **回归对比：** `run-20261020T030219-2ffdbd2c.json` 与 `run-20261020T075603-2252ce2d.json` 比较为相同用例选择/环境；12 个回归案例均 PASS → PASS，无新增回归。报告 `compare-0566b4ee99.json`。
+- **尚未验证：** 非 UTF‑8 任意二进制、文件读取期间大规模并发修改及模型最终答案仍需进一步验证；二进制检测继续有效。
+
+### Round 3 反向界面检查追加 — 可选参数空值
+
+- **发现：** Electron 本地工具表单遍历每个字段并将 `el.value` 放入参数对象；未填写的可选字段因此以 `""` 传入。第二轮实现把空 `length` 转成数字 0 并拒绝，导致面板上的默认读取失败。
+- **修复：** `tool_file_read()` 将 `undefined`、`null` 和空白字符串视为未提供，并使用 offset 0 / length 204800 默认值；数值非法值仍拒绝。
+- **测试：** Node 测试现在以 `{offset: '', length: ''}` 模拟真实表单，再覆盖大文件继续读取和 UTF‑8 全量拼接。最终 `node --test` 该测试 PASS；`run-20261020T101057-1dda636a.json` local-tool-boundaries 19 PASS；8 个纯 Node 文件再次 56/56 PASS。
+- **根因与范围：** 根因由 `client/src/js/pages.js::renderTools` 参数采集代码和 Electron localtool 校验规则交叉审查确认。本轮只修复文件读取参数缺省处理，不改表单、权限或其它工具。
+
+### 最终冲刺验收状态
+
+- **当前全仓自动化：** `run-20261020T075418-809a0ebe.json`：1 个 full-local 聚合案例 PASS，pytest 1,384 passed、19 skipped、0 failed，105.469 秒。
+- **当前目标回归：** `run-20261020T075603-2252ce2d.json`：12 PASS、0 FAIL/TIMEOUT/BLOCKED、2 NOT RUN；240 passed、3 skipped。
+- **安全：** `run-20261020T075641-c5d65998.json`：1 PASS、29 passed、0 skipped。
+- **最后受影响项重跑：** `run-20261020T101057-1dda636a.json`：local-tool-boundaries 1 案例 PASS、19 passed；8 个纯 Node 文件 56/56 PASS。
+- **Node 组件：** `node --test` 对 8 个无 Electron 依赖文件，56 PASS。全量 `client/tools/test-*.js` 聚合 69 tests 中 56 pass、13 文件加载失败；缺少依赖 `electron`、`ws`、`ajv/dist/2020`，按环境阻塞，不计为 PASS。完整日志保存在 `%TEMP%/vigil-node-suite-20261020.log`。
+- **发行包：** `scripts/build_release.py --help` PASS；`--verify` BLOCKED 于未生成的 `client/build-info.json`。`client/node_modules` 不存在且当前 shell 没有 npm；没有生成候选安装包。
+- **未验证：** 10 个真实模型/Electron/外部服务行为场景仍 NOT RUN；19 个 pytest skip 及其原因见本机报告；高优先级事件恢复、真实 UI 状态一致性和安装包端到端待有完整运行时的 Windows 环境验证。
+
 ## 后续追加格式
 
 ### YYYY-MM-DD — ISSUE-ID — 简短标题
