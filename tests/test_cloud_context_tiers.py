@@ -96,6 +96,41 @@ def test_request_preparation_estimates_tokens_instead_of_utf8_bytes():
     assert prepared['max_tokens'] == 2000
 
 
+def test_output_reserve_unconfigured_means_no_cap():
+    # 未配置模型输出能力时不发明 2048 之类的隐式上限：不发 max_tokens，
+    # 由供应商默认值决定（"以设置为准"）。
+    from model_providers.execution import prepare
+
+    class P:
+        kind = 'cloud'
+
+    assert cc.output_reserve({'provider': 'custom'}, P()) is None
+    assert cc.output_reserve({'provider': 'custom',
+        'model_capabilities': {'max_output_tokens': 8192}}, P()) == 8192
+
+    class O:
+        kind = 'ollama'
+        num_predict = 4096
+
+    assert cc.output_reserve({}, O()) == 4096
+
+    class O2:
+        kind = 'ollama'
+        num_predict = None
+
+    assert cc.output_reserve({}, O2()) is None
+
+    payload = {'messages': [{'role': 'user', 'content': 'hi'}]}
+    assert 'max_tokens' not in prepare(payload, {'provider': 'custom'}, step_tokens=None)
+    # requires_output_limit 的兼容供应商仍拿到 4096 兜底（显式协议要求，不是发明）。
+    req = prepare(payload, {'provider': 'custom',
+        'model_capabilities': {'requires_output_limit': True}}, step_tokens=None)
+    assert req['max_tokens'] == 4096
+    prepared = prepare(payload, {'provider': 'custom',
+        'model_capabilities': {'max_output_tokens': 8192}}, step_tokens=None)
+    assert prepared['max_tokens'] == 8192
+
+
 def test_context_error_classifier_requires_explicit_length_signal():
     from model_providers.base import ProviderHTTPError
     from model_providers.execution import is_context_limit_error

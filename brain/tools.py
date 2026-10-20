@@ -197,11 +197,17 @@ _STATIC_SPECS = {
 
 
 def _parameters_schema(params):
-    """把 [("名","说明",必填)] 转成 JSON Schema 的 parameters 对象。"""
+    """把 [("名","说明",必填)] 转成 JSON Schema 的 parameters 对象。
+
+    类型声明成"字符串或数字"是有意的：模型常把 max_results 这类数量参数写成
+    50（数字）而不是 "50"。声明只收字符串会让校验直接判无效调用，整批工具
+    被拒（agent_runs 那边更狠：一次 invalid_tool 就结束整个任务）。
+    执行侧本来就会 str() 一次，收数字是安全的。
+    """
     props = {}
     required = []
     for pname, pdesc, preq in params:
-        props[pname] = {"type": "string", "description": pdesc}
+        props[pname] = {"type": ["string", "number", "integer"], "description": pdesc}
         if preq:
             required.append(pname)
     schema = {"type": "object", "properties": props}
@@ -469,6 +475,18 @@ def invoke_spec(name, args, ctx=None):
             return _dl(ctx, **args)
         except Exception:
             return "委派工具暂不可用，照你的其他工具或自己的判断回答。"
+
+    # 远程本机工具（local_file_* / local_exec …）：直接进 localtools。
+    # 插件里那层 `remote.py` 只是薄壳，而**插件是会被复制到家目录**的
+    # （sidecar 首启铺开、此后不覆盖），内核升级后旧副本还在用旧签名 ——
+    # 多参数工具（grep 的 pattern、write 的 text）的参数会被它悄悄丢掉。
+    # 这里走内核，参数一定完整，也不改变任何权限判定（全在 localtools 里）。
+    try:
+        import localtools as _lt
+        if n in _lt.REMOTE_TOOLS:
+            return _lt.call(n, args if isinstance(args, dict) else {})
+    except Exception:
+        pass
 
     # 动态 JS 技能
     if "__" in n:

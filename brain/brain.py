@@ -1202,7 +1202,9 @@ class Brain:
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
                 try:
-                    _j = mp.chat(prepare(_payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=90)
+                    # 未配置模型输出上限就不发 max_tokens：以设置为准，不发明限制。
+                    from conversation_context import output_reserve
+                    _j = mp.chat(prepare(_payload, _api0, step_tokens=output_reserve(_api0, mp)), timeout=90)
                 except Exception as _request_error:
                     from model_providers.execution import is_context_limit_error
                     if _round != 0 or _context_recovered or not is_context_limit_error(_request_error):
@@ -1222,7 +1224,7 @@ class Brain:
                     _payload['messages'] = msgs
                     _context_recovered = True
                     self.last_cloud_requests += 1
-                    _j = mp.chat(prepare(_payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=90)
+                    _j = mp.chat(prepare(_payload, _api0, step_tokens=output_reserve(_api0, mp)), timeout=90)
                 self.last_cloud_seconds = round(
                     self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
@@ -1491,10 +1493,11 @@ class Brain:
 
         try:
             from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
+            from conversation_context import output_reserve
             for attempt in range(2):
                 try:
                     for event in completion_events(mp, prepare(
-                            payload, _api0, step_tokens=_cinfo.get('reserve_out')), timeout=120):
+                            payload, _api0, step_tokens=output_reserve(_api0, mp)), timeout=120):
                         if event['type'] == 'think_delta':
                             think_buf.append(event['text'])
                             yield {'type': 'think', 'text': event['text']}

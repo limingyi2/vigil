@@ -452,8 +452,12 @@ def specs(names=None, src=None):
     for k, v in REMOTE_TOOLS.items():
         if names is not None and k not in names:
             continue
+        # 多参数工具必须标 multi_args：tools.invoke_spec 默认只还原 arg_param
+        # 一个参数，其余全丢（grep 因此永远收不到 pattern，write/append 收不到
+        # text —— 模型看着调用成功了，结果是一个空文件或一次空搜索）。
         out[k] = {"desc": v["desc"], "params": list(v["params"]),
-                  "arg_param": v["arg_param"], "risk": v.get("risk") or "safe"}
+                  "arg_param": v["arg_param"], "risk": v.get("risk") or "safe",
+                  "multi_args": len(v["params"]) > 1}
     return out
 
 

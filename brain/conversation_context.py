@@ -130,13 +130,14 @@ def _reserve_out(brain):
 
 
 def output_reserve(api, provider):
-    """The output ceiling sent with a request must match its reserved budget."""
+    """Per-request output cap sent with a call. Unconfigured means no cap:
+    the provider's own default governs. Never fall back to an invented limit."""
     if getattr(provider, 'kind', '') == 'ollama':
         value = getattr(provider, 'num_predict', None)
     else:
         from model_providers.execution import capabilities
         value = capabilities(api).get('max_output_tokens')
-    return value if isinstance(value, int) and value > 0 else DEFAULT_RESERVE_OUT
+    return value if isinstance(value, int) and value > 0 else None
 
 
 # --- 隔离键与持久化 ---
