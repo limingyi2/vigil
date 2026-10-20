@@ -24,9 +24,9 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | Node 原生测试 | PASS | 8 个 `node:test` 文件：56 passed / 0 failed / 0 skipped |
 | Electron + Brain + Fake Provider | PASS | 两次独立执行各 8/8 PASS；`%LOCALAPPDATA%/Vigil/stage2-state/phase2-electron-brain-e2e-final.log` 与 `phase2-electron-brain-e2e-stability.log` |
 | 任务阻塞、恢复与对比 | PASS（合成任务） | 独立 `task-flow-*` 状态目录：OPEN → BLOCKED → IN_PROGRESS → READY_FOR_VERIFY → COMPLETED；同条件 provider-contract PASS → PASS；blocked resume 未启动命令 |
-| Windows 候选包 / NSIS 生命周期 | PASS（限定验收路径） | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-dfda34f.json`；初始失败报告 `phase2-acceptance.json` 与后续夹具失败日志均保留；候选包不随 Git 提交或发布 |
-| 官方 1.0.2 → 候选升级、数据迁移及故障回滚 | PASS（限定验收路径） | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-dfda34f.json`；精确恢复旧安装文件树，profile 数据保留 |
-| 候选包内容与身份核验 | PASS | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-package-inventory-dfda34f.json`；241 unpacked files、804 ASAR entries，0 个禁止内容匹配；manifest source/size/SHA 与产物相符 |
+| Windows 候选包 / NSIS 生命周期 | PASS（限定验收路径） | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-0318835.json`；初始失败报告 `phase2-acceptance.json` 与后续夹具失败日志均保留；候选包不随 Git 提交或发布 |
+| 官方 1.0.2 → 候选升级、数据迁移及故障回滚 | PASS（限定验收路径） | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-0318835-retry.json`；精确恢复旧安装文件树，profile 数据保留；首次基线安装崩溃记录在 `phase2-upgrade-rollback-0318835.stdout.log` |
+| 候选包内容与身份核验 | PASS | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-package-inventory-0318835-final.json`；241 unpacked files、804 ASAR entries，0 个禁止内容匹配；manifest source/size/SHA 与产物相符 |
 
 全仓 pytest 的 19 个 skipped 保留在 `-rs` 输出，未计入通过：缺少私有/本机素材、FFmpeg，以及当前 Windows runner 不具备部分 junction/symlink/mkfifo 创建权限。早期 E2E 测试夹具失败和异步断言竞态均保留在 `improvement-log.md`；修正夹具契约和等待 session-list 后，最终连续两次通过。
 
