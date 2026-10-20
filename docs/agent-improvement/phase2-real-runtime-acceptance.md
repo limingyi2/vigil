@@ -1,8 +1,8 @@
 # Vigil 第二阶段真实运行环境验收
 
-日期：2026-10-20（Asia/Shanghai）  
-基线分支：`codex/vigil-agent-improvement-foundation`  
-基线提交：`aeacf166ea1478b830e6dfb9a0d9d7b50a6f21b9`  
+日期：2026-10-20（Asia/Shanghai）
+基线分支：`codex/vigil-agent-improvement-foundation`
+基线提交：`aeacf166ea1478b830e6dfb9a0d9d7b50a6f21b9`
 PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 
 ## 隔离环境
