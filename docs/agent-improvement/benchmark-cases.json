@@ -417,6 +417,13 @@
         "command": "python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag002-5000-round18",
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132038-86df9e8e.json",
         "result": "PASS=12, FAIL=0, TIMEOUT=0, BLOCKED=0, NOT RUN=2; compared with prior regression run, all selected statuses unchanged and unselected cases remain NOT RUN."
+      },
+      "final_clean_head_regression": {
+        "date": "2026-10-20",
+        "tested_commit": "bc8691b185677987180482647bb5192c22bd7a8b",
+        "command": "python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-final-clean-head-bc8691b",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132334-b40af455.json",
+        "result": "PASS=12, FAIL=0, TIMEOUT=0, BLOCKED=0, NOT RUN=2; compared with Round 18, 12 selected cases unchanged and both unselected cases remain NOT RUN."
       }
     },
     {
