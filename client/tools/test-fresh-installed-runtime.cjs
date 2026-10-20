@@ -10,6 +10,7 @@ const [install, mode = 'first'] = process.argv.slice(2);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let app, ws;
 let nextId = 0;
+let completionRequests = 0;
 const pending = new Map();
 const provider = http.createServer((req, res) => {
   if (req.method === 'GET') {
@@ -21,6 +22,7 @@ const provider = http.createServer((req, res) => {
   let raw = '';
   req.on('data', chunk => { raw += chunk; });
   req.on('end', () => {
+    completionRequests++;
     const body = JSON.parse(raw);
     assert.equal(req.headers.authorization, 'Bearer fresh-fixture-key');
     const response = JSON.stringify({ choices: [{ message: { content: 'FRESH_INSTALL_CHAT_OK' }, finish_reason: 'stop' }],
@@ -103,7 +105,7 @@ async function start() {
   let conversationId;
   if (mode === 'first') {
     const port = provider.address().port;
-    const applied = await evaluate(`vigil.api('POST','/api/models/apply',{provider:'custom',api_base:${JSON.stringify(`http://127.0.0.1:${port}/v1`)},api_key:'fresh-fixture-key',model:'fresh-fixture-model'})`);
+    const applied = await evaluate(`vigil.api('POST','/api/models/apply',{provider:'custom',api_base:${JSON.stringify(`http://127.0.0.1:${port}/v1`)},api_key:'fresh-fixture-key',chat:'fresh-fixture-model'})`);
     assert.equal(applied.status, 200, 'Could not configure the local Fake Provider');
     await evaluate("(()=>{const input=document.querySelector('#ta');input.value='P8_FRESH_CHAT_SENTINEL';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#sendBtn').click();return true})()");
     let visible = false;
@@ -113,6 +115,7 @@ async function start() {
       await sleep(100);
     }
     assert.ok(visible, 'Fresh install could not send and display a Fake Provider chat response');
+    assert.ok(completionRequests > 0, 'Fake Provider did not receive a chat completion request');
     conversationId = await evaluate('API.state.chatConversationId');
     assert.ok(conversationId, 'First sent message did not create a conversation');
   } else {
@@ -144,6 +147,7 @@ async function start() {
   }
   console.log(JSON.stringify({ result: 'passed', mode, conversation_id: conversationId, brain_home: home,
     brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored',
+    fake_provider_requests: completionRequests,
     wallpaper_uninstalled_and_idle: true, durable_chat_history: mode === 'restart' }));
 }
 

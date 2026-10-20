@@ -241,16 +241,21 @@ def assert_migrated(profile, fixture):
     assert (home / 'logs/user-fixture.log').is_file()
 
 
-def main(installer, baseline):
+def main(installer, baseline, output=None):
     assert os.name == 'nt', 'Windows only'
     installer = Path(installer).resolve()
     baseline = Path(baseline).resolve()
-    assert installer.name == 'Vigil.Setup.1.1.0.exe', 'Use the real product installer identity'
     verify_baseline(baseline)
     release = json.loads((installer.parent / 'release-manifest.json').read_text(encoding='utf-8'))
+    expected_version = release.get('ver')
+    assert expected_version and installer.name == f'Vigil.Setup.{expected_version}.exe', 'Installer name must match its candidate manifest'
     assert release['candidate'] is True and release['setup_file'] == installer.name
     assert release['sha256'] == sha256(installer) and release['size'] == installer.stat().st_size
     assert release['source_commit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+
+    report_path = Path(output).resolve() if output else installer.parent / 'windows-acceptance.json'
+    if report_path.exists():
+        raise FileExistsError(f'Refusing to overwrite existing acceptance report: {report_path}')
 
     root = Path(tempfile.mkdtemp(prefix='Vigil Windows acceptance '))
     install, profile = root / 'application', root / 'profile'
@@ -291,7 +296,7 @@ def main(installer, baseline):
         pending = profile / 'updates/pending.json'
         checkpoint = json.loads(pending.read_text(encoding='utf-8-sig'))
         assert checkpoint['status'] == 'healthy'
-        assert checkpoint['target']['version'] == '1.1.0'
+        assert checkpoint['target']['version'] == expected_version
         assert len(checkpoint['files']) > 10
 
         # The app must refuse a mismatched Brain, then the shipped restore helper returns
@@ -327,7 +332,7 @@ def main(installer, baseline):
         report = {
             'baseline': {'version': '1.0.2', 'official_release': True, 'size': BASELINE_SIZE,
                          'sha256': BASELINE_SHA256},
-            'target': {'version': '1.1.0', 'commit': release['source_commit'], 'candidate': True,
+            'target': {'version': expected_version, 'commit': release['source_commit'], 'candidate': True,
                        'sha256': release['sha256'], 'size': release['size']},
             'fresh_install': True,
             'real_version_upgrade': True,
@@ -356,7 +361,8 @@ def main(installer, baseline):
             'test_root': str(root),
         }
         assert all(report['plugin_chat'].values()), 'Installed smoke_ping tool call did not complete end-to-end'
-        (installer.parent / 'windows-acceptance.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
         print(json.dumps(report))
     finally:
         server.shutdown()
@@ -366,5 +372,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('installer')
     parser.add_argument('--baseline', required=True)
+    parser.add_argument('--output', help='Write the acceptance report outside the checkout')
     args = parser.parse_args()
-    main(args.installer, args.baseline)
+    main(args.installer, args.baseline, args.output)
