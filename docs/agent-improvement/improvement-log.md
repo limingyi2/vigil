@@ -274,3 +274,5 @@
 - **复现与首次失败：** 三次断线测试运行中，真实 run 已成功且结果为七个 `STRESS_CHUNK` 完整拼接，测试却误比对旧用例的固定字符串 `RESUMED_AGENT_COMPLETED`。失败报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13.log` 保留。仅将压力用例终态断言改为检查所有分块，不改变产品逻辑。
 - **修改后结果：** `VIGIL_E2E_SCENARIO=agent-chat-reconnect-stress node client/tools/test-electron-brain-e2e.js`：PASS，cuts=3、resumed=3、七块文本完整、单 Provider 请求、零插件副作用；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13-rerun.log`。完整 `node client/tools/test-electron-brain-e2e.js`：18/18 PASS；1,200 事件超过 256 留存窗口后旧 cursor 得到与持久 run 一致的 authoritative snapshot；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log`。
 - **结论与后续：** 增强了短时断线/事件窗口压力证据，未发现产品回归；AG-002 仍为 P1/部分验证，长时间高频积压、内存/队列增长曲线、真实网络代理行为待测。
+
+Round 13 的干净提交回归：`agent_eval.py validate` PASS；Regression suite 在 HEAD `7ee0b698fcfd526ecead622fb0a30f20c30d52ae` 上 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN，报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T125924-a5a5ec6d.json`。
