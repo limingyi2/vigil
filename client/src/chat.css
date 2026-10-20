@@ -343,14 +343,13 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .plus-row.muted-row:hover { background:transparent; }
 .chatwrap .plus-row[disabled] { opacity:.5; cursor:progress; }
 .chatwrap .plus-rail { flex:none; display:grid; place-items:center; width:16px; height:16px; border-radius:50%; border:1px solid var(--chat-line); }
-.chatwrap .plus-row.on .plus-rail { border-color:var(--chat-accent); background:var(--chat-accent); }
 .chatwrap .plus-ic { border:0; width:20px; height:20px; color:var(--chat-muted); }
 .chatwrap .plus-lb { min-width:0; flex:1; display:flex; flex-direction:column; gap:1px; }
 .chatwrap .plus-lb b { font-size:13px; font-weight:550; }
 .chatwrap .plus-lb span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--chat-muted); font-size:11px; }
 .chatwrap .plus-note { flex:none; max-width:45%; color:var(--chat-muted); font-size:10.5px; text-align:right; }
 .chatwrap .plus-check { flex:none; width:16px; color:var(--chat-accent); }
-.chatwrap .plus-sub { display:flex; align-items:center; gap:8px; padding:2px 8px 6px 34px; }
+.chatwrap .plus-sub { display:flex; align-items:center; gap:8px; padding:2px 8px 6px 16px; }
 .chatwrap .plus-sub label { flex:none; color:var(--chat-muted); font-size:11px; }
 .chatwrap .plus-sub select { flex:1; min-width:0; height:28px; font-size:12px; border-radius:8px; }
 .chatwrap .plus-seg { display:flex; gap:6px; padding:2px 6px 4px; }

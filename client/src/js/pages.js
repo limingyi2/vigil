@@ -1609,7 +1609,6 @@
       const installed = local.installed || [];
       const modeRow = (mode, name, model, note) =>
         '<button class="plus-row' + (mode === cur ? ' on' : '') + '" type="button" data-mode="' + mode + '">' +
-        '<span class="plus-rail"></span>' +
         '<span class="plus-lb"><b>' + esc(name) + '</b><span>' + esc(model || '未配置') + '</span></span>' +
         '<span class="plus-note">' + esc(note) + '</span>' +
         (mode === cur ? '<span class="plus-check">' + icon('check', 'sm') + '</span>' : '') +
@@ -1623,7 +1622,6 @@
       const modeSection = st.unsupported
         ? '<div class="plus-sec">模型<span class="plus-hint">这台 Brain 还不支持本地模型</span></div>' +
           '<div class="plus-row muted-row">' +
-          '<span class="plus-rail"></span>' +
           '<span class="plus-lb"><b>默认模型</b><span>' + esc((st.cloud || {}).model || '由 Brain 配置决定') + '</span></span>' +
           '<span class="plus-note">Brain 版本较旧</span></div>'
         : '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
@@ -4790,8 +4788,8 @@
   }
 
   // ═══ 9. 功能分组页（按功能分类的聚合壳）════════════════════
-  // 顶部导航五项：01 工作台 02 对话与人格 03 能力与扩展 04 连接与系统 05 数据。
-  // 原有九个页面**一个不少**，全部按功能归入三组，作为组内功能项
+  // 顶部导航：01 工作台 · 插件市场 · 设置 · 02 对话与人格 · 03 能力与扩展 · 04 连接与系统 · 05 自动化任务 · 统一管理 · 数据。
+  // 原有各页面**一个不少**，按功能归入分组，作为组内功能项
   // （左栏 § 编号 + 等宽路径尾标）。各渲染器一行不改：给它们一个
   // "假 panel"挂副导航（横排在内容上沿），view 照旧，topbar 由它们自己写。
   const FUNC_GROUPS = [
@@ -4803,11 +4801,12 @@
     { id: 'ability', name: '能力与扩展', num: '03', icon: 'puzzle', items: [
       { k: 'ability', num: '031', name: '能力与技能', path: '/abilities', icon: 'puzzle', render: renderAbility },
       { k: 'tools', num: '032', name: '本地操控', path: '/local', icon: 'term', render: renderTools },
-      { k: 'life', num: '033', name: '生活面板', path: '/life', icon: 'heart', render: renderLife },
-      { k: 'plugin_market', num: '034', name: '插件市场', path: '/plugins/market', icon: 'puzzle', render: renderPluginMarket },
     ] },
     { id: 'system', name: '连接与系统', num: '04', icon: 'set', items: [
       { k: 'settings', num: '041', name: '连接与设备', path: '/connection', icon: 'set', render: renderSettings },
+    ] },
+    { id: 'auto', name: '自动化任务', num: '05', icon: 'activity', items: [
+      { k: 'life', num: '051', name: '生活面板', path: '/life', icon: 'heart', render: renderLife },
     ] },
   ];
 
@@ -4874,8 +4873,8 @@
       ctx.navigate('chat');
     });
     const cards = [
-      {title:'插件市场', desc:'从可信来源安装和管理 Brain 插件', icon:'puzzle', page:'ability', group:'plugin_market'},
-      {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'ability', group:'life'},
+      {title:'插件市场', desc:'从可信来源安装和管理 Brain 插件', icon:'puzzle', page:'market'},
+      {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'auto', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},

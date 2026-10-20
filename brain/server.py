@@ -3086,7 +3086,11 @@ def start_remote_api(brain):
                     # 绝不出现"界面已切换、下一条还在打旧 Provider"。
                     try:
                         import run_modes
-                        res = run_modes.switch(API_CFG, body.get("mode"),
+                        # 🔴 必须传完整 api_config，不能传 API_CFG 子集：返回的
+                        # _cfg 会被整份写回 config.json，子集里没有 brain_token，
+                        # 落一次盘凭据就没了 —— 之后客户端每次现读配置拿不到
+                        # token，所有请求 401 "bad token"（切到本地就再也换不回来）。
+                        res = run_modes.switch(api_config, body.get("mode"),
                                                body.get("model"),
                                                active_jobs=_running_creator_jobs())
                         if not res.get("ok"):
