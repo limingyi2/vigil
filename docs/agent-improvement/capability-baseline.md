@@ -179,3 +179,9 @@
 - 在隔离 Electron + 本地 Brain + Fake Provider 下，将可配置 burst 上限设为 5,000，Focused 场景完成 5,000 个持久文本事件。Brain event cursor=5004；只读 SQLite 查询确认保留 256 条连续记录（seq 4749–5004）；旧 cursor 的权威 snapshot 内容完整。压力和恢复耗时 65.393 秒。报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-events-round17.log`。
 - 修改仅在 `client/tools/test-electron-brain-e2e.js`，增加有界测试参数并复用 ledger 检查；完整 E2E 随后重跑 18/18 PASS，退出码 0。报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-burst-default-full-e2e-round17-rerun.log`。
 - 证据加强短时事件窗口的完整性和有界留存；未测长时间高频积压、内存曲线或真实代理。AG-002 仍为 P1/部分验证。
+
+
+## 2026-10-20 更新：Agent Provider HTTP 失败终态一致性（Round 22）
+
+- 真实 Electron renderer 经本地 Brain 请求隔离 Fake Provider；服务端确定返回 HTTP 503。renderer display record 与 Brain durable run 都转为 `failed`，错误分类均为 `service_error`，UI 有可见错误说明；模型调用计数=1、没有自动重试、工具或插件 side effect 数=0。Focused 报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-provider-http-failure-first.log`。
+- 本轮仅增加故障注入测试夹具，未改模型 Provider/Agent 业务代码。该测试关闭了“单次 provider HTTP server error 的 UI/Brain 偏差”这一子场景；AG-003 全终态矩阵、真实 Provider 错误场景仍未完全验证。

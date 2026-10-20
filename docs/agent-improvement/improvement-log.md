@@ -329,3 +329,12 @@ Round 16 automated regression on clean HEAD `dad8311c6f82ade44bd101490a8acf53b20
 - **Round 21：** 对 clean HEAD `bc8691b185677987180482647bb5192c22bd7a8b` 执行清单校验和 regression，12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN；与 Round 18 实际比较为 12 项 UNCHANGED、两项持续 NOT RUN。完整 Electron/Brain/Fake Provider E2E 的 18/18、退出码 0 结果属于 Round 17，不重复计为 Round 21。真实 Provider、长时事件积压、完整终态交叉矩阵及受当前用户客户端进程保护的 NSIS upgrade/rollback 仍 BLOCKED 或 NOT RUN，详见阶段报告。
 - **提交范围：** 仅隔离 E2E 测试夹具、案例证据、能力基线、改进日志和本机验收记录；没有修改 Vigil 业务实现。
 - **Clean HEAD 复核：** 提交 `bc8691b185677987180482647bb5192c22bd7a8b` 上再次 `agent_eval.py validate` PASS，regression 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132334-b40af455.json`。与 Round 18 的实际同选择对比仍为 12 项 UNCHANGED，另两项 NOT RUN；比较报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/round21-clean-head-comparison.json`。
+
+
+## 2026-10-20 — Provider HTTP 失败时 Electron/Brain 终态一致性（Round 22）
+
+- **目标：** AG-003 的完整终态矩阵仍缺真实 UI 发起的 Agent 失败路径；本轮检验模型 Provider 返回 HTTP 错误时，用户界面是否保留 Brain 的真实终态。
+- **夹具与复现：** 隔离 Fake Provider 对 marker 请求返回 HTTP 503。真实 Electron renderer 发送消息，经实际 `/api/chat/stream` 和本地 Brain Agent run；请求只发出一次，插件 trace 不增加。
+- **结果：** renderer display record=`failed`，Brain durable snapshot=`failed`；两侧错误分类都为 `service_error`，renderer 保存了可见错误说明。Focused 命令 `$env:VIGIL_E2E_SCENARIO=agent-ui-provider-failure; node client/tools/test-electron-brain-e2e.js` PASS，退出码 0，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-provider-http-failure-first.log`。未发现该路径下的产品缺陷，因此未修改产品代码。
+- **关联回归：** 默认 Electron/Brain/Fake Provider E2E 在新增独立错误分支后通过 18/18，明确退出码 0；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-provider-failure-full-e2e-round22.log`。默认套件不覆盖独立的 HTTP 503 focused marker，focused 与 full-suite 两项结果分别计数。
+- **范围：** 是本地、确定性 server-error 故障注入，不代表真实 Provider 鉴权、限流或真实服务错误；AG-003 的完整 done/failure/cancel/timeout/reconnect/restart 交叉矩阵仍待验证。

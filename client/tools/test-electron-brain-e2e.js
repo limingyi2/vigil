@@ -85,6 +85,9 @@ async function startModel() {
     // The fixture has accepted and recorded the request, but the response is
     // lost before Brain can observe it. A repeated durable request_id must
     // return the existing failed/uncertain run instead of issuing it again.
+    if (userText.includes('P1_UI_PROVIDER_SERVER_ERROR')) {
+      return json(res, 503, { error: { message: 'isolated fixture server error' } });
+    }
     if (userText.includes('P1_PROVIDER_RESPONSE_LOST')) {
       await wait(50);
       res.destroy();
@@ -608,6 +611,28 @@ async function exerciseUiModelCancel(brainBase, pluginTrace) {
   cancelGate = null;
   pass('renderer cancels during model generation and prevents a late tool call from dispatching');
 }
+async function exerciseUiProviderFailure(brainBase, pluginTrace) {
+  const traceBefore = providerTrace(pluginTrace).length;
+  const requestsBefore = modelRequests.length;
+  const intent = 'P1_UI_PROVIDER_SERVER_ERROR 验证服务端错误状态';
+  const accepted = requestStarted(x => x.userText.includes('P1_UI_PROVIDER_SERVER_ERROR'));
+  await submit(intent);
+  await accepted;
+  await waitFor(`(()=>{const rows=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));const r=rows.find(x=>x.input===${JSON.stringify(intent)});return r&&['failed','interrupted'].includes(r.status)})()`,
+    'renderer terminal record after an upstream Provider HTTP error', 10000);
+  const runEvent = await evaluate("(window.__vigilE2EEvents||[]).filter(e=>e.type==='agent_run'&&e.run_id).at(-1)");
+  assert.ok(runEvent?.run_id, 'renderer must receive the durable run identity for the failed Provider request');
+  const conversationId = await evaluate('API.state.chatConversationId');
+  const brain = await waitBrainAgentRun(brainBase, runEvent.run_id, 10000, conversationId);
+  const renderer = await evaluate(`(()=>{const rows=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));return rows.find(x=>x.input===${JSON.stringify(intent)})})()`);
+  assert.equal(brain.status, 'failed', JSON.stringify(brain.error));
+  assert.equal(renderer.status, brain.status, 'renderer terminal state must match the durable Brain run');
+  assert.equal(renderer.error?.class, brain.error?.reason, 'renderer and Brain must retain the same classified failure');
+  assert.ok(renderer.error?.message, 'renderer failure record must retain a user-visible explanation');
+  assert.equal(modelRequests.length, requestsBefore + 1, 'a server error must not be retried implicitly');
+  assert.equal(providerTrace(pluginTrace).length, traceBefore, 'Provider failure must not dispatch a tool side effect');
+  pass('renderer and Brain agree on classified failed state after an upstream Provider HTTP error');
+}
 async function brainAgentSnapshot(brainBase, runId, conversationId) {
   const query = new URLSearchParams({ src: 'pc', ...(conversationId ? { conversation_id: conversationId } : {}) });
   const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}?${query}`, {
@@ -748,9 +773,10 @@ async function run() {
   const modelBase = await startModel();
   const focusedSlowToolCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-slow-tool';
   const focusedModelCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-during-model';
+  const focusedProviderFailure = process.env.VIGIL_E2E_SCENARIO === 'agent-ui-provider-failure';
   const focusedEventBurst = process.env.VIGIL_E2E_SCENARIO === 'agent-event-burst';
   const { base: brainBase, pluginTrace } = await startBrain(modelBase, undefined,
-    { agentEnabled: focusedSlowToolCancel || focusedModelCancel || focusedEventBurst });
+    { agentEnabled: focusedSlowToolCancel || focusedModelCancel || focusedProviderFailure || focusedEventBurst });
   await startElectron(brainBase);
   let brainPort = Number(new URL(brainBase).port);
   const reconnectScenario = process.env.VIGIL_E2E_SCENARIO || '';
@@ -761,6 +787,10 @@ async function run() {
   }
   if (focusedModelCancel) {
     await exerciseUiModelCancel(brainBase, pluginTrace);
+    return;
+  }
+  if (focusedProviderFailure) {
+    await exerciseUiProviderFailure(brainBase, pluginTrace);
     return;
   }
   if (focusedEventBurst) {

@@ -437,12 +437,19 @@
         "No next step after cancellation"
       ],
       "status": "NOT RUN",
-      "scope_note": "Renderer cancellation now has direct Electron/Brain evidence both before tool dispatch (while model generation is held and a late tool call is returned) and during an already-dispatched slow side-effecting plugin. Both runs become cancelled and no late tool/follow-up is dispatched; the composer unlocks. Renderer reload cancellation and bounded retry exhaustion state are also separately measured. Full done/failure/cancel/timeout/reconnect/restart state matrix remains unverified.",
+      "scope_note": "Renderer cancellation now has direct Electron/Brain evidence both before tool dispatch (while model generation is held and a late tool call is returned) and during an already-dispatched slow side-effecting plugin. Both runs become cancelled and no late tool/follow-up is dispatched; the composer unlocks. A focused upstream HTTP 503 case also proves the renderer's failed status/class matches the durable Brain failure, with no implicit retry or tool side effect. Renderer reload cancellation and bounded retry exhaustion state are separately measured. Full done/failure/cancel/timeout/reconnect/restart state matrix remains unverified.",
       "ui_model_cancel_evidence": {
         "date": "2026-10-20",
         "command": "$env:VIGIL_E2E_SCENARIO=agent-cancel-during-model; node client/tools/test-electron-brain-e2e.js",
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log",
         "result": "PASS: real renderer cancel during model generation; late tool-call response was not dispatched; Brain/UI terminal state cancelled."
+      },
+      "ui_provider_failure_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-ui-provider-failure; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-provider-http-failure-first.log",
+        "result": "PASS: isolated Provider HTTP 503 produced Brain status failed and renderer status failed with matching service_error classification and a visible explanation; exactly one Provider request; no plugin side effect.",
+        "scope_note": "One deterministic local server-error injection only; real Provider auth/rate-limit behavior and the complete terminal-state matrix remain unverified."
       }
     },
     {
