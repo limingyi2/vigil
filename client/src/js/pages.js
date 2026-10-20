@@ -2225,7 +2225,8 @@
       for (const button of msgs.querySelectorAll('.agent-cancel')) {
         button.onclick = async () => {
           button.disabled = true;
-          const r = pick(await post('/api/agent/runs/' + encodeURIComponent(button.dataset.run) + '/cancel', {}));
+          const r = pick(await post('/api/agent/runs/' + encodeURIComponent(button.dataset.run) + '/cancel',
+            {src:state.src || 'pc', conversation_id:loadConversationId}));
           if (!r.ok) { button.disabled = false; toast('取消未确认，请检查任务状态'); }
           else await loadMsgs(true);
         };
@@ -2391,7 +2392,8 @@
         if (!agentRunId) return;
         agentCancel.disabled = true;
         try {
-          const r = pick(await post('/api/agent/runs/' + encodeURIComponent(agentRunId) + '/cancel', {}));
+          const r = pick(await post('/api/agent/runs/' + encodeURIComponent(agentRunId) + '/cancel',
+            {src:state.src || 'pc', conversation_id:sendConversationId}));
           if (!r.ok) throw Error(r._err || '取消未确认');
           statusEl.textContent = '已取消后续调度；在途操作可能仍在执行';
         } catch (_) {

@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
+import features
 import paths
 import plugin_ops as ops
 import plugin_transaction as tx
@@ -330,6 +331,77 @@ class TransactionTests(unittest.TestCase):
         ops.install(self.archive())
         self.assertTrue(ops.uninstall('demo', purge_data=True)[0])
         self.assertFalse(data.exists())
+
+    def test_failed_data_purge_never_claims_data_was_removed(self):
+        ops.install(self.archive())
+        data = self.home / 'data/plugins/demo'
+        data.mkdir(parents=True)
+        (data / 'user.txt').write_text('user')
+        original = ops.shutil.rmtree
+        def fail_data(path, *args, **kwargs):
+            if Path(path).resolve() == data.resolve():
+                raise PermissionError('injected locked plugin data')
+            return original(path, *args, **kwargs)
+        with patch.object(ops.shutil, 'rmtree', side_effect=fail_data), \
+             patch.object(ops.restart_state, 'note_change'):
+            ok, result = ops.uninstall('demo', purge_data=True)
+        self.assertTrue(ok)
+        self.assertTrue(data.exists())
+        self.assertIn('数据清理未完成', result['msg'])
+        self.assertNotIn('数据已清理', result['msg'])
+
+    def test_partial_data_purge_failure_does_not_claim_data_remains_intact(self):
+        ops.install(self.archive())
+        data = self.home / 'data/plugins/demo'
+        data.mkdir(parents=True)
+        user_file = data / 'user.txt'
+        user_file.write_text('user')
+        original = ops.shutil.rmtree
+        def partially_fail(path, *args, **kwargs):
+            if Path(path).resolve() == data.resolve():
+                user_file.unlink()
+                raise PermissionError('injected partial purge')
+            return original(path, *args, **kwargs)
+        with patch.object(ops.shutil, 'rmtree', side_effect=partially_fail), \
+             patch.object(ops.restart_state, 'note_change'):
+            ok, result = ops.uninstall('demo', purge_data=True)
+        self.assertTrue(ok)
+        self.assertTrue(data.exists())
+        self.assertFalse(user_file.exists())
+        self.assertIn('请检查残留数据', result['msg'])
+        self.assertNotIn('数据仍保留', result['msg'])
+
+    def test_data_purge_keeps_channel_cleanup_result_in_message(self):
+        archive = self.archive()
+        with zipfile.ZipFile(archive, 'w') as z:
+            z.writestr('demo.py', 'FEATURE = "DEMO_FEATURE"\n')
+        ops.install(archive)
+        data = self.home / 'data/plugins/demo'
+        data.mkdir(parents=True)
+        with patch.object(features, 'drop', return_value=2), \
+             patch.object(ops.restart_state, 'note_change'):
+            ok, result = ops.uninstall('demo', purge_data=True)
+        self.assertTrue(ok)
+        self.assertIn('渠道开关也清了（2 处）', result['msg'])
+        self.assertIn('插件数据已清理', result['msg'])
+
+    def test_uninstall_does_not_claim_directory_package_removed_when_cleanup_fails(self):
+        package = self.plugins / 'demo'
+        package.mkdir()
+        (package / '__init__.py').write_text('NAME = "demo"\n')
+        original = ops.shutil.rmtree
+        def fail_package(path, *args, **kwargs):
+            if Path(path).resolve() == package.resolve():
+                if kwargs.get('ignore_errors'):
+                    return None
+                raise PermissionError('injected locked package')
+            return original(path, *args, **kwargs)
+        with patch.object(ops.shutil, 'rmtree', side_effect=fail_package), \
+             patch.object(ops.restart_state, 'note_change'):
+            ok, result = ops.uninstall('demo')
+        self.assertFalse(ok)
+        self.assertTrue(package.exists())
+        self.assertIn('插件目录清理失败', result['err'])
 
 
 if __name__ == '__main__':

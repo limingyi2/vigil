@@ -446,7 +446,14 @@ function requestStream(method, urlStr, body, token, onEvent, isTerminalEvent) {
             }
           }
         });
-        res.on('aborted', () => failStream('连接中断，结果不完整'));
+        res.on('aborted', () => {
+          failStream('连接中断，结果不完整');
+          // IncomingMessage emits `aborted` rather than `end` when the peer
+          // drops an SSE response. Settle the stream promise so its bounded
+          // Agent-run resume policy can take over; otherwise the caller hangs
+          // until the renderer's unrelated UI fallback fires.
+          resolve({ ok: false, status: res.statusCode || 0, err: '连接中断，结果不完整' });
+        });
         res.on('end', () => {
           if (!terminalEvent) failStream('服务端提前关闭连接，结果不完整');
           resolve({ ok: res.statusCode >= 200 && res.statusCode < 300 && terminalEvent, status: res.statusCode });
@@ -1037,10 +1044,43 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
     ? (evt) => evt.type === 'snapshot' &&
       ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(evt.payload?.status)
     : null;
-  return requestStream(subscription ? 'GET' : 'POST', b + withSrc, subscription ? null : body, token, (evt) => {
+  const resumableAgentChat = p === '/api/chat/stream' && body &&
+    typeof body.request_id === 'string' && body.request_id.length > 0;
+  let agentRunId = null;
+  let agentCursor = 0;
+  let resumeCount = 0;
+  let lastConnectionError = null;
+  const onEvent = (evt) => {
+    if (resumableAgentChat && evt.type === 'agent_run' && evt.run_id &&
+        (!evt.request_id || evt.request_id === body.request_id)) agentRunId = evt.run_id;
+    if (resumableAgentChat && agentRunId && evt.run_id === agentRunId &&
+        Number.isSafeInteger(evt.seq) && evt.seq >= agentCursor) agentCursor = evt.seq;
+    if (resumableAgentChat && agentRunId && evt.type === 'error' &&
+        evt.class === 'connection_lost') {
+      lastConnectionError = evt;
+      return; // Keep the renderer run open while the bounded read-only resume runs.
+    }
     if (subscription && !evt.job_id) evt = { ...evt, job_id: p.split('/')[4] };
     if (!wc.isDestroyed()) wc.send('api:stream:event', evt);
-  }, isTerminalEvent);
+  };
+  let requestUrl = b + withSrc;
+  for (;;) {
+    const result = await requestStream(subscription ? 'GET' : 'POST', requestUrl,
+      subscription ? null : body, token, onEvent, isTerminalEvent);
+    if (!resumableAgentChat || !agentRunId || result.ok || !lastConnectionError || resumeCount >= 3) {
+      if (resumableAgentChat && agentRunId && !result.ok && lastConnectionError && !wc.isDestroyed())
+        wc.send('api:stream:event', lastConnectionError);
+      return result;
+    }
+    // Agent runs are durable and request_id is idempotent. Resume only after
+    // the stream has confirmed the run identity; never replay a legacy chat or
+    // an unconfirmed request whose side effects may be uncertain.
+    resumeCount += 1;
+    await new Promise(resolve => setTimeout(resolve, Math.min(200 * (2 ** (resumeCount - 1)), 800)));
+    const resumeUrl = new URL(b + withSrc);
+    resumeUrl.searchParams.set('after', String(agentCursor));
+    requestUrl = resumeUrl.toString();
+  }
 });
 
 // 渲染层只看到"本机配置 + 当前地址"。没有连接模式可选：地址永远来自 sidecar。

@@ -197,17 +197,21 @@ _STATIC_SPECS = {
 
 
 def _parameters_schema(params):
-    """把 [("名","说明",必填)] 转成 JSON Schema 的 parameters 对象。
+    """把 [("名","说明",必填[,类型])] 转成 JSON Schema 的 parameters 对象。
 
-    类型声明成"字符串或数字"是有意的：模型常把 max_results 这类数量参数写成
-    50（数字）而不是 "50"。声明只收字符串会让校验直接判无效调用，整批工具
-    被拒（agent_runs 那边更狠：一次 invalid_tool 就结束整个任务）。
-    执行侧本来就会 str() 一次，收数字是安全的。
+    未显式声明类型的参数统一收"字符串或数字"：模型常把 max_results 这类数量
+    参数写成 50（数字）而不是 "50"，声明只收字符串会让校验直接判无效调用，
+    整批工具被拒（agent_runs 那边更狠：一次 invalid_tool 就结束整个任务）。
+    执行侧本来就会 str() 一次，收数字是安全的。声明第 4 位的工具按声明走。
     """
     props = {}
     required = []
-    for pname, pdesc, preq in params:
-        props[pname] = {"type": ["string", "number", "integer"], "description": pdesc}
+    for param in params:
+        pname, pdesc, preq = param[:3]
+        ptype = param[3] if len(param) > 3 else None
+        if ptype not in (None, "string", "integer", "number", "boolean"):
+            raise ValueError("unsupported tool parameter type")
+        props[pname] = {"type": ptype or ["string", "number", "integer"], "description": pdesc}
         if preq:
             required.append(pname)
     schema = {"type": "object", "properties": props}

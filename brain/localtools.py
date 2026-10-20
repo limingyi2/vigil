@@ -59,9 +59,12 @@ REMOTE_TOOLS = {
     "local_file_read": {
         "desc": "读一个文本文件的内容（只读，改不了东西）。看配置文件、日志、笔记时用它。"
                 "**大文件不要直接读整个文件**——先用 local_file_grep 定位到关键行，"
-                "再读相关部分，否则会浪费大量 Token。",
-        "params": [("path", "文件路径", True)],
+                "再用 offset/length 按字节读取目标片段，单次最多 200KB。",
+        "params": [("path", "文件路径", True),
+                   ("offset", "从文件开头起的字节偏移，默认 0", False, "integer"),
+                   ("length", "本次读取字节数，最多 204800，默认 204800", False, "integer")],
         "arg_param": "path",
+        "multi_args": True,
         "danger": False,
         "risk": "safe",
         "group": "files",
@@ -455,9 +458,11 @@ def specs(names=None, src=None):
         # 多参数工具必须标 multi_args：tools.invoke_spec 默认只还原 arg_param
         # 一个参数，其余全丢（grep 因此永远收不到 pattern，write/append 收不到
         # text —— 模型看着调用成功了，结果是一个空文件或一次空搜索）。
+        # 显式声明优先（REMOTE_TOOLS 里标了 multi_args 的工具），否则按参数
+        # 个数推断 —— 两条来源都要认，漏认哪个哪个工具就丢参数。
         out[k] = {"desc": v["desc"], "params": list(v["params"]),
                   "arg_param": v["arg_param"], "risk": v.get("risk") or "safe",
-                  "multi_args": len(v["params"]) > 1}
+                  "multi_args": bool(v.get("multi_args")) or len(v["params"]) > 1}
     return out
 
 

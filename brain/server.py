@@ -1616,10 +1616,10 @@ def start_remote_api(brain):
                     self._json(500, {'ok': False, 'err': '执行服务暂不可用，请查询原 request_id；未自动重发'})
             return True
 
-        def _agent_chat_events(self, item, owner):
+        def _agent_chat_events(self, item, owner, after=0):
             """Project read-only run events onto the existing Electron SSE shape."""
             import agent_runs
-            rid, cursor = item['run_id'], 0
+            rid, cursor = item['run_id'], after
             yield {'type': 'agent_run', 'run_id': rid, 'request_id': item['request_id']}
             while True:
                 for event in agent_runs.stream(rid, owner, cursor):
@@ -1627,21 +1627,24 @@ def start_remote_api(brain):
                     kind, payload = event['type'], event['payload']
                     if kind in ('text_delta', 'think_delta'):
                         yield {'type': 'text' if kind == 'text_delta' else 'think', 'text': payload['text'],
-                               'run_id': rid, 'request_id': item['request_id']}
+                               'run_id': rid, 'request_id': item['request_id'], 'seq': event['seq']}
                     elif kind == 'step_started':
-                        yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid}
+                        yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid, 'seq': event['seq']}
                     elif kind == 'snapshot':
                         if payload['status'] not in agent_runs.STOPPED:
                             # A buffer gap must replace the preview, never append it twice.
-                            yield {'type': 'run_snapshot', 'text': payload['content'], 'run_id': rid}
+                            yield {'type': 'run_snapshot', 'text': payload['content'], 'run_id': rid,
+                                   'seq': event['seq']}
                 current = agent_runs.snapshot(rid, owner)
                 if current['status'] in agent_runs.STOPPED:
                     if current['status'] == 'succeeded':
-                        yield {'type': 'done', 'text': current['content'], 'run_id': rid}
+                        yield {'type': 'done', 'text': current['content'], 'run_id': rid,
+                               'seq': current['event_cursor']}
                     else:
                         err = current['error'] or {}
                         yield {'type': 'error', 'text': current['content'], 'class': err.get('reason'),
-                               'msg': err.get('message'), 'status': current['status'], 'run_id': rid}
+                               'msg': err.get('message'), 'status': current['status'], 'run_id': rid,
+                               'seq': current['event_cursor']}
                     return
 
         def _creator_admin(self, method, path, body):
@@ -2706,6 +2709,15 @@ def start_remote_api(brain):
                         except ValueError:
                             self._json(400, {'ok': False, 'err': '任务参数、预算或 request_id 无效'})
                             return
+                    _agent_after = 0
+                    if _agent_item:
+                        try:
+                            _agent_after = int(_query_param(self.path, 'after') or 0)
+                            if _agent_after < 0 or _agent_after > _agent_item.get('event_cursor', 0):
+                                raise ValueError('invalid event cursor')
+                        except (TypeError, ValueError):
+                            self._json(400, {'ok': False, 'err': 'Agent 事件游标无效'})
+                            return
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                     self.send_header("Cache-Control", "no-cache")
@@ -2729,7 +2741,7 @@ def start_remote_api(brain):
                             else:
                                 yield from _LOCAL['brain'].stream_chat(_in_text, src=_src, conversation_id=_brain_cid)
                     if _agent_item:
-                        _events = self._agent_chat_events(_agent_item, self._display_owner(body))
+                        _events = self._agent_chat_events(_agent_item, self._display_owner(body), _agent_after)
                     else:
                         _events = _display.stream(_factory, self._display_owner(body), body['request_id'], _in_text) if body.get('request_id') else _factory()
                     try:

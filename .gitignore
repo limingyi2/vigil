@@ -279,3 +279,9 @@ brain/build-info.json
 brain/plugins/_pending_restart.json
 
 .vigil-dev/
+
+# Local Agent evaluation artifacts (reports and resumable improvement tasks).
+# Default storage is outside the checkout; these guard explicit local overrides.
+/.agent-eval/
+/agent-eval-reports/
+/agent-eval-state/

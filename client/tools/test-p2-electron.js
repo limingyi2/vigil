@@ -38,6 +38,9 @@ function response(method, raw, body) {
     cancels++;
     data = runs.get(p.split('/')[4]);
     assert.ok(data);
+    assert.equal(body?.src, 'pc', 'Agent cancellation must retain the channel used to create the run');
+    assert.equal(body?.conversation_id, data.conversation_id,
+      'Agent cancellation must retain the conversation owner used to create the run');
     Object.assign(data,{status:'cancelled',error:{message:'已取消后续调度；在途操作可能仍在执行'}});
   }
   return {ok:true,status:200,json:data};
@@ -56,7 +59,8 @@ async function main() {
       event.sender.send('api:stream:event',{type:'error',request_id:body.request_id,class:'connection_lost',status:'interrupted',msg:'服务端提前关闭连接'});
       return {ok:false,status:0,err:'fixture truncated stream'};
     }
-    const run = {run_id:'run_'+streams,request_id:body.request_id,input:body.text,status:'running',content:'',created_at:Date.now()/1000};
+    const run = {run_id:'run_'+streams,request_id:body.request_id,input:body.text,status:'running',content:'',
+      conversation_id:body.conversation_id,created_at:Date.now()/1000};
     runs.set(run.run_id,run);
     const send = (type,extra={})=>{if(!event.sender.isDestroyed())event.sender.send('api:stream:event',{type,run_id:run.run_id,request_id:run.request_id,...extra});};
     send('agent_run');

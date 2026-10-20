@@ -379,6 +379,9 @@ def _finish(db, item, status, reason=None, detail=None):
            else 'paused' if status in ('paused_budget', 'paused') else status,
            dict(status=status, error=item['error']))
     _save(db, item)
+    # Reasoning deltas are ephemeral; retaining them after a terminal run adds
+    # no recovery value and keeps private model output resident in process memory.
+    TRANSIENT.pop(item['run_id'], None)
 
 
 def cancel(rid, owner):

@@ -10,6 +10,8 @@ const [install, mode = 'first'] = process.argv.slice(2);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let app, ws;
 let nextId = 0;
+let completionRequests = 0;
+let freshChatRequests = 0;
 const pending = new Map();
 const provider = http.createServer((req, res) => {
   if (req.method === 'GET') {
@@ -21,7 +23,11 @@ const provider = http.createServer((req, res) => {
   let raw = '';
   req.on('data', chunk => { raw += chunk; });
   req.on('end', () => {
+    completionRequests++;
     const body = JSON.parse(raw);
+    if ((body.messages || []).some(message => JSON.stringify(message).includes('P8_FRESH_CHAT_SENTINEL'))) {
+      freshChatRequests++;
+    }
     assert.equal(req.headers.authorization, 'Bearer fresh-fixture-key');
     const response = JSON.stringify({ choices: [{ message: { content: 'FRESH_INSTALL_CHAT_OK' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
@@ -99,20 +105,40 @@ async function start() {
     'Fresh Core must not bundle or install Wallpaper implicitly');
   const initial = await evaluate("Boolean(document.querySelector('#hero')&&!document.querySelector('#hero').hidden&&document.querySelector('#ta')&&document.querySelector('#msgs').children.length===0)");
   assert.ok(initial, 'Fresh launch did not show an empty welcome page and composer');
+  let clientBrainConnected = false;
+  for (let i = 0; i < 120; i++) {
+    clientBrainConnected = await evaluate('Boolean(API.state.conn&&API.state.conn.ok)');
+    if (clientBrainConnected) break;
+    await sleep(100);
+  }
+  assert.ok(clientBrainConnected, 'Electron renderer did not finish connecting to its bundled Brain');
 
   let conversationId;
   if (mode === 'first') {
     const port = provider.address().port;
-    const applied = await evaluate(`vigil.api('POST','/api/models/apply',{provider:'custom',api_base:${JSON.stringify(`http://127.0.0.1:${port}/v1`)},api_key:'fresh-fixture-key',model:'fresh-fixture-model'})`);
+    const applied = await evaluate(`vigil.api('POST','/api/models/apply',{provider:'custom',api_base:${JSON.stringify(`http://127.0.0.1:${port}/v1`)},api_key:'fresh-fixture-key',chat:'fresh-fixture-model'})`);
     assert.equal(applied.status, 200, 'Could not configure the local Fake Provider');
-    await evaluate("(()=>{const input=document.querySelector('#ta');input.value='P8_FRESH_CHAT_SENTINEL';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#sendBtn').click();return true})()");
+    assert.equal(applied.json?.ok, true, 'Brain rejected the local Fake Provider fixture');
+    await evaluate("(()=>{const input=document.querySelector('#ta');input.value='P8_FRESH_CHAT_SENTINEL';input.dispatchEvent(new Event('input',{bubbles:true}));return true})()");
+    let composerReady = false;
+    for (let i = 0; i < 120; i++) {
+      composerReady = await evaluate("Boolean(document.querySelector('#sendBtn')&&!document.querySelector('#sendBtn').disabled)");
+      if (composerReady) break;
+      await sleep(100);
+    }
+    assert.ok(composerReady, 'Installed composer did not become ready after Brain startup');
+    await evaluate("document.querySelector('#sendBtn').click();true");
     let visible = false;
     for (let i = 0; i < 180; i++) {
       visible = await evaluate("document.querySelector('#msgs')?.innerText.includes('FRESH_INSTALL_CHAT_OK')");
       if (visible) break;
       await sleep(100);
     }
+    const chatDiagnostic = await evaluate(`(()=>({providerRequests:${completionRequests},freshChatRequests:${freshChatRequests},busy:document.querySelector('#sendBtn')?.getAttribute('aria-busy'),disabled:document.querySelector('#sendBtn')?.disabled,composerLength:document.querySelector('#ta')?.value.length||0,activeConversation:Boolean(API.state.chatConversationId),turnCount:document.querySelectorAll('#msgs .turn').length,assistantTurnCount:document.querySelectorAll('#msgs .turn:not(.me)').length,visible:document.querySelector('#msgs')?.innerText.includes('FRESH_INSTALL_CHAT_OK')}))()`);
+    console.log('FRESH_CHAT_DIAGNOSTIC ' + JSON.stringify(chatDiagnostic));
     assert.ok(visible, 'Fresh install could not send and display a Fake Provider chat response');
+    assert.ok(completionRequests > 0, 'Fake Provider did not receive a chat completion request');
+    assert.ok(freshChatRequests > 0, 'Fake Provider did not receive the actual fresh-chat sentinel');
     conversationId = await evaluate('API.state.chatConversationId');
     assert.ok(conversationId, 'First sent message did not create a conversation');
   } else {
@@ -144,6 +170,8 @@ async function start() {
   }
   console.log(JSON.stringify({ result: 'passed', mode, conversation_id: conversationId, brain_home: home,
     brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored',
+    fake_provider_requests: completionRequests,
+    fresh_chat_provider_requests: freshChatRequests,
     wallpaper_uninstalled_and_idle: true, durable_chat_history: mode === 'restart' }));
 }
 

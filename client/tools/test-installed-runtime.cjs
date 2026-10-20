@@ -114,7 +114,7 @@ async function run(){
   }
   assert.ok(restored,'Installed renderer restart did not restore the selected conversation and its messages');
   console.log('PASS installed chat UI creates, switches, continues and restores isolated A/B conversations');
-  await evaluate("window.confirm=()=>{throw Error('native confirm forbidden')};document.querySelector('#clearBtn').click();true");
+  await evaluate("window.confirm=()=>{throw Error('native confirm forbidden')};const active=document.querySelector('.session-row.on [data-delete]');if(!active)throw Error('active conversation delete action missing');active.click();true");
   let confirmReady=false;
   for(let i=0;i<50;i++){
     confirmReady=await evaluate("Boolean(document.querySelector('.vigil-confirm [data-choice=cancel]'))");
@@ -124,7 +124,7 @@ async function run(){
   await evaluate("document.querySelector('.vigil-confirm [data-choice=cancel]').click();true");
   assert.ok(await evaluate("document.querySelector('#msgs').innerText.includes('B_CONTEXT_OK')"),
     'Canceling the in-app confirmation changed the conversation');
-  await evaluate(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();document.createElement=original;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange();true})()`);
+  await evaluate(`(()=>{window.__fixtureFileInput=null;const original=document.createElement.bind(document);document.createElement=function(tag){const n=original(tag);if(tag==='input')n.click=()=>{window.__fixtureFileInput=n};return n};document.querySelector('#clipBtn').click();const picker=document.querySelector('#plusPop [data-plus="file"]');if(!picker)throw Error('attachment menu item missing');picker.click();document.createElement=original;const file=new File([new Uint8Array([0,0,0,24,102,116,121,112])],'fixture.mp4',{type:'video/mp4'});const files=new DataTransfer();files.items.add(file);if(!window.__fixtureFileInput)throw Error('native file picker was not requested');window.__fixtureFileInput.files=files.files;window.__fixtureFileInput.onchange();true})()`);
   let videoReady=false;
   for(let i=0;i<100;i++){
     videoReady=await evaluate("Boolean(document.querySelector('[data-video-choice=frames]')&&document.querySelector('[data-video-choice=original]'))");

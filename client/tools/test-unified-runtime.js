@@ -60,4 +60,10 @@ test('rollback snapshot preserves a complete pair, checks hashes, never contains
   tx.markHealthy(home,{...identity,source_digest:'wrong'});assert.equal(tx.pending(home).status,'prepared');
   tx.markHealthy(home,identity);assert.equal(tx.pending(home).status,'healthy');
   assert.throws(()=>tx.checkpoint(install,path.join(install,'data'),identity));
+  const originalCopy=fs.cpSync;let copyAttempted=false;
+  fs.cpSync=function(){copyAttempted=true;throw new Error('copy must not be reached for overlapping roots')};
+  try {
+    assert.throws(()=>tx.checkpoint(install,install,identity),/应用目录与用户数据目录必须分离/);
+  } finally { fs.cpSync=originalCopy; }
+  assert.equal(copyAttempted,false,'overlapping install and data roots must be rejected before filesystem changes');
 });

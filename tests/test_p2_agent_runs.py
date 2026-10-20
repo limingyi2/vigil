@@ -188,6 +188,7 @@ class RunTests(unittest.TestCase):
     def test_reasoning_is_transient_and_never_in_checkpoint(self):
         item, _, _ = self.execute([response('done', reasoning='PRIVATE_REASONING')])
         self.assertEqual(item['status'], 'succeeded')
+        self.assertNotIn(item['run_id'], runs.TRANSIENT)
         with open(os.path.join(self.tmp.name, 'agent_runs.sqlite3'), 'rb') as stream:
             self.assertNotIn(b'PRIVATE_REASONING', stream.read())
         self.assertNotIn('PRIVATE_REASONING', json.dumps(item))
@@ -201,6 +202,19 @@ class RunTests(unittest.TestCase):
         self.assertEqual(len(item['result']), runs.MAX_TEXT)
         self.assertEqual(len(provider.payloads), 1)
         tool.assert_not_called()
+
+    def test_large_tool_result_is_bounded_and_explicitly_truncated(self):
+        item, provider, tool = self.execute([
+            response(calls=[call()]), response('done')],
+            invoke=lambda *a: 'A'*(runs.MAX_TEXT+1000))
+        self.assertEqual(item['status'], 'succeeded')
+        self.assertEqual(tool.call_count, 1)
+        result = provider.payloads[1]['messages'][-1]['content']
+        self.assertLessEqual(len(result), runs.MAX_TEXT)
+        self.assertIn('truncated', result.lower())
+        self.assertTrue(result.startswith('A'))
+        self.assertTrue(result.endswith('A'))
+        self.assertEqual(item['steps'][1]['result'], result)
 
     def test_partial_stream_tool_call_without_finish_is_not_executed(self):
         @contextlib.contextmanager

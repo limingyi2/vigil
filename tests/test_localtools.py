@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRAIN = os.path.join(ROOT, "brain")
@@ -22,6 +23,32 @@ while BRAIN in sys.path:
 sys.path.insert(0, BRAIN)
 
 import localtools          # noqa: E402
+
+
+class ChunkedReadContractTests(unittest.TestCase):
+    def test_file_read_publishes_typed_optional_range_schema(self):
+        import tools
+
+        spec = localtools.specs(names={"local_file_read"})["local_file_read"]
+        self.assertTrue(spec["multi_args"])
+        schema = tools._parameters_schema(spec["params"])
+        self.assertEqual(schema["required"], ["path"])
+        self.assertEqual(schema["properties"]["offset"]["type"], "integer")
+        self.assertEqual(schema["properties"]["length"]["type"], "integer")
+
+    def test_remote_plugin_forwards_named_range_arguments(self):
+        plugin_dir = os.path.join(BRAIN, "plugins")
+        if plugin_dir not in sys.path:
+            sys.path.insert(0, plugin_dir)
+        import remote
+
+        with patch.object(localtools, "call", return_value="range-result") as call:
+            result = remote.TOOLS["local_file_read"](path="notes.txt", offset=204800, length=512)
+
+        self.assertEqual(result, "range-result")
+        call.assert_called_once_with("local_file_read", {
+            "path": "notes.txt", "offset": 204800, "length": 512,
+        })
 
 
 class LocalToolsBase:   # 只是 mixin，别继承 TestCase（tests/test_source_hygiene.py 会挑出来）

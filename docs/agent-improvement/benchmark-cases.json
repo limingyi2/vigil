@@ -1,0 +1,567 @@
+{
+  "schema_version": 1,
+  "description": "Vigil Agent evaluation manifest. Every automated case is an explicit argv command; no shell strings are permitted.",
+  "suites": {
+    "smoke": [
+      "agent-run-lifecycle",
+      "plan-observability",
+      "runtime-trace"
+    ],
+    "regression": [
+      "agent-run-lifecycle",
+      "plan-observability",
+      "runtime-trace",
+      "local-tool-boundaries",
+      "provider-contract",
+      "conversation-isolation",
+      "run-mode-http",
+      "codex-reasoning-events",
+      "context-history",
+      "plugin-contract",
+      "cancel-contract",
+      "agent-eval-runner"
+    ],
+    "security": [
+      "tool-call-permissions"
+    ],
+    "full-local": [
+      "full-local-pytest"
+    ]
+  },
+  "tests": [
+    {
+      "id": "agent-run-lifecycle",
+      "title": "Agent run lifecycle and HTTP contract",
+      "area": "execution/state",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_p2_agent_runs.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "smoke",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "plan-observability",
+      "title": "Plan observability",
+      "area": "planning/trace",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_plan_observability.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "smoke",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "runtime-trace",
+      "title": "Runtime trace",
+      "area": "events/diagnostics",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_runtime_trace.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "smoke",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "local-tool-boundaries",
+      "title": "Local tool boundaries",
+      "area": "tools/security",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_localtools.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "regression",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "provider-contract",
+      "title": "Model provider contract",
+      "area": "provider/streaming",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_model_providers.py",
+        "brain/tests/test_run_modes_http.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "regression",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "conversation-isolation",
+      "title": "Conversation isolation",
+      "area": "history/state",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_conversation_isolation.py",
+        "tests/test_request_context.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "regression",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "run-mode-http",
+      "title": "Agent run mode HTTP contract",
+      "area": "execution/http",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "brain/tests/test_run_modes_http.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "regression",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "codex-reasoning-events",
+      "title": "Codex reasoning event handling",
+      "area": "streaming/recovery",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_codex_reasoning_summary.py",
+        "tests/test_codex_timeline.py"
+      ],
+      "timeout_seconds": 300,
+      "suite": "regression",
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ],
+      "cwd": "brain"
+    },
+    {
+      "id": "tool-call-permissions",
+      "title": "Tool call permission boundaries",
+      "area": "tools/security",
+      "suite": "security",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_api_permissions.py",
+        "tests/test_localtools.py"
+      ],
+      "timeout_seconds": 300,
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "context-history",
+      "title": "Context and history contracts",
+      "area": "context/history",
+      "suite": "regression",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_cloud_context_tiers.py",
+        "tests/test_conversation_isolation.py"
+      ],
+      "timeout_seconds": 300,
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "plugin-contract",
+      "title": "Plugin contract and structure",
+      "area": "plugins",
+      "suite": "regression",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_creator_plugin_contract.py",
+        "brain/tests/test_plugin_manifest.py",
+        "brain/tests/test_plugin_transactions.py"
+      ],
+      "timeout_seconds": 300,
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "cancel-contract",
+      "title": "Agent cancellation contract",
+      "area": "execution/cancel",
+      "suite": "regression",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_p72_creator_cancel.py"
+      ],
+      "timeout_seconds": 300,
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Declared pytest command exits with code 0; failures and collection errors remain visible in report."
+      ]
+    },
+    {
+      "id": "agent-eval-runner",
+      "title": "Agent evaluation runner infrastructure tests",
+      "area": "evaluation/infrastructure",
+      "suite": "regression",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "tests/test_agent_eval_runner.py"
+      ],
+      "timeout_seconds": 120,
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "Manifest, command allowlist, execution status, timeout/block classification, report comparison, and output path protections pass their unit tests."
+      ]
+    },
+    {
+      "id": "full-local-pytest",
+      "title": "Full local Python test suite",
+      "area": "repository/regression",
+      "suite": "full-local",
+      "argv": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-rs"
+      ],
+      "timeout_seconds": 300,
+      "environments": [
+        "python",
+        "pytest",
+        "local-checkout"
+      ],
+      "acceptance": [
+        "All tests discovered by repository pytest.ini complete with exit code 0; skipped tests are separately counted and are not passes."
+      ]
+    }
+  ],
+  "behavior_scenarios": [
+    {
+      "id": "real-agent-execution",
+      "area": "agent/execution",
+      "environment_type": "real-model",
+      "goal": "Complete a bounded task through the production Agent execution path using a controlled real-model account.",
+      "acceptance": [
+        "Task reaches explicit terminal state",
+        "Result satisfies a written task-specific acceptance rubric",
+        "No unrequested source or user-data changes"
+      ],
+      "status": "NOT RUN"
+    },
+    {
+      "id": "tool-call-correctness",
+      "area": "tools/calls",
+      "environment_type": "real-model-or-fake-provider",
+      "goal": "Exercise tool selection, argument validation, denial, and retry behavior.",
+      "acceptance": [
+        "Calls match available tool schemas",
+        "Denied actions have no side effect",
+        "Retries do not repeat non-idempotent calls"
+      ],
+      "status": "NOT RUN"
+    },
+    {
+      "id": "large-tool-result",
+      "area": "tools/context",
+      "environment_type": "automated-plus-manual",
+      "goal": "Return a tool result larger than current output limits and inspect chunk retrieval and user-visible truncation.",
+      "acceptance": [
+        "Progress is retained",
+        "Truncation is explicit",
+        "Memory remains bounded"
+      ],
+      "status": "NOT RUN"
+    },
+    {
+      "id": "stream-disconnect",
+      "area": "stream/events",
+      "environment_type": "electron-or-e2e",
+      "goal": "Disconnect and reconnect the UI while an Agent run is active.",
+      "acceptance": [
+        "Run identity remains stable",
+        "Snapshot exposes actual state",
+        "No duplicate side-effecting call"
+      ],
+      "status": "PASS",
+      "evidence": {
+        "date": "2026-10-20",
+        "command": "node client/tools/test-electron-brain-e2e.js (VIGIL_E2E_SCENARIO=agent-chat-reconnect)",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-focused-final.log",
+        "scope": "Real Electron renderer and main process, local Brain, loopback Fake Provider, one injected SSE disconnect; does not cover a real Provider or prolonged pressure."
+      },
+      "scope_note": "Two measured scopes pass: the original Electron chat reconnect case survives one injected network cut, and a repeated-cut focused run survives three cuts while preserving all seven streamed chunks and issuing only one Provider request. The full Electron/Brain E2E also crosses the bounded event window with 1,200 persisted text events and returns the authoritative snapshot. Long-duration sustained pressure and real remote-service behavior remain NOT RUN. A bounded-retry exhaustion probe then injected four cuts across one seven-chunk run (three client resumes); after the original Brain run completed, both renderer and Brain eventually reported succeeded. This is a short deterministic probe, not a long-running network outage test. The 1,200-event test also directly queried the isolated Agent SQLite ledger: it retained exactly 256 contiguous event rows ending at the terminal cursor; the event burst plus snapshot recovery took 15.8 seconds.",
+      "stress_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-chat-reconnect-stress; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13-rerun.log",
+        "result": "PASS: cuts=3, resumed=3, same run/request, seven chunks preserved, one Provider request, no plugin side effects."
+      },
+      "burst_evidence": {
+        "date": "2026-10-20",
+        "command": "node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log",
+        "result": "PASS: 1,200 persisted text events exceed the 256-event window; SQLite retained exactly 256 contiguous rows ending at cursor 1204; old cursor returned authoritative terminal/content snapshot; 15.8s."
+      },
+      "extended_burst_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-event-burst; $env:VIGIL_E2E_EVENT_COUNT=5000; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-events-round17.log",
+        "result": "PASS: 5,000 persisted text events (~19.5x the 256-row retention window), cursor 5004, exactly 256 retained contiguous rows 4749–5004, full authoritative snapshot content; burst plus recovery 65.393s.",
+        "scope_note": "Short deterministic local Electron/Brain/Fake Provider pressure only; does not measure long-duration memory/backpressure behavior or real network proxies."
+      },
+      "retry_exhaustion_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-chat-reconnect-exhaustion; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log",
+        "result": "PASS: cuts=4, client resumes=3, same run reaches succeeded in both renderer and Brain."
+      },
+      "round18_regression_evidence": {
+        "date": "2026-10-20",
+        "command": "python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag002-5000-round18",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132038-86df9e8e.json",
+        "result": "PASS=12, FAIL=0, TIMEOUT=0, BLOCKED=0, NOT RUN=2; compared with prior regression run, all selected statuses unchanged and unselected cases remain NOT RUN."
+      },
+      "final_clean_head_regression": {
+        "date": "2026-10-20",
+        "tested_commit": "bc8691b185677987180482647bb5192c22bd7a8b",
+        "command": "python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-final-clean-head-bc8691b",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132334-b40af455.json",
+        "result": "PASS=12, FAIL=0, TIMEOUT=0, BLOCKED=0, NOT RUN=2; compared with Round 18, 12 selected cases unchanged and both unselected cases remain NOT RUN."
+      },
+      "round22_clean_head_regression": {
+        "date": "2026-10-20",
+        "tested_commit": "bbacf07ba72967f540a867712d8d1205824c1cab",
+        "command": "python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag003-provider-failure-clean-bbacf07",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132956-255fd7b6.json",
+        "result": "PASS=12, FAIL=0, TIMEOUT=0, BLOCKED=0, NOT RUN=2; compared with Round 21, all selected cases unchanged and the two unselected cases remain NOT RUN."
+      }
+    },
+    {
+      "id": "task-state-and-cancel",
+      "area": "execution/state",
+      "environment_type": "electron-or-e2e",
+      "goal": "Observe queued, running, terminal, and cancelled states across UI/Brain; cancel model generation and a long tool.",
+      "acceptance": [
+        "UI and Brain states agree",
+        "Cancellation has explicit terminal state",
+        "No next step after cancellation"
+      ],
+      "status": "NOT RUN",
+      "scope_note": "Renderer cancellation now has direct Electron/Brain evidence both before tool dispatch (while model generation is held and a late tool call is returned) and during an already-dispatched slow side-effecting plugin. Both runs become cancelled and no late tool/follow-up is dispatched; the composer unlocks. A focused upstream HTTP 503 case also proves the renderer's failed status/class matches the durable Brain failure, with no implicit retry or tool side effect. Renderer reload cancellation and bounded retry exhaustion state are separately measured. Full done/failure/cancel/timeout/reconnect/restart state matrix remains unverified.",
+      "ui_model_cancel_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-cancel-during-model; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log",
+        "result": "PASS: real renderer cancel during model generation; late tool-call response was not dispatched; Brain/UI terminal state cancelled."
+      },
+      "ui_provider_failure_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-ui-provider-failure; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-provider-http-failure-first.log",
+        "result": "PASS: isolated Provider HTTP 503 produced Brain status failed and renderer status failed with matching service_error classification and a visible explanation; exactly one Provider request; no plugin side effect.",
+        "scope_note": "One deterministic local server-error injection only; real Provider auth/rate-limit behavior and the complete terminal-state matrix remain unverified."
+      }
+    },
+    {
+      "id": "context-budget",
+      "area": "context",
+      "environment_type": "real-model-or-e2e",
+      "goal": "Run a long context task with history and large tool results.",
+      "acceptance": [
+        "Budget behavior is observable",
+        "Relevant evidence is preserved",
+        "No silent context loss"
+      ],
+      "status": "NOT RUN"
+    },
+    {
+      "id": "session-recovery",
+      "area": "session/recovery",
+      "environment_type": "electron-or-e2e",
+      "goal": "Restart/reconnect the application and resume a persisted session.",
+      "acceptance": [
+        "Session identity and persisted state are accurate",
+        "Transient events are not claimed as persisted"
+      ],
+      "status": "NOT RUN"
+    },
+    {
+      "id": "plugin-lifecycle",
+      "area": "plugins",
+      "environment_type": "external-fixture",
+      "goal": "Install, authorize, invoke, and remove a disposable test plugin.",
+      "acceptance": [
+        "Manifest validation is enforced",
+        "Permission boundaries hold",
+        "No unrelated plugin/user data changed"
+      ],
+      "status": "NOT RUN"
+    },
+    {
+      "id": "provider-timeout",
+      "area": "provider/errors",
+      "environment_type": "fake-provider",
+      "goal": "Inject connect timeout, accepted-request response loss, stream disconnect, empty response and malformed event.",
+      "acceptance": [
+        "Failure category is specific",
+        "Run cannot remain indefinitely active",
+        "Retry policy respects idempotency"
+      ],
+      "status": "NOT RUN",
+      "scope_note": "The accepted-request response-loss subcase now has isolated real-Electron/Fake-Provider evidence: the socket is destroyed after receipt, the run becomes connection_lost, and duplicate request_id does not replay it. Other scenarios remain NOT RUN as a whole: provider connect timeout, empty response and malformed-event coverage are incomplete."
+    },
+    {
+      "id": "permission-boundary",
+      "area": "security",
+      "environment_type": "automated-plus-manual",
+      "goal": "Attempt unauthorized tool use and path traversal in a disposable workspace.",
+      "acceptance": [
+        "Operation is denied",
+        "No out-of-scope file changed",
+        "Denial is visible in trace"
+      ],
+      "status": "NOT RUN"
+    }
+  ],
+  "notes": [
+    "Automated tests run only argv entries declared under tests[].",
+    "Behavior scenarios are NOT RUN by this command; require their listed environments.",
+    "Never include secrets, real conversations, personal files, or production data in reports."
+  ],
+  "test_sets": {
+    "execution": [
+      "agent-run-lifecycle",
+      "run-mode-http",
+      "conversation-isolation"
+    ],
+    "observability": [
+      "plan-observability",
+      "runtime-trace",
+      "codex-reasoning-events"
+    ],
+    "security": [
+      "local-tool-boundaries"
+    ],
+    "provider": [
+      "provider-contract",
+      "codex-reasoning-events"
+    ],
+    "permissions": [
+      "local-tool-boundaries",
+      "tool-call-permissions"
+    ],
+    "context": [
+      "context-history",
+      "conversation-isolation"
+    ],
+    "plugins": [
+      "plugin-contract"
+    ],
+    "cancellation": [
+      "cancel-contract"
+    ],
+    "infrastructure": [
+      "agent-eval-runner"
+    ],
+    "full-local": [
+      "full-local-pytest"
+    ]
+  }
+}
