@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import paths
 from plugins import plugin_market as market
@@ -122,3 +123,62 @@ def test_refresh_pulls_updated_manifest_from_a_fake_local_git_remote():
             listed = market.api_list({}, {})
         assert listed["state"] == "ready"
         assert [p["name"] for p in listed["plugins"]] == ["fixture"]
+
+
+def test_raw_urls_map_to_mirror_candidates_with_raw_last():
+    url = "https://raw.githubusercontent.com/limingyi2/vigil-plugins/main/market.json"
+    urls = market._candidate_urls(url)
+    assert urls[0] == "https://cdn.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
+    assert urls[1] == "https://fastly.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
+    assert urls[2] == "https://testingcf.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
+    assert urls[3] == "https://ghfast.top/" + url
+    assert urls[-1] == url
+    # 非 GitHub Raw 地址原样透传，不做镜像映射
+    assert market._candidate_urls("https://cdn.jsdelivr.net/gh/a/b@main/c.json") == [
+        "https://cdn.jsdelivr.net/gh/a/b@main/c.json"]
+
+
+def test_preferred_host_jumps_the_queue_after_a_success():
+    url = "https://raw.githubusercontent.com/example/repo/main/pkg/pkg.zip"
+    market._preferred_host["host"] = "fastly.jsdelivr.net"
+    try:
+        assert market._candidate_urls(url)[0] == \
+            "https://fastly.jsdelivr.net/gh/example/repo@main/pkg/pkg.zip"
+    finally:
+        market._preferred_host["host"] = ""
+
+
+def test_fetch_falls_through_to_first_reachable_mirror():
+    url = "https://raw.githubusercontent.com/example/repo/main/market.json"
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, n):
+            return b'{"plugins": []}'
+
+    def fake_urlopen(request, timeout):
+        calls.append(urlparse(request.full_url).hostname)
+        if calls[-1] == "cdn.jsdelivr.net":
+            raise OSError("blocked")
+        return FakeResponse()
+
+    with patch.object(market, "urlopen", side_effect=fake_urlopen):
+        data = market._fetch_bytes(url, 1024)
+    assert data == b'{"plugins": []}'
+    assert calls == ["cdn.jsdelivr.net", "fastly.jsdelivr.net"]
+    assert market._preferred_host["host"] == "fastly.jsdelivr.net"
+    # 下一次下载直接命中记忆的源
+    with patch.object(market, "urlopen", side_effect=fake_urlopen) as again:
+        market._fetch_bytes(url, 1024)
+        assert urlparse(again.call_args[0][0].full_url).hostname == "fastly.jsdelivr.net"
+    market._preferred_host["host"] = ""
+
+
+def test_fetch_still_rejects_disallowed_download_hosts():
+    import pytest
+    with pytest.raises(ValueError):
+        market._fetch_bytes("https://evil.example.com/market.json", 1024)

@@ -29,6 +29,15 @@ REMOTE_PACKAGE_FILES_LIMIT = 64
 PLUGIN_PROTOCOL = {"name": "vigil-brain-plugin", "major": 1}
 ALLOWED_PERMISSIONS = {"wallpaper.workshop.read", "wallpaper.config.write", "wallpaper.media.read"}
 
+# GitHub Raw 裸连在国内基本不可达。下载走镜像优先、逐源回退；安全不靠域名靠
+# SHA-256——清单与制品内容都做哈希强校验，镜像被篡改会在校验步被拦下。
+RAW_HOST = "raw.githubusercontent.com"
+MIRROR_HOSTS = ("cdn.jsdelivr.net", "fastly.jsdelivr.net", "testingcf.jsdelivr.net", "ghfast.top")
+ALLOWED_HOSTS = {RAW_HOST} | set(MIRROR_HOSTS)
+FETCH_TIMEOUT = 8
+# 进程内记住最近一次成功的源，后续下载（含插件包）直接排最前，不再逐个试错。
+_preferred_host = {"host": ""}
+
 
 def _repo_path():
     """市场仓库本地路径。优先读 config，没有用默认。"""
@@ -75,17 +84,43 @@ def _list_local():
     return installed
 
 
-def _fetch_bytes(url, limit):
-    """仅从 HTTPS raw.githubusercontent.com 读取文件，并限制下载体积。"""
+def _candidate_urls(url):
+    """GitHub Raw 地址 → 候选下载地址列表。镜像在前、原始地址兜底；
+    上次成功的源提到最前。清单与制品下载共用这一条路径。"""
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != "raw.githubusercontent.com":
-        raise ValueError("插件市场只允许从 HTTPS GitHub Raw 源下载")
-    request = Request(url, headers={"User-Agent": "Vigil-Plugin-Market/1.0"})
-    with urlopen(request, timeout=6) as response:
-        data = response.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError("远程文件超过大小限制")
-    return data
+    urls = [url]
+    if parsed.scheme == "https" and parsed.hostname == RAW_HOST:
+        segs = parsed.path.lstrip("/").split("/", 3)
+        if len(segs) == 4 and all(segs[:3]):
+            user, repo, ref, path = segs
+            urls = ["https://%s/gh/%s/%s@%s/%s" % (m, user, repo, ref, path)
+                    for m in MIRROR_HOSTS[:3]]
+            urls.append("https://%s/%s" % (MIRROR_HOSTS[3], url))
+            urls.append(url)
+    if _preferred_host["host"]:
+        urls.sort(key=lambda u: 0 if urlparse(u).hostname == _preferred_host["host"] else 1)
+    return urls
+
+
+def _fetch_bytes(url, limit):
+    """按候选源依次尝试下载，任一源成功即返回并记位。限制下载体积。"""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+        raise ValueError("插件市场只允许从 HTTPS GitHub Raw 或其镜像下载")
+    errors = []
+    for candidate in _candidate_urls(url):
+        request = Request(candidate, headers={"User-Agent": "Vigil-Plugin-Market/1.0"})
+        try:
+            with urlopen(request, timeout=FETCH_TIMEOUT) as response:
+                data = response.read(limit + 1)
+        except Exception as exc:
+            errors.append("%s：%s" % (urlparse(candidate).hostname, str(exc)[:60]))
+            continue
+        if len(data) > limit:
+            raise ValueError("远程文件超过大小限制")
+        _preferred_host["host"] = urlparse(candidate).hostname
+        return data
+    raise ValueError("全部下载源不可达（%s）" % "; ".join(errors[:3]))
 
 
 def _validate_market(market, source_kind):

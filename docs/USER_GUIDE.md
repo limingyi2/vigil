@@ -215,7 +215,9 @@ PROVIDERS = {
 
 Vigil 有三种扩展入口：Python 后端插件、目录型市场插件、Node 侧 JS 技能。
 后端运行插件安装在 `brain/plugins/`，可以声明工具、路由、提示词钩子和前端资源。
-Brain 插件市场默认从独立 `vigil-plugins` GitHub 仓库的 `market.json` 读取；如果在运行目录的
+Brain 插件市场默认从独立 `vigil-plugins` GitHub 仓库的 `market.json` 读取；GitHub Raw 裸连
+不可达时自动回退到 jsDelivr 等公开镜像（清单与制品都先过 SHA-256 强校验，镜像不引入信任风险）。
+如果在运行目录的
 `config/config.json` 中显式配置 `market_repo`，则改用该本地 Git 仓库并通过
 fast-forward-only `git pull` 刷新。市场制品先校验 ZIP SHA-256、Manifest、协议、权限与逐文件 SHA-256，再由 Brain 安装器做
 静态结构检查和事务提交。市场插件安装到 `brain/data/installed_plugins/`，不会写进跟踪源码的
