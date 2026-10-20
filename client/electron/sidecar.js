@@ -90,7 +90,7 @@ function maybeStart(cfg = getter()) {
       VIGIL_READY_FILE:readyFile,VIGIL_INSTANCE_ID:state.instanceId,VIGIL_LEGACY_HOMES:JSON.stringify([...new Set(legacy)]),
       BRAIN_MUTEX:'Local\\VigilBrain-'+crypto.createHash('sha256').update(state.home).digest('hex').slice(0,20)};
     delete env.VIGIL_PORT;delete env.VIGIL_BRAIN_EXE;
-    // 不再把云端地址/凭据递给本地大脑：本地 Brain 不推不拉，记忆和人设只有本机这一份。
+    // 不再把云端地址/凭据递给本地内核：本地 Brain 不推不拉，记忆和人设只有本机这一份。
     delete env.VIGIL_CLOUD_URL;delete env.VIGIL_CLOUD_TOKEN;
     fs.mkdirSync(state.home,{recursive:true});
     child=spawn(state.exe,[],{cwd:state.home,windowsHide:true,stdio:['ignore','pipe','pipe'],env});

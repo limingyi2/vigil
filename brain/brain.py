@@ -950,6 +950,12 @@ class Brain:
         按通道自己加的（FC 通道加工具态度，router 通道加工具结果）。
         """
         parts = [self.persona_text]
+        # 单轮工作区注记：server 每次请求前按当前会话归属设置，这里用完即弃。
+        # 放在人设之后，"此刻该在哪个文件夹里干活"就有了着落。
+        turn_note = getattr(self, 'turn_note', '')
+        if turn_note:
+            parts.append('\n' + turn_note)
+            self.turn_note = ''
         tm = self._time_hint()
         if tm:
             parts.append("\n" + tm)

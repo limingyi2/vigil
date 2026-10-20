@@ -2,7 +2,7 @@
 /**
  * M3 转发通道客户端：本地 Electron 出站长连云端 /ws/brain。
  *
- * 职责就一件：云端来 msg → 调本地大脑 /api/chat → 把 answer 送回去。
+ * 职责就一件：云端来 msg → 调本地内核 /api/chat → 把 answer 送回去。
  * 附带：ack（云端日志用）、指数退避重连、30s 心跳探测。
  *
  * 为什么出站连接：NAT/防火墙后面只有出站是天然通的；云端不用开新端口
@@ -18,7 +18,7 @@ const http = require('http');
 const BACKOFF_MAX = 60 * 1000;    // 重连封顶 1 分钟
 const BACKOFF_BASE = 1000;
 const IDLE_PING_MS = 30 * 1000;   // 30s 没任何帧 → 主动 ping
-const BRAIN_TIMEOUT_MS = 22 * 1000; // 调本地大脑的超时（云端 25s 总闸，留余量）
+const BRAIN_TIMEOUT_MS = 22 * 1000; // 调本地内核的超时（云端 25s 总闸，留余量）
 
 let state = {
   running: false,
@@ -52,14 +52,14 @@ function wsUrl(cloudBase, token) {
   return wsBase + '/ws/brain?token=' + encodeURIComponent(token || '');
 }
 
-/** POST 本地大脑 /api/chat，拿 { reply, messages, ... } */
+/** POST 本地内核 /api/chat，拿 { reply, messages, ... } */
 function askLocalBrain(brainBase, token, payload) {
   return new Promise((resolve) => {
     const body = JSON.stringify({
       text: payload.text || '',
       src: payload.src || 'wechat',
       dry_run: !!payload.dry_run,
-      // img：云端原样转来的 base64（微信发图场景），本地大脑自己走视觉链
+      // img：云端原样转来的 base64（微信发图场景），本地内核自己走视觉链
       img: payload.img || undefined,
     });
     const u = new URL(brainBase + '/api/chat');
@@ -78,7 +78,7 @@ function askLocalBrain(brainBase, token, payload) {
         try { resolve(JSON.parse(data)); } catch (e) { resolve({ err: 'bad json' }); }
       });
     });
-    req.on('timeout', () => { req.destroy(new Error('本地大脑超时')); });
+    req.on('timeout', () => { req.destroy(new Error('本地内核超时')); });
     req.on('error', (e) => resolve({ err: String(e.message || e) }));
     req.end(body);
   });
@@ -166,7 +166,7 @@ function connect(opts) {
     let d = null;
     try { d = JSON.parse(String(data)); } catch (e) { return; }
     if (d && d.t === 'msg') {
-      // 串行处理：她本地大脑一次答一句（/api/chat 自带排队语义）
+      // 串行处理：她本地内核一次答一句（/api/chat 自带排队语义）
       handleMsg(d, brainBase, brainToken).catch((e) => {
         log('handle msg failed: ' + (e.message || e));
         sendJson({ t: 'result', id: d.id || '', reply: '',

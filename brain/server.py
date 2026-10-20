@@ -1506,6 +1506,26 @@ def start_remote_api(brain):
             item = conversations.get(owner, src, str(persona), cid)
             return item, owner, src, persona
 
+        def _workspace_note(self, src, conv, conv_owner, persona):
+            """会话归属了工作区就把路径注记进这一轮上下文。
+
+            选择工作区此前只是侧栏分组（"摆设"的根因）：她根本不知道自己
+            该在哪个文件夹里干活。这里只注入位置事实，**不**放宽 localtools
+            的授权 —— 读写权限仍由盾牌面板的白名单/确认机制单独管。
+            """
+            if not conv or not conv.get('workspace_id'):
+                return ''
+            try:
+                import workspaces as _ws
+                item = _ws.get(conv_owner, src, str(persona), conv['workspace_id'])
+            except Exception:
+                return ''
+            if not item or not item.get('path'):
+                return ''
+            return ('当前对话归属于用户选择的工作区「%s」（路径 %s）。'
+                    '涉及这个目录下文件的任务，默认就在这个目录里做。'
+                    % (item.get('name') or '工作区', item.get('path')))
+
         def _new_agent_run(self, body):
             import agent_runs
             import copy
@@ -1630,6 +1650,13 @@ def start_remote_api(brain):
                                'run_id': rid, 'request_id': item['request_id'], 'seq': event['seq']}
                     elif kind == 'step_started':
                         yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid, 'seq': event['seq']}
+                    elif kind == 'tool_finished':
+                        # 工具步骤进聊天流：她在干什么、结果如何，看得见。
+                        yield {'type': 'tool', 'tool': payload.get('tool'),
+                               'state': payload.get('result_state'), 'run_id': rid, 'seq': event['seq']}
+                    elif kind == 'tool_reused':
+                        # 看门狗检测到的同参复用：自我纠错的可见信号。
+                        yield {'type': 'tool_reused', 'run_id': rid, 'seq': event['seq']}
                     elif kind == 'snapshot':
                         if payload['status'] not in agent_runs.STOPPED:
                             # A buffer gap must replace the preview, never append it twice.
@@ -2354,6 +2381,7 @@ def start_remote_api(brain):
                             return
                         _brain_cid = None if _conv['legacy'] else _cid
                         body['session_id'] = _cid
+                        brain.turn_note = self._workspace_note(_src, _conv, _conv_owner, _conv_persona)
                         if not body.get('dry_run'):
                             import conversations as _conversations
                             _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _disp)
@@ -2668,6 +2696,7 @@ def start_remote_api(brain):
                         _brain_cid = None if _conv['legacy'] else _cid
                         body['session_id'] = _cid
                         body['brain_conversation_id'] = _brain_cid
+                        brain.turn_note = self._workspace_note(_src, _conv, _conv_owner, _conv_persona)
                         if not body.get('dry_run'):
                             import conversations as _conversations
                             _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _in_text)

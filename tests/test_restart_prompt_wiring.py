@@ -5,7 +5,7 @@
 持久判据"，e2e 要真跑一遍 Electron + Brain + Host（分钟级），而这里钉的是
 **不许退回去的形状**：
 
-  C1  toast 文案按操作类型分（插件→重启大脑，技能→重启技能宿主）；
+  C1  toast 文案按操作类型分（插件→重启内核，技能→重启技能宿主）；
   C2  卸载回调必须消费 restart_needed，不能把"文件删了"显示成"运行态也停了"；
   C3  界面的"待重启"来自服务端磁盘判据（changed_at > started_at），
       不是 toast 记忆、不是前端变量 —— 所以刷新后还在，也不可能虚假消解。
@@ -51,7 +51,7 @@ class C1ToastWordingByKind(unittest.TestCase):
         """同一句话两边复用就是 C1 本身。"""
         i = self.src.index("const RN = {")
         block = self.src[i:i + 400]
-        self.assertIn("重启大脑", block)
+        self.assertIn("重启内核", block)
         self.assertIn("重启技能宿主", block)
 
     def test_plugin_call_passes_plugin_kind(self):
@@ -64,7 +64,7 @@ class C1ToastWordingByKind(unittest.TestCase):
 
     def test_old_single_wording_is_not_hardcoded_anymore(self):
         """原来那句被所有类型共用；现在它只能出现在 plugin 分支里。"""
-        n = self.src.count("有后台线程的插件要重启大脑才完全生效")
+        n = self.src.count("有后台线程的插件要重启内核才完全生效")
         self.assertEqual(n, 1, "这句文案应当只属于插件分支，出现 %d 处" % n)
 
 
@@ -137,7 +137,7 @@ class C3PendingStateHasAReliableSource(unittest.TestCase):
                          "插件页和技能页都该有这条持久提示")
 
     def test_banner_names_the_right_restart_target(self):
-        self.assertIn("待重启大脑", self.pages)
+        self.assertIn("待重启内核", self.pages)
         self.assertIn("待重启技能宿主", self.pages)
 
     def test_plugins_get_returns_the_judgement(self):

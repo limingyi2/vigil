@@ -352,7 +352,7 @@
         } else {
           // 起不来就把原因说清楚：本地 Brain 是唯一后端，静默失败等于"她不见了"
           state.autoFail = again || { err: state.conn.err || '未知原因' };
-          toast('本地 Brain 没起来：' + (state.autoFail.err || '请到设置 → 本地大脑 查看'));
+          toast('本地 Brain 没起来：' + (state.autoFail.err || '请到设置 → 本地内核 查看'));
         }
       }
       if (state.conn.ok && lastPluginVersion === 0) void loadPluginFrontends();
@@ -397,7 +397,7 @@
   }
 
   // ── 首启向导（填 key 即用）─────────────────────────────────
-  // 本地大脑跑着、连接正常、但一个模型 key 都没配 → 直接把人领到
+  // 本地内核跑着、连接正常、但一个模型 key 都没配 → 直接把人领到
   // "模型与服务商"表单前。配过一次（wizard_done）就再也不弹。
   async function maybeWizard() {
     try {
