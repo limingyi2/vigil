@@ -109,3 +109,38 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 10 个需要真实模型、Electron 或外部插件/服务的行为场景仍是 NOT RUN；当前机器缺少 Electron/npm 依赖、真实模型测试账户和私有外部 fixture。没有构建发行包。Agent reasoning 缓存清理以对象/持久化断言验证，尚无真实模型长期内存曲线；升级目录分离验证为纯 Node 临时目录；插件锁定/部分删除通过临时故障注入，不代表每种 Windows 文件系统锁语义。评测报告及 compare JSON 均只在 `%LOCALAPPDATA%/Vigil/agent-eval/reports`，不入库。
 
 轮后 regression 与轮前基线 compare：`compare-a514fff3ea.json`，同测试选择/环境为 true。R1/R3/R5 的复现到修复 compare：`compare-8991e541bc.json`、`compare-9fe0d1ca1e.json`、`compare-9d91a3082d.json`，均识别为 FIXED。PR #10 保持 open/unmerged；本轮无发布包，没有修改 master。
+
+---
+
+## 第二阶段真实 Windows / Electron / Brain 验收（2026-10-20）
+
+本节 supersede 早期“无 Electron/npm”的环境阻塞描述。工作树使用 Node 24.19.0/npm 11.17.0 portable toolchain、隔离 CPython 3.12.14 venv、通过 `npm ci` 安装的 Electron 28.3.3；模型、Brain home、插件及 Electron user data 均为临时 fixture。没有读取真实 Provider 密钥或用户聊天。
+
+### 实际命令与结果
+
+| 命令 / 范围 | 结果 | 本机证据 |
+|---|---|---|
+| `python scripts/agent_eval.py --state-dir <本地隔离目录> validate` | PASS：14 自动案例、4 suites、10 sets、10 行为场景 | CLI 输出；状态目录在 `%LOCALAPPDATA%/Vigil/stage2-state` |
+| `python scripts/agent_eval.py --state-dir <本地隔离目录> run --suite regression --label phase2-regression` | 12/12 案例 PASS；240 passed、3 skipped | `reports/run-20261020T104957-72a4dc41.json` |
+| 同上 `run --suite security --label phase2-security` | 1/1 案例 PASS；29 passed | `reports/run-20261020T105048-084cb27f.json` |
+| 同上 `run --suite full-local --label phase2-full-local` | 1 个聚合案例 PASS；1,388 passed、19 skipped、0 failed；47 subtests passed，114.01 秒 | `reports/run-20261020T105101-97df30a8.json` |
+| `node --test` 8 个包含 `node:test` 的客户端组件文件 | 56 passed、0 failed、0 skipped | 控制台输出；组件清单为 Agent Center notifications/state、timeline、localtool read、stream lifecycle、plugin media、public updates、unified runtime |
+| `node client/tools/test-electron-brain-e2e.js` | 最终两次独立执行均 exit 0、8/8 PASS | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-electron-brain-e2e-final.log` 与 `phase2-electron-brain-e2e-stability.log` |
+| Agent evaluator synthetic blocked/resume workflow | `OPEN → BLOCKED → IN_PROGRESS → READY_FOR_VERIFY → COMPLETED`；blocked resume 未运行测试；同条件 PASS → PASS / UNCHANGED | 任务与报告在 `%LOCALAPPDATA%/Vigil/stage2-state/task-flow-*` 的独立本地目录，不入库 |
+
+全仓 Python 跳过 19 项未计入通过，`-rs` 原因保存在报告，包括缺少私有/本机素材、FFmpeg、Windows junction/symlink/mkfifo 权限限制。行为场景不因单个组件测试通过而升格为 PASS。
+
+### 测试基础设施修复与失败证据
+
+真实 Electron 首轮 E2E 暴露临时插件 `TOOL_SPECS.params` fixture 契约错误（`KeyError: slice(None, 3, None)`、Fake Provider 请求数为 0），已仅修复 fixture。随后稳定性复跑暴露会话列表异步加载 race（欢迎页已出现而列表请求未完成，断言 `0 !== 12`），已增加基于会话数量的显式 `waitFor`，未增加固定 sleep 或放宽断言。之后两次独立执行全部 8 项通过。以上均为测试基础设施问题，不是 Vigil 业务 Bug。
+
+### P1 状态与候选发行包
+
+| P1 | 当前状态 | 剩余范围 |
+|---|---|---|
+| AG-002 SSE 恢复/游标/队列压力 | 部分验证 | 真实 Electron 流、终态和 Brain 进程断开已验；Electron 网络断开后重连、Brain cursor gap 快照及长时间事件压力未完整验收 |
+| AG-003 Electron/Brain 状态一致性 | 部分验证 | 成功、插件失败、会话与 Brain/Electron 重启、Brain 断开后 UI 解锁已验；取消/超时/退出窗口的状态矩阵待验证 |
+| AG-005 不确定请求与幂等副作用 | 待验证 | 自动契约/去重套件通过；响应不确定情况下的真实非幂等外部操作未故障注入 |
+| AG-008 包内容、用户数据、升级/回滚 | 部分验证 | 此环境能够尝试隔离 Windows candidate installer lifecycle；旧版本升级和安装器级失败回滚须结合候选包实测结果判断，不能以单元快照测试替代 |
+
+Windows 候选包的版本、source commit、installer SHA-256、包内清单、实际安装/启动/重启/卸载结果写入本阶段本机 `phase2-acceptance.json`；候选包不发布，也不覆盖正式安装。完整安装器级升级与失败回滚仍是阻塞范围。PR #10 保持 open/draft/unmerged；本阶段没有修复 Vigil 业务 Bug。

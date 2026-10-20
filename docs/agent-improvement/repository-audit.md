@@ -78,3 +78,19 @@ Python Brain
 | P2 | AG-007 | 扩展插件权限隔离、越权参数、路径穿越、卸载清理审计 |
 
 以上待办均没有在本轮修复。详细报告文件名、命令及状态见 `final-acceptance.md` 和本机评测报告目录。
+
+## 第二阶段 Windows 运行环境补充（2026-10-20）
+
+前文“缺少 Electron/npm”的审计结论对应初始环境，现由本地隔离工具链补充覆盖：Node 24.19.0/npm 11.17.0、Electron 28.3.3 和 CPython 3.12.14 venv 已在用户状态目录准备；在临时 profile + 本地 Brain + Fake Provider 下，真实 Electron E2E 连续两次 8/8 PASS。此补充不代表真实 Provider，也不证明全部 UI 路径。
+
+| 模块 | 第二阶段证据 | 仍待验证 / P1 |
+|---|---|---|
+| Electron 启动、渲染、插件前端 | 真 Electron 加载主界面与临时插件 frontend/css；E2E 8/8 PASS | 窗口关闭时后台任务行为、GPU/安装后机器差异待测 |
+| Brain 启动/HTTP/Provider | 隔离 Brain 健康就绪；Fake Provider 收到流式与非流请求 | 真实模型认证、限流、空响应和供应商网络未测 |
+| SSE/事件/恢复 | 多 delta + 单终态、Brain crash interruption、组件游标 gap/snapshot 56 Node tests 中覆盖 | Electron 实际网络断流后的 cursor/snapshot 自动恢复和事件队列压力仍 P1 |
+| Agent/工具与失败 | Electron 工具 schema 调用、插件成功/失败、失败信息进入模型和 UI | 非幂等外部 side effect 的超时不确定与重试仍 P1 |
+| 会话/历史/Creator | 多会话隔离、A/B 恢复、Brain 与 Electron 重启后的历史/草稿恢复通过 | 高负荷/损坏数据恢复尚无全矩阵 |
+| 插件生命周期 | 临时目录插件安装调用路径、前端/CSS及失败结果显示 | 市场下载、外部依赖、安装/启停/卸载失败完整 UI 流程未全验 |
+| 安装/发行 | 真实 NSIS candidate lifecycle 运行结果见 `phase2-real-runtime-acceptance.md`/本机验收 JSON | 旧版升级、升级失败后的安装器 rollback 是否通过需按候选包实际结果判断；不因单元回滚测试宣称完成 |
+
+阶段自动回归结果为全仓 1,388 passed / 19 skipped / 0 failed；跳过未计入通过。问题 ID AG-002/003/005/008 均仍分别标为部分验证或待验证，不作为已确认缺陷修复。

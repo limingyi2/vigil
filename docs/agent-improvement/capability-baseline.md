@@ -89,3 +89,27 @@
 第一次全仓执行与 regression 并行，出现隔离 Brain 60 秒启动失败，聚合报告 `run-20261020T102724-04ab9dd3.json` 为 FAIL（1,373 passed、19 skipped、15 errors）。停止并行后原样串行重跑通过；不把首次失败删除或覆盖。19 项 skip 仍是 skip，原因见 pytest 报告。真实模型、Electron 进程/窗口、外部插件和发行包端到端仍未验证：本环境没有 Electron runtime、`client/node_modules` 或 npm；这些不计为通过。
 
 本轮改动只涉及终态 Agent reasoning transient 清理、更新快照目录隔离和插件卸载结果/清理错误处理，相关已知功能性风险 AG-002—AG-008 仍按前文状态保留，不能据自动测试推断为全部解决。
+
+## 2026-10-20 — 第二阶段真实运行环境测量
+
+本节以 Windows 隔离环境对当前 PR 分支进行的运行结果为准，补充并更新上面的早期“无 Electron 依赖”状态。测试没有读取真实用户配置或连接真实模型；所有聊天、插件、Brain 数据和令牌均为临时 Fake Provider fixture。
+
+### 环境与真实运行结果
+
+- **提交基线：** `aeacf166ea1478b830e6dfb9a0d9d7b50a6f21b9`；工作分支 `codex/vigil-agent-improvement-foundation`。
+- **环境：** Windows 10 Pro x64，build 26300；Node 24.19.0 / npm 11.17.0（便携安装于用户本地状态目录）；CPython 3.12.14 隔离 venv；Electron 28.3.3 由 `npm ci` 安装；Brain 依赖来自仓库需求文件。
+- `client/tools/test-electron-brain-e2e.js` 在真实 Electron renderer + 本地 Python Brain + loopback Fake Provider 中 **8 项 PASS**：插件页面加载、冷启动欢迎页、会话历史/隔离、工具成功及失败反馈、SSE 多事件单次终态、Creator 草稿与会话恢复、Brain 重启和进程断开后的 `interrupted` 展示及解锁。
+- Node 原生组件回归：8 个明确包含 `node:test` 的文件 **56 passed / 0 failed / 0 skipped**，覆盖 Agent Center 游标缺口/重连快照、timeline 快照恢复、流生命周期、工具分块读取、更新事务与哈希。
+- `agent_eval.py run --suite regression`：12 个声明案例 PASS，pytest 240 passed / 3 skipped；security 1 案例 PASS，29 passed；全仓 `python -m pytest -rs` 聚合案例 PASS，1,388 passed / 19 skipped / 0 failed / 47 subtests passed，114.01 秒。19 项 skipped 未计入 passed，原因和原始 pytest 摘要保留在本机报告。
+- 任务工作流以独立用户状态目录中的合成任务验证 `OPEN → BLOCKED → IN_PROGRESS → READY_FOR_VERIFY → COMPLETED`；blocked resume 没有执行测试，后测和同条件比较关联成功。合成任务不是 Vigil 缺陷记录。
+
+### P1 风险现状（本轮没有确认或修复业务 Bug）
+
+| ID | 优先级 | 当前证据 | 状态 |
+|---|---:|---|---|
+| AG-002 | P1 | Electron SSE 的多 delta/终态正常；Brain 强制退出被记录为 interrupted；Node timeline 快照恢复、游标 gap/connection-generation 分支测试通过 | **部分验证**。网络中途断开后的 Electron 自动重连、Brain snapshot 游标缺口及真实事件队列压力未形成完整联机验收 |
+| AG-003 | P1 | Fake Provider/Electron 成功工具工作流、工具失败反馈、Brain/Electron 重启恢复、Brain 进程断开后 UI 解锁通过 | **部分验证**。Electron 取消、超时、窗口退出以及各终态与 Brain API 持久状态矩阵仍待验证 |
+| AG-005 | P1 | Provider/Agent 执行契约、失败处理和工具去重自动化回归通过 | **待验证**。未对响应不确定时的外部非幂等副作用执行端到端故障注入；真实 Provider 不可用 |
+| AG-008 | P1 | 构建来源、包内容、首次安装、重启恢复、用户数据保留和卸载检查由隔离候选生命周期脚本实测（详见阶段验收记录） | **部分验证**。升级旧版本与升级失败后的安装器级回滚不能由单元级快照测试代替 |
+
+当前不允许提出“全部 P1 关闭”或完整产品交付结论。真实模型认证/限流/空响应的专用故障注入、Electron 窗口退出、长时事件队列压力和安装器升级回滚范围见 `phase2-real-runtime-acceptance.md`。

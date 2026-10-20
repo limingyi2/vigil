@@ -157,3 +157,38 @@
 - **尚未验证：** 被真实系统进程占用时 Electron 插件面板的端到端提示；当前宿主无 Electron runtime。
 
 本轮所有 pytest 报告与 compare JSON 存放在 `%LOCALAPPDATA%\Vigil\agent-eval\reports`，不入库。测试代码只对临时目录施加故障，不运行真实模型，不修改用户配置、聊天记录或插件数据。
+
+## 2026-10-20 — 第二阶段真实 Electron/Brain 环境验收
+
+**基线提交：** `aeacf166ea1478b830e6dfb9a0d9d7b50a6f21b9`，分支 `codex/vigil-agent-improvement-foundation`。Windows 工具链安装在用户本地状态目录的隔离 Node/Python 环境；Electron 28.3.3 和 Brain 均对临时 profile 启动。模型请求只打到 loopback Fake Provider。
+
+### Round 1 — 修正 Electron/Brain E2E 插件夹具契约
+
+- **修改前表现：** `node client/tools/test-electron-brain-e2e.js` 在第一次“保存会话”即失败；Brain 日志栈为 `tools.py::_parameters_schema` 对 `param[:3]` 执行时收到 dict，抛出 `KeyError: slice(None, 3, None)`；Fake Provider 请求数为 0。
+- **根因证据：** `brain/tools.py::_parameters_schema` 与 Creator 插件契约要求 `TOOL_SPECS.params` 使用 `(name, description, required, type)` 元组列表；E2E 生成的临时 `smoke_ping` 插件错误地声明为 dict 列表。
+- **修改范围：** 只修正 `client/tools/test-electron-brain-e2e.js` 临时插件 fixture 为正确 tuple 参数契约，并保留只输出请求序号/stream 标记的诊断；没有更改 Brain 或 Electron 业务代码。
+- **前后对照：** 修复前 E2E FAIL（请求未发出）；修复后 E2E 8/8 PASS，报告日志在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-electron-brain-e2e-final.log`。另一次仅为检查异步稳定性的初跑发现会话列表断言竞态，保留观察结果并进入 Round 2。
+
+### Round 2 — 等待 Electron 会话列表恢复后再断言
+
+- **修改前表现：** Brain/Electron 重启后欢迎页已可见，但 renderer 的异步会话列表请求尚未完成；测试立即断言 12 条记录时偶发得到 0。原始观察是 FAIL (`0 !== 12`)，其临时测试目录按 harness 默认清理，原始 stack 保存在本任务工具输出中。
+- **根因证据：** E2E 只等待欢迎页，不等待 `[data-session]` 列表加载；欢迎页可先于 session API 响应渲染。不是聊天或持久化业务缺陷。
+- **修改范围：** 在最终冷启动断言之前增加 `waitFor("document.querySelectorAll('[data-session]').length===12", ...)`，等待明确的 UI 后置条件。未延长固定 sleep，也未放宽数量断言。
+- **修改后结果：** 修复后以默认安全清理运行两次，均退出码 0、8/8 PASS；日志分别为 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-electron-brain-e2e-final.log` 和 `phase2-electron-brain-e2e-stability.log`。两次均覆盖工具调用、流事件、会话隔离、Creator、Brain 重启和 Brain 进程断开恢复。
+
+### 全仓关联回归与续接闭环
+
+- `python scripts/agent_eval.py --state-dir <本机隔离状态> run --suite regression --label phase2-regression`：12/12 案例 PASS，pytest 240 passed / 3 skipped，报告 `run-20261020T104957-72a4dc41.json`。
+- `... run --suite security --label phase2-security`：1/1 案例 PASS，pytest 29 passed，报告 `run-20261020T105048-084cb27f.json`。
+- `... run --suite full-local --label phase2-full-local`：全仓 1,388 passed / 19 skipped / 0 failed、47 subtests passed、114.01 秒；1 个聚合案例 PASS，报告 `run-20261020T105101-97df30a8.json`。19 项 skip 未计入通过，原因保存在该报告 `stdout`。
+- `node --test <8 个声明 node:test 的 client/tools 文件>`：56 passed / 0 failed / 0 skipped。
+- 合成任务在独立状态目录中完成 `OPEN → BLOCKED → IN_PROGRESS → READY_FOR_VERIFY → COMPLETED`；blocked resume 没运行命令；同一个 `provider-contract` 案例的前后报告为 PASS → PASS、`same_conditions=true`、classification `UNCHANGED`。该任务只测任务状态机，并非产品缺陷或 fix。
+- `npm ci`、Node/Python 工具链和 Fake Provider 均位于本机隔离目录；运行报告没有进入 Git。最终包和其 lifecycle 实际结果另见 `phase2-real-runtime-acceptance.md` 及本机验收 JSON。
+
+### P1 状态
+
+- **AG-002：部分验证，仍 P1。** 真实 Electron SSE 增量/终态、Brain 进程退出的 interrupted 恢复和组件级 cursor gap/snapshot 测试有证据；真正网络断线后的 UI 自动重连、Brain event cursor gap 与持续压力没有端到端证明。
+- **AG-003：部分验证，仍 P1。** 成功/插件失败、会话/Brain/Electron 重启及 Brain 断开后 UI 解锁有 Fake Provider/Electron 结果；长任务取消、超时、窗口退出后的完整状态矩阵待验证。
+- **AG-005：待验证，仍 P1。** 自动 Provider/Agent 契约通过；外部非幂等副作用在连接中断与响应不确定状态下的端到端不重放尚无证据。
+- **AG-008：部分验证，仍 P1。** 本轮建立 Windows 隔离工具链并运行候选包 lifecycle（如安装/重启/卸载保留数据通过）；旧版升级及升级失败回滚仍需单独结论。没有声明 P1 全部关闭。
+- 本阶段未修复 Vigil 业务 Bug，未接入真实 Provider 凭据，不触碰用户数据。Windows 候选包为非正式验收产物，SHA-256/清单仅记录在本机验收 JSON；不发布、不覆盖正式安装。

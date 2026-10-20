@@ -53,7 +53,10 @@ function requestStarted(predicate) {
 
 async function startModel() {
   modelServer = http.createServer(async (req, res) => {
-    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') return json(res, 404, {});
+    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      console.log('FAKE_PROVIDER unexpected=' + req.method + ' ' + req.url);
+      return json(res, 404, {});
+    }
     let raw = '';
     for await (const chunk of req) raw += chunk;
     let payload;
@@ -63,6 +66,7 @@ async function startModel() {
     const userText = String(lastUser && lastUser.content || '');
     const call = { payload, messages, userText, toolNames: (payload.tools || []).map(t => t.function && t.function.name) };
     modelRequests.push(call);
+    console.log('FAKE_PROVIDER request=' + modelRequests.length + ' stream=' + Boolean(payload.stream));
     for (let i = modelWaiters.length - 1; i >= 0; i--) {
       if (modelWaiters[i].predicate(call)) modelWaiters.splice(i, 1)[0].resolve(call);
     }
@@ -151,7 +155,7 @@ function writeFixtures(modelBase, brainPort) {
     '    if mode == "fail": raise RuntimeError("fixture plugin execution failure")',
     '    return "VIGIL_PLUGIN_CALL_OK"',
     'TOOLS = {"smoke_ping": smoke_ping}',
-    'TOOL_SPECS = {"smoke_ping": {"desc":"E2E plugin call", "params":[{"name":"mode","type":"string","desc":"test mode"}], "arg_param":"mode"}}',
+    'TOOL_SPECS = {"smoke_ping": {"desc":"E2E plugin call", "params":[("mode","test mode",True,"string")], "arg_param":"mode"}}',
     '',
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(pluginDir, 'frontend.js'), [
@@ -288,7 +292,9 @@ async function waitFor(predicate, label, timeout = 15000) {
     if (value) return value;
     await wait(75);
   }
-  throw new Error('Timed out waiting for ' + label + '; renderer=' + String(await evaluate("document.querySelector('#msgs')?.innerText || ''")));
+  throw new Error('Timed out waiting for ' + label + '; renderer=' + String(await evaluate("document.querySelector('#msgs')?.innerText || ''")) +
+    '; streamEvents=' + JSON.stringify(await evaluate('window.__vigilE2EEvents || []')) +
+    '; fakeProviderRequests=' + modelRequests.length);
 }
 async function assertToolCall(traceFile, mode) {
   const deadline = Date.now() + 5000;
@@ -484,6 +490,7 @@ async function run() {
   await wait(500);
   await startElectron(brainBase);
   await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'cold launch after an existing session');
+  await waitFor("document.querySelectorAll('[data-session]').length===12", 'saved session list after cold launch');
   assert.equal(await evaluate('API.state.chatConversationId'), '', 'normal app relaunch must return to welcome');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'normal relaunch must not show old messages/cards');
   assert.equal(await evaluate("document.querySelectorAll('[data-session]').length"), 12, 'all twelve saved conversations remain listed');
