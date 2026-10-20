@@ -87,3 +87,25 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 - Windows 候选安装包 **未构建**；不对 Windows 安装/升级/卸载或正式发布作通过声明。PR 继续保持未合并；本轮结束后等待后续单独验收，不启动下一轮业务 Bug 修复。
 
 完整能力盘点见 `repository-audit.md`；逐轮根因和修改记录见 `improvement-log.md`。
+
+---
+
+## 五轮后续质量复核验收（2026-10-20）
+
+本轮从 PR 分支提交 `5b3e86a151eae542a9dc901ee7cbd4bbfb289eb5` 开始，共完成五轮：Agent terminal transient 清理、更新目录重叠检查、插件用户数据清理失败提示、部分清理时提示准确性、旧式插件目录卸载错误处理。每个发现均先以隔离测试复现或反向故障注入，再修改并运行相关回归；详细证据见 `improvement-log.md` 五轮记录。
+
+| 最终运行 | 结果 | 本机报告 |
+|---|---|---|
+| `python scripts/agent_eval.py validate` | PASS：14 自动案例、4 suites、10 test sets、10 行为场景 | stdout；清单文件 `benchmark-cases.json` |
+| `python scripts/agent_eval.py run --suite regression --label five-round-regression` | 12 PASS，0 FAIL/TIMEOUT/BLOCKED，2 NOT RUN；244 passed、3 skipped | `run-20261020T102801-74c2e589.json` |
+| `python scripts/agent_eval.py run --suite security --label five-round-security` | 1 PASS；29 passed，0 failed | `run-20261020T103048-56df5d22.json` |
+| `python scripts/agent_eval.py run --suite full-local --label five-round-full-local-serial` | 1 PASS；1,388 passed、19 skipped，0 failed | `run-20261020T102908-1aea2f90.json` |
+| `node --test client/tools/test-unified-runtime.js client/tools/test-agent-center-state.js client/tools/test-agent-timeline.js client/tools/test-p2-stream-lifecycle.js` | 49 passed、0 failed | Node stdout；进程退出码 0 |
+| `python -m py_compile scripts/agent_eval.py brain/agent_runs.py brain/plugin_ops.py`; `git diff --check` | PASS | 命令退出码 0 |
+| smoke/regression 基线与轮后同条件 compare | 12 个共同回归案例均 PASS → PASS，无新增回归；轮内复现 compare 对 AG-009/011/013 标为 FIXED | `compare-a514fff3ea.json` 及逐轮 compare 见改进日志 |
+
+全仓 pytest 首次与 regression 并行运行时有 15 个启动错误，独立 Brain 测试进程未在 60 秒内就绪，报告 `run-20261020T102724-04ab9dd3.json` 保留为 FAIL。停止并行负载后，以相同全仓命令串行重跑通过；首次失败不删除，也不将其记为通过。全仓仍有 19 个 pytest skip，未计入 1,388 passed，原因包括 Windows symlink/junction/mkfifo 权限、缺少本机测试素材及 FFmpeg。
+
+10 个需要真实模型、Electron 或外部插件/服务的行为场景仍是 NOT RUN；当前机器缺少 Electron/npm 依赖、真实模型测试账户和私有外部 fixture。没有构建发行包。Agent reasoning 缓存清理以对象/持久化断言验证，尚无真实模型长期内存曲线；升级目录分离验证为纯 Node 临时目录；插件锁定/部分删除通过临时故障注入，不代表每种 Windows 文件系统锁语义。评测报告及 compare JSON 均只在 `%LOCALAPPDATA%/Vigil/agent-eval/reports`，不入库。
+
+轮后 regression 与轮前基线 compare：`compare-a514fff3ea.json`，同测试选择/环境为 true。R1/R3/R5 的复现到修复 compare：`compare-8991e541bc.json`、`compare-9fe0d1ca1e.json`、`compare-9d91a3082d.json`，均识别为 FIXED。PR #10 保持 open/unmerged；本轮无发布包，没有修改 master。

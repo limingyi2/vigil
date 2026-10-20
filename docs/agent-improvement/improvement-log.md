@@ -111,3 +111,49 @@
 - **前后对比：** `<comparison report path and classification>`
 - **尚未验证：**
 - **下一步：**
+
+## 2026-10-20 — 五轮客户端/Brain/插件回归改进
+
+本组工作从提交 `5b3e86a151eae542a9dc901ee7cbd4bbfb289eb5` 开始；所有复现和故障注入均使用临时测试目录/Fake Provider。没有修改 Electron + Python Brain 的总体架构，没有触碰 `D:\vigil` worktree 中的用户文件。
+
+### Round 1 — AG-009：终态任务释放瞬态推理缓存
+
+- **问题与影响：** Agent 结束后，最多 200 个 run 的全局 transient 映射仍保留最多 256 条 reasoning delta；这类内容不持久化，也不能用于终态恢复，却会持续驻留进程内存。
+- **复现步骤：** `python scripts/agent_eval.py run --case agent-run-lifecycle --label round1-transient-cleanup-repro`；测试发现任务成功后 `run_id` 仍在 `TRANSIENT`，其中包含 `PRIVATE_REASONING`。FAIL 报告 `run-20261020T102251-cc29787e.json`。
+- **修改范围：** `brain/agent_runs.py::_finish` 写入 terminal event 和状态后删除对应 transient reasoning；新增终态内存清理回归断言。不持久化推理文本。
+- **修改后结果：** 同案例 PASS，报告 `run-20261020T102301-f77d4e85.json`；后续复验 `run-20261020T102513-287a33e6.json` 与 `run-20261020T102716-7e359d7a.json` 均 PASS。比较 `compare-8991e541bc.json` 在相同案例/环境下归类为 FIXED。
+- **尚未验证：** 真实模型下长时间运行的全进程内存曲线；本轮证明对象清理语义，不是系统级内存基准。
+
+### Round 2 — AG-010：拒绝完全重合的安装目录和用户数据目录
+
+- **问题与影响：** 更新回滚快照仅拒绝两目录互相嵌套；当两者完全相等时未命中旧前缀检查，可能在安装树内创建 updates/rollback，再复制同一树。
+- **复现步骤：** `node --test client/tools/test-unified-runtime.js` 的隔离临时目录测试在 `checkpoint(install, install, identity)` 处失败；旧逻辑继续进入 `fs.cpSync`，由测试注入的 sentinel 拦截并报错。
+- **修改范围：** `client/electron/update-transaction.js` 用 `path.relative` 关系检查，并拒绝相等或任一方向包含；断言拒绝发生于复制前。仅使用临时 fixture。
+- **修改后结果：** `node --test client/tools/test-unified-runtime.js` 5/5 PASS，五轮结束时相同文件复验仍 5/5 PASS。
+- **尚未验证：** 完整安装器/升级流程因当前 worktree 缺少 Electron 构建依赖未能执行；纯 Node 事务逻辑已覆盖。
+
+### Round 3 — AG-011：插件用户数据清理失败不再谎报完成
+
+- **问题与影响：** 插件卸载的 `purge_data` 使用 `ignore_errors=True`，并在删除调用后无条件声称数据已清；权限拒绝时会留下数据却给出成功清理消息。
+- **复现步骤：** `python scripts/agent_eval.py run --case plugin-contract --label round3-plugin-purge-repro`；临时数据目录注入 `PermissionError`，验证发现目录保留而响应没有失败提示。FAIL 报告 `run-20261020T102456-cc86e81a.json`。
+- **修改范围：** `brain/plugin_ops.py::uninstall` 只在目录确实消失后追加“插件数据已清理”；失败则返回清理未完成提示和安全错误类型日志，不包含路径或敏感异常内容。新增保留数据的故障注入测试。
+- **修改后结果：** `plugin-contract` PASS，报告 `run-20261020T102513-2d20d8fb.json`；比较 `compare-9fe0d1ca1e.json` 归类 FIXED。
+- **尚未验证：** 不同 Windows 文件系统/杀毒软件对真实锁定目录的行为；通过可控 `PermissionError` 验证错误路径。
+
+### Round 4 — AG-012：部分清理失败提示不再声称数据完整保留
+
+- **问题与影响：** 反向审查发现 Round 3 的失败提示“数据仍保留”在删除部分文件后抛错时不成立，可能误导用户认为数据未受影响。
+- **复现步骤：** 使用临时插件数据目录，让故障注入先删除 `user.txt` 再抛 `PermissionError`；验证目录残留但文件已消失。
+- **修改范围：** 失败提示改为“插件数据清理未完成，请检查残留数据”；新增部分删除故障测试，要求明确不能宣称数据仍完整保留或已全部删除。
+- **修改后结果：** `python scripts/agent_eval.py run --case plugin-contract --label round4-partial-purge-message-fix` PASS；报告 `run-20261020T102651-e8cebaf7.json`。
+- **尚未验证：** UI 对该完整中文消息在所有渠道中的布局；Brain 返回文本契约通过。
+
+### Round 5 — AG-013：插件目录包删除失败不再返回卸载成功
+
+- **问题与影响：** 旧式目录包卸载同样使用 `shutil.rmtree(..., ignore_errors=True)`；目录被锁定时错误被吞掉，插件仍可留在磁盘，而 API 仍返回“已卸载”。
+- **复现步骤：** `python scripts/agent_eval.py run --case plugin-contract --label round5-plugin-code-purge-repro`；临时目录模拟 `ignore_errors=True` 吞错，断言原实现仍返回 `ok=True`。FAIL 报告 `run-20261020T102701-80789fb3.json`。
+- **修改范围：** 卸载在清理目录包后检查路径是否消失；失败时返回明确错误并停止后续元数据清理。新增旧式目录插件的锁定故障注入。
+- **修改后结果：** `plugin-contract` PASS，报告 `run-20261020T102716-37253c5d.json`；比较 `compare-9d91a3082d.json` 归类 FIXED。Round 2 Node 回归 5/5；关联 Node Agent UI/Timeline/stream lifecycle 回归 49/49 PASS。
+- **尚未验证：** 被真实系统进程占用时 Electron 插件面板的端到端提示；当前宿主无 Electron runtime。
+
+本轮所有 pytest 报告与 compare JSON 存放在 `%LOCALAPPDATA%\Vigil\agent-eval\reports`，不入库。测试代码只对临时目录施加故障，不运行真实模型，不修改用户配置、聊天记录或插件数据。

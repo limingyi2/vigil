@@ -72,3 +72,20 @@
 ## 测量规则
 
 报告应保留提交、分支、工作区是否有改动、Python/平台、命令、suite/case、每项开始/结束时间、耗时、退出码和受限输出。只选择与问题有关的测试；未选择案例必须保留 `NOT RUN`。前后比较要求案例选择和执行环境匹配，修复完成前还需人工确认根因证据与验收条件。Fake Provider 只能说明控制流/契约；不能代替真实模型质量评估。
+
+## 五轮改进后的测量（2026-10-20）
+
+测量分支仍为 `codex/vigil-agent-improvement-foundation`。提交变更前在 Windows 11 / CPython 3.13（Codex workspace Python）下运行；最终全仓结果来自无并行测试竞争的重跑。
+
+| 验证范围 | 实际结果 | 本机报告 |
+|---|---|---|
+| Regression suite | 12 案例 PASS，0 FAIL/TIMEOUT/BLOCKED，2 NOT RUN；pytest 244 passed、3 skipped | `run-20261020T102801-74c2e589.json` |
+| Security suite | 1 案例 PASS，pytest 29 passed | `run-20261020T103048-56df5d22.json` |
+| 全仓 Python pytest | 1 聚合案例 PASS；1,388 passed、19 skipped，0 failed | `run-20261020T102908-1aea2f90.json` |
+| Node 核心组件回归 | 49 passed、0 failed（Agent Center、timeline、stream lifecycle、统一更新 runtime） | 控制台输出；`node --test` 未单独落评测 JSON |
+| 清单 | 14 自动案例、4 suites、10 test sets、10 behavior scenarios 格式校验通过 | `agent_eval.py validate` stdout |
+| 复现对比 | AG-009、AG-011、AG-013 均为同选择/环境 `FAIL → PASS (FIXED)`；最终 regression 与轮前 baseline 12 个共同案例均 UNCHANGED PASS | `compare-8991e541bc.json`、`compare-9fe0d1ca1e.json`、`compare-9d91a3082d.json`、`compare-a514fff3ea.json` |
+
+第一次全仓执行与 regression 并行，出现隔离 Brain 60 秒启动失败，聚合报告 `run-20261020T102724-04ab9dd3.json` 为 FAIL（1,373 passed、19 skipped、15 errors）。停止并行后原样串行重跑通过；不把首次失败删除或覆盖。19 项 skip 仍是 skip，原因见 pytest 报告。真实模型、Electron 进程/窗口、外部插件和发行包端到端仍未验证：本环境没有 Electron runtime、`client/node_modules` 或 npm；这些不计为通过。
+
+本轮改动只涉及终态 Agent reasoning transient 清理、更新快照目录隔离和插件卸载结果/清理错误处理，相关已知功能性风险 AG-002—AG-008 仍按前文状态保留，不能据自动测试推断为全部解决。
