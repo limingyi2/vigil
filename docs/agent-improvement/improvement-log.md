@@ -206,6 +206,7 @@
 
 - **修改前表现：** 1.0.2 → 当前候选的隔离升级脚本已完成启动和会话 A/B 隔离检查，随后在自定义危险操作确认测试中失败；Node 夹具尝试读取已经不在当前 UI 的 `#clearBtn`，触发 `Uncaught`，不是安装器回滚或用户数据迁移失败。
 - **根因证据：** 当前 `client/src/js/pages.js` 会话行渲染的是 `.session-delete[data-delete]`，监听器调用 `deleteConversation()`，其确认由 `confirmDialog()` 渲染 `.vigil-confirm`。`client/tools/test-installed-runtime.cjs` 仍点击旧 `#clearBtn`。首次升级失败完整命令输出保存在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-5cf5000.stdout.log`；失败的旧候选/旧夹具不覆盖。
-- **修改范围：** 仅将集成夹具改为找到当前活动会话的 `[data-delete]` 并触发真实自定义确认；测试仍禁止调用原生 `window.confirm`，仍验证点击取消不改变对话。
+- **后续发现：** 同一测试修正后，升级验收通过会话 A/B 与自定义删除确认，再在附件检查失败：夹具点击 `#clipBtn` 后立即假设原生文件选择器已弹出；当前客户端先打开加号菜单，必须进一步点击 `[data-plus="file"]`。第二次完整失败输出保存在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-e529708.stdout.log`，不覆盖第一次证据。
+- **修改范围：** 仅将集成夹具改为找到当前活动会话的 `[data-delete]` 并触发真实自定义确认；附件模拟按当前界面点击 `#clipBtn` → `[data-plus="file"]`，再替换原生文件对话框并注入临时视频 fixture。测试仍禁止调用原生 `window.confirm`，仍验证点击取消不改变对话，视频选项仍断言可见和生效。
 - **验证状态：** 修复后的提交将重建与该提交匹配的候选安装包，再运行官方 1.0.2 → 候选升级、数据迁移、Brain 配对、安装失败回滚及完整文件树恢复。最终实际结果记录在本机 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-<source-commit>.json`；只有该报告 `result` 为成功才算通过。
 - **范围边界：** 该阶段仍只修测试基础设施；如果用例随后进入真实产品路径并失败，保留报告并按证据重新分类，不在此轮借机修复 Vigil 业务问题。
