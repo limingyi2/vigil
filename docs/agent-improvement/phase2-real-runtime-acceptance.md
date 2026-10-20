@@ -79,3 +79,12 @@ pytest 报告、任务状态、比较结果、E2E 原始日志和候选包均在
 修复前，旧客户端在代理断开后没有带 durable cursor 恢复；同场景观察 `resumed=0`，Brain run 虽已成功但 renderer 不恢复终态。`brain/server.py` 现为 Agent chat 投影事件增加持久 seq 并接受经校验的 `after` cursor；`client/electron/main.js` 只在确认 run identity 后以原 request_id 最多重试三次。`IncomingMessage.aborted` 现在 settle stream Promise，避免中断后挂起。测试仅使用本地 Fake Provider。完整 E2E 的先行失败仍保留于本机日志：seed-history 第 8 项超时（`phase2-ag002-chat-reconnect-settle-fix.log`），以及两次测试误断言 run_id 字段（`phase2-ag002-chat-reconnect-focused-keep.log`、`phase2-ag002-chat-reconnect-focused-diagnostic.log`）；页面本地记录白名单不存 run_id，测试改用 request_id 关联。最终完整 16 项回归通过。
 
 该结果扩展了 AG-002 的单次本地 Agent chat 断线恢复证据，但不证明高压/连续多次中断或真实远端 Agent 服务。AG-002、AG-003、AG-005 保持**部分验证**；真实 Provider 认证、限流、空响应、服务端错误仍为 **BLOCKED（无授权隔离凭据）**。当前提交的 Windows 候选已在独立 detached worktree 构建，配对身份、release manifest、241 个 unpacked 文件、682 个 ASAR entries 和敏感/用户数据静态扫描通过，Installer SHA、大小及来源记录在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-final-runtime-acceptance-6462021.json`。当前 NSIS 首启/升级/卸载由于宿主有用户 Vigil 正在运行而 BLOCKED；没有碰该进程，旧候选生命周期结果不代表当前源码。PR #10 保持 open/draft/unmerged，未提出合并建议。
+
+### 当前候选 unpacked 运行验收补充
+
+- 使用最终候选 `win-unpacked/Vigil.exe`，通过项目 `client/tools/test-fresh-installed-runtime.cjs`；`VIGIL_USER_DATA`、`APPDATA`、`LOCALAPPDATA` 均指向新的外部临时 profile，Fake Provider 仅绑定 loopback。
+- `first` PASS：Electron 从候选目录启动，bundled Brain health=`ready`，首次欢迎页显示，Fake Provider 收到一次带 sentinel 的请求并返回成功聊天；Brain home 在隔离 profile 中。
+- `restart` PASS：第二次启动恢复相同 conversation ID 和成功历史；Fake Provider 没有额外请求。
+- 报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-runtime-39ae579.json`，原始日志在相邻的 `candidate-profile-39ae579-retry/local/`。
+- 此项是未安装的 unpacked candidate 运行检查。NSIS 注册、安装、旧版本升级/回滚和卸载仍未执行，因为宿主有用户 Vigil 进程在运行；不能把本项当作安装器生命周期通过。
+- 首次尝试把相对 worktree 路径传给 harness，路径比较断言失败；改传绝对路径后 first/restart 均通过。另一个通用 `--packaged` Agent proxy 测试因发行版有意忽略 `VIGIL_TEST_BRAIN` 而不适用于 bundled Brain；该 harness 边界与最终 candidate runtime 结果分开记录。
