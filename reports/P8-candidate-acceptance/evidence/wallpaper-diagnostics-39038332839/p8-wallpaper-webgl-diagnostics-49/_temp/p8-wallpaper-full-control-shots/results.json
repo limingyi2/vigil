@@ -1,0 +1,1978 @@
+{
+  "fixture": true,
+  "preload": "client/electron/preload.js (production, unchanged)",
+  "electron": "28.3.3",
+  "chrome": "120.0.6099.291",
+  "productionMain": false,
+  "realModelCalls": 0,
+  "hardwareAcceleration": "Electron default enabled",
+  "gpu": {
+    "features": {
+      "2d_canvas": "unavailable_software",
+      "canvas_oop_rasterization": "disabled_off",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "disabled_software",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "disabled_off",
+      "rasterization": "disabled_software",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "video_decode": "disabled_software",
+      "video_encode": "disabled_software",
+      "vulkan": "disabled_off",
+      "webgl": "unavailable_software",
+      "webgl2": "unavailable_software",
+      "webgpu": "unavailable_software"
+    },
+    "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+  },
+  "results": [
+    {
+      "name": "isolated EPIPE simulation does not open a main-process error dialog",
+      "status": "passed"
+    },
+    {
+      "name": "empty session and default collapsed context",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1024,
+          "height": 720
+        },
+        "input": {
+          "x": 336,
+          "y": 519.40625,
+          "width": 646,
+          "height": 132,
+          "bottom": 651.40625
+        },
+        "composer": {
+          "x": 294,
+          "y": 503.40625,
+          "width": 730,
+          "height": 190.59375,
+          "bottom": 694
+        },
+        "chat": {
+          "x": 294,
+          "y": 92,
+          "width": 730,
+          "height": 602,
+          "bottom": 694
+        },
+        "hero": {
+          "x": 294,
+          "y": 92,
+          "width": 730,
+          "height": 411.40625,
+          "bottom": 503.40625
+        },
+        "scroll": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "bottom": 0
+        },
+        "context": "none",
+        "overflow": false
+      }
+    },
+    {
+      "name": "computed typography, 860px composer and no global scale",
+      "status": "passed",
+      "detail": {
+        "body": "15px",
+        "input": "15px",
+        "welcome": "32px",
+        "button": "14px",
+        "model": "14px",
+        "sidebar": "14px",
+        "zoom": "1",
+        "transform": "none",
+        "electronZoom": 1
+      }
+    },
+    {
+      "name": "production preload, contextBridge, configuration IPC and security settings",
+      "status": "passed"
+    },
+    {
+      "name": "titlebar maximize/minimize via production preload IPC",
+      "status": "passed"
+    },
+    {
+      "name": "quick question and blank-content disabled state",
+      "status": "passed"
+    },
+    {
+      "name": "session list and context toggle, dark theme",
+      "status": "passed"
+    },
+    {
+      "name": "textarea auto-height and max-height",
+      "status": "passed"
+    },
+    {
+      "name": "Enter, Shift+Enter, IME, stream state and deduplicated IPC payload",
+      "status": "passed"
+    },
+    {
+      "name": "destructive history clear retains a themed in-app confirmation",
+      "status": "passed"
+    },
+    {
+      "name": "Markdown headings/lists/quotes/link/code and code copy",
+      "status": "passed"
+    },
+    {
+      "name": "existing safety control opens and closes",
+      "status": "passed"
+    },
+    {
+      "name": "history restored and persistent conversation selection is interactive",
+      "status": "passed"
+    },
+    {
+      "name": "A/B independent messages, scoped Creator draft restore, continuation, legacy label and renderer restart",
+      "status": "passed"
+    },
+    {
+      "name": "ordinary light-theme history and code rendering",
+      "status": "passed"
+    },
+    {
+      "name": "860px aligned content and composer outside message scroll",
+      "status": "passed",
+      "detail": {
+        "left": 0,
+        "right": 0,
+        "width": 646
+      }
+    },
+    {
+      "name": "stream error UI and send state recovery",
+      "status": "passed"
+    },
+    {
+      "name": "attachment FileReader, preview, removal and image-only send eligibility",
+      "status": "passed"
+    },
+    {
+      "name": "image-only send through original stream IPC",
+      "status": "passed"
+    },
+    {
+      "name": "video limits show inline keyframe/original choices without native confirm; cancel removes attachment",
+      "status": "passed"
+    },
+    {
+      "name": "attachment upload failure remains inline and does not claim chat success",
+      "status": "passed"
+    },
+    {
+      "name": "existing model settings navigation and non-chat scope",
+      "status": "passed"
+    },
+    {
+      "name": "global function entries retained",
+      "status": "passed",
+      "detail": 8
+    },
+    {
+      "name": "history failure is explicit and retry restores empty welcome",
+      "status": "passed"
+    },
+    {
+      "name": "persona data, compact list, editor and existing cloud save IPC",
+      "status": "passed"
+    },
+    {
+      "name": "persona light/dark and narrow-window layouts",
+      "status": "passed"
+    },
+    {
+      "name": "persona empty state is distinguished from service failure",
+      "status": "passed"
+    },
+    {
+      "name": "memory data loads and persona styles leave the subsection",
+      "status": "passed"
+    },
+    {
+      "name": "knowledge-base data and document entry retained",
+      "status": "passed"
+    },
+    {
+      "name": "wallpaper settings light contrast and gallery layout",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1400,
+          "height": 900
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 1338,
+          "height": 778,
+          "bottom": 874
+        },
+        "shell": {
+          "x": 104,
+          "y": 116,
+          "width": 1254,
+          "height": 738,
+          "bottom": 854
+        },
+        "grid": {
+          "x": 121,
+          "y": 420.09375,
+          "width": 1220,
+          "height": 416.90625,
+          "bottom": 837
+        },
+        "toolbar": {
+          "x": 121,
+          "y": 364.40625,
+          "width": 1220,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(255, 255, 255)",
+        "text": "rgb(32, 39, 51)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper settings dark contrast and gallery layout",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1400,
+          "height": 900
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 1338,
+          "height": 778,
+          "bottom": 874
+        },
+        "shell": {
+          "x": 104,
+          "y": 116,
+          "width": 1254,
+          "height": 738,
+          "bottom": 854
+        },
+        "grid": {
+          "x": 121,
+          "y": 420.09375,
+          "width": 1220,
+          "height": 416.90625,
+          "bottom": 837
+        },
+        "toolbar": {
+          "x": 121,
+          "y": 364.40625,
+          "width": 1220,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 1920x1080",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1920,
+          "height": 1080
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 1858,
+          "height": 958,
+          "bottom": 1054
+        },
+        "shell": {
+          "x": 271,
+          "y": 116,
+          "width": 1440,
+          "height": 918,
+          "bottom": 1034
+        },
+        "grid": {
+          "x": 288,
+          "y": 420.09375,
+          "width": 1406,
+          "height": 596.90625,
+          "bottom": 1017
+        },
+        "toolbar": {
+          "x": 288,
+          "y": 364.40625,
+          "width": 1406,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 1280x800",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 1218,
+          "height": 678,
+          "bottom": 774
+        },
+        "shell": {
+          "x": 100.390625,
+          "y": 116,
+          "width": 1141.21875,
+          "height": 638,
+          "bottom": 754
+        },
+        "grid": {
+          "x": 117.390625,
+          "y": 420.09375,
+          "width": 1107.21875,
+          "height": 316.90625,
+          "bottom": 737
+        },
+        "toolbar": {
+          "x": 117.390625,
+          "y": 364.40625,
+          "width": 1107.21875,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 800x540",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 800,
+          "height": 540
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 738,
+          "height": 418,
+          "bottom": 514
+        },
+        "shell": {
+          "x": 86,
+          "y": 106,
+          "width": 690,
+          "height": 398,
+          "bottom": 504
+        },
+        "grid": {
+          "x": 103,
+          "y": 353.765625,
+          "width": 656,
+          "height": 133.234375,
+          "bottom": 487
+        },
+        "toolbar": {
+          "x": 103,
+          "y": 298.078125,
+          "width": 656,
+          "height": 55.6875,
+          "bottom": 353.765625
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 600x650",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 600,
+          "height": 650
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 538,
+          "height": 528,
+          "bottom": 624
+        },
+        "shell": {
+          "x": 74,
+          "y": 108,
+          "width": 514,
+          "height": 504,
+          "bottom": 612
+        },
+        "grid": {
+          "x": 91,
+          "y": 370.453125,
+          "width": 480,
+          "height": 224.546875,
+          "bottom": 595
+        },
+        "toolbar": {
+          "x": 91,
+          "y": 265.078125,
+          "width": 480,
+          "height": 105.375,
+          "bottom": 370.453125
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "very short wallpaper window has accessible outer scroll",
+      "status": "passed"
+    },
+    {
+      "name": "wallpaper search/filter, all tabs, canceled import/directory and refresh",
+      "status": "passed"
+    },
+    {
+      "status": "failed",
+      "error": "Timeout: document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'"
+    }
+  ],
+  "errors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "0"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "检查界面",
+        "src": "pc",
+        "request_id": "req_c18c9c5f-fc7f-4dc0-8a3d-366ea0d4df9b",
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "session_id": "11111111-1111-4111-8111-111111111111"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations",
+      "query": {},
+      "body": {
+        "src": "pc"
+      },
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "A_ONLY",
+        "src": "pc",
+        "request_id": "req_634e2be0-1103-4bc3-b550-0a209eb318b8",
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8",
+        "session_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations",
+      "query": {},
+      "body": {
+        "src": "pc"
+      },
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "B_ONLY",
+        "src": "pc",
+        "request_id": "req_c8752542-99f9-4016-a705-a282aaa1f06f",
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f",
+        "session_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "A_CONTINUE",
+        "src": "pc",
+        "request_id": "req_0cb2c6a4-2f6d-457f-9078-66106e8b7cdd",
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8",
+        "session_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/creator/jobs",
+      "query": {},
+      "body": {
+        "kind": "plugin",
+        "requirement": "P6_SESSION_DRAFT",
+        "request_id": "req_95336b9f-2a54-424e-a758-69d521cfda3d",
+        "src": "pc",
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      },
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/draft",
+      "query": {
+        "id": "draft_p6_session"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "afaa6933-c276-4076-bd1f-7eb7aae9a3a8"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/draft",
+      "query": {
+        "id": "draft_p6_session"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/59cf2b60-ef07-4701-80e7-2957ec2bcf8f",
+      "query": {},
+      "body": {
+        "src": "pc",
+        "title": "B 独立会话"
+      },
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "0"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "59cf2b60-ef07-4701-80e7-2957ec2bcf8f"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "错误场景",
+        "src": "pc",
+        "request_id": "req_3830b2fc-ff92-46f3-8792-a3a3a5b81a66",
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "session_id": "11111111-1111-4111-8111-111111111111"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "STREAM",
+      "path": "/api/chat/stream",
+      "body": {
+        "text": "",
+        "src": "pc",
+        "request_id": "req_0bd9bde5-3d8d-49e2-80b9-ab2a6e11c784",
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "img": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQYlWM4MS3lPwAGrgLCpMGNwgAAAABJRU5ErkJggg=="
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/attachments/capabilities",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "IPC",
+      "path": "settings:open",
+      "body": {
+        "section": "model",
+        "source": "local"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "app"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "wechat"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "wechat_group"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "app"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "wechat"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "wechat_group"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona/full",
+      "query": {
+        "key": "default"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "POST",
+      "path": "/api/persona/save",
+      "query": {},
+      "body": {
+        "key": "default",
+        "src": "wechat_group",
+        "fields": {
+          "name": "Vigil",
+          "nicknames": "",
+          "relation": "",
+          "call_user": "",
+          "personality": "清晰、耐心",
+          "background": "协助思考和执行任务",
+          "scene": "",
+          "appearance": "",
+          "notes": "",
+          "label": "Vigil"
+        }
+      },
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "app"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "wechat"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {
+        "src": "wechat_group"
+      },
+      "body": null,
+      "base": "cloud"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/stores",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/list",
+      "query": {
+        "store": "memory",
+        "limit": "300"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugin/kb/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugin/kb/docs",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/history",
+      "query": {
+        "limit": "300",
+        "src": "pc",
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/jobs",
+      "query": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    }
+  ]
+}

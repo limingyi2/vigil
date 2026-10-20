@@ -209,6 +209,109 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
   .chatwrap .cbox { transition:none; }
 }
 
+/* Cold start and blank conversations reuse the real chat composer. In normal
+   mode this changes layout only; Wallpaper owns its glass treatment below. */
+body.welcome-home { color:var(--chat-text); }
+body.welcome-home .app {
+  position:relative; z-index:2; height:100vh; padding:10px;
+  grid-template-columns:var(--rail) minmax(0,1fr); grid-template-rows:0 minmax(0,1fr) 0;
+  overflow:hidden; border:0; border-radius:0; background:transparent;
+}
+body.welcome-home .titlebar {
+  position:fixed; z-index:100; inset:0 0 auto 0; height:54px; padding:8px 18px 0;
+  justify-content:flex-end; border:0; background:transparent; -webkit-app-region:drag;
+}
+body.welcome-home .wctl { height:36px; align-self:auto; padding:0 2px; border:1px solid var(--chat-line); border-radius:11px; background:var(--chat-sidebar); }
+body.welcome-home .wctl button { width:42px; height:34px; color:var(--chat-muted); border-radius:8px; }
+body.welcome-home .wctl button:hover { background:var(--chat-hover); color:var(--chat-text); }
+body.welcome-home .wctl button.close:hover { background:#c92a2a; }
+body.welcome-home .gnav {
+  grid-column:1; grid-row:2; z-index:3; align-items:center; gap:7px; padding:10px 6px;
+  overflow-x:hidden; background:var(--chat-sidebar); border:0;
+  border-right:1px solid var(--chat-line); border-radius:0; backdrop-filter:none;
+}
+body.welcome-home .gnav-brand { display:none; }
+body.welcome-home .gnav .gbtn {
+  display:grid; flex:none; place-items:center;
+  width:48px; height:48px; padding:0; border-radius:10px; color:var(--chat-muted);
+}
+body.welcome-home .gnav .gbtn .i { width:17px; height:17px; }
+body.welcome-home .gnav .gnav-label { display:none; }
+body.welcome-home .gnav .gbtn.on { color:var(--chat-accent); background:var(--chat-selected); box-shadow:inset 3px 0 var(--chat-accent); }
+body.welcome-home .gnav .gbtn:hover { color:var(--chat-text); background:var(--chat-hover); }
+body.welcome-home .gnav .nav-settings { height:48px; border-top:1px solid var(--chat-line); border-radius:0; }
+body.welcome-home .body { grid-column:2; grid-row:2; grid-template-columns:minmax(0,1fr); min-width:0; background:transparent; }
+body.welcome-home:not(.welcome-has-sessions) .panel,
+body.welcome-home:not(.welcome-has-sessions) #gPanel,
+body.welcome-home #topbar, body.welcome-home .statusbar { display:none; }
+body.welcome-home.welcome-has-sessions .body { grid-template-columns:minmax(180px,220px) minmax(0,1fr); }
+body.welcome-home.welcome-has-sessions.chat-sessions-collapsed .body { grid-template-columns:minmax(0,1fr); }
+body.welcome-home.welcome-has-sessions .panel {
+  display:flex; background:var(--chat-sidebar); border:0;
+  border-right:1px solid var(--chat-line); backdrop-filter:none;
+}
+body.welcome-home.welcome-has-sessions.chat-sessions-collapsed .panel { display:none; }
+body.welcome-home.welcome-has-sessions .panel .phead { color:var(--chat-text); }
+body.welcome-home.welcome-has-sessions .panel .li { color:var(--chat-text); }
+body.welcome-home.welcome-has-sessions .panel .li:hover { background:var(--chat-hover); }
+body.welcome-home.welcome-has-sessions .panel .li.on { background:var(--chat-selected); }
+body.welcome-home.welcome-has-sessions .panel .empty { color:var(--chat-muted); }
+body.welcome-home.welcome-has-sessions #gPanel { display:none; }
+body.welcome-home .main { min-width:0; min-height:0; background:transparent; background-image:none; }
+body.welcome-home .chatwrap { min-height:0; height:100%; overflow:hidden; }
+body.welcome-home .chatwrap .split { min-height:0; grid-template-columns:minmax(0,1fr); }
+body.welcome-home .chatwrap .chat { min-height:0; }
+body.welcome-home .chatwrap .hero {
+  flex:1; min-height:120px; padding:48px 24px 22px; gap:8px;
+  justify-content:center; color:var(--chat-text); text-shadow:none;
+}
+body.welcome-home .chatwrap .welcome-brand {
+  margin:0; color:var(--chat-text); font-size:clamp(42px,5vw,58px); font-weight:720;
+  line-height:1.08; letter-spacing:-.055em; text-shadow:none;
+}
+body.welcome-home .chatwrap .hero p { color:var(--chat-muted); font-size:15px; }
+body.welcome-home .chatwrap .hero-hints { margin-top:14px; gap:8px; }
+body.welcome-home .chatwrap .hero-hints .chip {
+  padding:7px 12px; color:var(--chat-muted); border:1px solid var(--chat-line);
+  border-radius:999px; background:var(--chat-surface); backdrop-filter:none;
+}
+body.welcome-home .chatwrap .hero-hints .chip:hover { color:var(--chat-text); background:var(--chat-hover); }
+body.welcome-home .chatwrap .composer {
+  flex:none; padding:0 clamp(16px,5vw,72px) clamp(24px,6vh,64px);
+  background:transparent;
+}
+body.welcome-home .chatwrap .composer .col { width:min(100%,860px); }
+body.welcome-home .chatwrap .cbox {
+  padding:16px 16px 12px; border:1px solid var(--chat-line); border-radius:20px;
+  background:var(--chat-surface); box-shadow:var(--sh-2); backdrop-filter:none;
+}
+body.welcome-home .chatwrap .cbox:focus-within { border-color:var(--chat-accent); }
+body.welcome-home .chatwrap .cbox textarea { color:var(--chat-text); }
+body.welcome-home .chatwrap .cbox textarea::placeholder { color:var(--chat-muted); }
+body.welcome-home .chatwrap .cbar .ibtn,
+body.welcome-home .chatwrap .cbar .chip,
+body.welcome-home .chatwrap .composer-model { color:var(--chat-text); }
+body.welcome-home .chatwrap .cbar .chip { border-color:var(--chat-line); }
+body.welcome-home .chatwrap .composer-caption { color:var(--chat-muted); }
+body.welcome-home .chatwrap .attach { background:var(--chat-surface); }
+body.welcome-home .chatwrap .modelpop,
+body.welcome-home .chatwrap .localpop { color:var(--chat-text); background:var(--chat-bg); border-color:var(--chat-line); }
+body.welcome-home .chatwrap .creatorbar { background:var(--chat-hover); }
+@media(max-width:760px) {
+  body.welcome-home .app { grid-template-columns:var(--rail) minmax(0,1fr); padding:7px; border-radius:14px; }
+  body.welcome-home .gnav { padding:10px 5px; }
+  body.welcome-home .chatwrap .hero { padding:42px 14px 18px; }
+  body.welcome-home .chatwrap .hero-hints { max-width:460px; }
+  body.welcome-home .chatwrap .composer { padding:0 14px 22px; }
+  body.welcome-home.welcome-has-sessions .body { grid-template-columns:minmax(0,1fr); }
+  body.welcome-home.welcome-has-sessions .panel { display:none; }
+}
+@media(max-width:420px) {
+  body.welcome-home .app { grid-template-columns:var(--rail) minmax(0,1fr); padding:5px; }
+  body.welcome-home .chatwrap .hero-hints .chip { padding:6px 9px; font-size:11px; }
+  body.welcome-home .chatwrap .cbox { padding:12px; }
+}
+
 /* Loading/error/empty are distinct states; a failed history read stays visible. */
 .chatwrap .chat-load-state { flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px; color:var(--chat-muted); text-align:center; }
 .chatwrap .chat-load-state[hidden], .chatwrap .msgs:empty { display:none; }

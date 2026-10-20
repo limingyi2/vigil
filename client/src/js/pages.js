@@ -207,9 +207,8 @@
   }
 
   function heroHtml() {
-    return '<div class="welcome-brand" aria-hidden="true">V</div>' +
-      '<h1>有什么可以帮你？</h1>' +
-      '<p>与 Vigil 一起思考、编程和执行任务</p>' +
+    return '<h1 class="welcome-brand">Vigil</h1>' +
+      '<p>与更强大的 AI，一起探索无限可能</p>' +
       '<div class="hero-hints">' +
       ['帮我看看今天的日程', '把刚才那段整理成清单', '看看下载文件夹里有什么']
         .map((x) => '<button class="chip" data-hint="' + x + '">' + esc(x) + '</button>').join('') +
@@ -516,6 +515,7 @@
     };
 
     function drawSessions() {
+      document.body.classList.toggle('welcome-has-sessions', sessionItems.length > 0);
       if (!sessionItems.length) {
         sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">还没有会话</div>';
         return;
@@ -533,6 +533,7 @@
     }
     async function activateConversation(id, options = {}) {
       if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
+      document.body.classList.remove('welcome-home');
       activeConversationId = id;
       state.chatConversationId = id;
       if (options.persist !== false) {
@@ -773,6 +774,7 @@
       updateComposer();
     }
     function showWelcomeHome(persist = false) {
+      document.body.classList.add('welcome-home');
       activeConversationId = '';
       state.chatConversationId = '';
       lastCount = -1;
@@ -811,6 +813,7 @@
         }
         if (!activeConversationId) return '';
         state.chatConversationId = activeConversationId;
+        document.body.classList.remove('welcome-home');
         try { localStorage.setItem(SESS_KEY, activeConversationId); } catch (_) {}
         rememberRendererSelection(activeConversationId, 'conversation');
         drawSessions();
@@ -840,7 +843,26 @@
       if (restoreId && sessionItems.some((item) => item.id === restoreId)) {
         await activateConversation(restoreId, {persist:false});
       } else {
-        showWelcomeHome(false);
+        // A normal process launch restores the newest conversation that has
+        // durable turns. Empty conversation rows do not count as chat history.
+        // Renderer reloads use restoreId above so in-flight work stays scoped.
+        let historyId = '';
+        for (const session of sessionItems) {
+          try {
+            const history = pick(await get('/api/history?limit=1&src=pc&conversation_id=' + encodeURIComponent(session.id)));
+            const turns = (history.items || []).length || (history.display_turns || []).length;
+            if (turns) { historyId = session.id; break; }
+            const jobs = pick(await get('/api/creator/jobs?conversation_id=' + encodeURIComponent(session.id)));
+            if ((jobs.items || []).length) { historyId = session.id; break; }
+          } catch (_) {
+            // If history lookup is temporarily unavailable, prefer opening
+            // the newest saved row so existing data is still reachable.
+            historyId = session.id;
+            break;
+          }
+        }
+        if (historyId) await activateConversation(historyId, {persist:false});
+        else showWelcomeHome(false);
       }
     }
     // ── 创作模式（Creator Mode MVP-1）─────────────────────────
@@ -1163,6 +1185,7 @@
       let loadConversationId = activeConversationId;
       const loadState = view.querySelector('#chatLoadState');
       const showRetry = (message) => {
+        document.body.classList.remove('welcome-home');
         heroEl.hidden = true; chat.classList.remove('is-empty'); loadState.hidden = false;
         loadState.innerHTML = '<b>暂时无法加载会话</b><p>' + esc(message || '检查连接设置') + '</p><button class="btn oline" id="retryHistory">重新加载</button>';
         loadState.querySelector('button').onclick = () => loadMsgs(true);
@@ -1216,6 +1239,7 @@
       lastCount = renderKey;
       if (!items.length) {
         // Empty history: centered welcome and the existing quick questions.
+        document.body.classList.add('welcome-home');
         heroEl.hidden = false;
         chat.classList.add('is-empty');
         heroEl.innerHTML = heroHtml();
@@ -1228,6 +1252,7 @@
         return;
       }
       drawSessions();
+      document.body.classList.remove('welcome-home');
       heroEl.hidden = true;
       chat.classList.remove('is-empty');
       // Preserve live draft nodes only while refreshing this same conversation.
@@ -3062,9 +3087,9 @@
     // 本地操控不再是设置里的一页：确认走聊天气泡，权限/目录/工具开关
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：云端 brain 没有 /api/device/*（点了就是 no such api）。
-    const subs = [['conn', '连接与设备'], ['model', '模型管理'], ['wechat', '微信聊天集成'], ['sync', '云端同步'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '连接与设备'], ['model', '模型管理'], ['appearance', '外观'], ['wechat', '微信聊天集成'], ['sync', '云端同步'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'wechat' ? 'chat' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'appearance' ? 'moon' : k === 'wechat' ? 'chat' : k === 'sync' ? 'heart' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('连接与设备', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -3896,7 +3921,29 @@
       });
     }
 
-    const draw = { conn, model, wechat, sync, danger, about };
+    function appearance() {
+      ctx.topbar.querySelector('h1').textContent = '外观';
+      const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+      v.innerHTML = '<div class="sec">主题</div><div class="card" style="max-width:640px">' +
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+        '<div class="lb"><b>界面主题</b><span>欢迎页保持深色玻璃效果，其他页面使用所选主题</span></div>' +
+        '<div class="seg" role="group" aria-label="界面主题">' +
+        '<button type="button" data-theme-choice="light" aria-pressed="' + (theme === 'light') + '" class="' + (theme === 'light' ? 'on' : '') + '">浅色</button>' +
+        '<button type="button" data-theme-choice="dark" aria-pressed="' + (theme === 'dark') + '" class="' + (theme === 'dark' ? 'on' : '') + '">深色</button>' +
+        '</div></div></div>';
+      v.querySelectorAll('[data-theme-choice]').forEach((button) => button.addEventListener('click', () => {
+        const next = button.dataset.themeChoice === 'dark' ? 'dark' : 'light';
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem('vigil_theme', next); } catch (_) {}
+        v.querySelectorAll('[data-theme-choice]').forEach((choice) => {
+          const active = choice.dataset.themeChoice === next;
+          choice.classList.toggle('on', active);
+          choice.setAttribute('aria-pressed', String(active));
+        });
+      }));
+    }
+
+    const draw = { conn, model, appearance, wechat, sync, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));

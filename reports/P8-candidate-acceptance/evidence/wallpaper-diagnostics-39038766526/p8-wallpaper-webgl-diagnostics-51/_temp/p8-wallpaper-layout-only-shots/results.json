@@ -1,0 +1,450 @@
+{
+  "fixture": true,
+  "preload": "client/electron/preload.js (production, unchanged)",
+  "electron": "28.3.3",
+  "chrome": "120.0.6099.291",
+  "productionMain": false,
+  "realModelCalls": 0,
+  "hardwareAcceleration": "Electron default enabled",
+  "gpu": {
+    "features": {
+      "2d_canvas": "unavailable_software",
+      "canvas_oop_rasterization": "disabled_off",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "disabled_software",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "disabled_off",
+      "rasterization": "disabled_software",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "video_decode": "disabled_software",
+      "video_encode": "disabled_software",
+      "vulkan": "disabled_off",
+      "webgl": "unavailable_software",
+      "webgl2": "unavailable_software",
+      "webgpu": "unavailable_software"
+    },
+    "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+  },
+  "results": [
+    {
+      "name": "isolated EPIPE simulation does not open a main-process error dialog",
+      "status": "passed"
+    },
+    {
+      "name": "wallpaper settings light contrast and gallery layout",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1024,
+          "height": 720
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 962,
+          "height": 598,
+          "bottom": 694
+        },
+        "shell": {
+          "x": 92.71875,
+          "y": 116,
+          "width": 900.5625,
+          "height": 558,
+          "bottom": 674
+        },
+        "grid": {
+          "x": 109.71875,
+          "y": 420.09375,
+          "width": 866.5625,
+          "height": 236.90625,
+          "bottom": 657
+        },
+        "toolbar": {
+          "x": 109.71875,
+          "y": 364.40625,
+          "width": 866.5625,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(255, 255, 255)",
+        "text": "rgb(32, 39, 51)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper settings dark contrast and gallery layout",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1024,
+          "height": 720
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 962,
+          "height": 598,
+          "bottom": 694
+        },
+        "shell": {
+          "x": 92.71875,
+          "y": 116,
+          "width": 900.5625,
+          "height": 558,
+          "bottom": 674
+        },
+        "grid": {
+          "x": 109.71875,
+          "y": 420.09375,
+          "width": 866.5625,
+          "height": 236.90625,
+          "bottom": 657
+        },
+        "toolbar": {
+          "x": 109.71875,
+          "y": 364.40625,
+          "width": 866.5625,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 1920x1080",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1920,
+          "height": 1080
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 1858,
+          "height": 958,
+          "bottom": 1054
+        },
+        "shell": {
+          "x": 271,
+          "y": 116,
+          "width": 1440,
+          "height": 918,
+          "bottom": 1034
+        },
+        "grid": {
+          "x": 288,
+          "y": 420.09375,
+          "width": 1406,
+          "height": 596.90625,
+          "bottom": 1017
+        },
+        "toolbar": {
+          "x": 288,
+          "y": 364.40625,
+          "width": 1406,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 1280x800",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 1218,
+          "height": 678,
+          "bottom": 774
+        },
+        "shell": {
+          "x": 100.390625,
+          "y": 116,
+          "width": 1141.21875,
+          "height": 638,
+          "bottom": 754
+        },
+        "grid": {
+          "x": 117.390625,
+          "y": 420.09375,
+          "width": 1107.21875,
+          "height": 316.90625,
+          "bottom": 737
+        },
+        "toolbar": {
+          "x": 117.390625,
+          "y": 364.40625,
+          "width": 1107.21875,
+          "height": 55.6875,
+          "bottom": 420.09375
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 800x540",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 800,
+          "height": 540
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 738,
+          "height": 418,
+          "bottom": 514
+        },
+        "shell": {
+          "x": 86,
+          "y": 106,
+          "width": 690,
+          "height": 398,
+          "bottom": 504
+        },
+        "grid": {
+          "x": 103,
+          "y": 353.765625,
+          "width": 656,
+          "height": 133.234375,
+          "bottom": 487
+        },
+        "toolbar": {
+          "x": 103,
+          "y": 298.078125,
+          "width": 656,
+          "height": 55.6875,
+          "bottom": 353.765625
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "wallpaper gallery viewport 600x650",
+      "status": "passed",
+      "detail": {
+        "viewport": {
+          "width": 600,
+          "height": 650
+        },
+        "view": {
+          "x": 62,
+          "y": 96,
+          "width": 538,
+          "height": 528,
+          "bottom": 624
+        },
+        "shell": {
+          "x": 74,
+          "y": 108,
+          "width": 514,
+          "height": 504,
+          "bottom": 612
+        },
+        "grid": {
+          "x": 91,
+          "y": 370.453125,
+          "width": 480,
+          "height": 224.546875,
+          "bottom": 595
+        },
+        "toolbar": {
+          "x": 91,
+          "y": 265.078125,
+          "width": 480,
+          "height": 105.375,
+          "bottom": 370.453125
+        },
+        "gridScroll": true,
+        "outerScroll": false,
+        "overflow": false,
+        "panel": "none",
+        "gutter": "none",
+        "surface": "rgb(32, 38, 48)",
+        "text": "rgb(239, 243, 248)",
+        "titleSize": "14px",
+        "blur": "none"
+      }
+    },
+    {
+      "name": "very short wallpaper window has accessible outer scroll",
+      "status": "passed"
+    },
+    {
+      "name": "wallpaper search/filter, all tabs, canceled import/directory and refresh",
+      "status": "passed"
+    }
+  ],
+  "errors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "0"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    }
+  ]
+}

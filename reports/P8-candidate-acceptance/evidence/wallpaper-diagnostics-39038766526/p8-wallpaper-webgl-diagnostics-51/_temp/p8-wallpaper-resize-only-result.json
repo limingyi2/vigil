@@ -1,0 +1,6 @@
+{
+  "exit_code": 0,
+  "test": "window-resize-only-then-scene",
+  "source_commit": "193f297234a36a91ef61a4dedd63d4564df41c87",
+  "diagnostic_commit": "cac6f0b20ac76ee65cb2e550ae37686a88a56a12"
+}

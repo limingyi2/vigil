@@ -1,0 +1,404 @@
+{
+  "fixture": true,
+  "preload": "client/electron/preload.js (production, unchanged)",
+  "electron": "28.3.3",
+  "chrome": "120.0.6099.291",
+  "productionMain": false,
+  "realModelCalls": 0,
+  "hardwareAcceleration": "Electron default enabled",
+  "gpu": {
+    "features": {
+      "2d_canvas": "unavailable_software",
+      "canvas_oop_rasterization": "disabled_off",
+      "direct_rendering_display_compositor": "disabled_off_ok",
+      "gpu_compositing": "disabled_software",
+      "multiple_raster_threads": "enabled_on",
+      "opengl": "disabled_off",
+      "rasterization": "disabled_software",
+      "raw_draw": "disabled_off_ok",
+      "skia_graphite": "disabled_off",
+      "video_decode": "disabled_software",
+      "video_encode": "disabled_software",
+      "vulkan": "disabled_off",
+      "webgl": "unavailable_software",
+      "webgl2": "unavailable_software",
+      "webgpu": "unavailable_software"
+    },
+    "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+  },
+  "results": [
+    {
+      "name": "isolated EPIPE simulation does not open a main-process error dialog",
+      "status": "passed"
+    },
+    {
+      "status": "failed",
+      "error": "Timeout: document.querySelector('[data-status]')?.textContent==='WebWallGL 实时渲染中'"
+    }
+  ],
+  "errors": [
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat",
+    "Uncaught SyntaxError: Invalid regular expression: /wallpaper|webwall|.js(?:?|$)/i: Nothing to repeat"
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "0"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/saved",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/creator/drafts",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/trace",
+      "query": {
+        "last": "60"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/conversations",
+      "query": {
+        "src": "pc"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/persona",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/frontend",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/status",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/events",
+      "query": {
+        "after": "undefined"
+      },
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/tasks",
+      "query": {},
+      "body": null,
+      "base": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent-center/approvals",
+      "query": {},
+      "body": null,
+      "base": null
+    }
+  ]
+}

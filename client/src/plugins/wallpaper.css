@@ -164,3 +164,59 @@ body[data-vigil-page="wallpaper"] #view {
   .vwp-shell { min-height:420px; flex:none; }
 }
 @media(prefers-reduced-motion:reduce) { .vwp-tile { transition:none; } }
+
+/* The welcome view is transparent over this same stage. Keep its window
+   controls and navigation as readable glass without touching the renderer. */
+body.vwp-active.welcome-home[data-vigil-page="chat"] .titlebar { background:transparent; border:0; }
+body.vwp-active.welcome-home[data-vigil-page="chat"] > .app { border:1px solid rgba(255,255,255,.16); border-radius:18px; }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .wctl {
+  border-color:rgba(255,255,255,.2); background:rgba(12,16,22,.58);
+  backdrop-filter:blur(min(14px,var(--vwp-blur,10px))) saturate(120%);
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .wctl button { color:#f2f4f8; }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .gnav {
+  background:rgba(7,15,26,.56); border:1px solid rgba(255,255,255,.17);
+  border-radius:14px 0 0 14px; backdrop-filter:blur(min(18px,var(--vwp-blur,12px))) saturate(125%);
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .gnav-brand,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .gnav .gbtn,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .hero,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .welcome-brand {
+  color:#f5f7fa; text-shadow:0 2px 12px rgba(0,0,0,.56);
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .gnav .gbtn.on {
+  color:#fff; background:rgba(92,143,221,.28); box-shadow:inset 3px 0 #78a7ff;
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .gnav .gbtn:hover {
+  color:#fff; background:rgba(224,235,251,.13);
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .panel {
+  background:rgba(8,16,27,.48); border-right:1px solid rgba(255,255,255,.15);
+  backdrop-filter:blur(min(18px,var(--vwp-blur,12px))) saturate(125%);
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .panel .phead,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .panel .li { color:#f5f7fa; }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .panel .li:hover { background:rgba(224,235,251,.1); }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .panel .li.on { background:rgba(92,143,221,.28); }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .hero p,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .composer-caption { color:rgba(245,247,250,.84); }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .hero-hints .chip {
+  color:#f5f7fa; border:1px solid rgba(255,255,255,.23); background:rgba(11,18,29,.34);
+  backdrop-filter:blur(min(12px,var(--vwp-blur,8px)));
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .cbox {
+  color:#f5f7fa; border-color:rgba(255,255,255,.4);
+  background:rgba(15,22,32,.42); box-shadow:0 18px 54px rgba(0,0,0,.25);
+  backdrop-filter:blur(min(22px,var(--vwp-blur,16px))) saturate(135%);
+}
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .cbox textarea,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .cbar .ibtn,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .cbar .chip,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .composer-model { color:#f5f7fa; }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .cbox textarea::placeholder { color:rgba(238,243,250,.78); }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .cbar .chip { border-color:rgba(255,255,255,.23); }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .attach { background:rgba(11,18,29,.62); }
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .modelpop,
+body.vwp-active.welcome-home[data-vigil-page="chat"] .chatwrap .localpop {
+  color:#f5f7fa; background:rgba(18,24,33,.96); border-color:rgba(255,255,255,.22);
+}

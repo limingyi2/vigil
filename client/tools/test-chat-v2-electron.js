@@ -14,8 +14,8 @@ for(const stream of [process.stdout,process.stderr]) {
 const client = path.resolve(__dirname, '..');
 const baseline = process.argv.includes('--baseline');
 const src = baseline ? path.join(client, '_shots/ui-v2/baseline-src/src') : path.join(client, 'src');
-const shots = path.join(client, '_shots/ui-v2');
-const evidenceDir = path.resolve(client, '..', 'reports', 'p6.1-evidence');
+const shots = path.resolve(process.env.VIGIL_UI_SHOTS_DIR || path.join(client, '_shots/ui-v2'));
+const evidenceDir = path.resolve(process.env.VIGIL_UI_EVIDENCE_DIR || path.resolve(client, '..', 'reports', 'p6.1-evidence'));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-chat-v2-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
@@ -243,6 +243,13 @@ async function chat() {
   }
   await until(`document.querySelector('#hero') && !document.querySelector('#hero').hidden`); await wait(100);
 }
+async function refreshCurrentPage() {
+  await ev(`document.querySelector('#gnav [data-page="'+API.state.page+'"]').click()`);
+  await wait(120);
+}
+async function setTheme(theme) {
+  await ev(`(()=>{const t=${JSON.stringify(theme)};document.documentElement.dataset.theme=t;API.state.theme=t;localStorage.setItem('vigil_theme',t)})()`);
+}
 async function measure() {
   return ev(`(()=>{const rect=s=>{let r=document.querySelector(s).getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom}};return{viewport:{width:innerWidth,height:innerHeight},input:rect('.cbox'),composer:rect('.composer'),chat:rect('.chat'),hero:rect('#hero'),scroll:rect('#msgs'),context:getComputedStyle(document.querySelector('#rp')).display,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
 }
@@ -305,7 +312,7 @@ async function main() {
   await wait(400);
   gpu = { features:app.getGPUFeatureStatus(), webgl:await ev(`(()=>{const c=document.createElement('canvas'),g=c.getContext('webgl');if(!g)return 'unavailable';const d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):g.getParameter(g.RENDERER)})()`) };
   wallpaperTrace('environment',{electron:process.versions.electron,chrome:process.versions.chrome,platform:process.platform,gpu,initialMeasure:await measure(),predecessorState:{fixtureSelection:'not-started',visibleFrames:await ev(`document.querySelectorAll('iframe').length`),page:await ev(`document.body.dataset.vigilPage`),classes:await ev(`document.body.className`),resourceEntries:await ev(`performance.getEntriesByType('resource').length`)}});
-  if(baseline) { await shot('before-light'); await ev(`document.querySelector('#themeBtn').click()`); await shot('before-dark'); return; }
+  if(baseline) { await shot('before-light'); await setTheme('dark'); await shot('before-dark'); return; }
   if (process.env.P8_WALLPAPER_ONLY === '1') {
     await ev(`document.querySelector('#gnav [data-page="wallpaper"]').click()`); await until(`document.querySelector('[data-id="990003"]')`);
     await wallpaperSceneRun(); console.log('PASS: isolated chat harness Wallpaper scene first frame'); return;
@@ -324,10 +331,18 @@ async function main() {
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
   assert.equal(await ev(`document.querySelector('#rpBtn').getAttribute('aria-expanded')`),'false');
   assert.equal((await measure()).context,'none');
-  assert.equal(await ev(`document.querySelector('#hero').textContent.includes('有什么可以帮你')`),true);
+  assert.equal(await ev(`document.querySelector('#hero').textContent.includes('Vigil')`),true);
+  assert.equal(await ev(`document.body.classList.contains('welcome-home')`),true);
+  assert.equal(await ev(`getComputedStyle(document.querySelector('.gnav')).alignItems`),'center');
+  assert.equal(await ev(`getComputedStyle(document.querySelector('.gnav .gnav-label')).display`),'none');
+  assert.equal(await ev(`getComputedStyle(document.querySelector('.gnav-brand')).display`),'none');
+  assert.match(await ev(`getComputedStyle(document.querySelector('.app')).gridTemplateColumns`),/^62px\s/);
+  result('welcome keeps original narrow icon-only global navigation');
+  assert.equal(await ev(`Boolean(document.querySelector('#themeBtn,#reloadBtn'))`),false);
+  assert.equal(await ev(`document.querySelectorAll('.wctl button').length`),3);
   result('empty session and default collapsed context',await measure());
   const type=await ev(`(()=>{const size=s=>getComputedStyle(document.querySelector(s)).fontSize;return{body:size('body'),input:size('#ta'),welcome:size('#hero h1'),button:size('#rpBtn'),model:size('#modelBtn'),sidebar:size('.phead h2'),zoom:getComputedStyle(document.body).zoom,transform:getComputedStyle(document.body).transform}})()`);
-  assert.deepEqual(type,{body:'15px',input:'15px',welcome:'32px',button:'14px',model:'14px',sidebar:'14px',zoom:'1',transform:'none'});
+  assert.deepEqual(type,{body:'15px',input:'15px',welcome:'58px',button:'14px',model:'14px',sidebar:'14px',zoom:'1',transform:'none'});
   assert.equal(win.webContents.getZoomFactor(),1);
   const composerWidth=(await measure()).input.width;
   if (process.env.P8_DIAG_SKIP_FIXED_LAYOUT === '1') wallpaperTrace('diagnostic-layout-gate',{expected:860,actual:composerWidth,decision:'skipped only to reach wallpaper scenario'});
@@ -360,7 +375,7 @@ async function main() {
   await ev(`document.querySelector('#sessionsBtn').click();document.querySelector('#rpBtn').click()`);
   assert.equal((await measure()).context,'block');
   await shot('after-light-context');
-  await ev(`document.querySelector('#rpBtn').click();document.querySelector('#themeBtn').click()`);
+  await ev(`document.querySelector('#rpBtn').click()`); await setTheme('dark');
   await shot('after-dark-empty'); result('session list and context toggle, dark theme');
   await ev(`const ta=document.querySelector('#ta');ta.value='多行内容\\n'.repeat(30);ta.dispatchEvent(new Event('input'))`);
   assert.ok(await ev(`document.querySelector('#ta').clientHeight<=180 && document.querySelector('#ta').clientHeight>=120`));
@@ -410,7 +425,7 @@ async function main() {
   await ev(`document.querySelector('#localBtn').click()`); await until(`!document.querySelector('#localPop').hidden && document.querySelector('#lpClose')`);
   await ev(`document.querySelector('#lpClose').click()`); result('existing safety control opens and closes');
   // Load history through the existing refresh entry and select a real session row.
-  await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelector('#msgs .codeblock')`);
+  await refreshCurrentPage(); await until(`document.querySelector('#msgs .codeblock')`);
   assert.equal(await ev(`document.querySelector('#hero').hidden`),true);
   await ev(`document.querySelector('[data-session]').click()`);
   assert.equal(await ev(`document.querySelector('[data-session]').closest('.session-row').classList.contains('on')`),true);
@@ -467,15 +482,15 @@ async function main() {
   win.webContents.reload();
   await until(`API.state.chatConversationId===${JSON.stringify(conversationB)} && document.querySelector('#msgs').textContent.includes('B_ONLY')`);
   result('A/B independent messages, scoped Creator draft restore, continuation, legacy label and renderer restart');
-  await ev(`document.querySelector('#themeBtn').click()`); await shot('after-light-chat');
-  await ev(`document.querySelector('#themeBtn').click()`);
+  await setTheme('light'); await shot('after-light-chat');
+  await setTheme('dark');
   result('ordinary light-theme history and code rendering');
   // Inspect matched content edges and a fixed composer while scrolling long history.
   await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
   await until(`API.state.chatConversationId===${JSON.stringify(legacyConversationId)}`);
   await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k))`);
   const many=Array.from({length:40},(_,i)=>({role:i%2?'assistant':'user',text:i%2?answer:'问题 '+i,t:Date.now()-40000+i*1000}));
-  history=many; await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelectorAll('#msgs .turn').length===40`);
+  history=many; await refreshCurrentPage(); await until(`document.querySelectorAll('#msgs .turn').length===40`);
   const align=await ev(`(()=>{const t=document.querySelector('#msgs .turn').getBoundingClientRect(),c=document.querySelector('.cbox').getBoundingClientRect();return{left:Math.abs(t.left-c.left),right:Math.abs(t.right-c.right),width:c.width}})()`);
   assert.ok(align.left<=2 && align.right<=2 && align.width<=860,JSON.stringify(align));
   const before=await measure(); await ev(`document.querySelector('#msgs').scrollTop=0`); await wait(80);
@@ -533,7 +548,7 @@ async function main() {
   const navCount=await ev(`document.querySelectorAll('#gnav .gbtn').length`);
   assert.ok(navCount>=7); result('global function entries retained',navCount);
   historyError=true;
-  await ev(`document.querySelector('#reloadBtn').click()`);
+  await refreshCurrentPage();
   await until(`document.querySelector('#retryHistory')`);
   assert.equal(await ev(`document.querySelector('#hero').hidden`),true);
   assert.equal(await ev(`getComputedStyle(document.querySelector('#chatLoadState')).display`),'flex');
@@ -556,7 +571,7 @@ async function main() {
   const saved=requests.findLast(r=>r.path==='/api/persona/save');
   assert.equal(saved.base,'cloud'); assert.equal(saved.body.key,'default'); assert.equal(saved.body.src,'wechat_group');
   result('persona data, compact list, editor and existing cloud save IPC');
-  await ev(`document.querySelector('#themeBtn').click();document.querySelector('#pfBack').click()`);
+  await setTheme('light'); await ev(`document.querySelector('#pfBack').click()`);
   await until(`document.querySelector('.persona-view .pcard')`);
   await shot('round2-persona-light');
   for(const [width,height] of [[900,700],[600,650]]) {
@@ -566,10 +581,10 @@ async function main() {
     await shot('round2-persona-'+width+'x'+height);
   }
   win.setSize(1400,900); await wait(100);
-  await ev(`document.querySelector('#themeBtn').click()`);
+  await setTheme('dark');
   result('persona light/dark and narrow-window layouts');
   personaEmpty=true;
-  await ev(`document.querySelector('#reloadBtn').click()`);
+  await refreshCurrentPage();
   await until(`document.querySelector('.persona-view .empty')?.textContent.includes('暂无人格配置')`);
   result('persona empty state is distinguished from service failure');
   personaEmpty=false;
@@ -617,7 +632,7 @@ async function main() {
   assert.equal(material.welcomeBackground,'rgba(0, 0, 0, 0)'); assert.equal(material.welcomeBorder,'0px'); assert.equal(material.welcomeBlur,'none');
   result('wallpaper welcome has no card or backdrop blur',material);
   history=[{role:'assistant',text:answer,t:Date.now()}];
-  await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelector('.codeblock')`); await shot('after-wallpaper-chat');
+  await refreshCurrentPage(); await until(`document.querySelector('.codeblock')`); await shot('after-wallpaper-chat');
   result('wallpaper reading surface and unchanged chat DOM');
   for(const [width,height] of [[1280,800],[900,700],[600,650],[800,540]]) {
     win.setSize(width,height); await wait(120);
