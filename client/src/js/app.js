@@ -27,9 +27,11 @@
   // ── 左侧主导航：图标栏，页名由原生 tooltip 和 aria-label 提供 ──
   function buildNav() {
     if (!gnavEl) return;
-    gnavEl.innerHTML = PAGES.filter((p) => p.id !== 'system').map((p) =>
-      '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
-      U.icon(p.icon === 'image' ? 'img' : (p.icon || 'puzzle'), 'md') + '</button>').join('') +
+    gnavEl.innerHTML = PAGES.filter((p) => p.id !== 'system').map((p) => {
+      // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，别让按钮变成空白图标
+      const ic = String(p.icon === 'image' ? 'img' : p.icon || '').replace(/^i-/, '') || 'puzzle';
+      return '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
+      U.icon(ic, 'md') + '</button>'; }).join('') +
       '<div class="nav-spacer" aria-hidden="true"></div>' +
       '<button class="gbtn nav-settings" id="settingsBtn" data-tip="设置" title="设置" aria-label="打开设置窗口">' +
       U.icon('set', 'md') + '</button>';
