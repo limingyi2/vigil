@@ -230,3 +230,11 @@
 - **前后变化：** 此前 AG-002 只由组件测试证明 cursor gap；新增端到端 Brain SSE 用例证明 300-event cursor gap 后内容/终态 snapshot 一致。AG-003 此前缺少 Agent run 的真实 Electron API 操作和窗口退出时活跃 run 的验证；现取消/timeout/Brain reboot/窗口退出并 relaunch 的状态有端到端观察。AG-005 从未对副作用窗口做 E2E；现有本地插件副作用记录与重启安全恢复证据。风险级别未降低为关闭，因为自动客户端重连、真实 Provider/外部系统副作用仍未覆盖。
 - **回归与风险：** 新增检查只注入 fixture，不改变产品代码。完整 E2E 前两次在新增场景执行前发生 seed-history 第 8 项渲染超时，属于真实失败证据；同一环境旧脚本成功、当前脚本第三次成功，表明有波动，需后续稳定性调查，不能删去失败次数。
 - **后续：** P1 AG-002 验证 Electron 自动断流重连语义；AG-003 验证 renderer UI 取消及窗口退出矩阵；AG-005 在授权的真实 Provider 或受控外部副作用服务上验证“请求已接收、响应丢失”；AG-008 继续覆盖更多正式历史版本/实际用户文件系统组合。真实 Provider 认证/限流/空响应仍 BLOCKED，未运行不得计为 PASS。
+
+## 2026-10-20 — Agent Center 真实 Electron 重连回归（Round 7）
+
+- **目标：** 补充 AG-002 在 Electron renderer/preload 对断开、显式重连、连接代次变化和事件游标缺口的行为证据，与本地 Agent run 的 Brain SSE 故障注入分开记录。
+- **执行：** `client/tools/test-agent-center-electron.js`，用真实 Electron renderer、项目 preload 和隔离 App Server 协议 fixture；输出设为 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-center-electron/`，没有写入仓库报告目录。
+- **结果：** 25/25 PASS、0 renderer/preload errors、0 模型 API 请求。实际检查覆盖启动自动连接、运行与失败状态、审批去重/不提供未经授权的审批按钮、显式断开保持断开、重新连接使未决项变未知、gap 告警及历史重同步、server connection/cursor reset、401 阻断与认证恢复、任务启动/中断及窄屏/主题布局。结果 JSON：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-center-electron/electron-results.json`；命令日志：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-center-electron.log`。
+- **证据边界：** 这是协议兼容 fixture，不是实际 Codex App Server 或真实 Provider；它证明 Electron 客户端消费既定事件语义，不证明本地 `/api/agent/runs` 的 UI 自动重连。AG-002 维持 P1/部分验证，持续队列压力、本地 run renderer reconnect 和真实远端服务仍待测。
+- **修改：** 仅追加基线、阶段验收和本日志记录，没有产品代码变更。
