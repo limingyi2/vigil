@@ -220,3 +220,13 @@
 - **独立 fresh-install 结果：** 同版本隔离 NSIS 安装、Brain health、Fake Provider 首次聊天、重启恢复、卸载清除程序文件并保留 70 个 profile 文件和外部 sentinel 均通过；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-dfda34f.json`。失败尝试 `5cf5000`、`e529708`、`9688b07` 的报告/日志保留，没有覆盖。
 - **包清单：** Electron `app.asar` 804 条目，Windows unpacked 241 个文件；扫描未匹配配置/用户聊天/测试 sentinel/本机报告。Installer manifest SHA-256/size 与产物一致，manifest 的 source commit 与候选验收提交一致。清单见本机 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-package-inventory-dfda34f.json`。
 - **剩余边界：** 这是隔离测试账户与当前 1.0.2→候选升级路径，不能证明所有历史版本及真实用户机器文件系统状态。NSIS verbose installer/uninstaller log 开关未产生日志文件；步骤级 JSON 日志和测试临时目录证据可用。未读取真实 Provider 密钥，真实模型场景仍 BLOCKED。
+
+## 2026-10-20 — P1 运行时验收补充（Round 6）
+
+- **范围：** AG-002 SSE cursor gap/snapshot、AG-003 Electron 发起的取消/超时与 Brain 重启状态、AG-005 不确定工具结果和非幂等副作用去重。基线源码提交 `498448f020a579b72d49d3d2fe0358e2a956573c`；改动仅限真实运行 E2E fixture 和文档，没有改动 Vigil 业务实现。
+- **复现与验证：** 用真实 Electron renderer/bridge、隔离 Python Brain、loopback Fake Provider 和临时插件目录执行 `node client/tools/test-electron-brain-e2e.js`。第一次与第二次在既有会话历史第 8 项先超时（详见报告日志）；同环境基线脚本 8/8 PASS；当前脚本第三次完整运行 14/14 PASS。所有日志均在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-p1-agent-e2e-*.log`，失败日志未覆盖。
+- **新增证据：** 300 个流 delta 后，断开首个持久 cursor 并恢复，事件超过 256 项保留窗后返回一致的 snapshot；Electron API bridge 触发取消和 1 秒 Provider timeout 后均非成功，且插件未被调用；成功 request ID 重试不会产生第二次 Provider/tool 调用；fixture 已写副作用但未返回时强杀 Brain，重启后 run 为 `interrupted`、步骤为 `unknown`，重复 request ID 不会重放。
+- **相关回归：** `python -m pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra`：34 passed、8 subtests passed、0 skipped（5.12 秒）。原始日志：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-backend-regression-final.log`。通过受控命令入口 `agent_eval.py --state-dir ... run --case agent-run-lifecycle --label p1-runtime-round6` 再执行，1/1 PASS、3.328 秒、其余 13 项 NOT RUN；真实本地报告：`%LOCALAPPDATA%/Vigil/stage2-state/eval-reports/reports/run-20261020T114016-7c7b7153.json`。
+- **前后变化：** 此前 AG-002 只由组件测试证明 cursor gap；新增端到端 Brain SSE 用例证明 300-event cursor gap 后内容/终态 snapshot 一致。AG-003 此前缺少 Agent run 的真实 Electron API 操作；现取消/timeout/Brain reboot 状态有端到端观察。AG-005 从未对副作用窗口做 E2E；现有本地插件副作用记录与重启安全恢复证据。风险级别未降低为关闭，因为自动客户端重连、窗口退出、真实 Provider/外部系统副作用仍未覆盖。
+- **回归与风险：** 新增检查只注入 fixture，不改变产品代码。完整 E2E 前两次在新增场景执行前发生 seed-history 第 8 项渲染超时，属于真实失败证据；同一环境旧脚本成功、当前脚本第三次成功，表明有波动，需后续稳定性调查，不能删去失败次数。
+- **后续：** P1 AG-002 验证 Electron 自动断流重连语义；AG-003 验证 renderer UI 取消及窗口退出矩阵；AG-005 在授权的真实 Provider 或受控外部副作用服务上验证“请求已接收、响应丢失”；AG-008 继续覆盖更多正式历史版本/实际用户文件系统组合。真实 Provider 认证/限流/空响应仍 BLOCKED，未运行不得计为 PASS。
