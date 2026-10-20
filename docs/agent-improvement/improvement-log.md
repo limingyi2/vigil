@@ -210,3 +210,10 @@
 - **修改范围：** 仅将集成夹具改为找到当前活动会话的 `[data-delete]` 并触发真实自定义确认；附件模拟按当前界面点击 `#clipBtn` → `[data-plus="file"]`，再替换原生文件对话框并注入临时视频 fixture。测试仍禁止调用原生 `window.confirm`，仍验证点击取消不改变对话，视频选项仍断言可见和生效。
 - **验证状态：** 修复后的提交将重建与该提交匹配的候选安装包，再运行官方 1.0.2 → 候选升级、数据迁移、Brain 配对、安装失败回滚及完整文件树恢复。最终实际结果记录在本机 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-<source-commit>.json`；只有该报告 `result` 为成功才算通过。
 - **范围边界：** 该阶段仍只修测试基础设施；如果用例随后进入真实产品路径并失败，保留报告并按证据重新分类，不在此轮借机修复 Vigil 业务问题。
+
+### Round 5 — 插件数据迁移断言路径修正
+
+- **修改前表现：** 候选升级完整运行通过旧安装包迁移、Brain/Electron 配对、会话隔离、插件工具调用、Creator 流式生成和草稿保存；验收脚本随后因 `profile/brain/plugins/vigil_smoke.py` 缺失而中止，尚未执行安装器级 rollback 部分。
+- **根因证据：** 失败报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-9688b07.stdout.log` 和残留隔离目录中都能找到 `profile/brain/data/installed_plugins/vigil_smoke.py`。`brain/paths.py` 定义 `PLUGIN_INSTALL_DIR = DATA_DIR/installed_plugins`，`brain/plugin_ops.py` 同样将市场安装插件写入 `data/installed_plugins`。夹具把安装插件误当成随包加载源 `brain/plugins`。
+- **修改范围：** 只修正 `scripts/test_windows_install.py` 检查位置，并在执行 rollback 之后再断言安装插件数据仍在。未改变安装器、插件实现或用户数据清理策略。
+- **验证状态：** 修复提交会重建来源匹配的候选包，再重跑从官方 1.0.2 升级、迁移、配对、Brain 故障阻断、rollback 恢复精确旧文件树、升级 checkpoint 故障保护的完整链路。最终报告在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-<source-commit>.json`；此前三次失败输出完整保存在各自的 stdout 日志，不覆盖。

@@ -291,7 +291,8 @@ def main(installer, baseline, output=None):
         check()
         assert marker.read_text(encoding='utf-8') == 'fixture retained'
         assert_migrated(profile, fixture)
-        assert (profile / 'brain/plugins/vigil_smoke.py').is_file(), 'Installed smoke plugin was lost during rollback'
+        installed_smoke_plugin = profile / 'brain/data/installed_plugins/vigil_smoke.py'
+        assert installed_smoke_plugin.is_file(), 'Installed smoke plugin was not persisted in the Brain user-data directory'
 
         pending = profile / 'updates/pending.json'
         checkpoint = json.loads(pending.read_text(encoding='utf-8-sig'))
@@ -315,6 +316,7 @@ def main(installer, baseline, output=None):
         assert inventory(install) == checkpoint_files, 'Rollback did not restore the exact 1.0.2 install tree'
         assert marker.read_text(encoding='utf-8') == 'fixture retained'
         assert_migrated(profile, fixture)
+        assert installed_smoke_plugin.is_file(), 'Installed smoke plugin data was lost during rollback'
         rolled = json.loads(pending.read_text(encoding='utf-8-sig'))
         assert rolled['status'] == 'rolled_back'
 
