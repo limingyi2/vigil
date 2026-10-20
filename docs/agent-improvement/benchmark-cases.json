@@ -399,11 +399,24 @@
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log",
         "result": "PASS: 1,200 persisted text events exceed the 256-event window; SQLite retained exactly 256 contiguous rows ending at cursor 1204; old cursor returned authoritative terminal/content snapshot; 15.8s."
       },
+      "extended_burst_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-event-burst; $env:VIGIL_E2E_EVENT_COUNT=5000; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-events-round17.log",
+        "result": "PASS: 5,000 persisted text events (~19.5x the 256-row retention window), cursor 5004, exactly 256 retained contiguous rows 4749–5004, full authoritative snapshot content; burst plus recovery 65.393s.",
+        "scope_note": "Short deterministic local Electron/Brain/Fake Provider pressure only; does not measure long-duration memory/backpressure behavior or real network proxies."
+      },
       "retry_exhaustion_evidence": {
         "date": "2026-10-20",
         "command": "$env:VIGIL_E2E_SCENARIO=agent-chat-reconnect-exhaustion; node client/tools/test-electron-brain-e2e.js",
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log",
         "result": "PASS: cuts=4, client resumes=3, same run reaches succeeded in both renderer and Brain."
+      },
+      "round18_regression_evidence": {
+        "date": "2026-10-20",
+        "command": "python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag002-5000-round18",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132038-86df9e8e.json",
+        "result": "PASS=12, FAIL=0, TIMEOUT=0, BLOCKED=0, NOT RUN=2; compared with prior regression run, all selected statuses unchanged and unselected cases remain NOT RUN."
       }
     },
     {

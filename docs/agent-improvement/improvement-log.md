@@ -306,3 +306,25 @@ Round 15 automated regression on clean HEAD `3a0de70b519124790e895c9c08552a0b57c
 - **边界：** 直接证实短时事件窗有界及 gap snapshot，不测长时 backpressure/内存曲线或真实网络代理；AG-002 风险仍部分验证。
 
 Round 16 automated regression on clean HEAD `dad8311c6f82ade44bd101490a8acf53b20e44b3`: 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN; manifest validation PASS. Report `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T131408-706cfe76.json`.
+
+
+## 2026-10-20 — 将 SSE 游标缺口压力扩展到 5,000 个持久事件（Round 17）
+
+- **基线与范围：** 已有 1,200-event burst 通过，但只是约 4.7 倍于 SQLite 256 行留存窗。此次只扩展隔离 E2E 参数；未更改 Brain/Electron 业务逻辑。
+- **测试改动：** `client/tools/test-electron-brain-e2e.js` 增加受限的 `VIGIL_E2E_EVENT_COUNT`（257–5,000）和等待时间参数，Focused `agent-event-burst` 共享实际内容、终态、request 去重及 SQLite 留存断言；越界值会 fail fast。
+- **结果：** `$env:VIGIL_E2E_SCENARIO=agent-event-burst; $env:VIGIL_E2E_EVENT_COUNT=5000; node client/tools/test-electron-brain-e2e.js` PASS。记录 5,000 个事件、cursor=5004、SQLite 恰好保留 256 行、seq 4749–5004 连续、快照内容完整，耗时 65.393s；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-events-round17.log`。完整 E2E 用默认 1,200 参数重跑 18/18 PASS，进程退出码 0；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-burst-default-full-e2e-round17-rerun.log`。
+- **失败/边界：** 默认完整 E2E 的首次运行完成并在输出末尾报告 18 项 PASS；第二次受控重跑保留明确退出码 0。没有观察到回归。长时间高频积压、内存曲线、真实代理仍 NOT RUN；真实 Provider 仍 BLOCKED。AG-002 保持 P1/部分验证。
+
+
+## 2026-10-20 — 回归、报告比较与中断任务续接（Rounds 18–19）
+
+- **Round 18 回归：** `python scripts/agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag002-5000-round18` 执行 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132038-86df9e8e.json`。同清单、同 runner 环境与前一回归报告比较，12 个选中案例均 PASS→PASS/UNCHANGED，`tool-call-permissions` 与 `full-local-pytest` 均保持 NOT RUN，不计入通过；比较文件在同一用户本机状态目录 `round17-comparison.json`。`tests/test_agent_eval_runner.py` 单独 10/10 PASS，覆盖报告差异判定逻辑。
+- **Round 19 续接：** 在本机隔离状态目录创建 `IMP-0001`，实际经历 BLOCKED→IN_PROGRESS→BLOCKED，blocked resume 未执行案例；记录解除后 resume 运行保存的 `agent-run-lifecycle` 白名单用例并 PASS。状态先转为 READY_FOR_VERIFY；缺少同案例基线/比较时尝试完成被拒绝，补齐基线、PASS 报告和同条件比较（PASS→PASS、其他 13 项 NOT RUN）后才允许 COMPLETED。任务 JSON 和两份报告仅保存在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-round17-task-resume/`，未进 Git。
+- **边界：** 被阻塞任务不会自动重试；解除阻塞及明确的 READY_FOR_VERIFY/报告门槛由维护者负责。报告中未运行的案例仍然 NOT RUN。
+
+
+## 2026-10-20 — 执行器命令白名单与交付复核（Rounds 20–21）
+
+- **Round 20：** `python scripts/agent_eval.py --state-dir <local-state> run --case agent-eval-runner --label phase2-whitelist-isolation-round20` PASS；测试自身 `python -m pytest tests/test_agent_eval_runner.py -ra` 10 passed。`agent_eval.py validate` 验证 14 个自动案例、4 suites、10 test sets、10 behavior scenarios；dry-run 展示的 argv 仅来自清单。runner 测试检查禁止 arbitrary shell/未声明命令的边界，测试执行器不获修改 Git 或源码的权限。
+- **Round 21：** 对最新 E2E 夹具再次执行完整 Electron/Brain/Fake Provider 流程，18/18 PASS、退出码 0；清单校验、CLI help/list、dry-run、报告比较及任务续接记录均通过。真实 Provider、长时事件积压、完整终态交叉矩阵及受当前用户客户端进程保护的 NSIS upgrade/rollback 仍 BLOCKED 或 NOT RUN，详见阶段报告。
+- **提交范围：** 仅隔离 E2E 测试夹具、案例证据、能力基线、改进日志和本机验收记录；没有修改 Vigil 业务实现。

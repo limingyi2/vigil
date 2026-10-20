@@ -30,6 +30,12 @@ let cancelGate = null;
 let windowExitGate = null;
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+function eventBurstCount() {
+  const count = process.env.VIGIL_E2E_EVENT_COUNT == null ? 1200 : Number(process.env.VIGIL_E2E_EVENT_COUNT);
+  if (!Number.isSafeInteger(count) || count < 257 || count > 5000)
+    throw new Error('VIGIL_E2E_EVENT_COUNT must be an integer from 257 through 5000');
+  return count;
+}
 function pass(label) { passCount++; console.log('PASS ' + label); }
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -134,7 +140,8 @@ async function startModel() {
         return;
       }
       if (userText.includes('P1_AGENT_EVENT_BURST')) {
-        for (let i = 0; i < 1200; i++) {
+        const count = eventBurstCount();
+        for (let i = 0; i < count; i++) {
           if (res.destroyed) return;
           res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'x' } }] }) + '\n\n');
           await wait(2);
@@ -644,7 +651,7 @@ function retainedAgentEventStats(runId) {
   ].join('; ');
   return JSON.parse(execFileSync(python, ['-c', query, database, runId], { encoding: 'utf8', windowsHide: true }));
 }
-async function disconnectAndResumeAgentEvents(brainBase, runId) {
+async function disconnectAndResumeAgentEvents(brainBase, runId, timeout = 20000) {
   const controller = new AbortController();
   const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}/events?src=pc&after=0`, {
     headers: { Authorization: 'Bearer ' + token }, signal: controller.signal,
@@ -665,7 +672,7 @@ async function disconnectAndResumeAgentEvents(brainBase, runId) {
   assert.ok(Number.isInteger(firstEvent.seq) && firstEvent.seq > 0);
   await reader.cancel(); // Simulate a client network cut after the first durable cursor.
   controller.abort();
-  const snapshot = await waitAgentRun(runId);
+  const snapshot = await waitAgentRun(runId, ['succeeded', 'failed', 'cancelled', 'interrupted'], timeout);
   const resumed = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}/events?src=pc&after=${firstEvent.seq}`, {
     headers: { Authorization: 'Bearer ' + token },
   });
@@ -681,20 +688,21 @@ async function disconnectAndResumeAgentEvents(brainBase, runId) {
   return { firstCursor: firstEvent.seq, resumedCursor: events[0].seq, snapshot };
 }
 async function exerciseEventBurst(brainBase) {
+  const eventCount = eventBurstCount();
   const burstId = 'p1_event_burst_' + require('node:crypto').randomUUID();
   const burstStartedAt = Date.now();
   const burstRequest = requestStarted(x => x.userText.includes('P1_AGENT_EVENT_BURST'));
   const burstRun = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
   await burstRequest;
-  const resumed = await disconnectAndResumeAgentEvents(brainBase, burstRun.run_id);
+  const resumed = await disconnectAndResumeAgentEvents(brainBase, burstRun.run_id, 120000);
   assert.equal(resumed.snapshot.status, 'succeeded');
-  assert.equal(resumed.snapshot.content, 'x'.repeat(1200));
+  assert.equal(resumed.snapshot.content, 'x'.repeat(eventCount));
   const retained = retainedAgentEventStats(burstRun.run_id);
   assert.equal(retained.count, 256, 'persistent event rows must remain within the configured 256-event retention window');
   assert.equal(retained.max_seq, resumed.snapshot.event_cursor, 'retained events must include the authoritative terminal cursor');
   assert.equal(retained.min_seq, retained.max_seq - 255, 'retained event sequence must be contiguous at the window boundary');
   console.log('EVENT_BURST_DIAGNOSTIC ' + JSON.stringify({
-    emitted_text_events:1200, cursor:resumed.snapshot.event_cursor, retained_rows:retained.count,
+    emitted_text_events:eventCount, cursor:resumed.snapshot.event_cursor, retained_rows:retained.count,
     first_retained_seq:retained.min_seq, last_retained_seq:retained.max_seq, duration_ms:Date.now()-burstStartedAt,
   }));
   const burstRequests = modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length;
@@ -702,7 +710,7 @@ async function exerciseEventBurst(brainBase) {
   assert.equal(burstDuplicate.run_id, burstRun.run_id);
   assert.equal(modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length, burstRequests,
     'reconnecting from an event cursor must observe the same run instead of creating another model request');
-  pass('SSE disconnect/resume retains 1,200 events as a bounded 256-row ledger and returns an authoritative gap snapshot');
+  pass(`SSE disconnect/resume retains ${eventCount} events as a bounded 256-row ledger and returns an authoritative gap snapshot`);
 }
 async function stopChild(child, force = false) {
   if (!child) return;

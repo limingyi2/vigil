@@ -159,3 +159,19 @@ Round 15 clean HEAD regression: `agent_eval.py validate` PASS; `agent_eval.py --
 - 这证明瞬时 1,200-event burst 下持久账本严格有界，不等价于长时间/高频 backpressure 内存曲线，也不覆盖真实外部网络。AG-002 仍为 P1/部分验证。
 
 Round 16 clean HEAD regression：`agent_eval.py validate` PASS；`agent_eval.py --state-dir <local-state> run --suite regression --label phase2-ag002-bounded-ledger-final` 在提交 `dad8311c6f82ade44bd101490a8acf53b20e44b3` 上结果为 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T131408-706cfe76.json`。
+
+
+### AG-002 5,000-event short pressure expansion (Round 17)
+
+- Test-only change: `client/tools/test-electron-brain-e2e.js` accepts bounded `VIGIL_E2E_EVENT_COUNT` values from 257 through 5,000; focused `agent-event-burst` exercises the same gap snapshot, terminal content and SQLite retention assertions. No product implementation changed.
+- Focused command: `$env:VIGIL_E2E_SCENARIO=agent-event-burst; $env:VIGIL_E2E_EVENT_COUNT=5000; node client/tools/test-electron-brain-e2e.js`. PASS: 5,000 text events, event cursor 5004, exactly 256 retained contiguous SQLite rows (4749–5004), complete authoritative snapshot, 65.393s. Local evidence: `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-events-round17.log`.
+- Full default Electron/Brain/Fake Provider E2E rerun: 18/18 PASS, process exit code 0, with the default 1,200-event case and the new DB assertions: `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-burst-default-full-e2e-round17-rerun.log`.
+- This short deterministic burst does not measure long-duration queue/backpressure or memory growth and does not represent a real remote network. AG-002 remains P1/partially verified.
+
+
+### Rounds 18–21 regression and task-resume gate
+
+- Regression runner on the updated E2E fixture: 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN. Actual comparison against the preceding regression report shows the same 12 selected cases PASS→PASS/UNCHANGED; the two unselected cases remain NOT RUN. Report `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132038-86df9e8e.json`; comparison `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/round17-comparison.json`.
+- Evaluator isolation case: 1 PASS, report `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T132240-d0e73960.json`; its underlying `tests/test_agent_eval_runner.py` is 10/10 PASS. Manifest validation reports 14 automated cases, 4 suites, 10 test sets and 10 behavior scenarios. Dry-run emits only declared argv.
+- Task lifecycle verification in a local-only state dir: create, update, block, refuse to resume while blocked, continue after explicit unblocking, run the saved `agent-run-lifecycle` case, enter READY_FOR_VERIFY, require linked same-case baseline/comparison, and only then complete. Resume report PASS=1 / NOT RUN=13; baseline report PASS=1 / NOT RUN=13; comparison PASS→PASS / UNCHANGED. Local task state and reports are in `%LOCALAPPDATA%/Vigil/stage2-round17-task-resume/` and are not tracked.
+- The latest 18/18 full E2E result is Round 17’s explicit-exit-code-0 rerun. Product code was unchanged. P1 status and remaining environment blocks are unchanged; this work provides more short-duration AG-002 evidence but no long soak, actual remote Provider, or current-source NSIS install lifecycle proof.

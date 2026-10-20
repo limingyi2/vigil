@@ -172,3 +172,10 @@
 - 真实 Electron/Brain/Fake Provider Agent run 输出 1,200 个持久 text events，event cursor 到 1204；断线后旧 cursor 收到正确 snapshot。只读检查 isolated `agent_runs.sqlite3` 发现该 run 仅保留 256 行，seq 连续为 949–1204，账本尾部包含终态 cursor。burst+恢复耗时 15.8 秒。
 - Focused 与默认完整 E2E 均 PASS（完整套件 18/18）。完整套件第一次因已有 seed-history 第 8 项夹具超时，失败日志保留，随后未改断言重跑通过。详见阶段报告 Round 16。
 - 长时间队列积压/内存曲线和真实代理仍未验证；不能从该短 burst 推断持续压力通过。
+
+
+## 2026-10-20 更新：5,000-event SSE 压力扩展（Round 17）
+
+- 在隔离 Electron + 本地 Brain + Fake Provider 下，将可配置 burst 上限设为 5,000，Focused 场景完成 5,000 个持久文本事件。Brain event cursor=5004；只读 SQLite 查询确认保留 256 条连续记录（seq 4749–5004）；旧 cursor 的权威 snapshot 内容完整。压力和恢复耗时 65.393 秒。报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-events-round17.log`。
+- 修改仅在 `client/tools/test-electron-brain-e2e.js`，增加有界测试参数并复用 ledger 检查；完整 E2E 随后重跑 18/18 PASS，退出码 0。报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-5000-burst-default-full-e2e-round17-rerun.log`。
+- 证据加强短时事件窗口的完整性和有界留存；未测长时间高频积压、内存曲线或真实代理。AG-002 仍为 P1/部分验证。
