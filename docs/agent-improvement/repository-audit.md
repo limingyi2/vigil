@@ -91,6 +91,6 @@ Python Brain
 | Agent/工具与失败 | Electron 工具 schema 调用、插件成功/失败、失败信息进入模型和 UI | 非幂等外部 side effect 的超时不确定与重试仍 P1 |
 | 会话/历史/Creator | 多会话隔离、A/B 恢复、Brain 与 Electron 重启后的历史/草稿恢复通过 | 高负荷/损坏数据恢复尚无全矩阵 |
 | 插件生命周期 | 临时目录插件安装调用路径、前端/CSS及失败结果显示 | 市场下载、外部依赖、安装/启停/卸载失败完整 UI 流程未全验 |
-| 安装/发行 | 真实 NSIS candidate lifecycle 运行结果见 `phase2-real-runtime-acceptance.md`/本机验收 JSON | 旧版升级、升级失败后的安装器 rollback 是否通过需按候选包实际结果判断；不因单元回滚测试宣称完成 |
+| 安装/发行 | 本次候选的 NSIS fresh install、Brain/chat/restart、卸载数据留存、官方 1.0.2→候选升级迁移、Brain mismatch 阻断、精确 rollback 和失败 checkpoint 保护均已实测通过；详见 `phase2-real-runtime-acceptance.md` 及外部本机 JSON | 仅覆盖该隔离 Windows 环境、1.0.2 基线与当前候选；其他历史版本跨度及真实机器状态仍待验证 |
 
 阶段自动回归结果为全仓 1,388 passed / 19 skipped / 0 failed；跳过未计入通过。问题 ID AG-002/003/005/008 均仍分别标为部分验证或待验证，不作为已确认缺陷修复。

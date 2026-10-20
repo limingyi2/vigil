@@ -110,6 +110,6 @@
 | AG-002 | P1 | Electron SSE 的多 delta/终态正常；Brain 强制退出被记录为 interrupted；Node timeline 快照恢复、游标 gap/connection-generation 分支测试通过 | **部分验证**。网络中途断开后的 Electron 自动重连、Brain snapshot 游标缺口及真实事件队列压力未形成完整联机验收 |
 | AG-003 | P1 | Fake Provider/Electron 成功工具工作流、工具失败反馈、Brain/Electron 重启恢复、Brain 进程断开后 UI 解锁通过 | **部分验证**。Electron 取消、超时、窗口退出以及各终态与 Brain API 持久状态矩阵仍待验证 |
 | AG-005 | P1 | Provider/Agent 执行契约、失败处理和工具去重自动化回归通过 | **待验证**。未对响应不确定时的外部非幂等副作用执行端到端故障注入；真实 Provider 不可用 |
-| AG-008 | P1 | 构建来源、包内容、首次安装、重启恢复、用户数据保留和卸载检查由隔离候选生命周期脚本实测（详见阶段验收记录） | **部分验证**。升级旧版本与升级失败后的安装器级回滚不能由单元级快照测试代替 |
+| AG-008 | P1 | fresh NSIS 安装/首次聊天/重启/卸载保留 70 个 profile 文件 PASS；官方 1.0.2→候选升级迁移、Brain mismatch 阻断、精确 rollback 与失败 checkpoint 保护 PASS；241 unpacked files、804 ASAR entries、禁止内容扫描 0 命中（证据见 phase2 报告） | **本次限定路径已验证**。其他旧版本跨度、真实用户设备文件系统、安装器 verbose log 未验证 |
 
 当前不允许提出“全部 P1 关闭”或完整产品交付结论。真实模型认证/限流/空响应的专用故障注入、Electron 窗口退出、长时事件队列压力和安装器升级回滚范围见 `phase2-real-runtime-acceptance.md`。

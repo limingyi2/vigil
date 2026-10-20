@@ -141,6 +141,6 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | AG-002 SSE 恢复/游标/队列压力 | 部分验证 | 真实 Electron 流、终态和 Brain 进程断开已验；Electron 网络断开后重连、Brain cursor gap 快照及长时间事件压力未完整验收 |
 | AG-003 Electron/Brain 状态一致性 | 部分验证 | 成功、插件失败、会话与 Brain/Electron 重启、Brain 断开后 UI 解锁已验；取消/超时/退出窗口的状态矩阵待验证 |
 | AG-005 不确定请求与幂等副作用 | 待验证 | 自动契约/去重套件通过；响应不确定情况下的真实非幂等外部操作未故障注入 |
-| AG-008 包内容、用户数据、升级/回滚 | 部分验证 | 此环境能够尝试隔离 Windows candidate installer lifecycle；旧版本升级和安装器级失败回滚须结合候选包实测结果判断，不能以单元快照测试替代 |
+| AG-008 包内容、用户数据、升级/回滚 | 指定路径通过 | 官方 1.0.2→隔离候选升级与数据迁移通过，Brain mismatch 阻断、完整旧版安装树回滚、失败 checkpoint 保护通过；fresh install/聊天/重启/卸载保留 70 个 profile 文件通过 |
 
-Windows 候选包的版本、source commit、installer SHA-256、包内清单、实际安装/启动/重启/卸载及升级/回滚结果写入本阶段本机 `phase2-acceptance-final.json`，独立 lifecycle 结果见 `phase2-candidate-lifecycle-final.json` 与 `phase2-upgrade-rollback-final.json`；原 `phase2-acceptance.json` 是首次失败记录并保留不覆盖。候选包不发布，也不覆盖正式安装。未完成项按最终报告标为 BLOCKED/NOT RUN，不作通过推断。PR #10 保持 open/draft/unmerged；本阶段没有修复 Vigil 业务 Bug。
+Windows 候选版本、source commit、installer SHA-256、包清单及本阶段验收汇总见本机 `phase2-acceptance-final.json`；独立 fresh-install/uninstall、旧版 upgrade/rollback 证据分别见 `phase2-candidate-lifecycle-dfda34f.json`、`phase2-upgrade-rollback-dfda34f.json` 和 `phase2-package-inventory-dfda34f.json`。原 `phase2-acceptance.json` 及后续夹具失败输出均保留不覆盖。候选包不发布，也不覆盖正式安装。AG-002/003 仍部分验证、AG-005 仍待验证；真实 Provider 和未完成场景按最终报告标为 BLOCKED/NOT RUN，不作通过推断。PR #10 保持 open/draft/unmerged；本阶段没有修复 Vigil 业务 Bug。

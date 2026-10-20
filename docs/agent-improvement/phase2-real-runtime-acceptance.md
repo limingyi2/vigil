@@ -24,7 +24,9 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | Node 原生测试 | PASS | 8 个 `node:test` 文件：56 passed / 0 failed / 0 skipped |
 | Electron + Brain + Fake Provider | PASS | 两次独立执行各 8/8 PASS；`%LOCALAPPDATA%/Vigil/stage2-state/phase2-electron-brain-e2e-final.log` 与 `phase2-electron-brain-e2e-stability.log` |
 | 任务阻塞、恢复与对比 | PASS（合成任务） | 独立 `task-flow-*` 状态目录：OPEN → BLOCKED → IN_PROGRESS → READY_FOR_VERIFY → COMPLETED；同条件 provider-contract PASS → PASS；blocked resume 未启动命令 |
-| Windows 候选包 / NSIS 生命周期 | 查看最终本机报告 | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-acceptance-final.json`；初始失败报告 `phase2-acceptance.json` 保留不覆盖，候选包不随 Git 提交或发布 |
+| Windows 候选包 / NSIS 生命周期 | PASS（限定验收路径） | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-dfda34f.json`；初始失败报告 `phase2-acceptance.json` 与后续夹具失败日志均保留；候选包不随 Git 提交或发布 |
+| 官方 1.0.2 → 候选升级、数据迁移及故障回滚 | PASS（限定验收路径） | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-dfda34f.json`；精确恢复旧安装文件树，profile 数据保留 |
+| 候选包内容与身份核验 | PASS | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-package-inventory-dfda34f.json`；241 unpacked files、804 ASAR entries，0 个禁止内容匹配；manifest source/size/SHA 与产物相符 |
 
 全仓 pytest 的 19 个 skipped 保留在 `-rs` 输出，未计入通过：缺少私有/本机素材、FFmpeg，以及当前 Windows runner 不具备部分 junction/symlink/mkfifo 创建权限。早期 E2E 测试夹具失败和异步断言竞态均保留在 `improvement-log.md`；修正夹具契约和等待 session-list 后，最终连续两次通过。
 
@@ -35,7 +37,7 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | AG-002 SSE 重连、游标缺口、快照与队列压力 | P1 | 部分验证：Electron 流式 delta/terminal 与 Brain crash interruption 实测；Node cursor gap/snapshot 分支通过 | 网络断流后的 Electron 自动重连、Brain cursor gap 一致性、有限队列持续压力未完整验证 |
 | AG-003 Electron/Brain 状态一致性 | P1 | 部分验证：成功工作流、工具失败显示、会话及 Brain/Electron 重启、进程断开后 UI 解锁 | 长任务取消/超时、窗口退出以及完成/失败/取消/重启的持久状态矩阵未完整验证 |
 | AG-005 不确定请求及非幂等副作用 | P1 | 待验证：Provider/Agent contract 与工具去重自动化通过 | 仍需 Fake Provider 在请求发出后丢响应、模拟重复请求，并对非幂等副作用计数的端到端测试 |
-| AG-008 安装包清单及用户数据保护 | P1 | 以本机 candidate JSON 报告中的 Windows lifecycle 结果为准 | 旧版本原位升级和故障注入回滚须独立确认；纯 Node rollback snapshot 测试不等价于 NSIS 升级/回滚 |
+| AG-008 安装包清单及用户数据保护 | P1 | **指定路径已验证通过**：fresh NSIS 安装/首次启动/Brain health/Fake Provider 聊天/Electron 重启/卸载保留 70 个 profile 文件；官方 1.0.2→候选迁移、Brain 不匹配阻断、精确回滚和升级 checkpoint 故障保护均 PASS；包清单扫描 0 禁止内容匹配 | 仅证明本次隔离环境、1.0.2 基线及候选版本；其他旧版升级跨度、真实用户机器/文件系统及安装器 verbose log 未验证 |
 
 以上风险均没有因不完整覆盖而标为完成。本阶段没有修改 Vigil 业务逻辑；没有修改 `master`、合并 PR、发布正式版本或覆盖正式安装。
 
@@ -43,7 +45,7 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 
 首次 fresh-install 聊天验收失败已作为真实失败证据保留在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-failure-initial.json` 及对应日志目录。故障定位在 lifecycle 测试夹具：模型配置字段应为 `chat`；随后又发现冷启动时 renderer 连接/发送按钮尚未就绪的竞态。修复测试夹具后，新的隔离 Electron profile 对已安装候选执行了 sentinel 聊天，sidecar Brain health 为 ready，Fake Provider 收到请求并在界面显示回复。详细通过/失败/阻塞结果、最终 installer 哈希、包清单和升级回滚结果以 `phase2-acceptance-final.json` 为准；如果该报告或对应独立 lifecycle 报告缺失，不得把该验收项推断为通过。
 
-旧版 1.0.2 到最终候选的安装器升级及故障注入回滚是独立验收项；必须以 `phase2-upgrade-rollback-final.json` 的实际结果为准。真实 Provider 认证、限流、空响应及服务端错误因没有授权的隔离凭据仍为 BLOCKED，Fake Provider 不代表真实服务验收。
+指定 Windows 环境下 1.0.2 到候选的安装器升级、数据迁移与故障注入回滚已实测通过，完整证据以 `phase2-upgrade-rollback-dfda34f.json` 为准。真实 Provider 认证、限流、空响应及服务端错误因没有授权的隔离凭据仍为 BLOCKED，Fake Provider 不代表真实服务验收。
 
 ## 报告和隐私
 
