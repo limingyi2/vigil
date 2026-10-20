@@ -122,7 +122,7 @@ def main(installer, expected_commit, output, expected_version='1.1.0'):
     assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    logs_dir = output.parent / 'lifecycle-logs'
+    logs_dir = output.parent / (output.stem + '-logs')
     logs_dir.mkdir(exist_ok=True)
     log_files = {
         'install': root / 'installer-install.json',
@@ -137,7 +137,7 @@ def main(installer, expected_commit, output, expected_version='1.1.0'):
         if source.is_file():
             extension = '.log' if source.suffix == '.log' else '.json'
             shutil.copy2(source, logs_dir / f'{name}{extension}')
-            available_logs[name] = f'lifecycle-logs/{name}{extension}'
+            available_logs[name] = f'{logs_dir.name}/{name}{extension}'
     report = {
         'result': 'passed',
         'environment': {'os': os.environ.get('RUNNER_OS', 'Windows isolated runner'),
@@ -171,12 +171,16 @@ if __name__ == '__main__':
     parser.add_argument('--output', required=True)
     parser.add_argument('--expected-version', default='1.1.0')
     args = parser.parse_args()
+    if Path(args.output).resolve().exists():
+        parser.error('Refusing to overwrite an existing lifecycle report')
     try:
         main(args.installer, args.expected_source_commit, args.output, args.expected_version)
     except Exception as error:
         output = Path(args.output).resolve()
+        if output.exists():
+            raise
         output.parent.mkdir(parents=True, exist_ok=True)
-        logs_dir = output.parent / 'lifecycle-logs'
+        logs_dir = output.parent / (output.stem + '-logs')
         logs_dir.mkdir(exist_ok=True)
         root_candidates = sorted(Path(tempfile.gettempdir()).glob('Vigil candidate lifecycle *'),
                                  key=lambda item: item.stat().st_mtime, reverse=True)
@@ -191,8 +195,12 @@ if __name__ == '__main__':
                                    ('nsis_uninstall', 'nsis-uninstall.log')):
                 source = root / filename
                 if source.is_file():
-                    shutil.copy2(source, logs_dir / f'{name}.json')
-                    logs[name] = f'lifecycle-logs/{name}.json'
+                    extension = '.log' if source.suffix == '.log' else '.json'
+                    destination = logs_dir / f'{name}{extension}'
+                    if destination.exists():
+                        continue
+                    shutil.copy2(source, destination)
+                    logs[name] = f'{logs_dir.name}/{name}{extension}'
         failure = {'result': 'failed', 'source_commit_expected': args.expected_source_commit,
                    'error': f'{type(error).__name__}: {error}', 'logs': logs}
         output.write_text(json.dumps(failure, indent=2), encoding='utf-8')
