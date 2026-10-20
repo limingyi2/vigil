@@ -1594,6 +1594,15 @@ def start_remote_api(brain):
                     self._json(200, {'ok': True, **self._new_agent_run(body)})
                 elif path == '/api/agent/runs' and method == 'GET':
                     self._json(200, {'ok': True, 'items': agent_runs.listing(owner)})
+                elif path == '/api/agent/runs/active' and method == 'GET':
+                    # Query parameters are used here because refresh recovery
+                    # happens before the renderer has a request body to send.
+                    src = _norm_src(_query_param(self.path, 'src') or 'pc')
+                    cid = _query_param(self.path, 'conversation_id') or ''
+                    active_owner = self._display_owner({'src': src,
+                                                        'conversation_id': cid})
+                    item = agent_runs.active(active_owner, cid)
+                    self._json(200, {'ok': True, 'item': item})
                 elif len(parts) in (4, 5):
                     rid = parts[3]
                     item = agent_runs.snapshot(rid, owner)
@@ -1649,11 +1658,20 @@ def start_remote_api(brain):
                         yield {'type': 'text' if kind == 'text_delta' else 'think', 'text': payload['text'],
                                'run_id': rid, 'request_id': item['request_id'], 'seq': event['seq']}
                     elif kind == 'step_started':
-                        yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid, 'seq': event['seq']}
+                        if payload.get('kind') == 'tool':
+                            yield {'type': 'tool', 'state': 'started',
+                                   'tool': payload.get('tool'), 'call_id': payload.get('call_id'),
+                                   'step_id': payload.get('step_id'), 'input': payload.get('input'),
+                                   'run_id': rid, 'seq': event['seq']}
+                        else:
+                            yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid, 'seq': event['seq']}
                     elif kind == 'tool_finished':
                         # 工具步骤进聊天流：她在干什么、结果如何，看得见。
                         yield {'type': 'tool', 'tool': payload.get('tool'),
-                               'state': payload.get('result_state'), 'run_id': rid, 'seq': event['seq']}
+                               'state': payload.get('result_state'), 'call_id': payload.get('call_id'),
+                               'step_id': payload.get('step_id'), 'input': payload.get('input'),
+                               'output': payload.get('output'), 'error': payload.get('error'),
+                               'run_id': rid, 'seq': event['seq']}
                     elif kind == 'tool_reused':
                         # 看门狗检测到的同参复用：自我纠错的可见信号。
                         yield {'type': 'tool_reused', 'run_id': rid, 'seq': event['seq']}
