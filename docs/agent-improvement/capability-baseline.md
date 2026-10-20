@@ -143,3 +143,11 @@
 - 修复后：活动 turn 与历史 turn cancel 请求带上 run 创建时相同的 `src`/`conversation_id`。真实 renderer + 本地 Brain 的慢工具取消场景将 run/UI 转为 cancelled；工具结果结算后没有模型续调或额外工具副作用。完整 E2E 18/18 PASS，backend owner/lifecycle 34 项与 8 subtests PASS，renderer fixture 7/7 PASS。详见 `phase2-real-runtime-acceptance.md` Round 11。
 - 最新 `agent_eval regression`：12 PASS、0 FAIL、0 TIMEOUT、0 BLOCKED、2 NOT RUN；报告在用户本地 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T124640-15c7dafd.json`。本报告是 dirty tree 上的验证，不代表已提交 HEAD。
 - AG-003 仍为 P1/部分验证；完整 Electron/Brain 终态矩阵及真实 Provider 未覆盖。AG-002 持续压力、AG-005 外部副作用与真实 Provider、AG-008 当前源码 NSIS 安装器生命周期仍是待验证/阻塞项。禁止将这些子场景推断为 PASS。
+
+
+## 2026-10-20 更新：SSE 重连压力测量（Round 13）
+
+- 真实 Electron + 本地 Brain + Fake Provider 的 Agent chat 在同一 run 中经历 3 次代理断线，Electron 完成 3 次 cursor 恢复；7 个流式文本块完整保留，Provider 请求计数仍为 1，无插件副作用。PASS 日志：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13-rerun.log`。
+- 持久事件突发 1,200 个 text events，超过 Brain 256-event 窗口；旧 cursor 恢复返回一致终态和完整内容 snapshot。完整 Electron E2E 18/18 PASS：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log`。
+- 首次压力场景执行因新夹具固定断言旧场景文本而 FAIL；源 run 已结束且数据完整。修改测试断言匹配压力场景，再次运行 PASS；两次证据均保留。没有确认新的产品缺陷。
+- 仍未进行长时间持续队列积压/内存曲线测试及真实远端服务网络测试，不能从短时压力注入推断这些范围通过。

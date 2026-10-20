@@ -265,3 +265,12 @@
 - **真实复现对比：** 修复前 UI 取消为 404/running；修复后在慢 side-effecting 插件处于 in-flight 时点击真实 UI 取消，状态转为 cancelled，composer 解锁，工具结算后仍保持 cancelled 且不进行 Provider follow-up/下一工具调用。全量隔离 Electron + Brain + Fake Provider E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ag005-full-e2e-postfix.log`。UI/慢工具合并场景现已验证，完整终态矩阵仍待验。
 - **多轮验证：** `node client/tools/test-p2-electron.js` 为 7 PASS；隔离 Python `pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra` 为 34 passed + 8 subtests；`agent_eval.py validate` PASS；最终 regression suite 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN，报告 `C:\Users\26871\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Vigil\stage2-state\phase2-agent-eval-final\reports\run-20261020T124640-15c7dafd.json`。该报告中的未选择案例不计通过。此前 E2E 夹具尝试和复现失败日志均未覆盖。
 - **后续：** AG-003 其余终态组合、AG-002 持续队列压力、AG-005 真实 Provider/外部副作用、AG-008 当前源码安装器升级/回滚仍需分别验证；不得因这些局部覆盖而关闭整个 P1。真实 Provider 场景保持 BLOCKED（没有授权隔离凭据）。
+
+
+## 2026-10-20 — SSE 重复断线与事件窗口压力（Round 13）
+
+- **目标与前态：** AG-002 已有单次 chat SSE 断线恢复和 300 个事件跨过 256 event window 的 snapshot 测量；多次同 run 网络中断和更大缺口尚无实测。
+- **改动：** 仅扩展隔离测试夹具 `client/tools/test-electron-brain-e2e.js`：代理可在同一聊天流中按配置重复切断；Fake Provider 增加慢速分块响应。完整 E2E 的持久 burst 提高到 1,200 个事件，并校验 snapshot 内容。未修改 Electron/Brain 产品实现。
+- **复现与首次失败：** 三次断线测试运行中，真实 run 已成功且结果为七个 `STRESS_CHUNK` 完整拼接，测试却误比对旧用例的固定字符串 `RESUMED_AGENT_COMPLETED`。失败报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13.log` 保留。仅将压力用例终态断言改为检查所有分块，不改变产品逻辑。
+- **修改后结果：** `VIGIL_E2E_SCENARIO=agent-chat-reconnect-stress node client/tools/test-electron-brain-e2e.js`：PASS，cuts=3、resumed=3、七块文本完整、单 Provider 请求、零插件副作用；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13-rerun.log`。完整 `node client/tools/test-electron-brain-e2e.js`：18/18 PASS；1,200 事件超过 256 留存窗口后旧 cursor 得到与持久 run 一致的 authoritative snapshot；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log`。
+- **结论与后续：** 增强了短时断线/事件窗口压力证据，未发现产品回归；AG-002 仍为 P1/部分验证，长时间高频积压、内存/队列增长曲线、真实网络代理行为待测。

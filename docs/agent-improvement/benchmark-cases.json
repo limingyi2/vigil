@@ -385,6 +385,19 @@
         "command": "node client/tools/test-electron-brain-e2e.js (VIGIL_E2E_SCENARIO=agent-chat-reconnect)",
         "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-focused-final.log",
         "scope": "Real Electron renderer and main process, local Brain, loopback Fake Provider, one injected SSE disconnect; does not cover a real Provider or prolonged pressure."
+      },
+      "scope_note": "Two measured scopes pass: the original Electron chat reconnect case survives one injected network cut, and a repeated-cut focused run survives three cuts while preserving all seven streamed chunks and issuing only one Provider request. The full Electron/Brain E2E also crosses the bounded event window with 1,200 persisted text events and returns the authoritative snapshot. Long-duration sustained pressure and real remote-service behavior remain NOT RUN.",
+      "stress_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-chat-reconnect-stress; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-reconnect-stress-round13-rerun.log",
+        "result": "PASS: cuts=3, resumed=3, same run/request, seven chunks preserved, one Provider request, no plugin side effects."
+      },
+      "burst_evidence": {
+        "date": "2026-10-20",
+        "command": "node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log",
+        "result": "PASS: 1,200 persisted text events exceed the 256-event window; reconnect returns a snapshot whose terminal state/content match the run."
       }
     },
     {

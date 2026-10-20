@@ -134,10 +134,22 @@ async function startModel() {
         return;
       }
       if (userText.includes('P1_AGENT_EVENT_BURST')) {
-        for (let i = 0; i < 300; i++) {
+        for (let i = 0; i < 1200; i++) {
           if (res.destroyed) return;
           res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'x' } }] }) + '\n\n');
           await wait(2);
+        }
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
+        return;
+      }
+      if (userText.includes('P1_CHAT_RECONNECT_STRESS')) {
+        // Slow chunk spacing keeps the durable Agent stream active across the
+        // client's bounded retry backoff, allowing several independent cuts.
+        for (let i = 0; i < 7; i++) {
+          if (res.destroyed) return;
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'STRESS_CHUNK_' + i + '_' } }] }) + '\n\n');
+          await wait(700);
         }
         res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
         res.end('data: [DONE]\n\n');
@@ -319,9 +331,9 @@ async function startBrain(modelBase, fixedPort, options = {}) {
   throw new Error('Brain did not become ready; log is at ' + path.join(root, 'brain.log'));
 }
 
-async function startDisconnectProxy(brainBase, marker) {
+async function startDisconnectProxy(brainBase, marker, cutLimit = 1) {
   const target = new URL(brainBase);
-  const state = { cuts: 0, resumed: 0, runId: null, requestId: null, lastCursor: 0, conversationId: null };
+  const state = { cuts: 0, resumed: 0, cutLimit, runId: null, requestId: null, lastCursor: 0, conversationId: null };
   const server = http.createServer((req, res) => {
     const forward = body => {
       const reconnect = req.url.includes('/api/chat/stream') && req.url.includes('after=');
@@ -338,7 +350,7 @@ async function startDisconnectProxy(brainBase, marker) {
         headers: { ...req.headers, host: target.host },
       }, response => {
         res.writeHead(response.statusCode || 502, response.headers);
-        const watch = req.method === 'POST' && req.url.startsWith('/api/chat/stream') && body.includes(marker) && state.cuts === 0;
+        const watch = req.method === 'POST' && req.url.startsWith('/api/chat/stream') && body.includes(marker) && state.cuts < cutLimit;
         if (!watch) { response.pipe(res); return; }
         let buffer = '';
         response.on('data', chunk => {
@@ -354,7 +366,7 @@ async function startDisconnectProxy(brainBase, marker) {
               const event = JSON.parse(data.slice(6));
               if (event.type === 'agent_run') state.runId = event.run_id;
               if (Number.isInteger(event.seq)) state.lastCursor = Math.max(state.lastCursor, event.seq);
-              if (event.type === 'text' && event.run_id && state.cuts === 0) {
+              if (event.type === 'text' && event.run_id && state.cuts < cutLimit) {
                 state.cuts++;
                 res.destroy(); // Drop only the Electron-facing socket; drain Brain SSE.
                 break;
@@ -655,7 +667,8 @@ async function run() {
   const { base: brainBase, pluginTrace } = await startBrain(modelBase, undefined, { agentEnabled: focusedSlowToolCancel });
   await startElectron(brainBase);
   let brainPort = Number(new URL(brainBase).port);
-  const focusedReconnect = process.env.VIGIL_E2E_SCENARIO === 'agent-chat-reconnect';
+  const reconnectScenario = process.env.VIGIL_E2E_SCENARIO || '';
+  const focusedReconnect = reconnectScenario === 'agent-chat-reconnect' || reconnectScenario === 'agent-chat-reconnect-stress';
   if (focusedSlowToolCancel) {
     await exerciseUiSlowToolCancel(pluginTrace);
     return;
@@ -969,13 +982,13 @@ async function run() {
   await burstRequest;
   const resumed = await disconnectAndResumeAgentEvents(brainBase, burstRun.run_id);
   assert.equal(resumed.snapshot.status, 'succeeded');
-  assert.equal(resumed.snapshot.content, 'x'.repeat(300));
+  assert.equal(resumed.snapshot.content, 'x'.repeat(1200));
   const burstRequests = modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length;
   const burstDuplicate = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
   assert.equal(burstDuplicate.run_id, burstRun.run_id);
   assert.equal(modelRequests.filter(x => x.userText.includes('P1_AGENT_EVENT_BURST')).length, burstRequests,
     'reconnecting from an event cursor must observe the same run instead of creating another model request');
-  pass('SSE disconnect/resume crosses the bounded event window and returns an authoritative cursor-gap snapshot');
+  pass('SSE disconnect/resume survives 1,200 persisted events across the bounded event window and returns an authoritative cursor-gap snapshot');
 
   // Force a Brain process exit after the fixture records a side effect but
   // before it returns. On restart, durable dispatched state must become
@@ -1013,12 +1026,15 @@ async function run() {
   await stopChild(electron, true); electron = null;
   await stopChild(brain, true); brain = null;
   await startBrain(modelBase, brainPort, { agentEnabled: true });
-  const resumeProxy = await startDisconnectProxy(brainBase, 'P1_CHAT_RECONNECT');
+  const stressReconnect = reconnectScenario === 'agent-chat-reconnect-stress';
+  const reconnectText = stressReconnect ? 'P1_CHAT_RECONNECT_STRESS' : 'P1_CHAT_RECONNECT';
+  const expectedCuts = stressReconnect ? 3 : 1;
+  const resumeProxy = await startDisconnectProxy(brainBase, reconnectText, expectedCuts);
   await startElectron(resumeProxy.base);
   await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
   await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'welcome before reconnect test');
-  await submit('P1_CHAT_RECONNECT 请调用 smoke_ping 并总结结果');
-  const reconnectDeadline = Date.now() + 20000;
+  await submit(stressReconnect ? 'P1_CHAT_RECONNECT_STRESS 请按块连续输出并保留完整结果' : 'P1_CHAT_RECONNECT 请调用 smoke_ping 并总结结果');
+  const reconnectDeadline = Date.now() + (stressReconnect ? 30000 : 20000);
   let reconnectRows = [];
   while (Date.now() < reconnectDeadline) {
     reconnectRows = await evaluate(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'))`);
@@ -1027,18 +1043,27 @@ async function run() {
   }
   const reconnectRun = resumeProxy.state.runId;
   assert.ok(reconnectRun, 'proxy must observe the Agent run identity before cutting SSE');
-  assert.equal(resumeProxy.state.cuts, 1, 'the Electron-facing stream must be cut once');
+  assert.equal(resumeProxy.state.cuts, expectedCuts, 'the Electron-facing stream must be cut the requested number of times');
   const reconnectFinal = await waitBrainAgentRun(brainBase, reconnectRun, 10000, resumeProxy.state.conversationId);
   assert.equal(reconnectFinal.status, 'succeeded');
-  assert.equal(reconnectFinal.result, 'RESUMED_AGENT_COMPLETED');
-  assert.equal(resumeProxy.state.resumed, 1,
+  if (!stressReconnect) assert.equal(reconnectFinal.result, 'RESUMED_AGENT_COMPLETED');
+  assert.equal(resumeProxy.state.resumed, expectedCuts,
     'Electron must reconnect with its durable cursor: ' + JSON.stringify(resumeProxy.state));
   assert.ok(reconnectRows.some(row => row.request_id === resumeProxy.state.requestId && row.status === 'succeeded'),
     'renderer must restore the same run as succeeded, not leave a stale interrupted row: ' +
       JSON.stringify({rows: reconnectRows.filter(row => row.request_id === resumeProxy.state.requestId), proxy: resumeProxy.state,
         events: await evaluate('window.__vigilE2EEvents || []'), keys: await evaluate('Object.keys(localStorage)')}));
-  assert.ok(providerTrace(pluginTrace).some(row => row.mode === 'ok'));
-  pass('Electron chat Agent SSE automatically resumes the same run from its last durable cursor after a network cut');
+  if (stressReconnect) {
+    assert.equal(modelRequests.filter(call => call.userText.includes(reconnectText)).length, 1,
+      'repeated stream cuts must resume the same Provider request, not submit a new one');
+    assert.equal(providerTrace(pluginTrace).length, 0, 'stream-only pressure case must not create plugin side effects');
+    for (let i = 0; i < 7; i++) assert.ok(reconnectFinal.result.includes('STRESS_CHUNK_' + i + '_'),
+      'resumed run must retain every streamed chunk: ' + i);
+    pass('Electron chat Agent SSE resumes the same durable run through three network cuts and retains all streamed chunks');
+  } else {
+    assert.ok(providerTrace(pluginTrace).some(row => row.mode === 'ok'));
+    pass('Electron chat Agent SSE automatically resumes the same run from its last durable cursor after a network cut');
+  }
   await stopChild(electron, true); electron = null;
   console.log('PASS integrated smoke total: ' + passCount);
 }
