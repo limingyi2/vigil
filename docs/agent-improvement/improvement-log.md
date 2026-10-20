@@ -192,3 +192,12 @@
 - **AG-005：待验证，仍 P1。** 自动 Provider/Agent 契约通过；外部非幂等副作用在连接中断与响应不确定状态下的端到端不重放尚无证据。
 - **AG-008：部分验证，仍 P1。** 本轮建立 Windows 隔离工具链并运行候选包 lifecycle（如安装/重启/卸载保留数据通过）；旧版升级及升级失败回滚仍需单独结论。没有声明 P1 全部关闭。
 - 本阶段未修复 Vigil 业务 Bug，未接入真实 Provider 凭据，不触碰用户数据。Windows 候选包为非正式验收产物，SHA-256/清单仅记录在本机验收 JSON；不发布、不覆盖正式安装。
+
+### Round 3 — Windows 候选安装验收夹具及启动竞态
+
+- **修改前表现：** `scripts/build_release.py --candidate` 成功构建配对 Windows NSIS + portable 候选包，`build_release.py --verify --candidate` 通过，静默安装退出码 0，真实 sidecar Brain health 为 ready；首次聊天验收失败。
+- **根因证据：** 首次安装 profile 脱敏配置检查确认 `/api/models/apply` 已保存 loopback base/key，但原验收夹具发送 `model` 而接口字段契约是 `chat`。修正字段后，单独复跑仍观察到一次没有创建 display turn 的首次启动竞态；Brain/Electron 启动期间 renderer 初始 ping 可能触发 chat 页重新渲染，测试此时提交消息，初始化会丢掉输入。安装后用例原本只等待欢迎页和 composer DOM，没有等 `API.state.conn.ok`。
+- **修改范围：** `client/tools/test-fresh-installed-runtime.cjs` 使用 `/api/models/apply` 的 `chat` 字段，等待 renderer 与 bundled Brain 连接成功、填入内容后等待发送按钮 enabled，再发消息；加入脱敏诊断和 Fake Provider 必须收到 `P8_FRESH_CHAT_SENTINEL` 的断言。`scripts/test_windows_install.py` 使用 release-manifest 里的候选版本而不是硬编码 `1.1.0`，可把报告写到 checkout 外。`scripts/test_windows_candidate_lifecycle.py` 每份报告使用独立日志子目录并拒绝覆盖已存在报告。
+- **修复后实测：** 对新的临时 profile 调用已安装候选 `Vigil.exe`，runtime harness exit 0；sidecar Brain ready，Fake Provider 收到 1 个带 sentinel 的真实聊天请求，renderer 显示回复并创建会话。结果日志：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-first-boot-isolated-profile.log`。
+- **失败证据保留：** 首次安装器 lifecycle 报告为 FAIL（安装成功，但 chat 首次启动 race），保存在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-failure-initial.json` 与 `lifecycle-failure-initial-logs/`；后续正式候选完整安装/升级结果写入独立 `phase2-acceptance-final.json`，不覆盖这份失败记录。
+- **回归与范围：** 失败/根因/修复均为发行和集成测试夹具，没有改 Brain、Electron 业务实现；最终候选以新提交重建后再执行 fresh install、restart、uninstall retention 和旧版 upgrade/rollback。运行的版本、报告及完整范围以最终 JSON 为准。

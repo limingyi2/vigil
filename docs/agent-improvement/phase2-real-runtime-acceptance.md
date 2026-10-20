@@ -24,7 +24,7 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | Node 原生测试 | PASS | 8 个 `node:test` 文件：56 passed / 0 failed / 0 skipped |
 | Electron + Brain + Fake Provider | PASS | 两次独立执行各 8/8 PASS；`%LOCALAPPDATA%/Vigil/stage2-state/phase2-electron-brain-e2e-final.log` 与 `phase2-electron-brain-e2e-stability.log` |
 | 任务阻塞、恢复与对比 | PASS（合成任务） | 独立 `task-flow-*` 状态目录：OPEN → BLOCKED → IN_PROGRESS → READY_FOR_VERIFY → COMPLETED；同条件 provider-contract PASS → PASS；blocked resume 未启动命令 |
-| Windows 候选包 / NSIS 生命周期 | 查看本阶段本机报告 | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-acceptance.json`（构建来源、包清单、哈希和实际安装/启动/重启/卸载结果）；候选包不随 Git 提交或发布 |
+| Windows 候选包 / NSIS 生命周期 | 查看最终本机报告 | `%LOCALAPPDATA%/Vigil/stage2-state/phase2-acceptance-final.json`；初始失败报告 `phase2-acceptance.json` 保留不覆盖，候选包不随 Git 提交或发布 |
 
 全仓 pytest 的 19 个 skipped 保留在 `-rs` 输出，未计入通过：缺少私有/本机素材、FFmpeg，以及当前 Windows runner 不具备部分 junction/symlink/mkfifo 创建权限。早期 E2E 测试夹具失败和异步断言竞态均保留在 `improvement-log.md`；修正夹具契约和等待 session-list 后，最终连续两次通过。
 
@@ -38,6 +38,12 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | AG-008 安装包清单及用户数据保护 | P1 | 以本机 candidate JSON 报告中的 Windows lifecycle 结果为准 | 旧版本原位升级和故障注入回滚须独立确认；纯 Node rollback snapshot 测试不等价于 NSIS 升级/回滚 |
 
 以上风险均没有因不完整覆盖而标为完成。本阶段没有修改 Vigil 业务逻辑；没有修改 `master`、合并 PR、发布正式版本或覆盖正式安装。
+
+### 第二阶段最终候选复验（Round 3）
+
+首次 fresh-install 聊天验收失败已作为真实失败证据保留在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-failure-initial.json` 及对应日志目录。故障定位在 lifecycle 测试夹具：模型配置字段应为 `chat`；随后又发现冷启动时 renderer 连接/发送按钮尚未就绪的竞态。修复测试夹具后，新的隔离 Electron profile 对已安装候选执行了 sentinel 聊天，sidecar Brain health 为 ready，Fake Provider 收到请求并在界面显示回复。详细通过/失败/阻塞结果、最终 installer 哈希、包清单和升级回滚结果以 `phase2-acceptance-final.json` 为准；如果该报告或对应独立 lifecycle 报告缺失，不得把该验收项推断为通过。
+
+旧版 1.0.2 到最终候选的安装器升级及故障注入回滚是独立验收项；必须以 `phase2-upgrade-rollback-final.json` 的实际结果为准。真实 Provider 认证、限流、空响应及服务端错误因没有授权的隔离凭据仍为 BLOCKED，Fake Provider 不代表真实服务验收。
 
 ## 报告和隐私
 

@@ -143,4 +143,4 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | AG-005 不确定请求与幂等副作用 | 待验证 | 自动契约/去重套件通过；响应不确定情况下的真实非幂等外部操作未故障注入 |
 | AG-008 包内容、用户数据、升级/回滚 | 部分验证 | 此环境能够尝试隔离 Windows candidate installer lifecycle；旧版本升级和安装器级失败回滚须结合候选包实测结果判断，不能以单元快照测试替代 |
 
-Windows 候选包的版本、source commit、installer SHA-256、包内清单、实际安装/启动/重启/卸载结果写入本阶段本机 `phase2-acceptance.json`；候选包不发布，也不覆盖正式安装。完整安装器级升级与失败回滚仍是阻塞范围。PR #10 保持 open/draft/unmerged；本阶段没有修复 Vigil 业务 Bug。
+Windows 候选包的版本、source commit、installer SHA-256、包内清单、实际安装/启动/重启/卸载及升级/回滚结果写入本阶段本机 `phase2-acceptance-final.json`，独立 lifecycle 结果见 `phase2-candidate-lifecycle-final.json` 与 `phase2-upgrade-rollback-final.json`；原 `phase2-acceptance.json` 是首次失败记录并保留不覆盖。候选包不发布，也不覆盖正式安装。未完成项按最终报告标为 BLOCKED/NOT RUN，不作通过推断。PR #10 保持 open/draft/unmerged；本阶段没有修复 Vigil 业务 Bug。
