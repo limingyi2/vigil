@@ -224,18 +224,61 @@ async function tool_file_read(args, cfg) {
   let st;
   try { st = await fs.promises.stat(g.abs); } catch (e) { return '读不到这个文件：' + e.message; }
   if (st.isDirectory()) return g.abs + ' 是目录（要列目录用 local_file_list）';
-  if (st.size > MAX_READ) {
+  const hasOffset = args.offset !== undefined && args.offset !== null && String(args.offset).trim() !== '';
+  const hasLength = args.length !== undefined && args.length !== null && String(args.length).trim() !== '';
+  const hasRange = hasOffset || hasLength;
+  const offset = hasOffset ? Number(args.offset) : 0;
+  const length = hasLength ? Number(args.length) : MAX_READ;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > st.size)
+    return '读取偏移必须是 0 到文件大小之间的安全整数（字节）。';
+  if (!Number.isSafeInteger(length) || length < 1 || length > MAX_READ)
+    return '单次读取长度必须是 1 到 204800 之间的安全整数（字节）。';
+  let readOffset = offset;
+  const end = Math.min(st.size, offset + Math.min(length, st.size - offset));
+  let buf;
+  if (hasRange || st.size > MAX_READ) {
     const fd = await fs.promises.open(g.abs, 'r');
     try {
-      const buf = Buffer.alloc(MAX_READ);
-      await fd.read(buf, 0, MAX_READ, 0);
-      return '（文件 ' + sizeText(st.size) + '，只读了前 200KB）\n' + buf.toString('utf8');
+      buf = Buffer.alloc(end - offset);
+      if (buf.length) {
+        const { bytesRead } = await fd.read(buf, 0, buf.length, offset);
+        buf = buf.subarray(0, bytesRead);
+      }
     } finally { await fd.close(); }
+  } else {
+    buf = await fs.promises.readFile(g.abs);
   }
-  const buf = await fs.promises.readFile(g.abs);
   // 二进制文件别硬当文本塞给她：出现大量 NUL 就直说是二进制
   if (buf.slice(0, 4096).includes(0)) return g.abs + ' 像是二进制文件（' + sizeText(st.size) + '），读出来没法看。';
-  return buf.toString('utf8');
+  // Range boundaries are bytes, but model-visible text should not contain
+  // replacement characters just because a UTF-8 code point crossed a chunk.
+  if (hasRange || st.size > MAX_READ) {
+    while (buf.length && (buf[0] & 0xc0) === 0x80) {
+      buf = buf.subarray(1);
+      readOffset += 1;
+    }
+  }
+  let content;
+  let actualEnd = readOffset + buf.length;
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (_) {
+    let decoded = false;
+    for (let trim = 1; trim <= 3 && trim <= buf.length; trim += 1) {
+      try {
+        content = new TextDecoder('utf-8', { fatal: true }).decode(buf.subarray(0, buf.length - trim));
+        actualEnd -= trim;
+        decoded = true;
+        break;
+      } catch (_) { /* only trim an incomplete final code point */ }
+    }
+    if (!decoded) content = buf.toString('utf8');
+  }
+  if (hasRange || st.size > MAX_READ) {
+    const more = actualEnd < st.size ? '；下一段从 offset=' + actualEnd + ' 开始' : '；已到文件末尾';
+    return '（文件 ' + sizeText(st.size) + '，字节范围 ' + readOffset + '-' + actualEnd + more + '）\n' + content;
+  }
+  return content;
 }
 
 async function tool_file_find(args, cfg) {
@@ -982,8 +1025,10 @@ const CATALOG = [
     desc: '列出一个目录里有什么（名字、大小、修改日期）',
     params: [{ k: 'path', label: '目录路径', ph: '~/Desktop 或 D:\\某目录', req: true }] },
   { name: 'local_file_read', group: 'files', danger: false,
-    desc: '读一个文本文件的内容（只读，单次最多 200KB）',
-    params: [{ k: 'path', label: '文件路径', ph: '~/文档/笔记.md', req: true }] },
+    desc: '读一个文本文件的内容（只读，支持分块，单次最多 200KB）',
+    params: [{ k: 'path', label: '文件路径', ph: '~/文档/笔记.md', req: true },
+      { k: 'offset', label: '字节偏移（可选，默认 0）', ph: '0', req: false },
+      { k: 'length', label: '读取字节数（可选，最多 204800）', ph: '204800', req: false }] },
   { name: 'local_file_find', group: 'files', danger: false,
     desc: '按文件名在允许的目录里递归找（最多 50 个、5 层）',
     params: [{ k: 'name', label: '文件名或其中一段', ph: '发票', req: true }] },

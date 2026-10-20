@@ -56,8 +56,9 @@ def _args_text(name, arg):
 
 def _mk(name):
     """给每个远程工具生成一个工具函数：参数原样透传，实际动作在客户端做。"""
-    def _fn(arg):
-        return localtools.call(name, _args_text(name, arg))
+    def _fn(arg=None, **kwargs):
+        payload = dict(kwargs) if kwargs else _args_text(name, arg)
+        return localtools.call(name, payload)
     _fn.__name__ = "_t_" + name
     return _fn
 

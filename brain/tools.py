@@ -197,11 +197,15 @@ _STATIC_SPECS = {
 
 
 def _parameters_schema(params):
-    """把 [("名","说明",必填)] 转成 JSON Schema 的 parameters 对象。"""
+    """把参数声明转成 JSON Schema；未标类型的旧声明仍默认为 string。"""
     props = {}
     required = []
-    for pname, pdesc, preq in params:
-        props[pname] = {"type": "string", "description": pdesc}
+    for param in params:
+        pname, pdesc, preq = param[:3]
+        ptype = param[3] if len(param) > 3 else "string"
+        if ptype not in ("string", "integer", "number", "boolean"):
+            raise ValueError("unsupported tool parameter type")
+        props[pname] = {"type": ptype, "description": pdesc}
         if preq:
             required.append(pname)
     schema = {"type": "object", "properties": props}
