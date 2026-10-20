@@ -55,9 +55,18 @@ def _args_text(name, arg):
 
 
 def _mk(name):
-    """给每个远程工具生成一个工具函数：参数原样透传，实际动作在客户端做。"""
-    def _fn(arg):
-        return localtools.call(name, _args_text(name, arg))
+    """给每个远程工具生成一个工具函数：参数原样透传，实际动作在客户端做。
+
+    两种调用形状都要认：
+    - 老式标签 / 单参数原生工具：`_fn("F:/某目录")`；
+    - 多参数原生工具（grep 的 path+pattern、write 的 path+text）：host 按
+      `fn(ctx, **arg_dict)` 调用，**关键字全在 kwargs 里**。以前只认第一种，
+      多参数工具于是丢掉了除第一个以外的所有参数。
+    """
+    def _fn(first=None, **kwargs):
+        if kwargs:
+            return localtools.call(name, {k: v for k, v in kwargs.items()})
+        return localtools.call(name, _args_text(name, first))
     _fn.__name__ = "_t_" + name
     return _fn
 

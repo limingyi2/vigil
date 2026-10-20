@@ -192,11 +192,13 @@ class RunTests(unittest.TestCase):
             self.assertNotIn(b'PRIVATE_REASONING', stream.read())
         self.assertNotIn('PRIVATE_REASONING', json.dumps(item))
 
-    def test_resource_stop_does_not_leave_a_running_step(self):
+    def test_oversized_answer_is_clipped_and_still_delivered(self):
+        # 一次写出超过保存上限的正文，不该把整项任务判死：答案已经产出了，
+        # 截断 + 留标记比"报错、什么都没有"有用得多。
         item, provider, tool = self.execute([response('x'*(runs.MAX_TEXT+1))])
-        self.assertEqual(item['status'], 'failed')
-        self.assertEqual(item['error']['reason'], 'resource_limit')
-        self.assertEqual(item['steps'][0]['status'], 'failed')
+        self.assertEqual(item['status'], 'succeeded')
+        self.assertTrue(item['result_truncated'])
+        self.assertEqual(len(item['result']), runs.MAX_TEXT)
         self.assertEqual(len(provider.payloads), 1)
         tool.assert_not_called()
 
@@ -358,8 +360,12 @@ class RunTests(unittest.TestCase):
             dict(call(), function={'name': 'write_note', 'arguments': '{"text":"ok","extra":true}'})]
         for bad in invalid:
             self.body['request_id'] += 'x'
-            item, _, tool = self.execute([response(calls=[call('valid'), bad])])
+            # 非法批次不会派发任何工具（含同批里那个合法的），并且会把问题回传给模型
+            # 再试 INVALID_TOOL_RETRIES 次；重试用尽才判 invalid_tool。
+            replies = [response(calls=[call('valid'), bad])] * (runs.INVALID_TOOL_RETRIES + 1)
+            item, provider, tool = self.execute(replies)
             self.assertEqual(item['error']['reason'], 'invalid_tool')
+            self.assertEqual(len(provider.payloads), runs.INVALID_TOOL_RETRIES + 1)
             tool.assert_not_called()
 
     def test_success_terminal_cannot_be_cancelled(self):
@@ -403,6 +409,147 @@ class StreamToolsTests(unittest.TestCase):
         self.assertEqual(result['tool_calls'][0]['id'], 'c1')
         self.assertEqual(result['tool_calls'][0]['function']['name'], 'write_note')
         self.assertEqual(json.loads(result['tool_calls'][0]['function']['arguments']), {'text': 'ok'})
+
+
+
+class LongTaskTests(unittest.TestCase):
+    """长任务：大工具结果、上下文膨胀、模型给出的坏调用都不该毁掉整项任务。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = patch.object(runs.paths, 'DATA_DIR', self.tmp.name)
+        self.home.start()
+        runs.INITIALIZED.clear()
+        runs.TRANSIENT.clear()
+
+    def tearDown(self):
+        self.home.stop()
+        self.tmp.cleanup()
+
+    def execute(self, responses, invoke):
+        item = runs.create(dict(request_id='request_long_%d' % id(responses), intent='read it', src='pc'),
+                           {}, 'owner', start=False)
+        provider = Provider(responses)
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=SPEC), \
+             patch.object(runs.tools, 'invoke_spec', side_effect=invoke):
+            runs._run(item['run_id'], 'owner', {})
+        return runs.snapshot(item['run_id'], 'owner'), provider
+
+    def test_oversized_tool_result_is_clipped_not_fatal(self):
+        # 客户端单次读文件最多回 200KB，而 MAX_TEXT 是 64KB：一次读到大文件
+        # 就会撞上。撞上只该截断，不该把整项任务判死。
+        huge = '你' * (runs.MAX_TEXT * 2)
+        item, provider = self.execute(
+            [response(calls=[call()]), response('done')], lambda *a: huge)
+        self.assertEqual(item['status'], 'succeeded')
+        self.assertEqual(item['result'], 'done')
+        tool_step = [s for s in item['steps'] if s['kind'] == 'tool'][0]
+        self.assertTrue(tool_step['truncated'])
+        self.assertEqual(tool_step['result_chars'], len(huge))
+        self.assertLessEqual(len(tool_step['result']), runs.MAX_TEXT)
+        self.assertIn('已截断', tool_step['result'])
+
+    def test_invalid_call_is_reported_back_and_retried(self):
+        bad = {'id': 'c_bad', 'type': 'function',
+               'function': {'name': 'write_note', 'arguments': '{broken'}}
+        item, provider = self.execute(
+            [response(calls=[bad]), response(calls=[call()]), response('ok')],
+            lambda *a: 'note saved')
+        self.assertEqual(item['status'], 'succeeded')
+        self.assertEqual(item['result'], 'ok')
+        # 第二次请求要把"上次调用不合法"告诉模型，而不是静默重发
+        self.assertIn('无法解析', provider.payloads[1]['messages'][-1]['content'])
+
+    def test_compact_keeps_pairing_and_brings_size_under_budget(self):
+        messages = [{'role': 'system', 'content': 'S' * 100},
+                    {'role': 'user', 'content': '任务原文'}]
+        for i in range(12):
+            messages.append({'role': 'assistant', 'content': 'a' * 200,
+                             'tool_calls': [{'id': 'c%d' % i, 'type': 'function',
+                                             'function': {'name': 'write_note', 'arguments': '{}'}}]})
+            messages.append({'role': 'tool', 'tool_call_id': 'c%d' % i, 'content': 'R' * 10000})
+        before = sum(len(m.get('content') or '') for m in messages)
+        out, saved = runs._compact(messages, 30000)
+        after = sum(len(m.get('content') or '') for m in out)
+        self.assertLessEqual(after, 30000)
+        self.assertEqual(saved, before - after)
+        # 结构不能破坏：assistant.tool_calls 后面的 tool_call_id 必须还在
+        self.assertEqual(len(out), len(messages))
+        self.assertEqual(out[0]['content'], 'S' * 100)
+        self.assertEqual(out[1]['content'], '任务原文')
+        for prev, cur in zip(out, out[1:]):
+            if prev.get('role') == 'assistant' and prev.get('tool_calls'):
+                self.assertEqual(cur['role'], 'tool')
+                self.assertEqual(cur['tool_call_id'], prev['tool_calls'][0]['id'])
+
+    def test_numeric_arguments_pass_validation(self):
+        schema = {'type': 'object',
+                  'properties': {'path': {'type': ['string', 'number', 'integer']},
+                                 'max_results': {'type': ['string', 'number', 'integer']}},
+                  'required': ['path']}
+        runs._validate({'path': 'F:/x', 'max_results': 5}, schema)
+
+
+
+    def test_broken_native_call_falls_back_to_xml_in_content(self):
+        # MiMo 已知形状：原生 tool_calls 的 arguments 只剩 `{"path": `，
+        # 而完整调用写在正文的 <tool_call> 里。取正文那条，任务不该因此死掉，
+        # 而且必须**继续**按原生协议循环 —— 不能一轮工具就被迫收尾。
+        def broken(text):
+            return {'id': 'c_' + text, 'type': 'function',
+                    'function': {'name': 'write_note', 'arguments': '{"text": '}}
+        def content(text):
+            return ('<tool_call><function=write_note><parameter=text>%s</parameter>'
+                    '</function></tool_call>' % text)
+        provider = Provider([response(content=content('hi'), calls=[broken('hi')]),
+                             response(content=content('ho'), calls=[broken('ho')]),
+                             response('ok')])
+        provider.supports_xml_tools = True
+        item = runs.create(dict(request_id='request_xml_fallback', intent='write', src='pc'),
+                           {}, 'owner', start=False)
+        seen = []
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=SPEC), \
+             patch.object(runs.tools, 'invoke_spec', side_effect=lambda n, a, c: seen.append(a) or 'saved'):
+            runs._run(item['run_id'], 'owner', {})
+        snapshot = runs.snapshot(item['run_id'], 'owner')
+        self.assertEqual(snapshot['status'], 'succeeded')
+        self.assertEqual(seen, [{'text': 'hi'}, {'text': 'ho'}])
+        self.assertEqual(snapshot['xml_fallback'], 2)
+        # 第二轮仍然带着工具清单，说明循环没被降级成单批次兼容模式。
+        self.assertIn('tools', provider.payloads[1])
+        # 记录形状要自洽：assistant.tool_calls 与随后的 tool 结果一一配对。
+        transcript = provider.payloads[1]['messages']
+        self.assertNotIn('<tool_call', (transcript[-2].get('content') or ''))
+        self.assertEqual(json.loads(transcript[-2]['tool_calls'][0]['function']['arguments']),
+                         {'text': 'hi'})
+        self.assertEqual(transcript[-1]['tool_call_id'], transcript[-2]['tool_calls'][0]['id'])
+    def test_paused_budget_survives_restart(self):
+        # 预算用尽只是"停住了"，不是进程崩溃：重启后不该被改写成 interrupted，
+        # 否则已经做完的那部分看起来像丢了。
+        provider = Provider([response(calls=[call()]), response('never')])
+        item = runs.create(dict(request_id='request_paused_restart', intent='go', src='pc',
+                                budget={'max_steps': 1}), {}, 'owner', start=False)
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=SPEC), \
+             patch.object(runs.tools, 'invoke_spec', return_value='ok'):
+            runs._run(item['run_id'], 'owner', {})
+        self.assertEqual(runs.snapshot(item['run_id'], 'owner')['status'], 'paused_budget')
+        runs.INITIALIZED.clear()
+        final = runs.snapshot(item['run_id'], 'owner')
+        self.assertEqual(final['status'], 'paused_budget')
+        self.assertTrue(final['steps'])
+
+    def test_budget_errors_name_their_source(self):
+        with self.assertRaises(ValueError) as ctx:
+            runs.create(dict(request_id='request_cfg_budget', intent='x', src='pc'),
+                        {'agent_execution': {'max_steps': 99999}}, 'owner', start=False)
+        self.assertIn('agent_execution.max_steps', str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            runs.create(dict(request_id='request_req_budget', intent='x', src='pc',
+                             budget={'max_requests': 999}), {}, 'owner', start=False)
+        self.assertIn('budget.max_requests', str(ctx.exception))
 
 
 if __name__ == '__main__':

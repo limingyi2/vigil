@@ -18,7 +18,9 @@
     "_说明": "仅 hybrid 生效：允许云端主脑把只读子任务委派给本机 Ollama。默认关闭，要显式打开；allowed_roots 是沙箱白名单根目录，委派只能读写这些目录内的文件（第一版只读）。router_enabled=true 时简单本地查询（消息里带授权目录的明确路径）直接由本机处理、跳过云端，可设 false 关掉走纯云端决策",
     "enabled": false,
     "router_enabled": true,
-    "allowed_roots": ["D:\\your-project"]
+    "allowed_roots": [
+      "D:\\your-project"
+    ]
   },
   "persona_file": "personas/default.json",
   "window": {
@@ -75,5 +77,10 @@
       "api_base": "https://dashscope.aliyuncs.com/api/v1",
       "api_key": "在这里填你的阿里百炼 API Key"
     }
+  },
+  "agent_execution": {
+    "_说明": "Agent 执行预算（“让她分析一个项目”这类多步任务的上限）。不配就用 DEFAULT_BUDGET：max_steps 120 / max_requests 60 / max_tool_calls 100 / max_seconds 1800 / request_timeout 90。请求里只能往下调，不能超过代码里的 HARD_LIMITS。",
+    "enabled": true,
+    "context_chars": 120000
   }
 }
