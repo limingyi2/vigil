@@ -211,7 +211,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(tool.call_count, 1)
         result = provider.payloads[1]['messages'][-1]['content']
         self.assertLessEqual(len(result), runs.MAX_TEXT)
-        self.assertIn('truncated', result.lower())
+        self.assertIn('已截断', result)   # dev 的 _clip 用中文续读提示标记截断
         self.assertTrue(result.startswith('A'))
         self.assertTrue(result.endswith('A'))
         self.assertEqual(item['steps'][1]['result'], result)
