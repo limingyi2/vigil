@@ -234,7 +234,15 @@
       // 注入 JS：交给主进程（它会重新拉一次资源并逐个执行）。
       if (window.vigil && window.vigil.plugins && window.vigil.plugins.load) {
         const lr = await window.vigil.plugins.load();
-        if (!lr || !lr.ok) return;
+        if (!lr || !lr.ok) {
+          toast('插件界面加载失败：' + ((lr && lr.err) || '未知原因'));
+          return;
+        }
+        // 插件 JS 在主进程里执行，出错只有 console 一条 —— 用户看不见就以为
+        // 功能坏了。这里把每个失败都念出来，别再静默。
+        if (Array.isArray(lr.errors) && lr.errors.length) {
+          toast('插件界面加载失败：' + lr.errors.join('；'));
+        }
       }
 
       lastPluginVersion = pluginFingerprint(plugins);
@@ -265,11 +273,14 @@
     window.VigilAPI = API;
     window.VigilUI = U;
     window.VigilPlugin = {
-      // 注册新页面：push 进 PAGES，重建导航
+      // 注册新页面：进 PAGES 并重建导航。page.after 指定插在哪个页面后面
+      // （导航栏按钮多、高度有限，插件页一律 push 到末尾会被滚动区吞掉看不见）
       registerPage(page) {
         if (!page || !page.id || !page.render) return;
         if (PAGES.find(p => p.id === page.id)) return;
-        PAGES.push(page);
+        const at = page.after ? PAGES.findIndex(p => p.id === page.after) : -1;
+        if (at >= 0) PAGES.splice(at + 1, 0, page);
+        else PAGES.push(page);
         buildNav();
       },
       // 动态注入 CSS

@@ -824,6 +824,7 @@ ipcMain.handle('plugins:load', async () => {
     if (!r.ok || !r.json) return { ok: false, loaded: 0, err: '拉取插件资源失败' };
     const plugins = Array.isArray(r.json.plugins) ? r.json.plugins : [];
     let loaded = 0;
+    const errors = [];
     for (const p of plugins) {
       if (!p.enabled || !p.js) continue;
       const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
@@ -835,9 +836,10 @@ ipcMain.handle('plugins:load', async () => {
         loaded += 1;
       } catch (err) {
         console.error('[plugins:load] 插件', name, '执行失败:', err);
+        errors.push(name + '（' + String(err && err.message || err).slice(0, 80) + '）');
       }
     }
-    return { ok: true, loaded, version: r.json.version || 0 };
+    return { ok: true, loaded, version: r.json.version || 0, errors };
   } catch (err) {
     return { ok: false, loaded: 0, err: String(err && err.message || err) };
   }

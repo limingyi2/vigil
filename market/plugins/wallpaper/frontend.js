@@ -288,7 +288,8 @@
   // ========== 注册页面 ==========
   function registerPage() {
     if (window.VigilPlugin && typeof window.VigilPlugin.registerPage === 'function') {
-      window.VigilPlugin.registerPage({ id: 'wallpaper', name: '壁纸', icon: 'i-img', render: renderSettings });
+      // after: 导航栏按钮多，push 到末尾会被滚动区吞掉；插在插件市场后面保证看得见
+      window.VigilPlugin.registerPage({ id: 'wallpaper', name: '壁纸', icon: 'i-img', render: renderSettings, after: 'market' });
     }
   }
 
