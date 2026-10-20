@@ -131,7 +131,7 @@
 | SSE/事件游标 | 真实 Electron 故障注入 PASS；后端 Agent HTTP/lifecycle 34 PASS + 8 subtests | Agent `seq` 投影，按 `after` 恢复；重放同一 run；超事件窗口时 snapshot；UI request_id 展示记录成功 | 长时压力测试、无限/多次断网和外部代理故障 |
 | 工具和权限 | Agent 及全量测试结果见最新验收记录 | 本地插件副作用 fixture、权限和重复 request_id 自动化回归通过 | 真实模型工具选择；真实用户工作区组合 |
 | 插件/Creator/会话 | Electron E2E 16/16，既有 Node 组件 56/56 | 插件成功/失败、会话隔离、Brain 重启后记录恢复 | 真实外部插件依赖和真实数据迁移组合 |
-| Windows 安装/升级 | 前一提交候选的 fresh-install、1.0.2 upgrade/rollback 有本机报告 | 之前隔离包扫描及用户数据保留路径已验证 | 本轮新源码改动需重新构建并核验包身份/清单，旧报告不能替代 |
+| Windows 安装/升级 | 本轮提交的配对候选构建和 `build_release.py --verify --candidate` PASS；静态清单为 682 ASAR entries / 241 unpacked files，隐私扫描 0 命中 | build-info、release manifest、Brain manifest 和关键文件哈希一致；详细 SHA/报告见 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-final-runtime-acceptance-6462021.json` | 当前候选安装器未运行：宿主上有用户 Vigil 正在运行；为保护正式安装，NSIS 首启/升级/卸载阻塞；此前 lifecycle 结果只对应旧源码 |
 | 真实 Provider | 未连接 | 使用 Fake Provider 完成控制流与故障注入 | 真实认证、限流、空响应和服务端错误均 BLOCKED（无授权隔离凭据） |
 
-当前 P1：AG-002/AG-003/AG-005 仍是**部分验证**；AG-008 只对已有构建和指定 1.0.2 升级路径成立。本文不宣称所有 P1 关闭。全仓 Python 测试、新源码候选包及当前提交的来源身份结果将在阶段验收报告/追加日志中记录；没运行或阻塞的场景仍分别标为 NOT RUN/BLOCKED。
+当前 P1：AG-002/AG-003/AG-005 仍是**部分验证**；AG-008 的当前源码候选已通过构建/身份/静态清单核验，但安装生命周期受宿主正在运行的 Vigil 阻塞；此前指定 1.0.2 upgrade 结果仍只对旧源码候选成立。本文不宣称所有 P1 关闭。全仓 Python 结果和本轮候选详细 SHA 记在阶段验收报告；没运行或阻塞的场景仍分别标为 NOT RUN/BLOCKED。
