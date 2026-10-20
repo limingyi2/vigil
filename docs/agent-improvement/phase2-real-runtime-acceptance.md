@@ -35,7 +35,7 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 | ID | 优先级 | 证据状态 | 剩余验收 |
 |---|---:|---|---|
 | AG-002 SSE 重连、游标缺口、快照与队列压力 | P1 | 部分验证：真实 Electron/Brain/Fake Provider 运行 300 delta；在 SSE 首事件游标后断开并重连；超过 256 事件保留窗口时收到与终态一致的 authoritative snapshot；Agent Center Electron renderer/preload fixture 覆盖断开、显式重连、连接 generation 变更和 cursor gap 重同步（25/25） | Agent Center 使用结构化 Codex fixture，不代表本地 Agent run 或真实 Codex 服务；本地 Brain/Electron 自动恢复策略、持续高压、长时间积压和网络代理异常未完整验证 |
-| AG-003 Electron/Brain 状态一致性 | P1 | 部分验证：本地 Agent E2E 覆盖取消/超时/Brain 重启/Electron 退出；生产 renderer + sandbox preload fixture 实际点击 Agent 取消并验证刷新后仍可取消；慢插件 in-flight 时 UI 取消使 Brain/UI 变 cancelled 且不再续调；短时 SSE 重连预算耗尽（4 cuts/3 resumes）后 Brain 和 renderer 最终都为 succeeded | 完整 UI/Brain 完成、失败、取消、超时、重连、重启终态矩阵仍未完整验证 |
+| AG-003 Electron/Brain 状态一致性 | P1 | 部分验证：本地 Agent E2E 覆盖取消/超时/Brain 重启/Electron 退出；生产 renderer + sandbox preload fixture 实际点击 Agent 取消并验证刷新后仍可取消；模型生成阶段和慢插件 in-flight 阶段点击 UI 取消均使 Brain/UI 变 cancelled 且不再派发工具/续调；短时 SSE 重连预算耗尽（4 cuts/3 resumes）后 Brain 和 renderer 最终都为 succeeded | 完整 UI/Brain 完成、失败、取消、超时、重连、重启终态矩阵仍未完整验证 |
 | AG-005 不确定请求及非幂等副作用 | P1 | 部分验证：真实 Electron/Brain + Fake Provider；服务端已收并记录请求后销毁响应 socket，run 进入 `connection_lost`；同 request ID 不重新请求 Provider，也不触发工具。另有工具执行后 Brain 崩溃恢复为 `interrupted/unknown` 且不重放 | 真实 Provider 接收后丢响应、跨系统外部副作用和多组件幂等仍未验证；Fake Provider 结果不代表外部服务 |
 | AG-008 安装包清单及用户数据保护 | P1 | **指定路径已验证通过**：fresh NSIS 安装/首次启动/Brain health/Fake Provider 聊天/Electron 重启/卸载保留 70 个 profile 文件；官方 1.0.2→候选迁移、Brain 不匹配阻断、精确回滚和升级 checkpoint 故障保护均 PASS；包清单扫描 0 禁止内容匹配 | 仅证明本次隔离环境、1.0.2 基线及候选版本；其他旧版升级跨度、真实用户机器/文件系统及安装器 verbose log 未验证 |
 
@@ -139,3 +139,11 @@ Round 13 清洁 HEAD 回归补充：`agent_eval.py validate` PASS；`agent_eval.
 - 测试对照 Brain 持久状态和 renderer display record，结果两者最终都为 `succeeded`；run_id/request_id 保持不变。日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log`。作为对照，标准单次断线 focused E2E 也通过，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-normal-round14.log`。
 - 首次执行的测试夹具将压力场景代理标记与提交文本不一致，代理没有观察到 run_id 而失败；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14.log` 保留。修正夹具发送文本后重跑成功，没有因此修改产品代码。
 - 未发现该重连预算耗尽路径下的 Brain/renderer 终态分歧。这个结论只覆盖短时本地故障注入；更长断线、进程崩溃并发、真实 Provider/代理仍未验证。AG-003 仍保持 P1/部分验证。
+
+
+### AG-003 模型生成阶段 renderer 取消（Round 15）
+
+- 真实 Electron renderer 点击聊天内取消按钮时，Agent 已完成持久 run identity 与 generating step，Fake Provider 正在 gate 上等待。Brain 确认 run=`cancelled`，renderer display record=`cancelled` 且忙碌状态解除。
+- 随后释放 Fake Provider gate，让 Provider 返回一个 late `smoke_ping` tool call；Agent 保持 cancelled，步骤中没有工具调用，隔离插件 trace 未增加，模型请求数仍为 1。该场景覆盖“工具派发前取消”，与慢工具已派发时取消互补。PASS 日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log`。
+- 测试夹具先后有两个未通过尝试：将空输入按钮的 `disabled` 错当作忙碌状态，之后 helper 忘记接收 Brain base 参数；原始日志 `phase2-ag003-ui-model-cancel-round15.log` 和 `phase2-ag003-ui-model-cancel-round15-rerun.log` 保留。修正后 focused 场景通过；同一更改后的默认完整 Electron/Brain/Fake Provider E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-model-cancel-full-e2e-round15.log`。没有发现新的产品缺陷，也没有因夹具失败放宽产品断言。
+- **关联范围：** UI 的模型阶段取消与已派发慢工具取消均有直接证据，但完整终态矩阵、真实 Provider 和进程 crash 同时取消仍待测；AG-003 仍是 P1/部分验证。

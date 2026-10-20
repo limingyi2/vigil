@@ -561,6 +561,46 @@ async function exerciseUiSlowToolCancel(pluginTrace) {
   fs.rmSync(pluginReleasePath, { force: true });
   pass('renderer cancels an already-dispatched side-effecting tool, preserves terminal state, and prevents follow-up dispatch');
 }
+async function exerciseUiModelCancel(brainBase, pluginTrace) {
+  const traceBefore = providerTrace(pluginTrace).length;
+  const requestsBefore = modelRequests.length;
+  const intent = 'P1_AGENT_CANCEL_DURING_MODEL 请等待后再调用 smoke_ping';
+  let release;
+  cancelGate = { promise: new Promise(resolve => { release = resolve; }) };
+  await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
+  await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'chat welcome before UI model cancellation');
+  await evaluate("document.querySelector('#newTopicBtn').click()");
+  const accepted = requestStarted(x => x.userText.includes('P1_AGENT_CANCEL_DURING_MODEL'));
+  await submit(intent);
+  await accepted;
+  await waitFor("document.querySelector('#msgs .turn:not(.me) .agent-cancel')", 'real renderer cancel control during model generation');
+  const runEvent = await evaluate("(window.__vigilE2EEvents||[]).filter(e=>e.type==='agent_run').at(-1)");
+  assert.ok(runEvent?.run_id, 'renderer must receive the durable run ID before showing cancellation');
+  const conversationId = await evaluate('API.state.chatConversationId');
+  const duringModel = await agentSnapshot(runEvent.run_id, conversationId);
+  assert.equal(duringModel.status, 'running');
+  assert.equal(duringModel.steps.at(-1)?.kind, 'model');
+  assert.equal(duringModel.steps.at(-1)?.status, 'running');
+  await evaluate('document.querySelector("#msgs .turn:not(.me) .agent-cancel").click()');
+  const cancelDeadline = Date.now() + 5000;
+  let cancelled;
+  while (Date.now() < cancelDeadline) {
+    cancelled = await agentSnapshot(runEvent.run_id, conversationId);
+    if (cancelled.status === 'cancelled') break;
+    await wait(50);
+  }
+  assert.equal(cancelled?.status, 'cancelled', 'renderer cancel must stop the model-waiting Agent run');
+  await waitFor(`(()=>{const rs=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));return rs.some(x=>x.input===${JSON.stringify(intent)}&&x.status==='cancelled')&&document.querySelector('#sendBtn')?.getAttribute('aria-busy')==='false'})()`,
+    'renderer cancelled status and unlocked composer', 5000);
+  release();
+  const final = await waitBrainAgentRun(brainBase, runEvent.run_id, 10000, conversationId);
+  assert.equal(final.status, 'cancelled');
+  assert.equal(final.steps.some(step => step.kind === 'tool'), false, 'a late model tool-call response must not dispatch after cancel');
+  assert.equal(providerTrace(pluginTrace).length, traceBefore, 'cancellation before tool dispatch must have no plugin side effect');
+  assert.equal(modelRequests.length, requestsBefore + 1, 'cancelled request must not produce a follow-up model call');
+  cancelGate = null;
+  pass('renderer cancels during model generation and prevents a late tool call from dispatching');
+}
 async function brainAgentSnapshot(brainBase, runId, conversationId) {
   const query = new URLSearchParams({ src: 'pc', ...(conversationId ? { conversation_id: conversationId } : {}) });
   const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}?${query}`, {
@@ -664,13 +704,19 @@ async function safeCleanup() {
 async function run() {
   const modelBase = await startModel();
   const focusedSlowToolCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-slow-tool';
-  const { base: brainBase, pluginTrace } = await startBrain(modelBase, undefined, { agentEnabled: focusedSlowToolCancel });
+  const focusedModelCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-during-model';
+  const { base: brainBase, pluginTrace } = await startBrain(modelBase, undefined,
+    { agentEnabled: focusedSlowToolCancel || focusedModelCancel });
   await startElectron(brainBase);
   let brainPort = Number(new URL(brainBase).port);
   const reconnectScenario = process.env.VIGIL_E2E_SCENARIO || '';
   const focusedReconnect = ['agent-chat-reconnect', 'agent-chat-reconnect-stress', 'agent-chat-reconnect-exhaustion'].includes(reconnectScenario);
   if (focusedSlowToolCancel) {
     await exerciseUiSlowToolCancel(pluginTrace);
+    return;
+  }
+  if (focusedModelCancel) {
+    await exerciseUiModelCancel(brainBase, pluginTrace);
     return;
   }
   if (!focusedReconnect) {

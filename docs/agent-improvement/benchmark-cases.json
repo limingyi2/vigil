@@ -417,7 +417,13 @@
         "No next step after cancellation"
       ],
       "status": "NOT RUN",
-      "scope_note": "Renderer cancel and reload recovery passed in the production Electron renderer fixture. The local Brain/Electron E2E also clicks the production renderer cancel button while an already-dispatched side-effecting plugin is in flight, observes cancelled terminal state and unlocked composer, then verifies the settled tool does not trigger model follow-up/tool dispatch. Full terminal-state matrix remains unverified."
+      "scope_note": "Renderer cancellation now has direct Electron/Brain evidence both before tool dispatch (while model generation is held and a late tool call is returned) and during an already-dispatched slow side-effecting plugin. Both runs become cancelled and no late tool/follow-up is dispatched; the composer unlocks. Renderer reload cancellation and bounded retry exhaustion state are also separately measured. Full done/failure/cancel/timeout/reconnect/restart state matrix remains unverified.",
+      "ui_model_cancel_evidence": {
+        "date": "2026-10-20",
+        "command": "$env:VIGIL_E2E_SCENARIO=agent-cancel-during-model; node client/tools/test-electron-brain-e2e.js",
+        "report": "%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log",
+        "result": "PASS: real renderer cancel during model generation; late tool-call response was not dispatched; Brain/UI terminal state cancelled."
+      }
     },
     {
       "id": "context-budget",

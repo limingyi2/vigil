@@ -285,3 +285,12 @@ Round 13 的干净提交回归：`agent_eval.py validate` PASS；Regression suit
 - **首轮夹具失败：** 新场景选择器使用 `P1_CHAT_RECONNECT_STRESS`，但分支提交文本仍使用普通 `P1_CHAT_RECONNECT`，代理未观察到 run_id。日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14.log` 保留；修正选择器与请求文本对应后重跑。
 - **结果：** 4 次 cut、3 次 resume；Brain 原 run 最终 succeeded，renderer record 最终 succeeded，ID 不变；场景 PASS，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log`。标准单次断线测试也 PASS，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-normal-round14.log`。未观察到终态分歧，不做产品代码修改。
 - **边界：** 仅短时 loopback Fake Provider 和 TCP 注入；长时代理故障、真实服务及进程 crash 同时断线仍未覆盖，AG-003 保持 P1/部分验证。
+
+
+## 2026-10-20 — 真实 renderer 在模型生成阶段取消 Agent（Round 15）
+
+- **目标：** 补足 AG-003 的工具派发前取消路径，并确认 late model tool-call 不会越过取消状态执行。
+- **测试改动：** 在隔离 E2E 中加入 `agent-cancel-during-model`。Fake Provider 暂停在模型响应 gate；测试经生产 renderer 点击 cancel，再放行带 `smoke_ping` 的 late tool-call。仅改测试夹具和证据记录。
+- **结果：** Brain 与 renderer 均 cancelled，composer busy 解除，late tool 未创建步骤、隔离 plugin trace 不变、Provider request 只有一次。Focused PASS 日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log`。完整 Electron/Brain/Fake Provider E2E **18/18 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-model-cancel-full-e2e-round15.log`。
+- **失败证据：** 首个夹具误把空 composer 的 disabled 当忙碌信号；第二次辅助函数漏传 brainBase。分别保留于 `phase2-ag003-ui-model-cancel-round15.log`、`phase2-ag003-ui-model-cancel-round15-rerun.log`。修复夹具后通过，没有降低产品检查标准。
+- **结论：** 未发现模型阶段取消的 Brain/UI 偏差或 late tool side effect。AG-003 仍 P1/部分验证，因完整终态矩阵与真实 Provider 尚未覆盖。

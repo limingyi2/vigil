@@ -158,3 +158,10 @@
 - 隔离 Electron/Brain/Fake Provider 在一次 Agent chat 中被代理断开 4 次，Electron 使用上限 3 次恢复；相同 durable run 最终完成，renderer 与 Brain 均报告 succeeded。详见 Round 14 日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log`。
 - 标准单次 chat SSE 重连再次通过（`phase2-ag003-reconnect-normal-round14.log`）。测试夹具初次未对齐标记的失败日志保留，修正后重跑成功。
 - 未发现有界恢复耗尽时的终态偏差；真实 Provider/代理与长时断线仍待测，AG-003 仍部分验证。
+
+
+## 2026-10-20 更新：模型阶段 UI 取消（Round 15）
+
+- 真实 renderer 对处于 generating 的 Agent run 点击取消；Brain 和 renderer 都记录 `cancelled`，composer busy 状态清除。随后放行 Fake Provider 返回 late tool call，工具未派发、未产生插件副作用、无模型 follow-up。PASS：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-ui-model-cancel-round15-final.log`。
+- 更改后的默认 Electron/Brain/Fake Provider E2E 18/18 PASS，含 1,200 event cursor-gap；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-model-cancel-full-e2e-round15.log`。夹具错误尝试均在本机保留并于修正后重跑。
+- AG-003 完整终态/长时故障矩阵仍不完整，真实 Provider 未验证；当前结论维持 P1/部分验证。
