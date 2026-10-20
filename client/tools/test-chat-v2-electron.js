@@ -558,6 +558,11 @@ async function main() {
   assert.equal(await ev(`document.querySelector('.codehead span').textContent`),'js');
   assert.ok(await ev(`U.md(${JSON.stringify('```\nfirst\nsecond\n```')},{codeActions:true}).includes('<code>first\\nsecond\\n</code>')`));
   result('Enter, Shift+Enter, IME, stream state and deduplicated IPC payload');
+  await ev(`document.querySelector('#clearBtn').click()`);
+  await until(`document.querySelector('.vigil-confirm[role="dialog"]')`);
+  await ev(`document.querySelector('.vigil-confirm [data-choice="cancel"]').click()`);
+  assert.equal(await ev(`document.querySelector('.vigil-confirm-backdrop')`),null);
+  result('destructive history clear retains a themed in-app confirmation');
   // Clipboard write executes in the real Electron renderer, not a mocked copy handler.
   savedClipboard = Object.fromEntries(require('electron').clipboard.availableFormats().map(format => [format,require('electron').clipboard.readBuffer(format)]));
   win.show(); win.focus(); await wait(150);
@@ -712,7 +717,7 @@ async function main() {
   await until(`API.state.chatConversationId===${JSON.stringify(legacyConversationId)}`);
   await ev(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).forEach(k=>localStorage.removeItem(k))`);
   const many=Array.from({length:40},(_,i)=>({role:i%2?'assistant':'user',text:i%2?answer:'问题 '+i,t:Date.now()-40000+i*1000}));
-  history=many; await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelectorAll('#msgs .turn').length===40`);
+  history=many; await refreshCurrentPage(); await until(`document.querySelectorAll('#msgs .turn').length===40`);
   const align=await ev(`(()=>{const t=document.querySelector('#msgs .turn').getBoundingClientRect(),c=document.querySelector('.cbox').getBoundingClientRect();return{left:Math.abs(t.left-c.left),right:Math.abs(t.right-c.right),width:c.width}})()`);
   assert.ok(align.left<=2 && align.right<=2 && align.width<=860,JSON.stringify(align));
   const before=await measure(); await ev(`document.querySelector('#msgs').scrollTop=0`); await wait(80);
@@ -805,10 +810,10 @@ async function main() {
     await shot('round2-persona-'+width+'x'+height);
   }
   win.setSize(1400,900); await wait(100);
-  await ev(`document.querySelector('#themeBtn').click()`);
+  await setTheme('dark');
   result('persona light/dark and narrow-window layouts');
   personaEmpty=true;
-  await ev(`document.querySelector('#reloadBtn').click()`);
+  await refreshCurrentPage();
   await until(`document.querySelector('.persona-view .empty')?.textContent.includes('暂无人格配置')`);
   result('persona empty state is distinguished from service failure');
   personaEmpty=false;
@@ -859,7 +864,7 @@ async function main() {
   await ev(`document.querySelector('[data-session="${legacyConversationId}"]').click()`);
   await until(`API.state.chatConversationId==='${legacyConversationId}'`);
   history=[{role:'assistant',text:answer,t:Date.now()}];
-  await ev(`document.querySelector('#reloadBtn').click()`); await until(`document.querySelector('.codeblock')`); await shot('after-wallpaper-chat');
+  await refreshCurrentPage(); await until(`document.querySelector('.codeblock')`); await shot('after-wallpaper-chat');
   result('wallpaper reading surface and unchanged chat DOM');
   for(const [width,height] of [[1280,800],[900,700],[600,650],[800,540]]) {
     win.setSize(width,height); await wait(120);

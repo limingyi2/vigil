@@ -6,7 +6,7 @@
  * "把舞台搭好、把当前页叫上来"。渲染层不持有任何密钥，网络全走主进程。
  *
  * 对齐 index.html 的 ID：gnav / panel / topbar / view / status / gPanel /
- * themeBtn / reloadBtn / winMin / winMax / winClose。
+ * winMin / winMax / winClose。
  * 全部带存在性守卫 —— 网页 harness 里没有 window.vigil 也要能跑 UI；
  * 启动失败必须看得见：异常打进状态栏和 __bootErr，不许无声黑屏。
  */
@@ -27,14 +27,16 @@
   // ── 左侧主导航：图标栏，页名由原生 tooltip 和 aria-label 提供 ──
   function buildNav() {
     if (!gnavEl) return;
-    gnavEl.innerHTML = PAGES.filter((p) => p.id !== 'system').map((p) => {
+    gnavEl.innerHTML = '<div class="gnav-brand" aria-label="Vigil">Vigil</div>' +
+      PAGES.filter((p) => p.id !== 'system').map((p) => {
       // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，别让按钮变成空白图标
       const ic = String(p.icon === 'image' ? 'img' : p.icon || '').replace(/^i-/, '') || 'puzzle';
       return '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
-      U.icon(ic, 'md') + '</button>'; }).join('') +
+      U.icon(ic, 'md') +
+      '<span class="gnav-label">' + esc(p.id === 'chat' ? '会话' : p.name) + '</span></button>'; }).join('') +
       '<div class="nav-spacer" aria-hidden="true"></div>' +
       '<button class="gbtn nav-settings" id="settingsBtn" data-tip="设置" title="设置" aria-label="打开设置窗口">' +
-      U.icon('set', 'md') + '</button>';
+      U.icon('set', 'md') + '<span class="gnav-label">设置</span></button>';
     gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.addEventListener('click', () => {
         if (b.id === 'settingsBtn') {
@@ -84,6 +86,7 @@
     state.page = page.id;
     document.body.dataset.vigilPage = page.id;
     document.body.classList.toggle('settings-detail', !!state.settingsDetail && page.id !== 'chat' && page.id !== 'settings');
+    if (page.id !== 'chat') document.body.classList.remove('welcome-home', 'welcome-has-sessions');
     if (gnavEl) gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.classList.toggle('on', b.dataset.page === page.id));
     // 每次切页把三块都清干净，页面自己负责填
@@ -302,11 +305,6 @@
 
     bindGutter(document.getElementById('gPanel'), { var: '--panel', min: 180, max: 460, def: 240, dir: 1 });
 
-    const tb = document.getElementById('themeBtn');
-    if (tb) tb.addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark'));
-    const rb = document.getElementById('reloadBtn');
-    if (rb) rb.addEventListener('click', () => go(state.page));
-
     if (settingsWindow && window.vigil && window.vigil.settings) {
       window.vigil.settings.onNavigate((target) => {
         state.settingsSub = target.section || 'model';
@@ -322,6 +320,7 @@
     q('winMin', () => window.vigil && window.vigil.win && window.vigil.win.minimize());
     q('winMax', () => window.vigil && window.vigil.win && window.vigil.win.maximize());
     q('winClose', () => window.vigil && window.vigil.win && window.vigil.win.close());
+    q('settingsReturn', () => window.vigil && window.vigil.win && window.vigil.win.close());
     window.vigil && window.vigil.win && window.vigil.win.onState(() => {});
 
     // 主进程的本地操控确认：不在聊天页就先切过去（pages.js 的 confirm 气泡接住）

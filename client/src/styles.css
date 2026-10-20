@@ -68,9 +68,17 @@ input, select, textarea { font: inherit; color: inherit; }
 .app { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); grid-template-rows: var(--title) minmax(0, 1fr) var(--status); height: 100vh; }
 .titlebar {
   grid-column: 1 / -1; grid-row: 1;
-  display: flex; align-items: center; gap: 8px; padding-left: 12px; background: var(--bg-sub);
+  display: flex; align-items: center; justify-content:flex-end; gap: 8px; padding-left: 12px; background: var(--bg-sub);
   border-bottom: 1px solid var(--line); -webkit-app-region: drag;
 }
+.settings-return {
+  display: none; align-items: center; gap: 7px; height: 26px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--text-2);
+  background: transparent; font-size: 12px; -webkit-app-region: no-drag;
+}
+.settings-return:hover { color: var(--text); background: var(--bg-hover); }
+.settings-window .settings-return { display: inline-flex; }
+.settings-window .titlebar { justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; letter-spacing: .01em; }
 .brand .mark { width: 17px; height: 17px; border-radius: 2px; background: var(--fill); color: var(--on-fill); display: grid; place-items: center; font-size: 10px; font-weight: 700; }
 .chanbadge {
@@ -88,6 +96,8 @@ input, select, textarea { font: inherit; color: inherit; }
 .wctl button { width: 42px; display: grid; place-items: center; color: var(--text-3); }
 .wctl button:hover { background: var(--bg-hover); color: var(--text); }
 .wctl button.close:hover { background: #c92a2a; color: #fff; }
+.gnav-brand { display:none; }
+.gnav-label { display:none; }
 
 /* ── 左侧主导航：紧凑图标栏，页名由 tooltip 显示 ── */
 .gnav {

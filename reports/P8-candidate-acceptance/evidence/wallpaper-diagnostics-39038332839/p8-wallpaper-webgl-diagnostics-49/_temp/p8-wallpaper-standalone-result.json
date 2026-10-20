@@ -1,0 +1,8 @@
+{
+  "test": "standalone-wallpaper-v2-electron",
+  "source_commit": "193f297234a36a91ef61a4dedd63d4564df41c87",
+  "diagnostic_commit": "757c7bf2bcc131049e4448500110072789ad1c03",
+  "exit_code": 0,
+  "chat_material_probe": "skipped only to proceed past known unrelated paint assertion",
+  "hardware_acceleration": "enabled"
+}

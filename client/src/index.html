@@ -54,12 +54,9 @@
 
 <div class="app">
   <header class="titlebar">
-    <div class="brand"><span class="mark">V</span>Vigil</div>
-    <!-- 客户端是控制台：聊天走自己的 pc 渠道，不顶替 App / 微信（那两路在别处跑） -->
-    <span class="chanbadge" style="margin-left:12px">控制台</span>
-    <div class="sp"></div>
-    <button class="tbtn" id="themeBtn" title="切换深浅色"><svg class="i xs"><use href="#i-moon"/></svg>深色</button>
-    <button class="tbtn" id="reloadBtn" title="重新拉取当前页"><svg class="i xs"><use href="#i-refresh"/></svg>刷新</button>
+    <button class="settings-return" id="settingsReturn" type="button" title="返回聊天" aria-label="返回聊天">
+      <span aria-hidden="true">←</span><span>返回聊天</span>
+    </button>
     <div class="wctl">
       <button id="winMin" title="最小化"><svg class="i xs"><use href="#i-minus"/></svg></button>
       <button id="winMax" title="最大化"><svg class="i xs"><use href="#i-sq"/></svg></button>
