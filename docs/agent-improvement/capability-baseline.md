@@ -119,3 +119,19 @@
 本次测试扩展基于提交 `e2f39c160e9e74ff235ac297122783d17cdcc56d`，只增加隔离 E2E fixture 和报告。真实 Electron/Brain/Fake Provider 的完整 E2E **15 PASS**，包含 Electron 退出期间 Brain 完成 run 并在 relaunch 后恢复；最终日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-p1-agent-e2e-final2.log`。中间失败尝试和夹具调整记录在 `phase2-real-runtime-acceptance.md`，失败日志未覆盖。相关后端回归 `python -m pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra`：34 passed、8 subtests passed、0 skipped，5.12 秒；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-backend-regression-final.log`。评测执行器中的 `agent-run-lifecycle` 单案例也 PASS（3.328 秒），本机报告 `%LOCALAPPDATA%/Vigil/stage2-state/eval-reports/reports/run-20261020T114016-7c7b7153.json`。真实模型和外部 Provider 仍 BLOCKED/未运行，Fake Provider 结果不代表真实供应商验收。
 
 额外实测 `client/tools/test-agent-center-electron.js`，通过 Electron renderer、正式 preload 和隔离 Codex App Server fixture：25/25 PASS，0 renderer/preload errors、0 模型请求。覆盖明确断开与重连、连接 generation 变化、cursor gap 后恢复、历史事件不触发通知、401 后恢复和任务状态；结果在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-center-electron/electron-results.json`。它不是本地 Agent run 的 SSE 客户端，也不代表真实 Codex 服务；AG-002 仍为部分验证。
+
+## P1 运行时追加基线（2026-10-20，基于 `dbfb7f5aa2cbdb5d409fc83149f1053b58f5fae2`）
+
+本节追加测量优先于文档中较早的“无 Electron 运行时”基线；历史测量仍保留。隔离环境为 Windows Electron 28.3.3 + 本地 Python Brain + loopback Fake Provider，临时配置、会话、插件和副作用目录均位于测试目录。当前分支工作区包含尚未提交的 AG-002 修改，因此下列结果不能归属于干净提交；后续提交/候选包还需重验。
+
+| 模块 | 最新检查 | 当前能力证据 | 未验证/风险 |
+|---|---|---|---|
+| Electron/Brain 启动、IPC、连接与恢复 | 完整 E2E 16/16 PASS | 冷启动、Brain 重启、Brain 断开、会话切换、Agent chat SSE 单次断线重连；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-full-e2e.log` | 真实 Provider/Codex；多次连续断线、主进程崩溃与高压队列组合 |
+| Agent 状态、取消、超时、重复请求 | 完整 E2E PASS | 成功、失败、取消、超时、退出窗口、重启恢复；未知工具结果不重放副作用 | 外部系统副作用和真实 Provider 已接收但丢响应 |
+| SSE/事件游标 | 真实 Electron 故障注入 PASS；后端 Agent HTTP/lifecycle 34 PASS + 8 subtests | Agent `seq` 投影，按 `after` 恢复；重放同一 run；超事件窗口时 snapshot；UI request_id 展示记录成功 | 长时压力测试、无限/多次断网和外部代理故障 |
+| 工具和权限 | Agent 及全量测试结果见最新验收记录 | 本地插件副作用 fixture、权限和重复 request_id 自动化回归通过 | 真实模型工具选择；真实用户工作区组合 |
+| 插件/Creator/会话 | Electron E2E 16/16，既有 Node 组件 56/56 | 插件成功/失败、会话隔离、Brain 重启后记录恢复 | 真实外部插件依赖和真实数据迁移组合 |
+| Windows 安装/升级 | 前一提交候选的 fresh-install、1.0.2 upgrade/rollback 有本机报告 | 之前隔离包扫描及用户数据保留路径已验证 | 本轮新源码改动需重新构建并核验包身份/清单，旧报告不能替代 |
+| 真实 Provider | 未连接 | 使用 Fake Provider 完成控制流与故障注入 | 真实认证、限流、空响应和服务端错误均 BLOCKED（无授权隔离凭据） |
+
+当前 P1：AG-002/AG-003/AG-005 仍是**部分验证**；AG-008 只对已有构建和指定 1.0.2 升级路径成立。本文不宣称所有 P1 关闭。全仓 Python 测试、新源码候选包及当前提交的来源身份结果将在阶段验收报告/追加日志中记录；没运行或阻塞的场景仍分别标为 NOT RUN/BLOCKED。

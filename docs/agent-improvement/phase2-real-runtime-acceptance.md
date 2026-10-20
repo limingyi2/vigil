@@ -61,3 +61,21 @@ PR：[limingyi2/vigil#10](https://github.com/limingyi2/vigil/pull/10)
 ## 报告和隐私
 
 pytest 报告、任务状态、比较结果、E2E 原始日志和候选包均在 `%LOCALAPPDATA%/Vigil/stage2-state/` 及其子目录，且位于仓库之外。Git 提交不含本机报告、凭据、会话或构建产物。最终 Git SHA、远端核验和 PR 状态由 PR 页面及交付消息提供。
+
+## AG-002 补充闭环与全量回归（2026-10-20）
+
+本节源代码基于干净基线 HEAD `dbfb7f5aa2cbdb5d409fc83149f1053b58f5fae2`，执行时工作树包含 AG-002 代码和测试修改；报告已保存到用户本地状态目录，不提交 Git。Windows 11 build 26300、Node 24.19.0、Electron 28.3.3、隔离 CPython 3.12.14、临时 Brain/Electron profile、Fake Provider 和插件目录；没有加载真实配置或秘密凭据。
+
+| 范围 | 结果 | 命令/证据 |
+|---|---|---|
+| Electron Agent chat 单次断线恢复 | PASS | `VIGIL_E2E_SCENARIO=agent-chat-reconnect node client/tools/test-electron-brain-e2e.js`；`cuts=1,resumed=1,lastCursor=11`，同一 Agent run 与 request_id 显示 succeeded，副作用无重复；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-focused-final.log` |
+| 完整 Electron/Brain E2E | PASS，16/16 | `node client/tools/test-electron-brain-e2e.js`；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-full-e2e.log` |
+| Agent HTTP/lifecycle | PASS，34 tests + 8 subtests | `python -m pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra`；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-agent-backend-final.log` |
+| 自动化 regression suite | PASS，12 个案例；0 FAIL/TIMEOUT/BLOCKED、2 NOT RUN | `python scripts/agent_eval.py --state-dir <本机状态目录> run --suite regression --label phase2-ag002-runtime-regression`；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval/reports/run-20261020T120733-ccfedf90.json` |
+| 全仓 Python | 聚合案例 PASS；1,388 passed、19 skipped，0 failed | `python scripts/agent_eval.py --state-dir <本机状态目录> run --suite full-local --label phase2-ag002-full-local`；报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval/reports/run-20261020T120827-24a9957d.json`。19 个 skip 原样保留，不计为 PASS |
+| Node 原生组件 | PASS，56/56；0 failed/skipped | `node --test <client/tools 中含 node:test 的 8 个文件>`；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-node-regression.log` |
+| 清单/CLI/dry-run | PASS | `agent_eval.py --help`、`validate`、`run --case agent-run-lifecycle --dry-run`、`list`；manifest 14 自动案例、4 suites、10 test sets、10 behavior scenarios |
+
+修复前，旧客户端在代理断开后没有带 durable cursor 恢复；同场景观察 `resumed=0`，Brain run 虽已成功但 renderer 不恢复终态。`brain/server.py` 现为 Agent chat 投影事件增加持久 seq 并接受经校验的 `after` cursor；`client/electron/main.js` 只在确认 run identity 后以原 request_id 最多重试三次。`IncomingMessage.aborted` 现在 settle stream Promise，避免中断后挂起。测试仅使用本地 Fake Provider。完整 E2E 的先行失败仍保留于本机日志：seed-history 第 8 项超时（`phase2-ag002-chat-reconnect-settle-fix.log`），以及两次测试误断言 run_id 字段（`phase2-ag002-chat-reconnect-focused-keep.log`、`phase2-ag002-chat-reconnect-focused-diagnostic.log`）；页面本地记录白名单不存 run_id，测试改用 request_id 关联。最终完整 16 项回归通过。
+
+该结果扩展了 AG-002 的单次本地 Agent chat 断线恢复证据，但不证明高压/连续多次中断或真实远端 Agent 服务。AG-002、AG-003、AG-005 保持**部分验证**；真实 Provider 认证、限流、空响应、服务端错误仍为 **BLOCKED（无授权隔离凭据）**。AG-008 此前的 NSIS 生命周期报告对应旧构建身份；当前提交候选需要在干净隔离构建目录重建并复验清单。候选成功/失败、哈希与来源清单随后写入本机最终验收 JSON；PR #10 保持 open/draft/unmerged，未提出合并建议。

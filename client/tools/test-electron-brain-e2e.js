@@ -22,6 +22,7 @@ const captureScreenshots = process.argv.includes('--packaged') || process.argv.i
 const modelRequests = [];
 const modelWaiters = [];
 let modelServer, brain, electron, cdp;
+let disconnectProxy;
 let cdpSeq = 0;
 const cdpPending = new Map();
 let passCount = 0;
@@ -126,6 +127,22 @@ async function startModel() {
         res.end('data: [DONE]\n\n');
         return;
       }
+      if (userText.includes('P1_CHAT_RECONNECT')) {
+        if (toolMessage) {
+          for (const text of ['RESUMED_AGENT_COMPLETED']) {
+            res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: text } } ] }) + '\n\n');
+          }
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+          res.end('data: [DONE]\n\n');
+          return;
+        }
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'RESUME_PREFIX_' } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
+          id: 'p1-chat-resume-tool', type: 'function', function: { name: 'smoke_ping', arguments: '{"mode":"ok"}' } }] } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
+        return;
+      }
       if (userText.includes('P1_AGENT_TOOL_ONCE') || userText.includes('P1_AGENT_UNKNOWN_TOOL') || userText.includes('P1_AGENT_TOOL_CRASH')) {
         if (toolMessage) {
           for (const text of ['AGENT_TOOL_RESULT_RECORDED']) {
@@ -195,7 +212,7 @@ async function startModel() {
   return 'http://127.0.0.1:' + modelServer.address().port + '/v1';
 }
 
-function writeFixtures(modelBase, brainPort) {
+function writeFixtures(modelBase, brainPort, agentEnabled = false) {
   fs.mkdirSync(path.join(home, 'config'), { recursive: true });
   fs.mkdirSync(path.join(home, 'data'), { recursive: true });
   fs.mkdirSync(path.join(home, 'plugins'), { recursive: true });
@@ -204,7 +221,7 @@ function writeFixtures(modelBase, brainPort) {
   const brainConfig = {
     api_base: modelBase, api_key: 'fixture-only', model: 'local-fake-provider',
     provider: 'custom', model_mode: 'cloud', chat_mode: 'api', brain_token: token,
-    agent_execution: { enabled: false }, features: { tools: true },
+    agent_execution: { enabled: agentEnabled }, features: { tools: true },
     persona_file: 'personas/default.json',
   };
   fs.writeFileSync(path.join(home, 'config', 'config.json'), JSON.stringify(brainConfig), 'utf8');
@@ -250,9 +267,9 @@ function writeFixtures(modelBase, brainPort) {
   return pluginTrace;
 }
 
-async function startBrain(modelBase, fixedPort) {
+async function startBrain(modelBase, fixedPort, options = {}) {
   const port = fixedPort || await freePort();
-  const pluginTrace = writeFixtures(modelBase, port);
+  const pluginTrace = writeFixtures(modelBase, port, options.agentEnabled === true);
   const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
   if (!fs.existsSync(python)) throw new Error('Python interpreter not found: ' + python);
   const env = { ...process.env, VIGIL_HOME: home, VIGIL_PORT: String(port),
@@ -273,10 +290,72 @@ async function startBrain(modelBase, fixedPort) {
         assert.equal(runtime.protocol, 1);
         return { base, pluginTrace, port };
       }
+
     } catch (_) {}
     await wait(250);
   }
   throw new Error('Brain did not become ready; log is at ' + path.join(root, 'brain.log'));
+}
+
+async function startDisconnectProxy(brainBase, marker) {
+  const target = new URL(brainBase);
+  const state = { cuts: 0, resumed: 0, runId: null, requestId: null, lastCursor: 0, conversationId: null };
+  const server = http.createServer((req, res) => {
+    const forward = body => {
+      const reconnect = req.url.includes('/api/chat/stream') && req.url.includes('after=');
+      if (req.url.startsWith('/api/chat/stream') && body.includes(marker)) {
+        try {
+          const payload = JSON.parse(body);
+          state.conversationId = payload.conversation_id || null;
+          state.requestId = payload.request_id || null;
+        } catch (_) {}
+      }
+      if (reconnect && body.includes(marker)) state.resumed++;
+      const upstream = http.request({
+        method: req.method, hostname: target.hostname, port: Number(target.port), path: req.url,
+        headers: { ...req.headers, host: target.host },
+      }, response => {
+        res.writeHead(response.statusCode || 502, response.headers);
+        const watch = req.method === 'POST' && req.url.startsWith('/api/chat/stream') && body.includes(marker) && state.cuts === 0;
+        if (!watch) { response.pipe(res); return; }
+        let buffer = '';
+        response.on('data', chunk => {
+          buffer += chunk.toString('utf8');
+          let idx;
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const raw = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            if (!res.destroyed) res.write(raw + '\n\n');
+            const data = raw.split(/\r?\n/).find(line => line.startsWith('data: '));
+            if (!data) continue;
+            try {
+              const event = JSON.parse(data.slice(6));
+              if (event.type === 'agent_run') state.runId = event.run_id;
+              if (Number.isInteger(event.seq)) state.lastCursor = Math.max(state.lastCursor, event.seq);
+              if (event.type === 'text' && event.run_id && state.cuts === 0) {
+                state.cuts++;
+                res.destroy(); // Drop only the Electron-facing socket; drain Brain SSE.
+                break;
+              }
+            } catch (_) {}
+          }
+        });
+        response.on('end', () => { if (!res.destroyed) res.end(); });
+        response.on('error', error => { if (!res.destroyed) res.destroy(error); });
+      });
+      upstream.on('error', error => { if (!res.destroyed) { res.writeHead(502); res.end(error.message); } });
+      upstream.end(body);
+    };
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString('utf8'); });
+    req.on('end', () => forward(body));
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  disconnectProxy = server;
+  return { base: 'http://127.0.0.1:' + server.address().port, state };
 }
 
 function cdpSend(method, params = {}) {
@@ -394,18 +473,19 @@ async function agentSnapshot(runId) {
   assert.equal(response.status, 200, 'Electron API bridge must read Agent run status');
   return response.json;
 }
-async function brainAgentSnapshot(brainBase, runId) {
-  const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}?src=pc`, {
+async function brainAgentSnapshot(brainBase, runId, conversationId) {
+  const query = new URLSearchParams({ src: 'pc', ...(conversationId ? { conversation_id: conversationId } : {}) });
+  const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}?${query}`, {
     headers: { Authorization: 'Bearer ' + token },
   });
   assert.equal(response.status, 200, 'Brain must expose durable Agent state without an Electron window');
   return response.json();
 }
-async function waitBrainAgentRun(brainBase, runId, timeout = 10000) {
+async function waitBrainAgentRun(brainBase, runId, timeout = 10000, conversationId) {
   const deadline = Date.now() + timeout;
   let snapshot;
   while (Date.now() < deadline) {
-    snapshot = await brainAgentSnapshot(brainBase, runId);
+    snapshot = await brainAgentSnapshot(brainBase, runId, conversationId);
     if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(snapshot.status)) return snapshot;
     await wait(50);
   }
@@ -497,6 +577,9 @@ async function run() {
   const modelBase = await startModel();
   const { base: brainBase, pluginTrace } = await startBrain(modelBase);
   await startElectron(brainBase);
+  let brainPort = Number(new URL(brainBase).port);
+  const focusedReconnect = process.env.VIGIL_E2E_SCENARIO === 'agent-chat-reconnect';
+  if (!focusedReconnect) {
   await waitFor("!!document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]')", 'directory plugin page registration');
   await evaluate("document.querySelector('#gnav [data-page=\\\"e2e-plugin-page\\\"]').click()");
   await waitFor("!!document.querySelector('#e2e-plugin-visible')", 'directory plugin page render');
@@ -620,7 +703,7 @@ async function run() {
   await waitFor("document.querySelector('.crturn')?.innerText.includes('P6 session scoped draft')", 'A Creator draft restore');
   await evaluate("document.querySelector('#creatorBtn').click();document.querySelector('#creatorBtn').click()");
   await waitFor("document.querySelector('#creatorBtn').innerText.includes('关')", 'return to ordinary chat mode');
-  const brainPort = Number(new URL(brainBase).port);
+  brainPort = Number(new URL(brainBase).port);
   await stopChild(brain, true); brain = null;
   await wait(500);
   const restarted = await startBrain(modelBase, brainPort);
@@ -821,14 +904,43 @@ async function run() {
   assert.equal(providerTrace(pluginTrace).length, traceBeforeCrash + 1,
     'retrying the same request after restart must not repeat the side effect');
   pass('Brain crash after durable tool dispatch recovers as interrupted/unknown without replaying a side effect');
+  }
 
-  // The previous Electron process had an open connection to the Brain that was
-  // forcibly restarted above. Relaunch the isolated desktop client so the
-  // final chat-disconnect assertion starts from a known healthy connection.
+  // Exercise the real chat-stream Agent path through a disposable TCP proxy.
+  // Drop only the Electron-facing SSE socket after the first durable Agent text
+  // event; the proxy continues draining the response so Brain work can finish.
   if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close();
   cdp = null;
   await stopChild(electron, true); electron = null;
-  await startElectron(brainBase);
+  await stopChild(brain, true); brain = null;
+  await startBrain(modelBase, brainPort, { agentEnabled: true });
+  const resumeProxy = await startDisconnectProxy(brainBase, 'P1_CHAT_RECONNECT');
+  await startElectron(resumeProxy.base);
+  await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
+  await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'welcome before reconnect test');
+  await submit('P1_CHAT_RECONNECT 请调用 smoke_ping 并总结结果');
+  const reconnectDeadline = Date.now() + 20000;
+  let reconnectRows = [];
+  while (Date.now() < reconnectDeadline) {
+    reconnectRows = await evaluate(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'))`);
+    if (reconnectRows.some(row => row.run_id === resumeProxy.state.runId && row.status === 'succeeded')) break;
+    await wait(100);
+  }
+  const reconnectRun = resumeProxy.state.runId;
+  assert.ok(reconnectRun, 'proxy must observe the Agent run identity before cutting SSE');
+  assert.equal(resumeProxy.state.cuts, 1, 'the Electron-facing stream must be cut once');
+  const reconnectFinal = await waitBrainAgentRun(brainBase, reconnectRun, 10000, resumeProxy.state.conversationId);
+  assert.equal(reconnectFinal.status, 'succeeded');
+  assert.equal(reconnectFinal.result, 'RESUMED_AGENT_COMPLETED');
+  assert.equal(resumeProxy.state.resumed, 1,
+    'Electron must reconnect with its durable cursor: ' + JSON.stringify(resumeProxy.state));
+  assert.ok(reconnectRows.some(row => row.request_id === resumeProxy.state.requestId && row.status === 'succeeded'),
+    'renderer must restore the same run as succeeded, not leave a stale interrupted row: ' +
+      JSON.stringify({rows: reconnectRows.filter(row => row.request_id === resumeProxy.state.requestId), proxy: resumeProxy.state,
+        events: await evaluate('window.__vigilE2EEvents || []'), keys: await evaluate('Object.keys(localStorage)')}));
+  assert.ok(providerTrace(pluginTrace).some(row => row.mode === 'ok'));
+  pass('Electron chat Agent SSE automatically resumes the same run from its last durable cursor after a network cut');
+  await stopChild(electron, true); electron = null;
   console.log('PASS integrated smoke total: ' + passCount);
 }
 
@@ -846,6 +958,7 @@ run().catch(error => {
   // temporary log handles open on Windows.
   await stopChild(electron, true);
   await stopChild(brain, true);
+  if (disconnectProxy) await new Promise(resolve => disconnectProxy.close(resolve));
   if (modelServer) {
     if (typeof modelServer.closeAllConnections === 'function') modelServer.closeAllConnections();
     await new Promise(resolve => modelServer.close(resolve));

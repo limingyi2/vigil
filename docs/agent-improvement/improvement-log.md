@@ -238,3 +238,12 @@
 - **结果：** 25/25 PASS、0 renderer/preload errors、0 模型 API 请求。实际检查覆盖启动自动连接、运行与失败状态、审批去重/不提供未经授权的审批按钮、显式断开保持断开、重新连接使未决项变未知、gap 告警及历史重同步、server connection/cursor reset、401 阻断与认证恢复、任务启动/中断及窄屏/主题布局。结果 JSON：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-center-electron/electron-results.json`；命令日志：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-center-electron.log`。
 - **证据边界：** 这是协议兼容 fixture，不是实际 Codex App Server 或真实 Provider；它证明 Electron 客户端消费既定事件语义，不证明本地 `/api/agent/runs` 的 UI 自动重连。AG-002 维持 P1/部分验证，持续队列压力、本地 run renderer reconnect 和真实远端服务仍待测。
 - **修改：** 仅追加基线、阶段验收和本日志记录，没有产品代码变更。
+
+## 2026-10-20 — 本地 Agent chat SSE 恢复（Round 8）
+
+- **基线与复现：** 分支 `codex/vigil-agent-improvement-foundation`，基线 HEAD `dbfb7f5aa2cbdb5d409fc83149f1053b58f5fae2`。隔离 TCP 代理只切断 Electron 侧 SSE，同时继续排空 Brain 响应。修复前 Brain run=`succeeded`，但代理没有观察到 Electron 带 `after` 游标重连（`resumed=0`）；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-repro-confirmed.log`。早期扩展 E2E 另在 seed-history 第 8 项有超时，原日志保留。
+- **根因证据：** `client/electron/main.js` 没有恢复本地 Agent chat stream；`requestStream()` 收到 Node `IncomingMessage.aborted` 只发错误、不完成 Promise。`brain/server.py::_agent_chat_events` 投影没有带事件序号，路由未使用 `after` cursor。一次初验因测试误以为 display record 持久化 run_id 而失败；页面 `rememberTurn()` 明确白名单不保存该字段，故夹具改为用 request_id 关联，不扩展本地数据字段。
+- **修改范围：** Brain SSE 为持久 run 事件附带 seq，支持并校验 after cursor；Electron 仅在确认 `agent_run` 后，对 connection_lost 做最多 3 次、200/400/800ms 有界重试，复用同一 request_id 并携带最近观察游标；未知 run 和旧 chat 不重发。`aborted` settle Promise，交由有界恢复逻辑处理。增加可单独选择的 `VIGIL_E2E_SCENARIO=agent-chat-reconnect` 场景，代理注入一次断线。
+- **前后结果：** 修复前 `resumed=0`；修复后 `cuts=1,resumed=1,lastCursor=11`，run 终态 `succeeded`，renderer 对应 request_id 的记录为 succeeded，Fake Provider/tool 副作用未重复。目标场景 PASS，完整 Electron + Brain + Fake Provider E2E **16/16 PASS**，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-chat-reconnect-full-e2e.log`。错误的初次断言日志 `phase2-ag002-chat-reconnect-focused-diagnostic.log` 仍在本地状态目录中，没有被覆盖。
+- **关联回归：** Agent HTTP/lifecycle `34 passed + 8 subtests`；Node `node --test` **56 PASS / 0 FAIL / 0 SKIP**；agent_eval regression **12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN**，报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval/reports/run-20261020T120733-ccfedf90.json`；同一状态目录下全仓 Python `full-local` 聚合案例 PASS，pytest **1,388 passed / 19 skipped / 0 failed**，96.406s，报告 `run-20261020T120827-24a9957d.json`。19 个 skipped 保持 skipped。
+- **风险状态：** AG-002 的单次 Electron SSE 断线和本地 Brain Agent run 自动恢复已有直接证据；长时高压、多次连续断线、主进程崩溃组合及真实 Provider 未验证，AG-002 仍属部分验证。AG-003/005 维持部分验证，AG-008 的旧报告只适用于其记录的旧构建身份；新源码候选包需要重新构建和清单校验。
