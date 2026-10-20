@@ -193,6 +193,39 @@ _STATIC_SPECS = {
         "params": [("keyword", "要取消的事项关键词，或“全部”", True)],
         "arg_param": "keyword",
     },
+    "project_review_start": {
+        "desc": "对用户明确提供的本地项目绝对路径建立可暂停的源码审查计划；只读，不修改项目文件。",
+        "params": [("path", "项目根目录绝对路径", True)],
+        "multi_args": True,
+    },
+    "project_review_step": {
+        "desc": "继续一份项目审查计划，按预算读取一批源码并保存证据、进度和唯一问题 ID。",
+        "params": [("review_id", "审查任务 ID", True), ("budget_files", "本次最多读取的文件数", False, "integer")],
+        "multi_args": True,
+    },
+    "project_review_report": {
+        "desc": "读取项目审查计划的覆盖范围、已验证发现和剩余未审查范围。",
+        "params": [("review_id", "审查任务 ID", True)],
+        "multi_args": True,
+    },
+    "project_repair_plan": {
+        "desc": "根据已有问题证据生成可查看的精确文本修复方案；不会写文件。",
+        "params": [("review_id", "审查任务 ID", True), ("issue_id", "问题 ID", True),
+                   ("path", "项目内文件路径", True), ("old", "期望替换的原文", True),
+                   ("new", "替换后的文本", True)],
+        "multi_args": True,
+    },
+    "project_repair_apply": {
+        "desc": "仅在用户明确授权 approved=true 后应用一份精确修复方案；文件变化时拒绝覆盖。",
+        "params": [("plan_id", "修复方案 ID", True), ("approved", "是否已明确授权", True, "boolean")],
+        "multi_args": True,
+    },
+    "project_repair_verify": {
+        "desc": "记录外部测试或实际运行得到的修复验收证据；没有证据不能标记通过。",
+        "params": [("plan_id", "修复方案 ID", True), ("passed", "测试是否通过", True, "boolean"),
+                   ("evidence", "测试输出或行为证据", True), ("command", "实际执行的命令", False)],
+        "multi_args": True,
+    },
 }
 
 
@@ -479,6 +512,19 @@ def invoke_spec(name, args, ctx=None):
             return _dl(ctx, **args)
         except Exception:
             return "委派工具暂不可用，照你的其他工具或自己的判断回答。"
+
+    if n.startswith('project_review_'):
+        try:
+            import project_review
+            return project_review.invoke(n, args, owner=str(getattr(ctx, 'owner', '') or ''))
+        except Exception:
+            return None
+    if n.startswith('project_repair_'):
+        try:
+            import project_repair
+            return project_repair.invoke(n, args, owner=str(getattr(ctx, 'owner', '') or ''))
+        except Exception:
+            return None
 
     # 远程本机工具（local_file_* / local_exec …）：直接进 localtools。
     # 插件里那层 `remote.py` 只是薄壳，而**插件是会被复制到家目录**的
