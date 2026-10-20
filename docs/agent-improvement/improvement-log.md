@@ -201,3 +201,11 @@
 - **修复后实测：** 对新的临时 profile 调用已安装候选 `Vigil.exe`，runtime harness exit 0；sidecar Brain ready，Fake Provider 收到 1 个带 sentinel 的真实聊天请求，renderer 显示回复并创建会话。结果日志：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-first-boot-isolated-profile.log`。
 - **失败证据保留：** 首次安装器 lifecycle 报告为 FAIL（安装成功，但 chat 首次启动 race），保存在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-candidate-lifecycle-failure-initial.json` 与 `lifecycle-failure-initial-logs/`；后续正式候选完整安装/升级结果写入独立 `phase2-acceptance-final.json`，不覆盖这份失败记录。
 - **回归与范围：** 失败/根因/修复均为发行和集成测试夹具，没有改 Brain、Electron 业务实现；最终候选以新提交重建后再执行 fresh install、restart、uninstall retention 和旧版 upgrade/rollback。运行的版本、报告及完整范围以最终 JSON 为准。
+
+### Round 4 — 升级验收 UI 选择器校正
+
+- **修改前表现：** 1.0.2 → 当前候选的隔离升级脚本已完成启动和会话 A/B 隔离检查，随后在自定义危险操作确认测试中失败；Node 夹具尝试读取已经不在当前 UI 的 `#clearBtn`，触发 `Uncaught`，不是安装器回滚或用户数据迁移失败。
+- **根因证据：** 当前 `client/src/js/pages.js` 会话行渲染的是 `.session-delete[data-delete]`，监听器调用 `deleteConversation()`，其确认由 `confirmDialog()` 渲染 `.vigil-confirm`。`client/tools/test-installed-runtime.cjs` 仍点击旧 `#clearBtn`。首次升级失败完整命令输出保存在 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-5cf5000.stdout.log`；失败的旧候选/旧夹具不覆盖。
+- **修改范围：** 仅将集成夹具改为找到当前活动会话的 `[data-delete]` 并触发真实自定义确认；测试仍禁止调用原生 `window.confirm`，仍验证点击取消不改变对话。
+- **验证状态：** 修复后的提交将重建与该提交匹配的候选安装包，再运行官方 1.0.2 → 候选升级、数据迁移、Brain 配对、安装失败回滚及完整文件树恢复。最终实际结果记录在本机 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-upgrade-rollback-<source-commit>.json`；只有该报告 `result` 为成功才算通过。
+- **范围边界：** 该阶段仍只修测试基础设施；如果用例随后进入真实产品路径并失败，保留报告并按证据重新分类，不在此轮借机修复 Vigil 业务问题。

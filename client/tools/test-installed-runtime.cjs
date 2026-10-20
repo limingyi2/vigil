@@ -114,7 +114,7 @@ async function run(){
   }
   assert.ok(restored,'Installed renderer restart did not restore the selected conversation and its messages');
   console.log('PASS installed chat UI creates, switches, continues and restores isolated A/B conversations');
-  await evaluate("window.confirm=()=>{throw Error('native confirm forbidden')};document.querySelector('#clearBtn').click();true");
+  await evaluate("window.confirm=()=>{throw Error('native confirm forbidden')};const active=document.querySelector('.session-row.on [data-delete]');if(!active)throw Error('active conversation delete action missing');active.click();true");
   let confirmReady=false;
   for(let i=0;i<50;i++){
     confirmReady=await evaluate("Boolean(document.querySelector('.vigil-confirm [data-choice=cancel]'))");
