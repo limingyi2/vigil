@@ -586,5 +586,114 @@ class LongTaskTests(unittest.TestCase):
         self.assertIn('budget.max_requests', str(ctx.exception))
 
 
+BRIEF = '【目标】验证检查点【已完成】写了两次笔记【关键发现】无【下一步】收尾汇报'
+
+
+class CheckpointResumeTests(unittest.TestCase):
+    """检查点摘要与断点续跑：历史可被简报替换，停止的任务能带着进度重新出发。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = patch.object(runs.paths, 'DATA_DIR', self.tmp.name)
+        self.home.start()
+        runs.INITIALIZED.clear()
+        runs.TRANSIENT.clear()
+
+    def tearDown(self):
+        self.home.stop()
+        self.tmp.cleanup()
+
+    def _drive(self, item, provider, invoke=None, cfg=None):
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=SPEC), \
+             patch.object(runs.tools, 'invoke_spec', side_effect=invoke or (lambda *a: 'note saved')):
+            runs._run(item['run_id'], 'owner', cfg or {})
+        return runs.snapshot(item['run_id'], 'owner')
+
+    def test_checkpoint_replaces_history_and_persists_brief(self):
+        provider = Provider([response(calls=[call('c1')]), response(calls=[call('c2', text='note2')]),
+                             response(BRIEF), response('done')])
+        item = runs.create(dict(request_id='request_ckpt_basic', intent='do it', src='pc'),
+                           {}, 'owner', start=False)
+        snap = self._drive(item, provider, None, cfg={'agent_execution': {'checkpoint_every': 2}})
+        self.assertEqual(snap['status'], 'succeeded')
+        self.assertEqual(snap['result'], 'done')
+        self.assertEqual(snap['checkpoint'], BRIEF)
+        # 摘要请求本身不携带工具清单，digest 里要能看到此前的工具结果
+        ck_payload = provider.payloads[2]
+        self.assertNotIn('tools', ck_payload)
+        self.assertIn('note saved', ck_payload['messages'][-1]['content'])
+        # 之后的请求历史已被替换成 [系统, 任务原文, 简报] 三条
+        final_msgs = provider.payloads[3]['messages']
+        self.assertEqual(len(final_msgs), 3)
+        self.assertEqual(final_msgs[1]['content'], 'do it')
+        self.assertIn('【目标】', final_msgs[2]['content'])
+        self.assertIn('【下一步】', final_msgs[2]['content'])
+        kinds = [s['kind'] for s in snap['steps']]
+        self.assertEqual(kinds, ['model', 'tool', 'model', 'tool', 'model', 'model'])
+
+    def test_checkpoint_failure_is_not_fatal(self):
+        # 摘要请求挂了只放弃本轮压缩，原历史照用，任务继续。
+        provider = Provider([response(calls=[call('c1')]), response(calls=[call('c2')]),
+                             ProviderUnavailable('boom'), response('done')])
+        item = runs.create(dict(request_id='request_ckpt_fail', intent='do it', src='pc'),
+                           {}, 'owner', start=False)
+        snap = self._drive(item, provider, None, cfg={'agent_execution': {'checkpoint_every': 2}})
+        self.assertEqual(snap['status'], 'succeeded')
+        self.assertEqual(snap['result'], 'done')
+        self.assertIsNone(snap.get('checkpoint'))
+        self.assertEqual(snap['checkpoint_failed'], 1)
+        # 历史没被替换：最后一条请求仍是完整对话（系统+任务+两条工具轮次）
+        self.assertGreater(len(provider.payloads[3]['messages']), 3)
+
+    def test_pause_with_checkpoint_then_resume(self):
+        provider = Provider([response(calls=[call('c1')]), response(calls=[call('c2', text='note2')]),
+                             response(BRIEF), response(calls=[call('c3', text='note3')])])
+        item = runs.create(dict(request_id='request_ckpt_pause', intent='do it', src='pc',
+                                budget={'max_steps': 6}), {}, 'owner', start=False)
+        snap = self._drive(item, provider, None, cfg={'agent_execution': {'checkpoint_every': 2}})
+        self.assertEqual(snap['status'], 'paused_budget')
+        self.assertEqual(snap['checkpoint'], BRIEF)
+        new = runs.resume(item['run_id'], 'owner', {}, start=False)
+        self.assertEqual(new['resume_from'], item['run_id'])
+        self.assertTrue(new['request_id'].startswith('res_'))
+        provider2 = Provider([response('续跑完成')])
+        snap2 = self._drive(new, provider2, None)
+        self.assertEqual(snap2['status'], 'succeeded')
+        self.assertEqual(snap2['result'], '续跑完成')
+        seed = provider2.payloads[0]['messages']
+        self.assertEqual(len(seed), 3)
+        self.assertEqual(seed[1]['content'], 'do it')
+        self.assertIn(BRIEF, seed[2]['content'])
+        # 原 run 台账上留了续跑痕迹
+        marks = [e['type'] for e in runs.events(item['run_id'], 'owner')['events']]
+        self.assertIn('resumed', marks)
+
+    def test_resume_without_checkpoint_builds_local_digest(self):
+        # 没跑过检查点的任务也能续：从台账步骤本地拼摘要，不花模型调用。
+        provider = Provider([response(calls=[call('c1')]), response(calls=[call('c2')])])
+        item = runs.create(dict(request_id='request_resume_digest', intent='go', src='pc',
+                                budget={'max_steps': 3}), {}, 'owner', start=False)
+        snap = self._drive(item, provider, None)
+        self.assertEqual(snap['status'], 'paused_budget')
+        self.assertIsNone(snap.get('checkpoint'))
+        new = runs.resume(item['run_id'], 'owner', {}, start=False)
+        provider2 = Provider([response('final')])
+        snap2 = self._drive(new, provider2, None)
+        self.assertEqual(snap2['status'], 'succeeded')
+        seed = provider2.payloads[0]['messages'][2]['content']
+        self.assertIn('目标：go', seed)
+        self.assertIn('write_note', seed)
+        self.assertIn('note saved', seed)
+
+    def test_resume_rejects_active_or_missing_runs(self):
+        item = runs.create(dict(request_id='request_resume_guard', intent='x', src='pc'),
+                           {}, 'owner', start=False)
+        with self.assertRaises(ValueError):
+            runs.resume(item['run_id'], 'owner', {}, start=False)  # queued 不算已停止
+        with self.assertRaises(ValueError):
+            runs.resume('run_missing', 'owner', {}, start=False)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -106,7 +106,9 @@
   },
   "agent_execution": {
     "_说明": "Agent 执行预算（“让她分析一个项目”这类多步任务的上限）。不配就用 DEFAULT_BUDGET：max_steps 120 / max_requests 60 / max_tool_calls 100 / max_seconds 1800 / request_timeout 90。请求里只能往下调，不能超过代码里的 HARD_LIMITS。",
+    "_checkpoint_every说明": "每完成这么多轮模型请求，自动把整段对话压成一份简报替换历史（防注意力稀释，简报同时存进台账供断点续跑用）。默认 30，0 为关闭；摘要请求照常计入预算，失败不致命。",
     "enabled": true,
-    "context_chars": 120000
+    "context_chars": 120000,
+    "checkpoint_every": 30
   }
 }

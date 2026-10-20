@@ -1583,6 +1583,10 @@ def start_remote_api(brain):
                         self._json(200, {'ok': True, **item})
                     elif method == 'POST' and parts[4:] == ['cancel']:
                         self._json(200, {'ok': True, **agent_runs.cancel(rid, owner)})
+                    elif method == 'POST' and parts[4:] == ['resume']:
+                        import copy as _copy
+                        self._json(200, {'ok': True, **agent_runs.resume(
+                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
                     elif method == 'GET' and parts[4:] == ['events']:
                         after = int(_query_param(self.path, 'after') or 0)
                         if after < 0 or after > item['event_cursor']:
