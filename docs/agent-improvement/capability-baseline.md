@@ -108,7 +108,7 @@
 | ID | 优先级 | 当前证据 | 状态 |
 |---|---:|---|---|
 | AG-002 | P1 | Electron/Brain/Fake Provider 300 delta 流；断开后从事件 cursor 重连，超过 256 事件窗口时取得一致终态 snapshot | **部分验证**。客户端自动重连、长时持续压力和网络代理故障未验证 |
-| AG-003 | P1 | Electron API bridge 发起取消/1 秒超时；Brain 重启后 run=`interrupted`、工具=`unknown`；Brain disconnect 后 UI 解锁 | **部分验证**。UI 控件取消与窗口退出期间任务的完整状态矩阵未验证 |
+| AG-003 | P1 | Electron API bridge 发起取消/1 秒超时；Agent 运行时 Electron 退出后 Brain 单次完成，重启后恢复同一 succeeded run；Brain 重启后工具=`unknown`；Brain disconnect 后 UI 解锁 | **部分验证**。UI 控件取消、长工具取消与所有终态在窗口退出时的完整状态矩阵未验证 |
 | AG-005 | P1 | 同 request ID 不重复模型/工具调用；插件先写入副作用后结果不明并强杀 Brain，重启恢复为 interrupted/unknown 且不重放 | **部分验证**。验证范围限本地 Fake Provider/插件；真实 Provider、外部服务副作用和请求已接收后丢响应未验证 |
 | AG-008 | P1 | fresh NSIS 安装/首次聊天/重启/卸载保留 70 个 profile 文件 PASS；官方 1.0.2→候选升级迁移、Brain mismatch 阻断、精确 rollback 与失败 checkpoint 保护 PASS；241 unpacked files、804 ASAR entries、禁止内容扫描 0 命中（证据见 phase2 报告） | **本次限定路径已验证**。其他旧版本跨度、真实用户设备文件系统、安装器 verbose log 未验证 |
 
@@ -116,4 +116,4 @@
 
 ### P1 追加测量（2026-10-20）
 
-当前测试源码基于提交 `498448f020a579b72d49d3d2fe0358e2a956573c`，只增加隔离 E2E fixture 和本报告。真实 Electron/Brain/Fake Provider 的完整 E2E 第三次执行 **14 PASS**；前两次在第 8 个会话历史首轮渲染超时且未到新增场景，失败日志保留，当前脚本有环境波动风险。命令：`node client/tools/test-electron-brain-e2e.js`（`VIGIL_TEST_PYTHON` 指向隔离 Python venv）；结果 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-p1-agent-e2e-crash-third.log`。相关后端回归 `python -m pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra`：34 passed、8 subtests passed、0 skipped，5.12 秒；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-backend-regression-final.log`。评测执行器中的 `agent-run-lifecycle` 单案例也 PASS（3.328 秒），本机报告 `%LOCALAPPDATA%/Vigil/stage2-state/eval-reports/reports/run-20261020T114016-7c7b7153.json`。真实模型和外部 Provider 仍 BLOCKED/未运行，Fake Provider 结果不代表真实供应商验收。
+本次测试扩展基于提交 `e2f39c160e9e74ff235ac297122783d17cdcc56d`，只增加隔离 E2E fixture 和报告。真实 Electron/Brain/Fake Provider 的完整 E2E **15 PASS**，包含 Electron 退出期间 Brain 完成 run 并在 relaunch 后恢复；最终日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-p1-agent-e2e-final2.log`。中间失败尝试和夹具调整记录在 `phase2-real-runtime-acceptance.md`，失败日志未覆盖。相关后端回归 `python -m pytest tests/test_p2_agent_runs.py tests/test_p2_agent_http.py -ra`：34 passed、8 subtests passed、0 skipped，5.12 秒；日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-backend-regression-final.log`。评测执行器中的 `agent-run-lifecycle` 单案例也 PASS（3.328 秒），本机报告 `%LOCALAPPDATA%/Vigil/stage2-state/eval-reports/reports/run-20261020T114016-7c7b7153.json`。真实模型和外部 Provider 仍 BLOCKED/未运行，Fake Provider 结果不代表真实供应商验收。

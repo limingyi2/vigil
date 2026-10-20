@@ -26,6 +26,7 @@ let cdpSeq = 0;
 const cdpPending = new Map();
 let passCount = 0;
 let cancelGate = null;
+let windowExitGate = null;
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 function pass(label) { passCount++; console.log('PASS ' + label); }
@@ -89,6 +90,17 @@ async function startModel() {
           res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
             id: 'p1-cancel-tool', type: 'function', function: { name: 'smoke_ping', arguments: '{"mode":"ok"}' } }] } }] }) + '\n\n');
           res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
+          res.end('data: [DONE]\n\n');
+        }
+        return;
+      }
+      if (userText.includes('P1_AGENT_WINDOW_EXIT')) {
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'WINDOW_EXIT_IN_PROGRESS' } }] }) + '\n\n');
+        if (!windowExitGate) throw new Error('window-exit gate was not armed');
+        await windowExitGate.promise;
+        if (!res.destroyed) {
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'WINDOW_EXIT_COMPLETED' } }] }) + '\n\n');
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
           res.end('data: [DONE]\n\n');
         }
         return;
@@ -382,6 +394,23 @@ async function agentSnapshot(runId) {
   assert.equal(response.status, 200, 'Electron API bridge must read Agent run status');
   return response.json;
 }
+async function brainAgentSnapshot(brainBase, runId) {
+  const response = await fetch(`${brainBase}/api/agent/runs/${encodeURIComponent(runId)}?src=pc`, {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  assert.equal(response.status, 200, 'Brain must expose durable Agent state without an Electron window');
+  return response.json();
+}
+async function waitBrainAgentRun(brainBase, runId, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  let snapshot;
+  while (Date.now() < deadline) {
+    snapshot = await brainAgentSnapshot(brainBase, runId);
+    if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(snapshot.status)) return snapshot;
+    await wait(50);
+  }
+  throw new Error('Brain Agent run did not reach a terminal state after Electron exit: ' + JSON.stringify(snapshot));
+}
 async function waitAgentRun(runId, terminal = ['succeeded', 'failed', 'cancelled', 'interrupted'], timeout = 20000) {
   const deadline = Date.now() + timeout;
   let snapshot;
@@ -642,6 +671,24 @@ async function run() {
   assert.equal(failureState.busy, 'false', 'tool error response must release the running state');
   pass('plugin execution failure reaches model and renderer without success marker');
 
+  // Keep the existing chat-SSE disconnect check next to the established live
+  // chat session; later Agent recovery fixtures deliberately restart Electron.
+  await submit('晚安');
+  await requestStarted(x => x.payload.stream === true && x.userText === '晚安');
+  await wait(250);
+  await stopChild(brain, true); brain = null;
+  await waitFor("document.querySelector('#msgs').innerText.includes('连接中断') || document.querySelector('#msgs').innerText.includes('执行中断') || document.querySelector('#msgs').innerText.includes('失败')", 'Brain disconnect status');
+  const disconnectState = await evaluate(`(()=>{const rows=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));const r=rows.find(x=>x.input==='晚安');return {status:r?.status,disabled:document.querySelector('#sendBtn').disabled,text:document.querySelector('#msgs').innerText.slice(-240)}})()`);
+  assert.equal(disconnectState.status, 'interrupted', 'Brain disconnect must persist interrupted status');
+  assert.equal(await evaluate("document.querySelector('#sendBtn').getAttribute('aria-busy')"), 'false',
+    'interrupted chat must not remain permanently running');
+  pass('Brain process disconnect is surfaced as interrupted and unlocks chat');
+  await startBrain(modelBase, brainPort);
+  if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close();
+  cdp = null;
+  await stopChild(electron, true); electron = null;
+  await startElectron(brainBase);
+
   // P1 live acceptance: the real Electron bridge creates/reads/cancels Brain
   // Agent runs. Provider and plugin effects remain local, deterministic fixtures.
   const traceBeforeOnce = providerTrace(pluginTrace).length;
@@ -705,6 +752,35 @@ async function run() {
     'a tool call arriving after request timeout must not be dispatched');
   pass('bounded Provider timeout produces a non-success terminal state and blocks later tool dispatch');
 
+  // Exit the actual Electron process while an Agent run remains in-flight.
+  // The isolated Brain should finish once, persist its terminal state, and be
+  // readable after a fresh Electron process attaches to the same profile.
+  let releaseWindowExit;
+  windowExitGate = { promise: new Promise(resolve => { releaseWindowExit = resolve; }) };
+  const windowExitId = 'p1_window_exit_' + require('node:crypto').randomUUID();
+  const windowExitRequest = requestStarted(x => x.userText.includes('P1_AGENT_WINDOW_EXIT'));
+  const windowExitRun = await createAgentRun('P1_AGENT_WINDOW_EXIT complete after the desktop window closes', windowExitId);
+  await windowExitRequest;
+  assert.equal((await agentSnapshot(windowExitRun.run_id)).status, 'running');
+  if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close();
+  cdp = null;
+  await stopChild(electron, true); electron = null;
+  releaseWindowExit();
+  const windowExitFinal = await waitBrainAgentRun(brainBase, windowExitRun.run_id);
+  assert.equal(windowExitFinal.status, 'succeeded');
+  assert.equal(windowExitFinal.result, 'WINDOW_EXIT_IN_PROGRESSWINDOW_EXIT_COMPLETED');
+  const windowExitProviderCalls = modelRequests.filter(x => x.userText.includes('P1_AGENT_WINDOW_EXIT')).length;
+  await startElectron(brainBase);
+  const windowExitRestored = await agentSnapshot(windowExitRun.run_id);
+  assert.equal(windowExitRestored.status, 'succeeded');
+  assert.equal(windowExitRestored.result, windowExitFinal.result);
+  const windowExitDuplicate = await createAgentRun('P1_AGENT_WINDOW_EXIT complete after the desktop window closes', windowExitId);
+  assert.equal(windowExitDuplicate.run_id, windowExitRun.run_id);
+  assert.equal(modelRequests.filter(x => x.userText.includes('P1_AGENT_WINDOW_EXIT')).length, windowExitProviderCalls,
+    'opening a new Electron process and retrying must not duplicate the completed model request');
+  windowExitGate = null;
+  pass('an in-flight Agent run finishes once after Electron exit and its terminal result restores after relaunch');
+
   const burstId = 'p1_event_burst_' + require('node:crypto').randomUUID();
   const burstRequest = requestStarted(x => x.userText.includes('P1_AGENT_EVENT_BURST'));
   const burstRun = await createAgentRun('P1_AGENT_EVENT_BURST return a bounded cursor trace', burstId);
@@ -746,16 +822,13 @@ async function run() {
     'retrying the same request after restart must not repeat the side effect');
   pass('Brain crash after durable tool dispatch recovers as interrupted/unknown without replaying a side effect');
 
-  await submit('晚安');
-  await requestStarted(x => x.payload.stream === true && x.userText === '晚安');
-  await wait(250);
-  await stopChild(brain, true); brain = null;
-  await waitFor("document.querySelector('#msgs').innerText.includes('连接中断') || document.querySelector('#msgs').innerText.includes('执行中断') || document.querySelector('#msgs').innerText.includes('失败')", 'Brain disconnect status');
-  const state = await evaluate(`(()=>{const rows=Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'));const r=rows.find(x=>x.input==='晚安');return {status:r?.status,disabled:document.querySelector('#sendBtn').disabled,text:document.querySelector('#msgs').innerText.slice(-240)}})()`);
-  assert.equal(state.status, 'interrupted', 'Brain disconnect must persist interrupted status');
-  assert.equal(await evaluate("document.querySelector('#sendBtn').getAttribute('aria-busy')"), 'false',
-    'interrupted chat must not remain permanently running');
-  pass('Brain process disconnect is surfaced as interrupted and unlocks chat');
+  // The previous Electron process had an open connection to the Brain that was
+  // forcibly restarted above. Relaunch the isolated desktop client so the
+  // final chat-disconnect assertion starts from a known healthy connection.
+  if (cdp && cdp.readyState === WebSocket.OPEN) cdp.close();
+  cdp = null;
+  await stopChild(electron, true); electron = null;
+  await startElectron(brainBase);
   console.log('PASS integrated smoke total: ' + passCount);
 }
 
