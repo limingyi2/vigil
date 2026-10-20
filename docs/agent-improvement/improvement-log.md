@@ -276,3 +276,12 @@
 - **结论与后续：** 增强了短时断线/事件窗口压力证据，未发现产品回归；AG-002 仍为 P1/部分验证，长时间高频积压、内存/队列增长曲线、真实网络代理行为待测。
 
 Round 13 的干净提交回归：`agent_eval.py validate` PASS；Regression suite 在 HEAD `7ee0b698fcfd526ecead622fb0a30f20c30d52ae` 上 12 PASS / 0 FAIL / 0 TIMEOUT / 0 BLOCKED / 2 NOT RUN，报告 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-agent-eval-final/reports/run-20261020T125924-a5a5ec6d.json`。
+
+
+## 2026-10-20 — 验证有界 SSE 重连预算耗尽（Round 14）
+
+- **目标：** 检查 Electron 最多恢复 3 次后，客户端与仍运行的 Brain 是否会保留不一致终态。
+- **执行：** 新增隔离 E2E 场景 `agent-chat-reconnect-exhaustion`，Fake Provider 以 700ms 间隔输出 7 块文本，TCP 代理切断 4 次；同一 run 的 retry request_id 和 durable cursor 被观测。
+- **首轮夹具失败：** 新场景选择器使用 `P1_CHAT_RECONNECT_STRESS`，但分支提交文本仍使用普通 `P1_CHAT_RECONNECT`，代理未观察到 run_id。日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14.log` 保留；修正选择器与请求文本对应后重跑。
+- **结果：** 4 次 cut、3 次 resume；Brain 原 run 最终 succeeded，renderer record 最终 succeeded，ID 不变；场景 PASS，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log`。标准单次断线测试也 PASS，日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-normal-round14.log`。未观察到终态分歧，不做产品代码修改。
+- **边界：** 仅短时 loopback Fake Provider 和 TCP 注入；长时代理故障、真实服务及进程 crash 同时断线仍未覆盖，AG-003 保持 P1/部分验证。

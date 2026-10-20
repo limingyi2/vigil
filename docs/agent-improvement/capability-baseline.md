@@ -151,3 +151,10 @@
 - 持久事件突发 1,200 个 text events，超过 Brain 256-event 窗口；旧 cursor 恢复返回一致终态和完整内容 snapshot。完整 Electron E2E 18/18 PASS：`%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag002-1200-events-full-e2e-round13.log`。
 - 首次压力场景执行因新夹具固定断言旧场景文本而 FAIL；源 run 已结束且数据完整。修改测试断言匹配压力场景，再次运行 PASS；两次证据均保留。没有确认新的产品缺陷。
 - 仍未进行长时间持续队列积压/内存曲线测试及真实远端服务网络测试，不能从短时压力注入推断这些范围通过。
+
+
+## 2026-10-20 更新：有界重连耗尽状态对照（Round 14）
+
+- 隔离 Electron/Brain/Fake Provider 在一次 Agent chat 中被代理断开 4 次，Electron 使用上限 3 次恢复；相同 durable run 最终完成，renderer 与 Brain 均报告 succeeded。详见 Round 14 日志 `%LOCALAPPDATA%/Vigil/stage2-state/phase2-ag003-reconnect-exhaustion-diagnostic-round14-rerun.log`。
+- 标准单次 chat SSE 重连再次通过（`phase2-ag003-reconnect-normal-round14.log`）。测试夹具初次未对齐标记的失败日志保留，修正后重跑成功。
+- 未发现有界恢复耗尽时的终态偏差；真实 Provider/代理与长时断线仍待测，AG-003 仍部分验证。

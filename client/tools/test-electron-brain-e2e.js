@@ -668,7 +668,7 @@ async function run() {
   await startElectron(brainBase);
   let brainPort = Number(new URL(brainBase).port);
   const reconnectScenario = process.env.VIGIL_E2E_SCENARIO || '';
-  const focusedReconnect = reconnectScenario === 'agent-chat-reconnect' || reconnectScenario === 'agent-chat-reconnect-stress';
+  const focusedReconnect = ['agent-chat-reconnect', 'agent-chat-reconnect-stress', 'agent-chat-reconnect-exhaustion'].includes(reconnectScenario);
   if (focusedSlowToolCancel) {
     await exerciseUiSlowToolCancel(pluginTrace);
     return;
@@ -1027,18 +1027,22 @@ async function run() {
   await stopChild(brain, true); brain = null;
   await startBrain(modelBase, brainPort, { agentEnabled: true });
   const stressReconnect = reconnectScenario === 'agent-chat-reconnect-stress';
-  const reconnectText = stressReconnect ? 'P1_CHAT_RECONNECT_STRESS' : 'P1_CHAT_RECONNECT';
-  const expectedCuts = stressReconnect ? 3 : 1;
+  const reconnectExhaustion = reconnectScenario === 'agent-chat-reconnect-exhaustion';
+  const reconnectText = stressReconnect || reconnectExhaustion ? 'P1_CHAT_RECONNECT_STRESS' : 'P1_CHAT_RECONNECT';
+  const expectedCuts = reconnectExhaustion ? 4 : stressReconnect ? 3 : 1;
   const resumeProxy = await startDisconnectProxy(brainBase, reconnectText, expectedCuts);
   await startElectron(resumeProxy.base);
   await evaluate("document.querySelector('#gnav [data-page=\\\"chat\\\"]').click()");
   await waitFor("document.querySelector('#hero') && !document.querySelector('#hero').hidden", 'welcome before reconnect test');
-  await submit(stressReconnect ? 'P1_CHAT_RECONNECT_STRESS 请按块连续输出并保留完整结果' : 'P1_CHAT_RECONNECT 请调用 smoke_ping 并总结结果');
-  const reconnectDeadline = Date.now() + (stressReconnect ? 30000 : 20000);
+  await submit(stressReconnect || reconnectExhaustion
+    ? 'P1_CHAT_RECONNECT_STRESS 请按块连续输出并保留完整结果'
+    : 'P1_CHAT_RECONNECT 请调用 smoke_ping 并总结结果');
+  const reconnectDeadline = Date.now() + (stressReconnect || reconnectExhaustion ? 30000 : 20000);
   let reconnectRows = [];
   while (Date.now() < reconnectDeadline) {
     reconnectRows = await evaluate(`Object.keys(localStorage).filter(k=>k.startsWith('vigil.display.v1:')).flatMap(k=>JSON.parse(localStorage.getItem(k)||'[]'))`);
-    if (reconnectRows.some(row => row.run_id === resumeProxy.state.runId && row.status === 'succeeded')) break;
+    if (reconnectRows.some(row => row.run_id === resumeProxy.state.runId &&
+        (row.status === 'succeeded' || reconnectExhaustion && row.status === 'interrupted'))) break;
     await wait(100);
   }
   const reconnectRun = resumeProxy.state.runId;
@@ -1046,14 +1050,22 @@ async function run() {
   assert.equal(resumeProxy.state.cuts, expectedCuts, 'the Electron-facing stream must be cut the requested number of times');
   const reconnectFinal = await waitBrainAgentRun(brainBase, reconnectRun, 10000, resumeProxy.state.conversationId);
   assert.equal(reconnectFinal.status, 'succeeded');
-  if (!stressReconnect) assert.equal(reconnectFinal.result, 'RESUMED_AGENT_COMPLETED');
-  assert.equal(resumeProxy.state.resumed, expectedCuts,
+  if (!stressReconnect && !reconnectExhaustion) assert.equal(reconnectFinal.result, 'RESUMED_AGENT_COMPLETED');
+  const expectedResumes = reconnectExhaustion ? 3 : expectedCuts;
+  assert.equal(resumeProxy.state.resumed, expectedResumes,
     'Electron must reconnect with its durable cursor: ' + JSON.stringify(resumeProxy.state));
-  assert.ok(reconnectRows.some(row => row.request_id === resumeProxy.state.requestId && row.status === 'succeeded'),
+  const rendererRow = reconnectRows.find(row => row.request_id === resumeProxy.state.requestId);
+  assert.ok(rendererRow && (rendererRow.status === 'succeeded' || reconnectExhaustion && rendererRow.status === 'interrupted'),
     'renderer must restore the same run as succeeded, not leave a stale interrupted row: ' +
       JSON.stringify({rows: reconnectRows.filter(row => row.request_id === resumeProxy.state.requestId), proxy: resumeProxy.state,
         events: await evaluate('window.__vigilE2EEvents || []'), keys: await evaluate('Object.keys(localStorage)')}));
-  if (stressReconnect) {
+  if (reconnectExhaustion) {
+    console.log('RECONNECT_EXHAUSTION_DIAGNOSTIC ' + JSON.stringify({renderer_status:rendererRow.status,
+      brain_status:reconnectFinal.status,run_id:reconnectRun,resumes:resumeProxy.state.resumed,cuts:resumeProxy.state.cuts}));
+    assert.equal(rendererRow.status, reconnectFinal.status,
+      'after bounded reconnect attempts are exhausted, renderer must reconcile to the Brain terminal state');
+    pass('Electron chat Agent SSE reconciles renderer state after bounded reconnect exhaustion');
+  } else if (stressReconnect) {
     assert.equal(modelRequests.filter(call => call.userText.includes(reconnectText)).length, 1,
       'repeated stream cuts must resume the same Provider request, not submit a new one');
     assert.equal(providerTrace(pluginTrace).length, 0, 'stream-only pressure case must not create plugin side effects');
