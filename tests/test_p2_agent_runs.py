@@ -695,5 +695,81 @@ class CheckpointResumeTests(unittest.TestCase):
             runs.resume('run_missing', 'owner', {}, start=False)
 
 
+class WatchdogPauseTests(unittest.TestCase):
+    """看门狗与用户暂停：预算管时长，看门狗管进展；暂停的任务可续跑。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = patch.object(runs.paths, 'DATA_DIR', self.tmp.name)
+        self.home.start()
+        runs.INITIALIZED.clear()
+        runs.TRANSIENT.clear()
+
+    def tearDown(self):
+        self.home.stop()
+        self.tmp.cleanup()
+
+    def test_user_pause_is_resumable_and_survives_restart(self):
+        item = runs.create(dict(request_id='request_pause_btn', intent='go', src='pc'),
+                           {}, 'owner', start=False)
+        with runs.LOCK, runs._db() as db:
+            it = runs._get(db, item['run_id'], 'owner')
+            it['status'] = 'running'
+            runs._save(db, it)
+        snap = runs.pause(item['run_id'], 'owner')
+        self.assertEqual(snap['status'], 'paused')
+        self.assertEqual(snap['error']['reason'], 'paused_by_user')
+        # paused 属于 STOPPED：进程重启不能把它改写成 interrupted
+        runs.INITIALIZED.clear()
+        self.assertEqual(runs.snapshot(item['run_id'], 'owner')['status'], 'paused')
+        # 已停止的任务不可再 pause；paused 可以续跑
+        runs.pause(item['run_id'], 'owner')
+        self.assertEqual(runs.snapshot(item['run_id'], 'owner')['status'], 'paused')
+        new = runs.resume(item['run_id'], 'owner', {}, start=False)
+        self.assertEqual(new['resume_from'], item['run_id'])
+        # 客户端带来的 request_id 要被原样采用（事件靠它绑回会话气泡）
+        named = runs.resume(item['run_id'], 'owner', {},
+                            dict(request_id='req_client_resume_1'), start=False)
+        self.assertEqual(named['request_id'], 'req_client_resume_1')
+
+    def test_stalled_repeats_get_nudge_then_pause(self):
+        # 同一工具同一参数连发 7 次：第 4 次起上下文里有提醒，第 7 次后停车。
+        provider = Provider([response(calls=[call('c%d' % i)]) for i in range(1, 8)])
+        item = runs.create(dict(request_id='request_stall_stop', intent='go', src='pc'),
+                           {}, 'owner', start=False)
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=SPEC), \
+             patch.object(runs.tools, 'invoke_spec', return_value='note saved') as tool:
+            runs._run(item['run_id'], 'owner', {})
+        snap = runs.snapshot(item['run_id'], 'owner')
+        self.assertEqual(snap['status'], 'paused')
+        self.assertEqual(snap['error']['reason'], 'stalled')
+        self.assertEqual(tool.call_count, 1)  # 之后全是复用，没有副作用
+        nudged = [p for p in provider.payloads
+                  if any('完全相同' in (m.get('content') or '') for m in p['messages'])]
+        self.assertTrue(nudged)
+
+    def test_distinct_calls_never_trigger_watchdog(self):
+        provider = Provider([response(calls=[call('c%d' % i, text='n%d' % i)]) for i in range(1, 6)] +
+                            [response('done')])
+        item = runs.create(dict(request_id='request_stall_clear', intent='go', src='pc'),
+                           {}, 'owner', start=False)
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=SPEC), \
+             patch.object(runs.tools, 'invoke_spec', return_value='ok'):
+            runs._run(item['run_id'], 'owner', {})
+        snap = runs.snapshot(item['run_id'], 'owner')
+        self.assertEqual(snap['status'], 'succeeded')
+
+    def test_hard_limits_allow_hour_level_config(self):
+        ok = runs.create(dict(request_id='request_hardlim_1', intent='x', src='pc'),
+                         {'agent_execution': {'max_seconds': 28800, 'max_steps': 2000}},
+                         'owner', start=False)
+        self.assertEqual(ok['budget']['max_seconds'], 28800)
+        with self.assertRaises(ValueError):
+            runs.create(dict(request_id='request_hardlim_2', intent='x', src='pc'),
+                        {'agent_execution': {'max_seconds': 28801}}, 'owner', start=False)
+
+
 if __name__ == '__main__':
     unittest.main()

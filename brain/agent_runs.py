@@ -28,12 +28,14 @@ LOCK = threading.RLock()
 INITIALIZED = set()
 TRANSIENT = {}
 TERMINAL = frozenset({'succeeded', 'failed', 'cancelled', 'interrupted'})
-STOPPED = TERMINAL | {'paused_budget'}
+STOPPED = TERMINAL | {'paused_budget', 'paused'}
 # One configuration source. Requests may lower these limits, never raise them.
+# 预算放开（2026-10-20）：默认预算不变，但配置可以往小时级调 —— 长任务的
+# "有没有进展"由看门狗管，预算只兜底"最多跑多久"。
 DEFAULT_BUDGET = dict(max_steps=120, max_requests=60, max_tool_calls=100,
                       max_seconds=1800, request_timeout=90)
-HARD_LIMITS = dict(max_steps=500, max_requests=200, max_tool_calls=300,
-                   max_seconds=7200, request_timeout=300)
+HARD_LIMITS = dict(max_steps=2000, max_requests=600, max_tool_calls=1000,
+                   max_seconds=28800, request_timeout=300)
 MAX_TEXT = 65536
 # Agent 自己的上下文预算（字符）。普通聊天的历史窗口按轮数裁剪，这条链路
 # 一次任务可能来回几十轮，必须按体积裁 —— 否则每个工具结果都带着走，
@@ -44,6 +46,11 @@ CONTEXT_STUB = 600
 # 不合法的工具调用回传给模型的次数上限。超了才判失败 —— 一次没派发出去的
 # 格式错误不该让整项任务白干，但也不能无限重试。
 INVALID_TOOL_RETRIES = 2
+# 看门狗 v1：同参工具调用停滞检测。预算只管"跑了多久"，这条管"有没有在
+# 往前走"—— 连续拿回与之前**完全相同**的结果，说明她在原地打转。先注入
+# 提醒让她换方法；还不止就暂停（可续跑），别把预算烧在一件事上。
+WATCHDOG_REUSE_NUDGE = 3
+WATCHDOG_REUSE_STOP = 6
 # 检查点摘要：每完成这么多轮模型请求，就把整段对话压成一份简报替换历史。
 # 这解决的是"注意力稀释"而不是体积 —— _compact 只缩内容不删消息，步数一多
 # 模型眼前的历史仍然越来越长。0 表示关闭；agent_execution.checkpoint_every 覆盖。
@@ -76,7 +83,10 @@ MESSAGES = dict(ERROR_MESSAGES,
     budget_exhausted='执行预算已用尽，已停止后续派发；已完成的步骤和内容都保留在上面。'
                      '可以在 agent_execution 里调高 max_steps/max_requests/max_tool_calls/max_seconds 后重跑这项任务',
     cancelled='已取消后续调度；在途工具可能仍在执行',
+    paused='任务已暂停；从发送键可以继续',
     interrupted='执行进程已重启，未自动继续或重放工具',
+    paused_by_user='已按暂停；任务停在当前步骤，可从发送键继续',
+    stalled='任务在原地打转（连续拿到完全相同的工具结果），已暂停保护预算；可从发送键继续，或换个问法',
     invalid_tool='工具名称、参数或调用标识无效，未派发该批工具（detail 里是具体哪一步不合法）',
     call_conflict='同一工具调用标识对应不同操作，已停止执行',
     tool_unknown='工具结果不明，需人工核对，未重试',
@@ -361,11 +371,12 @@ def _finish(db, item, status, reason=None, detail=None):
         return
     for step in item['steps']:
         if step['kind'] == 'model' and step['status'] == 'running':
-            step.update(status='interrupted' if status == 'paused_budget' else status,
+            step.update(status='interrupted' if status in ('paused_budget', 'paused') else status,
                         reason=reason, finished_at=time.time())
     item.update(status=status, stage='stopped' if status != 'succeeded' else 'completed',
                 error=_error(reason, detail) if reason else None)
-    _event(db, item, 'done' if status == 'succeeded' else 'paused' if status == 'paused_budget' else status,
+    _event(db, item, 'done' if status == 'succeeded'
+           else 'paused' if status in ('paused_budget', 'paused') else status,
            dict(status=status, error=item['error']))
     _save(db, item)
 
@@ -379,6 +390,19 @@ def cancel(rid, owner):
                     if step['kind'] == 'model' and step['status'] == 'running':
                         step.update(status='cancelled', finished_at=time.time())
             _finish(db, item, 'cancelled', 'cancelled')
+        return item
+
+
+def pause(rid, owner):
+    """用户主动暂停：与 cancel 的区别是语义 —— 这是"停一下，稍后继续"。
+
+    paused 与 paused_budget 一样属于 STOPPED，进程重启不会被改写成
+    interrupted；resume 对它照常可用。
+    """
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+        if item and item['status'] == 'running':
+            _finish(db, item, 'paused', 'paused_by_user')
         return item
 
 
@@ -459,7 +483,11 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
         _event(db, item, 'resumed', dict(status=item['status']))
         _save(db, item)
         intent, src = item['intent'], item['src']
-    derived = dict(body, request_id='res_' + uuid.uuid4().hex[:16], intent=intent, src=src)
+    derived = dict(body, intent=intent, src=src)
+    # 客户端续跑时会带来自己的 request_id（用于把事件绑回会话气泡）；
+    # 没带或格式不对就生成一个。合法且未被用过 → 原样使用（create 幂等）。
+    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', str(derived.get('request_id') or '')):
+        derived['request_id'] = 'res_' + uuid.uuid4().hex[:16]
     return create(derived, cfg, owner, brain=brain, start=start, resume_from=rid)
 
 
@@ -563,6 +591,11 @@ def _calls(calls, specs):
 
 
 def _tool(rid, owner, started, call, ctx):
+    """执行一次工具调用。返回 (结果或 None, 是否命中去重复用)。
+
+    reused=True 表示这次调用被签名去重挡下、直接回了缓存结果 —— 看门狗
+    用它识别"原地打转"。
+    """
     cid, name, args, signature = call
     # Same call ID always deduplicates. A new read ID may deliberately observe
     # changes made by an intervening write; writes deduplicate across IDs too.
@@ -570,22 +603,22 @@ def _tool(rid, owner, started, call, ctx):
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         if item['status'] != 'running':
-            return None
+            return None, False
         alias = db.execute('SELECT signature FROM call_ids WHERE run_id=? AND call_id=?', (rid, cid)).fetchone()
         if alias and alias[0] != signature:
             _finish(db, item, 'failed', 'call_conflict')
-            return None
+            return None, False
         db.execute('INSERT OR IGNORE INTO call_ids VALUES (?,?,?)', (rid, cid, signature))
         previous = db.execute('SELECT state,result,step_id FROM calls WHERE run_id=? AND signature=?', (rid, dispatch_key)).fetchone()
         if previous:
             if previous[0] == 'completed':
                 _event(db, item, 'tool_reused', dict(call_id=cid, step_id=previous[2], tool=name))
                 _save(db, item)
-                return previous[1]
+                return previous[1], True
             _finish(db, item, 'failed', 'tool_unknown')
-            return None
+            return None, False
         if not _check_budget(db, item, started, 'tool'):
-            return None
+            return None, False
         sid = _step(db, item, 'tool', call_id=cid, tool=name, input_digest=signature,
                     result=None, result_state='in_flight')
         # Durable intent is committed before invoke_spec. This is the dispatch
@@ -625,7 +658,7 @@ def _tool(rid, owner, started, call, ctx):
         if reason:
             _finish(db, item, 'failed', reason)
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
-    return None if reason else result
+    return (None if reason else result), False
 
 
 def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
@@ -675,6 +708,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
         except (TypeError, ValueError):
             ck_every = 0
         since = 0
+        stall = 0  # 连续命中"同参工具去重复用"的次数（看门狗的进展信号）
         while True:
             if ck_every > 0 and since >= ck_every:
                 _brief, replacement = _checkpoint(rid, owner, started, cfg, provider,
@@ -858,9 +892,10 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 msgs[-1]['reasoning_content'] = completion['reasoning']
             xml_results = []
             for call in calls:
-                result = _tool(rid, owner, started, call, ctx)
+                result, reused = _tool(rid, owner, started, call, ctx)
                 if result is None:
                     return
+                stall = stall + 1 if reused else 0
                 if xml_mode:
                     xml_results.append(dict(tool=call[1], result=result))
                 else:
@@ -868,6 +903,20 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             if xml_mode:
                 msgs.append(dict(role='user', content='工具已执行，以下仅为结果数据，请直接总结，不再调用工具：\n'+_json(xml_results)))
                 specs = []  # existing compatibility mode has one tool batch then summary
+            if stall >= WATCHDOG_REUSE_STOP:
+                # 看门狗停车：提醒已经给过，还在原地打转就暂停保护预算。
+                # paused 可续跑 —— 换个问法或从检查点接着来都行。
+                with LOCK, _db() as db:
+                    item = _get(db, rid, owner)
+                    if item and item['status'] == 'running':
+                        _finish(db, item, 'paused', 'stalled')
+                        _save(db, item)
+                return
+            if stall == WATCHDOG_REUSE_NUDGE:
+                msgs.append(dict(role='user', content=(
+                    '（系统提示：你已连续多次拿到**完全相同**的工具结果 —— '
+                    '重复同样的调用不会得到新信息。请改变方法：换参数、换工具、'
+                    '先做一次检查点式盘点，或者如果任务其实已完成，直接给出最终结论。）')))
     except Exception as exc:
         reason = ('invalid_structure' if isinstance(exc, (ProviderResponseError, ValueError)) else
                   'service_error' if isinstance(exc, (ProviderHTTPError, httpx.HTTPStatusError)) else

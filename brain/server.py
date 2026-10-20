@@ -1583,6 +1583,8 @@ def start_remote_api(brain):
                         self._json(200, {'ok': True, **item})
                     elif method == 'POST' and parts[4:] == ['cancel']:
                         self._json(200, {'ok': True, **agent_runs.cancel(rid, owner)})
+                    elif method == 'POST' and parts[4:] == ['pause']:
+                        self._json(200, {'ok': True, **agent_runs.pause(rid, owner)})
                     elif method == 'POST' and parts[4:] == ['resume']:
                         import copy as _copy
                         self._json(200, {'ok': True, **agent_runs.resume(
@@ -2681,9 +2683,21 @@ def start_remote_api(brain):
                     _owner = self._display_owner(body)
                     _existing_run = _runs.find_request(body.get('request_id'), _owner) if body.get('request_id') else None
                     _existing_legacy = _display.find_request(_owner, body.get('request_id')) if body.get('request_id') else None
-                    # A rollout switch can change only NEW requests. Lost responses
-                    # must keep their original executor, including legacy tombstones.
-                    if (self._is_admin() and _src == 'pc' and body.get('request_id') and
+                    # 断点续跑走同一条 SSE 通道：客户端带上 resume_of + 自己的
+                    # request_id，续跑 run 的事件直接投影进会话气泡。
+                    # 🔴 resume 与新建必须互斥（elif）：resume 刚建的 run 用同一个
+                    # request_id，下面新建分支的 find_request 会立刻查到它，拿空
+                    # text 再 create 一次只会报"request_id 已用于不同请求"。
+                    _resume_of = str(body.get('resume_of') or '')
+                    if _resume_of and self._is_admin() and _src == 'pc' and body.get('request_id'):
+                        import copy as _rcopy
+                        try:
+                            _agent_item = _runs.resume(_resume_of, _owner, _rcopy.deepcopy(API_CFG),
+                                dict(request_id=body.get('request_id')), brain=brain, start=True)
+                        except ValueError as _exc:
+                            self._json(400, {'ok': False, 'err': str(_exc)})
+                            return
+                    elif (self._is_admin() and _src == 'pc' and body.get('request_id') and
                             (_existing_run or (not _existing_legacy and not body.get('img')
                              and _run_tools.schema_needed(_in_text) and isinstance(_agent_cfg, dict)
                              and _agent_cfg.get('enabled', True)))):

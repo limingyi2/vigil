@@ -1378,6 +1378,14 @@
     let lastCount = -1;
     let busy = false;
     let busyScope = null;
+    // 发送键三态（发送/暂停/继续）：
+    // - pause：本会话有 agent run 在跑，点它 = 暂停任务
+    // - resume：最近一次 run 停在可续跑状态且输入框为空，点它 = 续跑
+    // 输入框一旦有文字，优先级永远是"发新消息"。
+    let activeRunId = null;
+    let resumableRunId = null;
+    let composerMode = 'send';
+    let pendingResumeOf = null;
     let conversationLoadSeq = 0;
     let renderedDraftConversationId = '';
     function finishBusy(scope) {
@@ -1401,6 +1409,8 @@
       view.querySelector('#chatLoadState').hidden = true;
       busy = false;
       busyScope = null;
+      activeRunId = null; resumableRunId = null; pendingResumeOf = null;
+      setComposerMode('send');
       if (typeof taEl !== 'undefined') taEl.value = '';
       if (typeof clearAttachment === 'function') clearAttachment();
       if (persist) rememberRendererSelection('', 'welcome');
@@ -1423,6 +1433,8 @@
       view.querySelector('#chatLoadState').hidden = true;
       busy = false;
       busyScope = null;
+      activeRunId = null; resumableRunId = null; pendingResumeOf = null;
+      setComposerMode('send');
       taEl.value = '';
       if (typeof clearAttachment === 'function') clearAttachment();
       if (persist) rememberRendererSelection('', 'draft');
@@ -2004,16 +2016,40 @@
       ta.style.overflowY = ta.scrollHeight > maxHeight ? 'auto' : 'hidden';
       view.querySelector('#ccount').textContent = ta.value.length + ' 字';
       const button = view.querySelector('#sendBtn');
-      button.disabled = !global.vigil || busy || (!ta.value.trim() && !imgB64 && !attachment) ||
-        !!(attachment && (attachment.failed || (attachment.kind === 'image' && !imgB64)));
-      button.classList.toggle('is-sending', busy);
-      button.setAttribute('aria-label', busy ? '正在发送' : '发送消息');
+      // resume 模式下一旦开始打字，立即回到发送模式 —— 新消息优先于续跑。
+      if (composerMode === 'resume' && (ta.value.trim() || imgB64 || attachment)) {
+        composerMode = 'send';
+        drawComposerIcon();
+      }
+      if (composerMode === 'pause') {
+        button.disabled = !global.vigil || !activeRunId;
+      } else if (composerMode === 'resume') {
+        button.disabled = !global.vigil || !resumableRunId;
+      } else {
+        button.disabled = !global.vigil || busy || (!ta.value.trim() && !imgB64 && !attachment) ||
+          !!(attachment && (attachment.failed || (attachment.kind === 'image' && !imgB64)));
+      }
+      button.classList.toggle('is-sending', busy && composerMode === 'send');
       button.setAttribute('aria-busy', String(busy));
-      button.title = busy ? '正在发送…' : '发送消息';
+      const label = composerMode === 'pause' ? '暂停任务'
+        : composerMode === 'resume' ? '继续上次任务（输入框有字则发送新消息）'
+        : (busy ? '正在发送…' : '发送消息');
+      button.setAttribute('aria-label', label);
+      button.title = label;
       // 生成中把模型按钮一起禁掉：不让"正在跑的这轮"和"刚选的模型"对不上。
       // 防一手 null —— updateComposer 在发送主链路上，这里抛错会连累整个 composer。
       const mb = view.querySelector('#modelBtn');
-      if (mb) mb.disabled = busy;
+      if (mb) mb.disabled = busy && composerMode === 'send';
+    }
+    function drawComposerIcon() {
+      const button = view.querySelector('#sendBtn');
+      button.innerHTML = icon(composerMode === 'pause' ? 'pause'
+        : composerMode === 'resume' ? 'play' : 'arrow-up', 'sm');
+    }
+    function setComposerMode(mode) {
+      composerMode = (mode === 'pause' || mode === 'resume') ? mode : 'send';
+      drawComposerIcon();
+      updateComposer();
     }
     const attachBox = view.querySelector('#attach');
     /** 加号菜单里的「图片、视频或文件」走这里：原生文件对话框 → 同一套类型/大小校验。 */
@@ -2100,9 +2136,16 @@
           records.set(job.request_id, {...job,input:job.feedback || job.requirement});
       }
       const jobsToWatch = [];
+      // 断点续跑恢复：最近一条 chat 记录若停在可续跑状态，发送键恢复成"继续"。
+      let lastResumable = null;
+      let newestChatTs = 0;
       for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
         const input = item.input || item.requirement || '';
         const status = item.status || 'pending';
+        if (item.kind === 'chat' && item.run_id) {
+          if ((item.created_at || 0) > newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; }
+          if (['paused','paused_budget','interrupted','failed'].includes(status)) lastResumable = item;
+        }
         // Successful legacy chat already has its own durable pair. Reuse it.
         if (item.kind === 'chat' && status === 'succeeded' && items.some((m,i)=>m.role==='user'&&m.text===input&&items[i+1]?.text===item.content)) {
           try { localStorage.setItem(recordKey(), JSON.stringify(localRecords().filter(r=>r.request_id!==item.request_id))); }
@@ -2125,6 +2168,16 @@
           run:item.run_id ? item : null});
       }
       items.sort((a,b)=>toMs(a.t)-toMs(b.t));
+      // 恢复判断放渲染后：只信"最近一条"chat 记录，旧的可续跑任务不抢按钮。
+      if (!busy) {
+        if (lastResumable && lastResumable.run_id) {
+          resumableRunId = lastResumable.run_id;
+          setComposerMode('resume');
+        } else if (composerMode === 'resume') {
+          resumableRunId = null;
+          setComposerMode('send');
+        }
+      }
       const renderKey = JSON.stringify(items);
       if (!force && renderKey === lastCount) return;
       lastCount = renderKey;
@@ -2188,9 +2241,12 @@
     }
 
     async function send() {
+      // 续跑也走这条主链路：resumeTurn 把 pendingResumeOf 置位后调进来，
+      // 带上 resume_of 发给同一条聊天 SSE 通道。
+      const resumeOf = pendingResumeOf; pendingResumeOf = null;
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if (!global.vigil || (!text && !imgB64 && !attachment) || busy) return;
+      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy) return;
       if (!await loadRecordScope() || busy) return;
       if (attachment && attachment.failed) return;
       if (attachment && attachment.kind === 'image' && !imgB64) {
@@ -2270,7 +2326,7 @@
       const requestId = 'req_' + crypto.randomUUID();
       const turnScope = sendScope;
       const remember = patch => rememberTurn(requestId, patch, turnScope);
-      remember({input:text,kind:'chat',status:'pending'});
+      remember({input:resumeOf ? '继续上次任务' : text,kind:'chat',status:'pending'});
       const sendingAttachments = uploadedAttachments;
       if (attachment && attachment.previewUrl && global.URL) {
         try { URL.revokeObjectURL(attachment.previewUrl); } catch (_) {}
@@ -2282,6 +2338,9 @@
       ta.value = '';
       busy = true;
       busyScope = turnScope;
+      composerMode = 'send';
+      drawComposerIcon();
+      if (!resumeOf) resumableRunId = null;
       heroEl.hidden = true;
       view.querySelector('#chatLoadState').hidden = true;
       chat.classList.remove('is-empty');
@@ -2289,9 +2348,10 @@
       const btn = view.querySelector('#sendBtn');
       btn.disabled = true;
 
-      // 乐观气泡：用户消息先画上去
+      // 乐观气泡：用户消息先画上去（续跑时也画一条，让会话留痕）
+      const bubbleText = resumeOf ? '▶ 继续上次任务' : text;
       msgs.insertAdjacentHTML('beforeend',
-        '<div class="turn me"><div class="bdy"><div class="txt">' + esc(text) +
+        '<div class="turn me"><div class="bdy"><div class="txt">' + esc(bubbleText) +
         (sendingImg ? '<img class="msgimg" src="data:image/png;base64,' + sendingImg + '" alt="">' : '') +
         (sendingAttachments.length ? '<div class="msg-attachment">' + sendingAttachments.map((a) => icon(a.kind === 'image' ? 'img' : 'clip', 'sm') + ' ' + esc(a.name) + ' · ' + esc(bytes(a.size))).join('<br>') + '</div>' : '') +
         '</div></div></div>');
@@ -2370,9 +2430,11 @@
         if (streamDone) return;
         if (evt.type === 'agent_run') {
           agentRunId = evt.run_id;
+          activeRunId = evt.run_id;
           remember({run_id:agentRunId,status:'running'});
           statusEl.textContent = '执行中 ';
           statusEl.appendChild(agentCancel);
+          setComposerMode('pause');
         } else if (evt.type === 'stage') {
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
           if (agentRunId) statusEl.appendChild(agentCancel);
@@ -2393,6 +2455,8 @@
         } else if (evt.type === 'done') {
           streamDone = true;
           stopListening();
+          resumableRunId = null;
+          setComposerMode('send');
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:'succeeded',error:null});
           // 强制刷新最后一帧
@@ -2417,8 +2481,18 @@
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
             error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
-          textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
-          statusEl.textContent = ({cancelled:'已取消',paused_budget:'预算已用尽',interrupted:'执行中断'})[evt.status] || '失败';
+          // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
+          const resumable = ['paused','paused_budget','interrupted'].includes(evt.status);
+          if (resumable && agentRunId) resumableRunId = agentRunId;
+          setComposerMode(resumable && resumableRunId ? 'resume' : 'send');
+          if (resumable) {
+            textEl.innerHTML = (esc(textBuf || '') + '<br><span style="color:var(--mut)">'
+              + esc(evt.msg || '已暂停') + ' —— 点发送键继续这个任务</span>');
+          } else {
+            textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
+          }
+          statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
+            interrupted:'执行中断'})[evt.status] || '失败';
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         }
@@ -2436,6 +2510,7 @@
       try {
       const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId,
         conversation_id: activeConversationId, session_id: activeConversationId };
+      if (resumeOf) chatPayload.resume_of = resumeOf;
         if (sendingImg) chatPayload.img = sendingImg;
         if (sendingAttachments.length) chatPayload.attachments = sendingAttachments;
         // 附件走普通 JSON 元数据请求；二进制已经在此前分块上传，
@@ -2503,11 +2578,37 @@
       }
     }
 
-    view.querySelector('#sendBtn').addEventListener('click', send);
+    // 发送键/回车的统一入口：按 composer 三态分派。
+    function composerAction() {
+      const ta = view.querySelector('#ta');
+      if (composerMode === 'pause' && activeRunId) { firePause(); return; }
+      if (composerMode === 'resume' && resumableRunId &&
+          !ta.value.trim() && !imgB64 && !attachment) { resumeTurn(resumableRunId); return; }
+      send();
+    }
+    async function firePause() {
+      if (!activeRunId) return;
+      try {
+        const r = pick(await post('/api/agent/runs/' + encodeURIComponent(activeRunId) + '/pause', {}));
+        if (!r.ok) throw new Error(r._err || '暂停未确认');
+        // 后续"已暂停"气泡由 SSE 的 paused 事件驱动，这里不抢画。
+      } catch (e) {
+        toast('暂停未确认：' + String(e.message || e).slice(0, 80));
+      }
+    }
+    async function resumeTurn(rid) {
+      if (busy || !rid) return;
+      pendingResumeOf = rid;
+      await send();
+    }
+    view.querySelector('#sendBtn').addEventListener('click', (e) => {
+      e.preventDefault();
+      composerAction();
+    });
     view.querySelector('#ta').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        send();
+        composerAction();
       }
     });
     const taEl = view.querySelector('#ta');
