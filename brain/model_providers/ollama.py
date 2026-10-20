@@ -193,7 +193,9 @@ class OllamaProvider(ModelProvider):
         p.pop("max_tokens", None)
         if opts:
             p["options"] = opts
-        if self.think is not None:
+        # An explicit framework strategy may provide a per-request boolean.
+        # Otherwise retain the user's provider-level default.
+        if self.think is not None and "think" not in p:
             p["think"] = self.think
         return p
 

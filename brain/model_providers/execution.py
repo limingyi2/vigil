@@ -16,6 +16,8 @@ from .base import ProviderResponseError
 _CACHE = {}
 _LOCK = threading.Lock()
 PARAMETERS = ('max_tokens', 'max_completion_tokens', 'max_output_tokens')
+REASONING_STRATEGIES = ('fast', 'balanced', 'deep')
+_REASONING_LEVELS = {'fast': 'low', 'balanced': 'medium', 'deep': 'high'}
 _CONTEXT_LIMIT = re.compile(
     r'context[_ -]?length|maximum context|context window|prompt.{0,24}too long|'
     r'too many tokens|input tokens?.{0,32}(limit|maximum|exceed)|'
@@ -49,7 +51,8 @@ def capabilities(cfg, provider=None):
         overrides = {}
     # Whitelist non-secret metadata before hashing or caching.
     opts = {k: overrides.get(k) for k in ('max_output_tokens', 'input_tokens',
-        'context_tokens', 'output_parameter', 'requires_output_limit', 'compat_output_tokens')}
+        'context_tokens', 'output_parameter', 'requires_output_limit', 'compat_output_tokens',
+        'reasoning', 'reasoning_parameter', 'usage', 'native_tool_calls')}
     key = (vendor, endpoint, model)
     signature = hashlib.sha256(json.dumps(opts, sort_keys=True).encode()).hexdigest()
     with _LOCK:
@@ -69,12 +72,62 @@ def capabilities(cfg, provider=None):
     record['confirmed'] = record['max_output_tokens'] is not None
     record['capacity_verified'] = record['context_tokens'] is not None
     record['input_limit_verified'] = record['input_tokens'] is not None
+    record['reasoning_supported'] = opts['reasoning'] is True
+    record['reasoning_parameter'] = (str(opts['reasoning_parameter'])
+        if opts['reasoning_parameter'] in ('reasoning_effort', 'thinking', 'think') else None)
+    record['usage_supported'] = opts['usage'] is not False
+    record['native_tool_calls'] = opts['native_tool_calls'] is not False
+    record['reasoning_strategies'] = list(REASONING_STRATEGIES) if record['reasoning_supported'] else []
     with _LOCK:
         # Bound cache growth when models/endpoints are frequently changed.
         if len(_CACHE) >= 256:
             _CACHE.pop(next(iter(_CACHE)))
         _CACHE[key] = dict(signature=signature, record=record)
     return copy.deepcopy(record)
+
+
+def strategy_info(cfg, provider=None):
+    """Describe Vigil reasoning tiers without inventing provider features."""
+    cap_cfg = getattr(provider, '_cap_cfg', None) or cfg
+    cap = capabilities(cap_cfg, provider=provider)
+    kind = getattr(provider, 'kind', None) if provider is not None else None
+    if kind == 'ollama':
+        think = getattr(provider, 'think', None)
+        return {'supported': think is not None,
+                'strategies': list(REASONING_STRATEGIES) if think is not None else [],
+                'parameter': 'think' if think is not None else None,
+                'mapping': {'fast': False, 'balanced': True, 'deep': True} if think is not None else {},
+                'downgrade': None if think is not None else 'Ollama 未启用思考开关'}
+    if cap['reasoning_supported'] and cap['reasoning_parameter']:
+        return {'supported': True, 'strategies': list(REASONING_STRATEGIES),
+                'parameter': cap['reasoning_parameter'], 'mapping': dict(_REASONING_LEVELS),
+                'downgrade': None}
+    return {'supported': False, 'strategies': [], 'parameter': None, 'mapping': {},
+            'downgrade': '模型未确认原生推理参数，已使用普通生成'}
+
+
+def apply_reasoning_strategy(payload, cfg, provider, strategy='balanced'):
+    """Map a framework strategy through the provider contract.
+
+    Unsupported strategies are reported and removed from the wire payload.
+    """
+    strategy = str(strategy or 'balanced').lower()
+    if strategy not in REASONING_STRATEGIES:
+        strategy = 'balanced'
+    out = dict(payload or {})
+    out.pop('vigil_reasoning_strategy', None)
+    info = strategy_info(cfg, provider)
+    if info['supported']:
+        value = info['mapping'].get(strategy)
+        if info['parameter'] == 'think':
+            out['think'] = bool(value)
+            out.pop('reasoning_effort', None)
+        else:
+            out[info['parameter']] = value
+        return out, dict(info, requested=strategy, applied=strategy, downgraded=False)
+    out.pop('reasoning_effort', None)
+    out.pop('thinking', None)
+    return out, dict(info, requested=strategy, applied=None, downgraded=True)
 
 
 def prepare(payload, cfg, *, step_tokens=None, remaining_tokens=None):

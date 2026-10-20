@@ -1199,9 +1199,13 @@ class Brain:
                     "model": _api0.get("model") or "deepseek-chat",
                     "messages": msgs,
                     "temperature": 0.85,
-                    # 详细回答模式给足空间；闲聊维持原值
-                    "reasoning_effort": _eff,
                 }
+                # ``fast/balanced/deep`` is a Vigil policy.  The provider
+                # adapter maps it only when the selected model confirms a
+                # native field; unknown gateways receive no invented option.
+                from model_providers.execution import apply_reasoning_strategy
+                _payload, _reasoning_state = apply_reasoning_strategy(
+                    _payload, _api0, mp, 'balanced' if _know else 'fast')
                 if tool_specs and not _next_no_tools:
                     _payload["tools"] = tool_specs
                     _payload["tool_choice"] = "auto"
@@ -1360,7 +1364,7 @@ class Brain:
             try:
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
-                _j = mp.chat(prepare({
+                _final_payload = {
                     "model": self.api.get("model", "deepseek-chat"),
                     "messages": msgs + [{
                         "role": "user",
@@ -1368,8 +1372,10 @@ class Brain:
                                    "你自己的话回答他，不要再调用任何工具。）",
                     }],
                     "temperature": 0.85,
-                    "reasoning_effort": _eff,
-                }, _api0), timeout=60)
+                }
+                _final_payload, _ = apply_reasoning_strategy(
+                    _final_payload, _api0, mp, 'balanced' if _know else 'fast')
+                _j = mp.chat(prepare(_final_payload, _api0), timeout=60)
                 self.last_cloud_seconds = round(
                     self.last_cloud_seconds + time.time() - _tc0, 2)
                 if _j is None:
@@ -1485,7 +1491,6 @@ class Brain:
             "model": _api0.get("model") or "deepseek-chat",
             "messages": msgs,
             "temperature": 0.85,
-            "reasoning_effort": _eff,
             "stream": True,
             # 流式响应默认不返回 usage；加了才会在最后一条 SSE 消息里
             # 返回 prompt_tokens / completion_tokens，token 统计才准。
@@ -1500,6 +1505,9 @@ class Brain:
         try:
             from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
             from conversation_context import output_reserve
+            from model_providers.execution import apply_reasoning_strategy
+            payload, _reasoning_state = apply_reasoning_strategy(
+                payload, _api0, mp, 'balanced' if _know else 'fast')
             for attempt in range(2):
                 try:
                     for event in completion_events(mp, prepare(
