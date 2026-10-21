@@ -63,6 +63,8 @@ function createPluginMedia({ getBase, getToken, ticketIdleMs = 30 * 60 * 1000 })
       if (ticket.kind === 'preview' && file !== 'preview') return fail(403, 'Ticket scope mismatch');
       if (ticket.kind === 'local') {
         const stat = await fs.promises.stat(ticket.localPath);
+        // Long-running videos fetch new ranges; renew on each valid media request.
+        ticket.expiresAt = Date.now() + idleMs;
         const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
         let start = 0, end = Math.max(0, stat.size - 1), status = 200;
         if (range) {
