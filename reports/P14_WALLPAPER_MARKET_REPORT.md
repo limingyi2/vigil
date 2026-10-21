@@ -71,12 +71,11 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 
 候选安装器：`client/dist-release/Vigil.Setup.1.1.8-p9.3.20261021.1.exe`
 Portable 候选：`client/dist-release/Vigil 1.1.8-p9.3.20261021.1.exe`
-release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。安装器大小 `242,260,782` bytes，SHA-256 `50f41170323d5fa90d4b20240e9d34fb3de1bff82a6a391877a745598a66d539`。候选 source commit：`1d69b89d348f7bf1c264aa75112014f333a77bf6`。构建源码摘要排除报告和 `client/tools/e2e.js`（测试夹具），且验证器允许其后只有 `reports/` 变更，报告回填制品 SHA 后仍可复核。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
+release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。当前安装器大小 `242,260,655` bytes，SHA-256 `46bf6c27dde5991d76091ea3de56022785e5787f4eab3c209bf16b4a40b366b2`。候选 source commit：`b9e22c435be879951b711cb11afce8052cf98dee`。隔离 NSIS 安装与卸载退出码均为 0；安装目录卸载后为空。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
 
 ## 未完成与人工验收
 
 - 用户自定义图片/视频导入、搜索、播放列表尚未实现。
-- 安装器的完整聊天 E2E 仍有设备注册/轮询、聊天记录与截图断言未通过，修正这些独立问题并重跑后才能将 E 标为 PASS。
 - 用户机器上的真实 Steam Workshop/Wallpaper Engine 内容、用户配置迁移仍待人工验收；渲染器不依赖 Wallpaper Engine 程序运行。
 - 3.1.0 市场 PR 尚未合并，因此远端客户端主市场暂时继续提供 3.0.1；新包通过分支 URL 可安装并已验证。
 
@@ -126,5 +125,5 @@ release manifest 校验及 `scripts/build_release.py --verify --candidate`：PAS
 
 - 本机未发现 Wallpaper Engine Workshop 目录；真实或合法授权的复杂 `scene.pkg`（粒子、Shader、交互）未验证。当前动态验收 Scene 是简单自制 animated solid，不能视为复杂场景兼容证据。
 - 自定义图片/视频导入、搜索、播放列表尚未实现。
-- Windows 候选构建第一次在 dirty worktree 被 release verifier 拒绝；代码提交后需重试 Windows build、安装和卸载验收，随后补候选包 SHA 与构建产物位置。
+- `npm run dist` 单独调用时由 verifier 拒绝（未指定候选模式）；已使用 `python scripts/build_release.py --candidate` 完成一体构建，并成功完成隔离 NSIS 安装/卸载。
 - PR #1 尚未合并，主市场更新需要人工审核；本轮未合并 PR/dev/master。
