@@ -31,6 +31,7 @@ Choose an EXE using the PoC picker. The PoC writes newline-delimited JSON events
 - Artifact: `Vigil P15 Preview 1.1.8-p9.3.20261021.1.exe` (70,092,597 bytes; updated workbench layout with the hosted window in the upper area and a reserved lower AI workspace).
 - SHA-256: `431EEFD81EBD31E5C2769643272D168EE5EBBD8E8178DBCA1D0E5AA7B090355A`.
 - The preview packages `resources/native-window-host/native-window-host.exe`. It does not package the Vigil Brain sidecar because this checkout has no Brain release build input; this is a P15 client preview, not a complete Vigil release.
+- Packaging issue found after delivery: the portable NSIS launcher displayed `Error launching installer` on this test machine. Running `win-unpacked/Vigil P15 Preview.exe` from that same build started and remained responsive. A ZIP of the unpacked files was prepared to bypass the failing launcher: `Vigil-P15-Preview-ZIP-20261021.zip` (111,798,198 bytes), SHA-256 `C68854EAA6771F40287EA19051749BD81267BF44876BFF1422D34614AC954597`. The archive listing was checked for the app executable, native helper, and run instructions. Extract the ZIP as-is and launch `Vigil P15 Preview.exe`.
 
 ## Limits observed
 
