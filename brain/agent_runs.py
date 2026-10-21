@@ -796,6 +796,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                                              'applied': None,
                                              'downgrade': strategy_state.get('downgrade')}
                         _save(db, item)
+            from model_providers.tool_protocol import ToolTextBoundary
+            boundary = ToolTextBoundary()
             completion = None
             for event in completion_events(provider, prepare(payload, cfg, step_tokens=reserve_out), timeout=max(0.001, timeout)):
                 with LOCK, _db() as db:
@@ -810,6 +812,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     if event['type'] == 'completion':
                         completion = event['result']
                     elif event['type'] == 'text_delta':
+                        event = dict(event, text=boundary.feed(event['text']))
                         # 展示用正文到顶就停止累积，任务继续跑：模型一次写太长不该
                         # 让整项任务死掉。最终 result 另按 MAX_TEXT 截断并留标记。
                         room = MAX_TEXT - len(item['content'])
@@ -830,15 +833,23 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     return
                 since += 1  # 本轮模型请求已完整收尾（含 length 续写路径），计入检查点节奏
                 completion = completion or dict(reason='connection_lost')
+                tail = boundary.feed('', final=True)
+                if tail:
+                    item['content'] += tail
+                    _event(db, item, 'text_delta', dict(text=tail, step_id=sid))
+                completion['content'] = boundary.text
                 reason = completion['reason']
+                if boundary.malformed and reason in ('normal', 'tool_calls', 'length'):
+                    reason = 'invalid_tool'
                 xml_mode = False
-                if reason == 'normal' and '<tool_call' in completion.get('content', '').lower():
+                if reason == 'normal' and boundary.blocks:
                     # Preserve the existing explicitly opted-in provider protocol;
                     # arbitrary content/XML never gains an execution path.
                     if specs and getattr(provider, 'supports_xml_tools', False) and cfg.get('allow_xml_tool_fallback', True) is not False:
-                        from brain import _parse_xml_tool_calls
-                        completion['tool_calls'] = _parse_xml_tool_calls(completion['content'],
-                            allowed_names={s['function']['name'] for s in specs})
+                        try:
+                            completion['tool_calls'] = boundary.calls({s['function']['name'] for s in specs})
+                        except ValueError:
+                            completion['tool_calls'] = []
                         xml_mode = bool(completion['tool_calls'])
                     reason = 'tool_calls' if xml_mode else 'invalid_tool'
                 if reason == 'length' and ((completion.get('content') or '').strip()
@@ -872,11 +883,11 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     return
                 if reason == 'normal':
                     # XML 兜底时正文里带着 <tool_call> 原文，不能当成她的回答露给用户。
-                    final = _strip_xml_calls(completion['content'])
+                    final = completion['content']
                     if len(final) > MAX_TEXT:
                         item['result_truncated'] = True
                     item['result'] = final[:MAX_TEXT]
-                    item['content'] = _strip_xml_calls(item.get('content') or '')[:MAX_TEXT]
+                    item['content'] = (item.get('content') or '')[:MAX_TEXT]
                     _finish(db, item, 'succeeded')
                     return
                 _save(db, item)
@@ -891,11 +902,11 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 # 声明过的协议，不是从任意文本里抠命令。
                 recovered, recovered_msg = [], None
                 if (not xml_mode and getattr(provider, 'supports_xml_tools', False)
-                        and '<tool_call' in (completion.get('content') or '').lower()):
-                    from brain import _parse_xml_tool_calls
-                    parsed = _parse_xml_tool_calls(
-                        completion['content'],
-                        allowed_names={s['function']['name'] for s in specs})
+                        and cfg.get('allow_xml_tool_fallback', True) is not False and boundary.blocks):
+                    try:
+                        parsed = boundary.calls({s['function']['name'] for s in specs})
+                    except ValueError:
+                        parsed = []
                     try:
                         recovered = _calls(parsed, specs) if parsed else []
                     except (ValueError, TypeError, KeyError, AttributeError):
@@ -906,7 +917,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     # 路只允许一轮工具就强制总结，长任务会在第一轮末尾被腰斩。
                     recovered_msg = dict(
                         role='assistant',
-                        content=_strip_xml_calls(completion.get('content') or '') or None,
+                        content=completion.get('content') or None,
                         tool_calls=[dict(id=cid, type='function',
                                          function=dict(name=name, arguments=_json(args)))
                                     for cid, name, args, _sig in recovered])

@@ -97,7 +97,7 @@
     return '<div class="think-block streaming"><button class="think-toggle" type="button">' +
       icon('brain', 'sm') + '<span class="think-label">思考中</span> <span class="think-caret">▴</span></button>' +
       '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div>' +
-      '<div class="live-steps" id="liveSteps" hidden></div></div>' +
+      '<div class="live-steps" id="liveSteps" hidden></div></div></div>' +
       '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
       '<div class="foot"><span class="stream-status">正在生成…</span></div>';
   }

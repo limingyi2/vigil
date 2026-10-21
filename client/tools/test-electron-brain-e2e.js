@@ -77,6 +77,9 @@ async function startModel() {
     const toolMessage = [...messages].reverse().find(m => m && m.role === 'tool');
     const call = { payload, messages, userText, toolNames: (payload.tools || []).map(t => t.function && t.function.name) };
     modelRequests.push(call);
+    if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
+      return require('./test-p12-e2e').respond(req, res, call, wait);
+    }
     console.log('FAKE_PROVIDER request=' + modelRequests.length + ' stream=' + Boolean(payload.stream));
     for (let i = modelWaiters.length - 1; i >= 0; i--) {
       if (modelWaiters[i].predicate(call)) modelWaiters.splice(i, 1)[0].resolve(call);
@@ -262,6 +265,8 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     agent_execution: { enabled: agentEnabled }, features: { tools: true },
     persona_file: 'personas/default.json',
   };
+  if (process.env.VIGIL_E2E_SCENARIO === 'p12') Object.assign(brainConfig,
+    {provider:'xiaomi',model:'mimo-fixture',agent_execution:{enabled:true,checkpoint_every:0}});
   fs.writeFileSync(path.join(home, 'config', 'config.json'), JSON.stringify(brainConfig), 'utf8');
   const pluginDir = path.join(home, 'plugins', 'vigil_smoke');
   fs.mkdirSync(pluginDir, { recursive: true });
@@ -771,6 +776,12 @@ async function safeCleanup() {
 
 async function run() {
   const modelBase = await startModel();
+  if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
+    await require('./test-p12-e2e').run({modelBase,startBrain,startElectron,evaluate,waitFor,submit,
+      screenshot,wait,root,home,repo,token,modelRequests,stopBrain:async()=>{await stopChild(brain,true);brain=null;},
+      stopElectron:async()=>{await stopChild(electron,true);electron=null;}});
+    return;
+  }
   const focusedSlowToolCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-slow-tool';
   const focusedModelCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-during-model';
   const focusedProviderFailure = process.env.VIGIL_E2E_SCENARIO === 'agent-ui-provider-failure';
