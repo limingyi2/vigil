@@ -16,6 +16,7 @@ const root = path.resolve(__dirname, '../..');
 const plugin = path.join(root, 'market/plugins/wallpaper');
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let backend, media, win;
+const issuedMediaUrls = [];
 
 async function main() {
   await app.whenReady();
@@ -58,7 +59,12 @@ async function main() {
   await new Promise(r => backend.listen(0, '127.0.0.1', r));
   media = createPluginMedia({ getBase: () => 'http://127.0.0.1:' + backend.address().port,
     getToken: async () => 'fixture-secret' });
-  ipcMain.handle('fixture:media', async (_, p) => ({ ok: true, url: await media.url(p) }));
+  ipcMain.handle('fixture:media', async (_, p) => {
+    const url = await media.url(p);
+    issuedMediaUrls.push(url);
+    return { ok: true, url };
+  });
+  ipcMain.handle('fixture:release', () => media.releaseResources());
   let config = { enabled: false, opacity: 0.7, scrim: 0.4, muted: true };
   const library = [{ id: '123', title: '<Test scene>', type: 'scene', file: 'scene.pkg' },
     { id: '456', title: 'Video', type: 'video', file: 'test.mp4' },
@@ -69,7 +75,7 @@ async function main() {
     return { ok: true, json: { ok: true, config: { ...config } } };
   });
   fs.writeFileSync(path.join(tmp, 'preload.js'), `const {contextBridge,ipcRenderer}=require('electron');
-    contextBridge.exposeInMainWorld('vigil',{plugins:{resourceUrl:p=>ipcRenderer.invoke('fixture:media',p),releaseResources:()=>Promise.resolve({ok:true})},
+    contextBridge.exposeInMainWorld('vigil',{plugins:{resourceUrl:p=>ipcRenderer.invoke('fixture:media',p),releaseResources:()=>ipcRenderer.invoke('fixture:release')},
       api:(m,p,b)=>ipcRenderer.invoke('fixture:api',m,p,b)});`);
   const csp = fs.readFileSync(path.join(root, 'client/src/index.html'), 'utf8').match(/content="(default-src[^"]+)"/)[1];
   fs.writeFileSync(path.join(tmp, 'index.html'), `<meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -98,7 +104,18 @@ async function main() {
   await ev(`document.querySelector('[data-id="123"]').click()`);
   await until(`!!document.querySelector('.wp-scene-stage canvas')`);
   await until(`document.querySelector('.wp-scene-stage')?.dataset.liveReady==='true'`);
+  await wait(200);
   await wait(550);
+  // Dragging appearance sliders must preserve the WebGL canvas and scene.
+  await ev(`window.__p14SceneCanvas=document.querySelector('.wp-scene-stage canvas');`
+    + `document.querySelector('#wp-opacity').value='45';`
+    + `document.querySelector('#wp-opacity').dispatchEvent(new Event('input',{bubbles:true}));`
+    + `document.querySelector('#wp-blur').value='5';`
+    + `document.querySelector('#wp-blur').dispatchEvent(new Event('input',{bubbles:true}));`);
+  assert.equal(await ev(`document.querySelector('.wp-scene-stage canvas')===window.__p14SceneCanvas`), true,
+    'Appearance-only updates must not remount WebWallGL');
+  assert.equal(await ev(`document.querySelector('.wallpaper-bg').style.opacity`), '0.45');
+  assert.equal(await ev(`document.documentElement.style.getPropertyValue('--wp-glass-blur')`), '5px');
   const sceneFrameA = await ev(`document.querySelector('.wp-scene-stage canvas').toDataURL()`);
   await wait(550);
   const sceneFrameB = await ev(`document.querySelector('.wp-scene-stage canvas').toDataURL()`);
@@ -116,6 +133,10 @@ async function main() {
   const sizeBefore = await ev(`({w:document.querySelector('.wp-scene-stage canvas').width,h:document.querySelector('.wp-scene-stage canvas').height})`);
   await ev(`Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))`);
   await until(`document.querySelector('.wp-scene-stage')?.dataset.paused==='true'`);
+  win.minimize();
+  await wait(150);
+  win.restore();
+  await wait(150);
   await ev(`Object.defineProperty(document,'hidden',{configurable:true,value:false});document.dispatchEvent(new Event('visibilitychange'))`);
   await until(`document.querySelector('.wp-scene-stage')?.dataset.paused==='false'`);
   win.setSize(1300, 850);
@@ -132,6 +153,8 @@ async function main() {
   await ev(`window.fixtureDispose()`);
   assert.equal(await ev(`!!document.getElementById('wallpaper-bg-layer')`), false, 'Plugin unload must remove background DOM');
   assert.equal(await ev(`document.documentElement.style.getPropertyValue('--wp-glass-blur')`), '');
+  assert(issuedMediaUrls.length > 0);
+  assert(issuedMediaUrls.every(url => !media.isApprovedUrl(url)), 'Plugin unload must revoke all issued media tickets');
   console.log('PASS: registration, library, previews, live WebWallGL animated Scene, authenticated Scene assets, video decoding, nested web assets, disable');
   console.log('Scene frame SHA-256:', sceneHashes.join(' '));
 }

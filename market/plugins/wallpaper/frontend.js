@@ -67,6 +67,8 @@
   var engineGlobalListeners = [];
   var themeChangeHandler = null;
   var disposed = false;
+  // Style-only changes must not remount the active Scene.
+  var activeWallpaperKey = null;
   function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -177,6 +179,7 @@
   }
   function disposeWallpaper() {
     disposed = true;
+    activeWallpaperKey = null;
     applyGeneration++;
     destroyScene();
     if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
@@ -207,24 +210,39 @@
     }
   }
 
-  // ========== 应用壁纸到背景层 ==========
-  function applyWallpaper(cfg) {
-    var generation = ++applyGeneration;
-    destroyScene();
-    // 清空背景层
-    bgLayer.replaceChildren();
-
-    if (!cfg || !cfg.enabled || !cfg.wallpaper_id) {
-      bgLayer.style.display = 'none';
-      scrimLayer.style.display = 'none';
-      document.body.classList.remove('wallpaper-active');
+  // Visual appearance and playback have separate lifetimes.
+  function applyAppearance(cfg) {
+    var enabled = !!(cfg && cfg.enabled && cfg.wallpaper_id);
+    bgLayer.style.display = enabled ? 'block' : 'none';
+    scrimLayer.style.display = enabled ? 'block' : 'none';
+    document.body.classList.toggle('wallpaper-active', enabled);
+    if (!enabled) {
+      document.documentElement.style.removeProperty('--wp-glass-blur');
       return;
     }
-
-    document.body.classList.add('wallpaper-active');
-    bgLayer.style.display = 'block';
-    scrimLayer.style.display = 'block';
     bgLayer.style.opacity = cfg.opacity != null ? cfg.opacity : 0.7;
+    var scrimColor = isDark() ? 'rgba(0,0,0,' : 'rgba(255,255,255,';
+    scrimLayer.style.background = scrimColor + (cfg.scrim != null ? cfg.scrim : 0.4) + ')';
+    document.documentElement.style.setProperty('--wp-glass-blur', (cfg.blur || 0) + 'px');
+  }
+
+  // ========== 应用壁纸到背景层 ==========
+  function applyWallpaper(cfg) {
+    var key = cfg && cfg.enabled && cfg.wallpaper_id
+      ? JSON.stringify([String(cfg.wallpaper_id), String(cfg.wallpaper_type || ''), String(cfg.wallpaper_file || '')])
+      : null;
+    if (key && key === activeWallpaperKey && bgLayer.isConnected && bgLayer.childElementCount) {
+      var playingVideo = bgLayer.querySelector('video');
+      if (playingVideo) playingVideo.muted = cfg.muted !== false;
+      applyAppearance(cfg);
+      return;
+    }
+    activeWallpaperKey = key;
+    var generation = ++applyGeneration;
+    destroyScene();
+    bgLayer.replaceChildren();
+    applyAppearance(cfg);
+    if (!key) return;
 
     var id = cfg.wallpaper_id;
     var type = cfg.wallpaper_type;
@@ -276,12 +294,6 @@
       document.addEventListener('visibilitychange', visibilityHandler);
     }
 
-    // 遮罩
-    var scrimColor = isDark() ? 'rgba(0,0,0,' : 'rgba(255,255,255,';
-    scrimLayer.style.background = scrimColor + (cfg.scrim != null ? cfg.scrim : 0.4) + ')';
-
-    // 毛玻璃（通过 CSS 变量传给面板）
-    document.documentElement.style.setProperty('--wp-glass-blur', (cfg.blur || 0) + 'px');
   }
 
   // ========== 加载配置 & 壁纸库 ==========
@@ -388,7 +400,8 @@
       el.addEventListener('input', function () {
         var v = parseInt(el.value) / (scale || 1);
         valEl.textContent = el.value + (key === 'blur' ? 'px' : '%');
-        applyWallpaper(Object.assign({}, currentConfig, (function () { var o = {}; o[key] = v; return o; })()));
+        currentConfig[key] = v;
+        applyWallpaper(currentConfig);
       });
       el.addEventListener('change', function () {
         var v = parseInt(el.value) / (scale || 1);

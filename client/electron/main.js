@@ -513,6 +513,20 @@ function createWindow() {
       spellcheck: false,
     },
   });
+  // The renderer needs a dynamic port for WebWallGL's authenticated media bridge.
+  // All other renderer XHR/fetch traffic to localhost must be blocked here.
+  const wallpaperRendererId = win.webContents.id;
+  win.webContents.session.webRequest.onBeforeRequest(
+    { urls: ['http://127.0.0.1/*'] },
+    (details, callback) => {
+      if (details.webContentsId === wallpaperRendererId
+          && (details.resourceType === 'xhr' || details.resourceType === 'fetch')
+          && !pluginMedia.isApprovedUrl(details.url)) {
+        callback({ cancel: true });
+        return;
+      }
+      callback({});
+    });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
   // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。

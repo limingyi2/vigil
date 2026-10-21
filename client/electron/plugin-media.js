@@ -4,7 +4,9 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 
-function createPluginMedia({ getBase, getToken }) {
+function createPluginMedia({ getBase, getToken, ticketIdleMs = 30 * 60 * 1000 }) {
+  // An active stream renews its ticket; abandoned tickets expire when idle.
+  const idleMs = Number.isFinite(ticketIdleMs) && ticketIdleMs > 0 ? ticketIdleMs : 30 * 60 * 1000;
   const tickets = new Map();
   const urls = new Map();
   let server = null;
@@ -39,6 +41,10 @@ function createPluginMedia({ getBase, getToken }) {
       const match = /^\/r\/([a-f0-9]{48})\/(.+)$/.exec(local.pathname);
       const ticket = match && tickets.get(match[1]);
       if (!ticket) return fail(404, 'Unknown resource');
+      if (ticket.expiresAt <= Date.now()) {
+        tickets.delete(match[1]);
+        return fail(410, 'Expired resource');
+      }
       const file = decodeURIComponent(match[2]);
       if (/[\\\x00]/.test(file) || file.startsWith('/') || file.split('/').includes('..')) {
         return fail(400, 'Invalid path');
@@ -47,6 +53,7 @@ function createPluginMedia({ getBase, getToken }) {
       upstreamPath.searchParams.set('id', ticket.id);
       if (ticket.kind === 'media') upstreamPath.searchParams.set('file', file);
       else if (file !== 'preview') return fail(404, 'Unknown resource');
+      ticket.expiresAt = Date.now() + idleMs;
       const token = await getToken();
       const headers = {};
       if (token) headers.Authorization = 'Bearer ' + token;
@@ -88,15 +95,33 @@ function createPluginMedia({ getBase, getToken }) {
     async url(resource) {
       const item = parseResource(resource);
       const key = JSON.stringify(item);
-      if (urls.has(key)) return urls.get(key);
-      if (tickets.size >= 4096) throw new Error('插件媒体资源过多，请重启客户端');
+      const cached = urls.get(key);
+      if (cached && tickets.has(cached.ticket) && tickets.get(cached.ticket).expiresAt > Date.now()) {
+        return cached.url;
+      }
+      if (cached) { tickets.delete(cached.ticket); urls.delete(key); }
+      for (const [id, entry] of tickets) {
+        if (entry.expiresAt <= Date.now()) tickets.delete(id);
+      }
+      if (tickets.size >= 1024) throw new Error('插件媒体资源过多，请稍后重试');
       const port = await ensureServer();
       const ticket = crypto.randomBytes(24).toString('hex');
-      tickets.set(ticket, item);
+      tickets.set(ticket, { ...item, expiresAt: Date.now() + idleMs });
       const suffix = item.file.split('/').map(encodeURIComponent).join('/');
       const result = 'http://127.0.0.1:' + port + '/r/' + ticket + '/' + suffix;
-      urls.set(key, result);
+      urls.set(key, { ticket, url: result });
       return result;
+    },
+    // The renderer request gate allows only URLs issued by this local proxy.
+    isApprovedUrl(raw) {
+      if (!server || !server.listening) return false;
+      try {
+        const u = new URL(raw);
+        if (u.origin !== 'http://127.0.0.1:' + server.address().port || u.search || u.hash) return false;
+        const match = /^\/r\/([a-f0-9]{48})\/(.+)$/.exec(u.pathname);
+        const ticket = match && tickets.get(match[1]);
+        return !!(ticket && ticket.expiresAt > Date.now());
+      } catch (_) { return false; }
     },
     releaseResources() {
       tickets.clear();

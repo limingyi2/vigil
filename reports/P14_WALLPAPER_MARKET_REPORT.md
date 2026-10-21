@@ -2,9 +2,10 @@
 
 日期：2026-10-21（Asia/Shanghai）
 工作分支：`codex/p14-wallpaper-market`
-起始提交：`0e24afe7c09fd561b7fd1d5b1d79a9000632f51b`
-实现提交：见候选包 `release-manifest.json` 的 source_commit
-状态：核心验收完成，聊天全量 E2E 与用户素材验收仍待处理。
+原始实现基线：`0e24afe7c09fd561b7fd1d5b1d79a9000632f51b`
+本轮 hotfix 起点：`41eb1e762c6568b37488d83518fdc9794012f218`
+本轮实现提交：构建后补入；历史记录见下方“第二轮续修”。
+状态：生命周期、市场和聊天 E2E 通过；复杂授权 Scene、导入与播放列表仍未完成。
 
 ## 结果概览
 
@@ -96,3 +97,34 @@ release manifest 校验及 `scripts/build_release.py --verify --candidate`：PAS
 - `market/plugins/wallpaper/__init__.py`
 - `market/plugins/wallpaper/frontend.js`、`frontend.css`
 - `reports/P14_WALLPAPER_MARKET_REPORT.md`
+
+## 第二轮续修（2026-10-21）
+
+用户提供的 `C:\Users\limingyi\Downloads\p14_hotfix.py` 已在独立 P14 worktree 审查和运行。执行前确认 branch 为 `codex/p14-wallpaper-market`、HEAD 为 `41eb1e762c6568b37488d83518fdc9794012f218`、工作区干净；远端分支 HEAD 相同，无新提交。
+
+### 修复和测试
+
+- `market/plugins/wallpaper/frontend.js` 分离外观更新与 WebWallGL Scene 生命周期；修复多个滑块连续输入时旧预览配置互相覆盖。已断言 Scene canvas 不被重建、外观值变化、动画帧变化。
+- `client/electron/plugin-media.js` 媒体票据闲置 30 分钟过期、活动请求续期、最多 1024 个有效票据；失效 URL 重新签发。Electron renderer 的 loopback fetch/XHR 由主进程按签发票据限制。插件清理调用 IPC 撤销票据。
+- `client/tools/test-plugin-media.js`：Node 2/2，覆盖正常资源传输、票据到期/重签、卸载撤销。
+- `client/tools/test-wallpaper-electron.js`：PASS，隔离 Electron + WebWallGL 3.0.0。覆盖动态 Scene、外观滑块、视频解码、网页嵌套资源、最小化/恢复、尺寸更新、壁纸切换、卸载 DOM/CSS/监听和媒体票据释放。帧 SHA-256：
+  - `1cc6d4547400caeaca7a333a0de132e803ecb7ddecb0343c5a672b9782e888c9`
+  - `e63db3c79b3c8eb8dd494abd392217e395a6fa5575e25d3fc4fb94bd45024764`
+- `client/tools/test-plugin-market-electron.js`：PASS，插件安装/启用、禁用、卸载、renderer 重启与旧导航状态清理。
+- `client/tools/test-market-live-electron.js`：PASS，真实 Renderer → preload/IPC → Brain → GitHub Raw 清单，`ready`，market version `1.1`，1 个插件。
+- `client/tools/e2e.js`：PASS，27/27。修复空历史验收选择器；旧脚本把本地 Brain 管理桌面误当远程设备客户端，现以真实隔离 Brain HTTP 注册和设备凭据请求核验哈希、能力和 `last_seen`，相关断言保留。
+- `node --check` 所涉 JS、`git diff --check`：PASS。
+
+### 插件制品
+
+- `vigil-plugins` 独立分支 `codex/p14-wallpaper-webwallgl` 已推送更新，PR #1 保持未合并。
+- Wallpaper 3.1.0 source commit：`346300588d0248a39d2323bcada5c5fd94766803`；包含 ZIP/Manifest 的 package commit：`ca0b12cbf28a0e834a381045acac3955ad8fc851`；分支 tip：`eeec6f93d469e9b4e95ce2e00b81e3ca52a7db07`。
+- 3.1.0 ZIP SHA-256：`1df6c354a68ab001d5b867396966b04731845b6330edbb16b6a51ab85c8be1c5`。Windows Python 3.13 重建后 `git diff --exit-code` 通过；Manifest 五项 payload SHA 与包内容匹配；market.json 指向包含制品的固定 commit。3.0.1 文件保留未覆盖。
+- GitHub Actions Linux/Python 3.12 检查由推送触发，结果待 CI 回报。
+
+### 未完成与阻塞
+
+- 本机未发现 Wallpaper Engine Workshop 目录；真实或合法授权的复杂 `scene.pkg`（粒子、Shader、交互）未验证。当前动态验收 Scene 是简单自制 animated solid，不能视为复杂场景兼容证据。
+- 自定义图片/视频导入、搜索、播放列表尚未实现。
+- Windows 候选构建第一次在 dirty worktree 被 release verifier 拒绝；代码提交后需重试 Windows build、安装和卸载验收，随后补候选包 SHA 与构建产物位置。
+- PR #1 尚未合并，主市场更新需要人工审核；本轮未合并 PR/dev/master。

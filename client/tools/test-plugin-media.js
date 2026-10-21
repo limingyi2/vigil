@@ -46,3 +46,33 @@ test('opaque media URL attaches auth, streams ranges and serves web children', a
     await new Promise(r => upstream.close(r));
   }
 });
+
+
+test('media tickets expire when idle and revoke on unload', async () => {
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'image/png' }); res.end('ok');
+  });
+  await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+  const media = createPluginMedia({
+    getBase: () => 'http://127.0.0.1:' + upstream.address().port,
+    getToken: async () => 'test-secret', ticketIdleMs: 120,
+  });
+  try {
+    const resource = '/api/plugin/wallpaper/we/media?id=123&file=scene.json';
+    const first = await media.url(resource);
+    assert.equal(media.isApprovedUrl(first), true);
+    assert.equal(media.isApprovedUrl('http://127.0.0.1:43210/'), false);
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(media.isApprovedUrl(first), false);
+    assert.equal((await fetch(first)).status, 410);
+    const second = await media.url(resource);
+    assert.notEqual(first, second);
+    assert.equal((await fetch(second)).status, 200);
+    media.releaseResources();
+    assert.equal(media.isApprovedUrl(second), false);
+    assert.equal((await fetch(second)).status, 404);
+  } finally {
+    media.close();
+    await new Promise(r => upstream.close(r));
+  }
+});
