@@ -13,7 +13,7 @@ exports.respond=async(req,res,call,wait)=>{
     if(!finished) send({tool_calls:[{index:0,id:'pause-tool',type:'function',function:{name:'smoke_ping',arguments:'{"mode":"ok"}'}}]});
     else {send({content:'正在检查文件。'});await new Promise(resolve=>{modelGate=resolve;});if(res.destroyed)return;}
   } else if(finished || resumed || task.includes('P12_CHAT')) {
-    send({content:'已完成任务。可以继续发送下一条消息。'});
+    send({content:'检查结果已整理。'});
   } else if(task.includes('P12_XML')) {
     for(const fragment of ['先检查工具。\n','<to','ol_call><fun','ction=smoke_ping><parameter=mode>ok</parameter></function></tool_call>']){
       send({content:fragment});await wait(35);
@@ -25,7 +25,7 @@ exports.respond=async(req,res,call,wait)=>{
     await new Promise(resolve=>{modelGate=resolve;});
     if(res.destroyed)return;
     send({content:'检查完成。'});
-  } else { send({content:'已完成任务。'}); }
+  } else { send({content:'检查结果已整理。'}); }
   res.write('data: '+JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})+'\n\n');
   res.end('data: [DONE]\n\n');
 };
@@ -91,7 +91,7 @@ exports.run=async h=>{
     assert.equal(await h.evaluate('(()=>{const rows=[...document.querySelectorAll("#msgs .turn:last-child #liveSteps > *")];return rows[0]?.classList.contains("agent-thinking") && rows.findIndex(n=>n.matches("[data-step-key]"))>0})()'),true,'Chinese thinking state precedes actual tool evidence');
     assert.ok(events.some(e=>e.type==='tool'&&e.state==='returned'));
     assert.equal(await h.evaluate('document.querySelector("#sendBtn").getAttribute("aria-busy")'),'false');
-    assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("已完成任务")'));
+    assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("检查结果已整理")'));
     results.push({task,events});
     if(task==='P12_NATIVE' && ['3','5'].includes(process.env.VIGIL_P12_ROUND)){
       assert.equal(await h.evaluate('document.querySelectorAll("[data-step-key]").length'),2,'one evidence row per tool, never duplicates on snapshots');
