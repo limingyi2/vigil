@@ -52,7 +52,7 @@ def capabilities(cfg, provider=None):
     # Whitelist non-secret metadata before hashing or caching.
     opts = {k: overrides.get(k) for k in ('max_output_tokens', 'input_tokens',
         'context_tokens', 'output_parameter', 'requires_output_limit', 'compat_output_tokens',
-        'reasoning', 'reasoning_parameter', 'usage', 'native_tool_calls')}
+        'reasoning', 'reasoning_parameter', 'reasoning_history_field', 'usage', 'native_tool_calls')}
     key = (vendor, endpoint, model)
     signature = hashlib.sha256(json.dumps(opts, sort_keys=True).encode()).hexdigest()
     with _LOCK:
@@ -75,6 +75,8 @@ def capabilities(cfg, provider=None):
     record['reasoning_supported'] = opts['reasoning'] is True
     record['reasoning_parameter'] = (str(opts['reasoning_parameter'])
         if opts['reasoning_parameter'] in ('reasoning_effort', 'thinking', 'think') else None)
+    record['reasoning_history_field'] = (opts['reasoning_history_field']
+        if opts['reasoning_history_field'] == 'reasoning_content' else None)
     record['usage_supported'] = opts['usage'] is not False
     record['native_tool_calls'] = opts['native_tool_calls'] is not False
     record['reasoning_strategies'] = list(REASONING_STRATEGIES) if record['reasoning_supported'] else []
@@ -200,7 +202,20 @@ def normalize(data):
             return result
         usage = data.get('usage')
         safe_usage = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
-            if k in ('prompt_tokens', 'completion_tokens', 'total_tokens') and isinstance(v, int) and not isinstance(v, bool) and v >= 0}
+            if k in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+            and isinstance(v, int) and not isinstance(v, bool) and v >= 0}
+        # Keep only the small, common detail fields needed for shared accounting.
+        # Provider-specific signed reasoning blocks remain provider-owned.
+        if isinstance(usage, dict):
+            for group in ('prompt_tokens_details', 'completion_tokens_details'):
+                details = usage.get(group)
+                if isinstance(details, dict):
+                    allowed = ('cached_tokens',) if group == 'prompt_tokens_details' else ('reasoning_tokens',)
+                    clean = {k: details[k] for k in allowed
+                             if isinstance(details.get(k), int) and not isinstance(details.get(k), bool)
+                             and details[k] >= 0}
+                    if clean:
+                        safe_usage[group] = clean
         result.update(content=content, reasoning=reasoning, tool_calls=calls,
                       usage=safe_usage or None)
         finish = choice.get('finish_reason')
@@ -224,6 +239,22 @@ def normalize(data):
         return result
     except (KeyError, TypeError, IndexError):
         return result
+
+
+def assistant_history_message(provider, message, content_override=None, tool_calls=None):
+    """Use the provider's replay contract, with a safe standard fallback."""
+    hook = getattr(provider, 'assistant_history_message', None)
+    if callable(hook):
+        result = hook(message, content_override=content_override, tool_calls=tool_calls)
+        if isinstance(result, dict) and result.get('role') == 'assistant':
+            return result
+    message = message if isinstance(message, dict) else {}
+    out = {'role': 'assistant', 'content': message.get('content', '')
+           if content_override is None else content_override}
+    calls = tool_calls if tool_calls is not None else message.get('tool_calls')
+    if calls:
+        out['tool_calls'] = calls
+    return out
 
 
 ERROR_MESSAGES = {'length': '模型输出被截断，未生成完整结果',

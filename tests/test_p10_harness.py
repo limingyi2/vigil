@@ -42,6 +42,16 @@ def test_project_review_checkpoint_and_repair(tmp_path):
         report = project_review.step(review_id, 'owner', 1)
         assert report['status'] == 'completed'
         issue = next(x for x in report['findings'] if x['kind'] == 'deferred_work')
+        assert issue['status'] == 'candidate'
+        plan = project_repair.plan(review_id, issue['issue_id'], 'main.py',
+                                   'return 1', 'return 2', 'owner')
+        assert not plan['ok']
+        # The fixture marks the finding confirmed only after its isolated
+        # reproduction has been established by this test.
+        stored = project_review._read(review_id, 'owner')
+        stored['findings'][0]['status'] = 'confirmed'
+        project_review._write(stored)
+        issue = stored['findings'][0]
         plan = project_repair.plan(review_id, issue['issue_id'], 'main.py',
                                    'return 1', 'return 2', 'owner')
         assert plan['status'] == 'proposed'
@@ -49,7 +59,15 @@ def test_project_review_checkpoint_and_repair(tmp_path):
         applied = project_repair.apply(plan['plan_id'], 'owner', True)
         assert applied['status'] == 'applied'
         assert source.read_text(encoding='utf-8').endswith('return 2\n')
-        verified = project_repair.verify(plan['plan_id'], 'owner', True, 'fixture behavior checked', 'python -m pytest')
+        assert not project_repair.verify(plan['plan_id'], 'owner', 'untrusted_run', 7)['ok']
+        from unittest.mock import patch as mock_patch
+        fake_run = {'steps': [{'step_id': 7, 'kind': 'tool', 'tool': 'local_exec',
+            'status': 'completed', 'result_state': 'returned',
+            'input': {'cmd': 'python -m pytest ' + str(root)},
+            'result': '1 passed\n[VIGIL_EXEC_EXIT_CODE=0]',
+            'started_at': 1.0, 'finished_at': 2.0}]}
+        with mock_patch('agent_runs.snapshot', return_value=fake_run):
+            verified = project_repair.verify(plan['plan_id'], 'owner', 'run_fixture', 7)
         assert verified['status'] == 'verified'
 
 

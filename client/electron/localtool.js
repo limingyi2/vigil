@@ -922,8 +922,10 @@ function _runOnce(exe, argv, cfg) {
       { timeout: 60000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
         cwd: (cfg && cfg.workdir) || undefined },
       (err, stdout, stderr) => {
-        if (err) { err.stdout = stdout; err.stderr = stderr; reject(err); return; }
-        resolve((stdout || '') + (stderr ? '\n[stderr]\n' + stderr : ''));
+        if (err && err.code === 'ENOENT') { err.stdout = stdout; err.stderr = stderr; reject(err); return; }
+        resolve({ stdout: stdout || '', stderr: stderr || '',
+          exitCode: err ? (Number.isInteger(err.code) ? err.code : null) : 0,
+          error: err ? String(err.message || err) : '' });
       });
   });
 }
@@ -946,11 +948,9 @@ async function runReadOnly(cmd, cfg) {
   } catch (e) {
     // npm 是 npm.cmd、pip 可能是批处理：直接 spawn 在 Windows 上 ENOENT。
     // 只对这类"找不到文件"退回 cmd 调起；其余错误照常抛。
-    const out = (e.stdout || '') + (e.stderr ? '\n[stderr]\n' + e.stderr : '');
     if (e && (e.code === 'ENOENT') && !/\.[a-z0-9]+$/i.test(argv[0])) {
       return _runOnce(comspec, ['/d', '/s', '/c', ...argv], cfg);
     }
-    if (out) return out;
     throw e;
   }
 }
@@ -972,13 +972,21 @@ async function tool_exec(args, cfg) {
           exec(cmd, { timeout: 60000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
                       cwd: (cfg && cfg.workdir) || undefined },
             (err, stdout, stderr) => {
-              if (err && !(stdout || stderr)) { reject(err); return; }
-              resolve((stdout || '') + (stderr ? '\n[stderr]\n' + stderr : ''));
+              if (err && !Number.isInteger(err.code) && !(stdout || stderr)) { reject(err); return; }
+              resolve({ stdout: stdout || '', stderr: stderr || '',
+                exitCode: err ? (Number.isInteger(err.code) ? err.code : null) : 0,
+                error: err ? String(err.message || err) : '' });
             });
         });
-    const text = String(out || '').trim().slice(0, 12000);
-    return text || '（命令没有输出）';
+    const record = out && typeof out === 'object' ? out : { stdout: String(out || ''), stderr: '', exitCode: 0 };
+    const text = (String(record.stdout || '') + (record.stderr ? '\n[stderr]\n' + record.stderr : '')).trim().slice(0, 11800);
+    const status = Number.isInteger(record.exitCode) ? record.exitCode : null;
+    return (text || '（命令没有输出）') + (status === null ? '' : '\n[VIGIL_EXEC_EXIT_CODE=' + status + ']');
   } catch (e) {
+    if (e && Number.isInteger(e.code)) {
+      const text = (String(e.stdout || '') + (e.stderr ? '\n[stderr]\n' + e.stderr : '')).trim().slice(0, 11800);
+      return (text || ('命令执行失败：' + (e.message || e))) + '\n[VIGIL_EXEC_EXIT_CODE=' + e.code + ']';
+    }
     return '命令执行失败：' + (e && e.message || e);
   }
 }

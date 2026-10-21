@@ -312,6 +312,9 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .mode-chip[data-mode="hybrid"] { color:var(--warn); }
 .chatwrap .mode-chip .mode-sep { color:var(--chat-line); }
 .chatwrap .mode-chip [data-mode-model] { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chatwrap .token-rate { flex:none; padding:0 4px; color:var(--chat-muted); font:10.5px var(--mono); white-space:nowrap; }
+.chatwrap .token-rate[hidden] { display:none; }
+@media (max-width:620px) { .chatwrap .token-rate { display:none; } }
 /* ═══ 加号菜单：附件 / 模型 / 创作模式 ═════════════════════════════ */
 .chatwrap .pluspop {
   left:0; right:auto; bottom:calc(100% + 8px); transform:none;

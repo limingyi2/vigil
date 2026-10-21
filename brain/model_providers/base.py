@@ -67,6 +67,20 @@ class ModelProvider(object):
     def chat(self, payload, timeout=90):
         raise NotImplementedError
 
+    def assistant_history_message(self, message, content_override=None, tool_calls=None):
+        """Build the standard replayable assistant turn for this protocol.
+
+        Native reasoning payloads are omitted unless a provider adapter opts
+        into an exact, documented replay format.
+        """
+        message = message if isinstance(message, dict) else {}
+        out = {'role': 'assistant', 'content': message.get('content', '')
+               if content_override is None else content_override}
+        calls = tool_calls if tool_calls is not None else message.get('tool_calls')
+        if calls:
+            out['tool_calls'] = calls
+        return out
+
     def stream(self, payload, timeout=120):
         """返回一个上下文管理器，行为对齐 httpx.stream（响应对象逐行 SSE）。"""
         raise NotImplementedError

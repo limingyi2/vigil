@@ -939,6 +939,7 @@
       }));
     }
     async function activateConversation(id, options = {}) {
+      clearTokenRate();
       if (!sessionItems.some((s) => s.id === id) || id === activeConversationId) return;
       activeConversationId = id;
       draftActive = false;
@@ -1227,6 +1228,7 @@
       '        </div></div>' +
       '      <div class="composer-caption composer-foot">' +
       '        <button class="foot-chip mode-chip" id="modeChip" type="button" data-mode="cloud" title="这一轮使用的模型"><span class="mode-dot"></span><span data-mode-model>—</span></button>' +
+      '        <span id="tokenRate" class="token-rate" hidden title="模型输出吞吐率；Provider usage 可能包含推理 Token">—</span>' +
       '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span></button>' +
       '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span></button>' +
       '        <div class="sp"></div>' +
@@ -1243,6 +1245,41 @@
     const heroEl = view.querySelector('#hero');
     const rp = view.querySelector('#rp');
     const chat = view.querySelector('.chat');
+    const tokenRateEl = view.querySelector('#tokenRate');
+    let metricStartedAt = 0, metricVisibleTokens = 0, metricLastPaint = 0;
+    function clearTokenRate() {
+      metricStartedAt = 0; metricVisibleTokens = 0; metricLastPaint = 0;
+      if (tokenRateEl) { tokenRateEl.hidden = true; tokenRateEl.textContent = '—'; }
+    }
+    function startTokenRate() {
+      metricStartedAt = performance.now(); metricVisibleTokens = 0; metricLastPaint = 0;
+      if (tokenRateEl) tokenRateEl.hidden = true;
+    }
+    function addVisibleTokenEstimate(text) {
+      const value = String(text || '');
+      let cjk = 0;
+      for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) >= 0x4e00 && value.charCodeAt(i) <= 0x9fff) cjk++;
+      metricVisibleTokens += cjk * 0.9 + (value.length - cjk) * 0.3;
+      const now = performance.now();
+      if (!metricStartedAt || !metricVisibleTokens || now - metricLastPaint < 1000) return;
+      const rate = metricVisibleTokens / Math.max(0.001, (now - metricStartedAt) / 1000);
+      paintTokenRate(rate, true); metricLastPaint = now;
+    }
+    function paintTokenRate(rate, estimated, reasoningTokens) {
+      if (!tokenRateEl || !Number.isFinite(Number(rate)) || Number(rate) <= 0) return;
+      tokenRateEl.textContent = (estimated ? '≈ ' : '') + Number(rate).toFixed(1) + ' tok/s';
+      tokenRateEl.title = '模型输出吞吐率；' + (estimated ? '按屏幕可见文本估算' : '按 Provider 输出 Token 统计') +
+        (reasoningTokens ? '；包含 ' + reasoningTokens + ' 个 Provider 报告的推理 Token' : '；Provider usage 可能包含推理 Token');
+      tokenRateEl.hidden = false;
+    }
+    function finishTokenRate(data) {
+      metricStartedAt = 0;
+      if (!data) return;
+      const elapsed = Number(data.request_elapsed_seconds || 0);
+      const count = Number(data.output_tokens);
+      const rate = Number(data.tokens_per_second || (elapsed > 0 ? count / elapsed : 0));
+      paintTokenRate(rate, !!(data.rate_estimated ?? data.estimated), data.reasoning_tokens);
+    }
     const applySessions = () => {};
     // 模型快速切换：点左上角那个模型名弹出已保存的模型清单，点一条即切。
     // 数据来自 /api/models/saved（不带密钥），切换走 /api/models/quick-switch。
@@ -1254,6 +1291,7 @@
       onBlocked: () => { openPlusPop(); },
       afterLoad: () => syncComposerModelLabel(),
       onSwitched: (c) => {
+        clearTokenRate();
         if (c && c.model) toast('已切到 ' + c.model);
         void loadRunMode(false);
       },
@@ -2286,6 +2324,7 @@
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
       if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) return;
+      clearTokenRate();
       submitPending = true;
       updateComposer();
       let scopeReady;
@@ -2532,7 +2571,8 @@
         // previous turn overwrite this turn's text or terminal state.
         if (evt.run_id && agentRunId && evt.run_id !== agentRunId) return;
         if (agentRunId && !evt.run_id &&
-            ['stage','tool','tool_reused','run_snapshot','think','text','done','error'].includes(evt.type)) return;
+            ['stage','tool','tool_reused','run_snapshot','think','text','done','error',
+             'model_request_started','token_rate'].includes(evt.type)) return;
         if (evt.type === 'agent_run') {
           if (agentRunId && evt.run_id !== agentRunId) return;
           if (!agentRunId) agentRunId = evt.run_id;
@@ -2543,7 +2583,11 @@
         }
         if (turnScope !== recordKey()) return;
         if (streamDone) return;
-        if (evt.type === 'agent_run') {
+        if (evt.type === 'model_request_started') {
+          startTokenRate();
+        } else if (evt.type === 'token_rate') {
+          finishTokenRate(evt);
+        } else if (evt.type === 'agent_run') {
           activeRunId = evt.run_id;
           remember({run_id:agentRunId,status:'running'});
           statusEl.textContent = '执行中 ';
@@ -2580,12 +2624,14 @@
           startThinking();
         } else if (evt.type === 'text' && evt.text) {
           finishThinking();
+          addVisibleTokenEstimate(evt.text);
           textBuf += evt.text;
           remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'done') {
           finishThinking();
+          finishTokenRate(evt.token_rate);
           streamDone = true;
           finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
@@ -2603,6 +2649,7 @@
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         } else if (evt.type === 'error') {
+          metricStartedAt = 0;
           if (evt.class === 'connection_lost' && agentRunId) {
             needsSnapshotText = true;
             reconcileRun();
