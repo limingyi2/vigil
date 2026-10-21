@@ -1410,6 +1410,8 @@
     let resumableRunId = null;
     let composerMode = 'send';
     let pendingResumeOf = null;
+    // 执行中插话：把目标 run 放在这里，send() 会带上 interject_of。
+    let pendingInterjectOf = null;
     let pausePending = false;
     let liveReconcile = null;
     let currentRequestId = null;
@@ -2051,7 +2053,9 @@
       if (composerMode === 'uncertain') {
         button.disabled = !global.vigil;
       } else if (composerMode === 'pause') {
-        button.disabled = !global.vigil || !activeRunId;
+        // 有字就是插话（发得出去），没字才是暂停。
+        button.disabled = !global.vigil || !activeRunId ||
+          !!(attachment && attachment.failed);
       } else if (composerMode === 'resume') {
         button.disabled = !global.vigil || !resumableRunId;
       } else {
@@ -2061,7 +2065,9 @@
       button.classList.toggle('is-sending', busy && composerMode === 'send');
       button.disabled = button.disabled || submitPending;
       button.setAttribute('aria-busy', String(busy || submitPending));
-      const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）' : composerMode === 'pause' ? '暂停任务'
+      const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）'
+        : composerMode === 'pause' ? ((ta.value.trim() || imgB64)
+          ? '插话并重新规划（会停下当前任务，保留已完成的步骤）' : '暂停任务')
         : composerMode === 'resume' ? '继续上次任务（输入框有字则发送新消息）'
         : (busy ? '正在发送…' : '发送消息');
       button.setAttribute('aria-label', label);
@@ -2321,16 +2327,23 @@
       // 续跑也走这条主链路：resumeTurn 把 pendingResumeOf 置位后调进来，
       // 带上 resume_of 发给同一条聊天 SSE 通道。
       const resumeOf = pendingResumeOf; pendingResumeOf = null;
+      // 插话同样复用这条链路：带 interject_of 发给同一个 SSE 通道，
+      // 服务端把旧 run 停成 paused/interjected 并另起一个带检查点的新 run。
+      const interjectOf = pendingInterjectOf; pendingInterjectOf = null;
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) return;
+      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) {
+        if (!interjectOf) return;
+      }
+      if (interjectOf && !text && !imgB64) return;
       clearTokenRate();
       submitPending = true;
       updateComposer();
       let scopeReady;
       try { scopeReady = await loadRecordScope(); }
       finally { submitPending = false; updateComposer(); }
-      if (!scopeReady || busy) return;
+      // 插话时 busy 是真的（旧任务还在收尾），但它不是"不能发"的理由。
+      if (!scopeReady || (busy && !interjectOf)) return;
       if (attachment && attachment.failed) return;
       if (attachment && attachment.kind === 'image' && !imgB64) {
         attachment.status = '图片尚未读取完成';
@@ -2585,6 +2598,19 @@
         if (streamDone) return;
         if (evt.type === 'model_request_started') {
           startTokenRate();
+        } else if (evt.type === 'image') {
+          // 图片四段状态各有各的话：收到 / 分析中 / 看不了 / 已看到。
+          // 「看不了」必须说出来 —— 否则她答的是猜的，用户却以为她看过了。
+          if (evt.stage === 'describe') {
+            statusEl.textContent = evt.ok ? '图片已看懂，正在回复 '
+              : '视觉模型不可用（' + String(evt.msg || '没有返回描述') + '），她看不到这张图 ';
+            if (!evt.ok) toast('视觉模型不可用，她看不到这张图');
+          } else {
+            statusEl.textContent = evt.ok ? '图片已收到'
+              : '图片没收到：' + String(evt.msg || evt.status || '未知原因');
+            if (!evt.ok) toast(String(evt.msg || '图片没有送进模型'));
+          }
+          if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'token_rate') {
           finishTokenRate(evt);
         } else if (evt.type === 'agent_run') {
@@ -2695,6 +2721,7 @@
       const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId,
         conversation_id: activeConversationId, session_id: activeConversationId };
       if (resumeOf) chatPayload.resume_of = resumeOf;
+        if (interjectOf) chatPayload.interject_of = interjectOf;
         if (sendingImg) chatPayload.img = sendingImg;
         if (sendingAttachments.length) chatPayload.attachments = sendingAttachments;
         // 附件走普通 JSON 元数据请求；二进制已经在此前分块上传，
@@ -2768,6 +2795,13 @@
     function composerAction() {
       const ta = view.querySelector('#ta');
       if (composerMode === 'uncertain' && !ta.value.trim()) { if (liveReconcile) void liveReconcile(); else void loadMsgs(true); return; }
+      // 执行中输入了内容 = 插话：停掉后续调度，带着进度重新规划。
+      // 输入框空着才是"暂停"。两者都落在同一个按钮上，靠有没有文字区分。
+      if (composerMode === 'pause' && activeRunId && (ta.value.trim() || imgB64)) {
+        pendingInterjectOf = activeRunId;
+        send();
+        return;
+      }
       if (composerMode === 'pause' && activeRunId) { firePause(); return; }
       if (composerMode === 'resume' && resumableRunId &&
           !ta.value.trim() && !imgB64 && !attachment) { resumeTurn(resumableRunId); return; }

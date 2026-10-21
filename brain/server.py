@@ -154,6 +154,108 @@ CHAT_LOCK_WAIT = 300
 # 顺便挡掉"报个超大 Content-Length 把内存打满"。
 MAX_BODY = 12 * 1024 * 1024
 
+# 单张聊天图片上限，与客户端 ATTACH_IMAGE_MAX 对齐。模型看不到超限的图，
+# 与其悄悄截断，不如明确告诉她"这张图没收到"。
+IMAGE_MAX_BYTES = 8 * 1024 * 1024
+IMAGE_DESC_TTL = 3600
+_IMAGE_DESC_CACHE = {}
+
+IMAGE_REJECT_TEXT = {
+    'empty': '图片数据是空的',
+    'not_base64': '图片数据不是有效的 base64',
+    'too_large': '图片超过 8 MB 上限，没有送进视觉模型',
+}
+
+
+def _decode_turn_image(img_b64):
+    """校验并解码这一轮带的图片，返回 (blob, 拒绝原因)。
+
+    校验放在服务端做，因为"客户端已检查"不能当作凭据：任何能直连 Brain 的
+    调用方都可以跳过前端校验。拒绝原因分层，便于界面区分是读取失败、上传
+    失败还是超限。
+    """
+    raw = str(img_b64 or '').strip()
+    if not raw:
+        return None, 'empty'
+    if raw.startswith('data:'):
+        raw = raw.split(',', 1)[-1]
+    # base64 的宽松解码会把 "@@@@" 当成空串，那样就分不清"没给图"和
+    # "给了垃圾"，界面上两种情况该说的话不一样。
+    import re
+    if not re.fullmatch(r'[A-Za-z0-9+/=\s]+', raw):
+        return None, 'not_base64'
+    try:
+        blob = base64.b64decode(raw, validate=False)
+    except Exception:
+        return None, 'not_base64'
+    if not blob:
+        return None, 'empty'
+    if len(blob) > IMAGE_MAX_BYTES:
+        return None, 'too_large'
+    return blob, None
+
+
+def _describe_turn_image(blob):
+    """视觉分析，按内容哈希缓存，返回 (描述, 错误原因)。
+
+    同一张图在一小时内只烧一次视觉调用：客户端重连、同图重发、以及
+    "先问一句再追问一句"都会重复贴同一张图，重复调用纯属浪费。
+    """
+    import hashlib
+    key = hashlib.sha256(blob).hexdigest()
+    hit = _IMAGE_DESC_CACHE.get(key)
+    if hit and time.time() - hit[1] < IMAGE_DESC_TTL:
+        print("[视觉] 命中缓存，未重复调用视觉模型", flush=True)
+        return hit[0], None
+    try:
+        import vision
+        desc = str(vision.describe_bytes(blob, API_CFG) or '').strip()
+    except Exception as e:
+        print(f"[视觉] 分析失败：{e}", flush=True)
+        return '', str(e)[:200]
+    if desc:
+        # 有界缓存：图片描述只用来省一次调用，不值得无限增长。
+        if len(_IMAGE_DESC_CACHE) >= 32:
+            _IMAGE_DESC_CACHE.pop(next(iter(_IMAGE_DESC_CACHE)))
+        _IMAGE_DESC_CACHE[key] = (desc, time.time())
+    return desc, None
+
+
+def _image_note(desc, rejected=None):
+    """把"这一轮有没有看到图"写进她读到的文本。
+
+    🔴 看不到图时**必须说一声**。什么都不加，她就不知道他发过图，会把
+    一张截图当没发生过；人设规则靠"（他发的图：…）"与"没看清"两档区分
+    "看到了"和"看不到"，绝不能让她自己编。
+    """
+    if rejected:
+        return "（他发了张图片，但%s，没看到内容）" % IMAGE_REJECT_TEXT.get(rejected, rejected)
+    if desc:
+        return "（他发的图：%s）" % desc
+    return "（他发了张图片，没看清）"
+
+
+def _save_turn_image(blob, src=None, desc=''):
+    """把这一轮的图存进 uploads，返回落盘路径（失败返回空串）。"""
+    try:
+        from paths import UPLOAD_DIR
+        d = str(UPLOAD_DIR)
+        os.makedirs(d, exist_ok=True)
+        img_path = os.path.join(d, "u_%s_%06d.jpg" % (
+            time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000000) % 1000000))
+        with open(img_path, "wb") as f:
+            f.write(blob)
+        try:
+            if src and str(src).startswith("wechat"):
+                import stickers as _stk
+                _stk.save_bytes(blob, desc=str(desc or ''), src=str(src))
+        except Exception:
+            pass
+        return img_path
+    except Exception as e:
+        print(f"[大脑] 图片落盘失败（不影响回复）：{e}", flush=True)
+        return ''
+
 # ── 设备 Token 权限矩阵（默认拒绝）─────────────────────────────────
 # 主人钥匙（brain token）：全部 API。
 # 设备 token 分两种角色（devices.ROLES）：
@@ -1570,6 +1672,15 @@ def start_remote_api(brain):
                     if _ci.get('fixed_overflow'):
                         raise ValueError('系统提示、工具与当前消息超过输入预算')
                     messages.extend(copy.deepcopy(_hist))
+                    # 上一轮失败过就先摆出事实：否则她只看到"新任务"，
+                    # 用户一问"刚才为什么失败"就只能猜（实测会猜成"你拒绝了审批"）。
+                    # 台账按 owner 隔离，owner 已含身份 + 渠道 + 会话。
+                    try:
+                        _brief = agent_runs.failure_brief(self._display_owner(body))
+                    except Exception:
+                        _brief = ''
+                    if _brief:
+                        messages.append({'role': 'user', 'content': _brief})
                 # Completed runs can inform the next request in this owner/session.
                 # Partial/error/tool transcripts stay outside model history.
                 messages.append({'role': 'user', 'content': brain._user_msg_with_rules(text)})
@@ -1617,6 +1728,12 @@ def start_remote_api(brain):
                     elif method == 'POST' and parts[4:] == ['resume']:
                         import copy as _copy
                         self._json(200, {'ok': True, **agent_runs.resume(
+                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
+                    elif method == 'POST' and parts[4:] == ['interject']:
+                        # 执行中插话：旧 run 停成 paused/interjected，另起一个
+                        # run 带检查点重新规划。和 pause/cancel/新消息语义分开。
+                        import copy as _copy
+                        self._json(200, {'ok': True, **agent_runs.interject(
                             rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
                     elif method == 'GET' and parts[4:] == ['events']:
                         after = int(_query_param(self.path, 'after') or 0)
@@ -2619,6 +2736,16 @@ def start_remote_api(brain):
                         pass
                     _snap = {}
                     import display_turns as _display
+                    # 图片在进模型前先校验：超限/损坏的图送进去只会白烧一次
+                    # 视觉调用，而且拿不到描述时她只能猜。两条聊天路径用同一套
+                    # 判定，免得流式能收、普通接口悄悄放过去。
+                    if body.get("img"):
+                        _img_blob, _img_err = _decode_turn_image(body.get("img"))
+                        if _img_err:
+                            self._json(400, {"ok": False,
+                                "err": IMAGE_REJECT_TEXT.get(_img_err, _img_err)})
+                            return
+                        body['img'] = base64.b64encode(_img_blob).decode()
                     _rid = body.get('request_id') if not body.get('dry_run') else None
                     _display_owner = self._display_owner(body)
                     if _rid:
@@ -2751,6 +2878,30 @@ def start_remote_api(brain):
                         _lt.set_context(_src, str(body.get("sender_id") or ""))
                     except Exception:
                         pass
+                    # 图片：先解码校验，再视觉分析，最后把结果写进她读到的文本。
+                    # 🔴 必须放在 Agent 判定**之前**。以前 img 只出现在
+                    # `not body.get('img')` 这个排除条件里 —— 带图的请求因此
+                    # 被踢出 Agent 分支，又落进从不消费 img 的流式分支，
+                    # 图就凭空消失了：上传成功，模型却什么都没看到。
+                    _disp_text = _in_text          # 存档/幂等用原文，不带图片描述
+                    _img_state, _img_path = None, ''
+                    if body.get("img"):
+                        _blob, _img_err = _decode_turn_image(body.get("img"))
+                        if _img_err:
+                            _img_state = dict(stage='receive', ok=False,
+                                              status=_img_err,
+                                              msg=IMAGE_REJECT_TEXT.get(_img_err, _img_err))
+                            _in_text = (_in_text + " " if _in_text else "") + _image_note('', _img_err)
+                        else:
+                            _img_state = dict(stage='receive', ok=True,
+                                              status='received', bytes=len(_blob))
+                            _desc, _vis_err = _describe_turn_image(_blob)
+                            _img_state['describe'] = dict(
+                                ok=bool(_desc),
+                                status='described' if _desc else 'unavailable',
+                                msg='' if _desc else (_vis_err or '视觉模型没有返回描述'))
+                            _in_text = (_in_text + " " if _in_text else "") + _image_note(_desc)
+                            _img_path = _save_turn_image(_blob, src=_src, desc=_desc)
                     _agent_item = None
                     import tools as _run_tools
                     import agent_runs as _runs
@@ -2765,7 +2916,22 @@ def start_remote_api(brain):
                     # request_id，下面新建分支的 find_request 会立刻查到它，拿空
                     # text 再 create 一次只会报"request_id 已用于不同请求"。
                     _resume_of = str(body.get('resume_of') or '')
-                    if _resume_of and self._is_admin() and _src == 'pc' and body.get('request_id'):
+                    # 插话优先于续跑：两者都可能带同一个 request_id，必须互斥，
+                    # 否则前一个刚建好 run，后一个就会报"request_id 已用于不同请求"。
+                    _interject_of = str(body.get('interject_of') or '')
+                    if _interject_of and self._is_admin() and _src == 'pc' and body.get('request_id'):
+                        import copy as _rcopy
+                        try:
+                            _agent_item = _runs.interject(_interject_of, _owner,
+                                _rcopy.deepcopy(API_CFG),
+                                dict(request_id=body.get('request_id'),
+                                     conversation_id=body.get('conversation_id') or '',
+                                     src=_src, intent=_in_text),
+                                brain=brain, start=True)
+                        except ValueError as _exc:
+                            self._json(400, {'ok': False, 'err': str(_exc)})
+                            return
+                    elif _resume_of and self._is_admin() and _src == 'pc' and body.get('request_id'):
                         import copy as _rcopy
                         try:
                             _agent_item = _runs.resume(_resume_of, _owner, _rcopy.deepcopy(API_CFG),
@@ -2774,11 +2940,14 @@ def start_remote_api(brain):
                             self._json(400, {'ok': False, 'err': str(_exc)})
                             return
                     elif (self._is_admin() and _src == 'pc' and body.get('request_id') and
-                            (_existing_run or (not _existing_legacy and not body.get('img')
+                            (_existing_run or (not _existing_legacy
                              and _run_tools.schema_needed(_in_text) and isinstance(_agent_cfg, dict)
                              and _agent_cfg.get('enabled', True)))):
                         try:
-                            _agent_item = self._new_agent_run(dict(body, src=_src))
+                            # 把带图片描述的那份文本交给 run：Agent 也看得到图。
+                            # 曾经这里是 `not body.get('img')`，带图的请求一律
+                            # 被排除在 Agent 之外，而普通流式分支又不消费 img。
+                            _agent_item = self._new_agent_run(dict(body, src=_src, text=_in_text))
                         except ValueError:
                             self._json(400, {'ok': False, 'err': '任务参数、预算或 request_id 无效'})
                             return
@@ -2816,8 +2985,20 @@ def start_remote_api(brain):
                     if _agent_item:
                         _events = self._agent_chat_events(_agent_item, self._display_owner(body), _agent_after)
                     else:
-                        _events = _display.stream(_factory, self._display_owner(body), body['request_id'], _in_text) if body.get('request_id') else _factory()
+                        # 存档与幂等键用原文：图片描述是这一轮的临时上下文，
+                        # 写进存档会在下一轮被再读一遍，越滚越长。
+                        _events = _display.stream(_factory, self._display_owner(body), body['request_id'], _disp_text) if body.get('request_id') else _factory()
                     try:
+                        # 图片状态先发：她看没看到图，界面要立刻知道，
+                        # 而不是等正文出来才发现答案是猜的。接收与分析分两条
+                        # 事件发，界面才能分别显示「收到了」和「看懂了/看不了」。
+                        if _img_state:
+                            _recv = {k: v for k, v in _img_state.items() if k != 'describe'}
+                            for _ev in [_recv] + ([dict(_img_state['describe'], stage='describe')]
+                                                  if _img_state.get('describe') else []):
+                                self.wfile.write(('data: ' + json.dumps(
+                                    dict(_ev, type='image'), ensure_ascii=False) + '\n\n').encode())
+                                self.wfile.flush()
                         for evt in _events:
                             self.wfile.write(('data: ' + json.dumps(evt, ensure_ascii=False) + '\n\n').encode())
                             self.wfile.flush()

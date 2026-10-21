@@ -376,6 +376,29 @@ class StopToken:
             pass
 
 
+def merge_identifier(current, fragment):
+    """Merge a streamed tool id/name without duplicating repeated sends.
+
+    Gateways disagree on identifier streaming: some send the whole name once,
+    some repeat it in every delta, a few split it across deltas. Concatenating
+    unconditionally corrupts the first two shapes, which is how a valid call
+    reaches the dispatcher as an unknown tool name.
+    """
+    if not fragment:
+        return current
+    if not current:
+        return fragment
+    if fragment == current or current.startswith(fragment):
+        return current              # repeated send, or a shorter repeat
+    if fragment.startswith(current):
+        return fragment             # longer repeat: take the fuller value
+    return current + fragment       # genuine split fragment
+
+
+def _merge_identifier(current, fragment):
+    return merge_identifier(current, fragment)
+
+
 def completion_events(provider, payload, timeout=180, stop=None):
     """One request only. Yield deltas then a normalized completion, never retry.
 
@@ -429,16 +452,24 @@ def completion_events(provider, payload, timeout=180, stop=None):
                             raise ValueError('invalid tool index')
                         entry = calls.setdefault(index, {'id': '', 'type': 'function',
                             'function': {'name': '', 'arguments': ''}})
-                        if call.get('type', 'function') != 'function':
+                        if call.get('type', 'function') not in ('function', None):
                             raise ValueError('invalid tool type')
                         fn = call.get('function') or {}
+                        # Only arguments is a genuine stream fragment. Identifiers are
+                        # sent whole by some gateways and repeated in every delta by
+                        # others; blind concatenation turns a legal call into an
+                        # unknown tool ("read_file" -> "read_fileread_file") and
+                        # overruns the call-id length limit.
                         for source, target, key in [(call, entry, 'id'),
                             (fn, entry['function'], 'name'), (fn, entry['function'], 'arguments')]:
                             value = source.get(key)
                             if value is not None:
                                 if not isinstance(value, str):
                                     raise ValueError('invalid tool fragment')
-                                target[key] += value
+                                if key == 'arguments':
+                                    target[key] += value
+                                else:
+                                    target[key] = _merge_identifier(target[key], value)
                     for field, buffer, kind in [('content', content, 'text_delta'),
                         ('reasoning_content', reasoning, 'think_delta')]:
                         value = delta.get(field)

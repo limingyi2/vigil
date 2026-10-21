@@ -175,6 +175,18 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .agent-step summary::-webkit-details-marker { display:none; }
 .chatwrap .agent-step-icon { flex:none; width:14px; text-align:center; }
 .chatwrap .agent-step-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:inherit; font:inherit; min-width:0; }
+/* 失败分类徽章 + 一句人话原因：都在 summary 里，步骤收起时也看得见 */
+.chatwrap .agent-step-badge { flex:none; padding:0 6px; border-radius:999px; font-size:11px; line-height:1.5; border:1px solid currentColor; }
+.chatwrap .agent-step-badge[data-error="permission_denied"],
+.chatwrap .agent-step-badge[data-error="approval_denied"] { color:var(--err); }
+.chatwrap .agent-step-badge[data-error="client_offline"],
+.chatwrap .agent-step-badge[data-error="client_busy"] { color:#c08a2e; }
+.chatwrap .agent-step-badge[data-error="unknown"],
+.chatwrap .agent-step-badge[data-error="cancelled"] { color:var(--chat-muted); opacity:.85; }
+.chatwrap .agent-step-badge[data-error="tool_failed"],
+.chatwrap .agent-step-badge[data-error="invalid_args"],
+.chatwrap .agent-step-badge[data-error="empty_output"] { color:var(--err); }
+.chatwrap .agent-step-why { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; opacity:.85; }
 .chatwrap .agent-step pre { max-height:220px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin:4px 0 12px 22px; font:12px/1.6 var(--mono); }
 .chatwrap .agent-detail-label { margin:8px 0 0 22px; font-size:12px; }
 .chatwrap .agent-commentary { color:var(--chat-text); font-size:var(--type-body); line-height:1.8; margin:12px 0; }

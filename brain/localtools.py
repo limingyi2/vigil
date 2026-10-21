@@ -483,17 +483,31 @@ def call(name, args, wait=None):
     #   —— cancel()（用户点"停止"）对这个调用就完全失效了。
     global _CANCEL
     receipt = {'tool': name, 'state': 'not_dispatched'}
+
+    def fail(state, reason, detail):
+        """Record why a call did not return a result.
+
+        `state` alone cannot distinguish "the client was offline" from "he
+        refused" from "the command exited non-zero" — every one of those used to
+        reach the UI as the same empty result. The reason/detail pair is what the
+        chat surface and the next turn's failure summary actually show.
+        """
+        receipt.update(state=state, reason=reason, detail=str(detail or '')[:400])
+        return receipt
+
     if _RECEIPTS.get() is not None:
         _RECEIPTS.get().append(receipt)
     if _run_stopped():
+        fail('not_dispatched', 'cancelled', '任务已停止，未派发本机工具')
         return '任务已停止，未派发本机工具。【别重试】'
     if name not in REMOTE_TOOLS:
+        fail('not_dispatched', 'unknown_tool', '没有这个本地工具：%s' % name)
         return "没有这个本地工具：%s" % name
     spec = REMOTE_TOOLS[name]
     risk = spec.get("risk") or ("dangerous" if spec.get("danger") else "safe")
     ok, why = clearance(risk)
     if not ok:
-        receipt['state'] = 'denied'
+        fail('denied', 'permission_denied', why)
         _audit("denied", name, args, why)
         _STATS["denied"] = _STATS.get("denied", 0) + 1
         _ctx = _CTX.get()
@@ -509,6 +523,8 @@ def call(name, args, wait=None):
         _STATS["timeout"] = _STATS.get("timeout", 0) + 1
         _audit("timeout", name, args,
                "没有在线的电脑（%d 秒内没有任何客户端来轮询过）" % POLL_STALE)
+        fail('not_dispatched', 'client_offline',
+             '%d 秒内没有任何客户端来轮询，工具从未发出' % POLL_STALE)
         return ("没有在线的电脑能执行「%s」—— 他电脑上的客户端没连上来。"
                 "【别重试】跟他说一声，让他把电脑上的 Vigil 客户端打开再试。"
                 % name)
@@ -525,14 +541,18 @@ def call(name, args, wait=None):
         waited = 0.0
         while (_QUEUE or _ACTIVE) and waited < 30:
             if _run_stopped():
+                fail('not_dispatched', 'cancelled', '排队期间任务被停止')
                 return '任务已停止，未派发本机工具。【别重试】'
             _COND.wait(1.0)
             waited += 1.0
         if _QUEUE or _ACTIVE:
             _STATS["busy"] = _STATS.get("busy", 0) + 1
+            fail('not_dispatched', 'client_busy',
+                 '上一件本地操作还在执行，排队 30 秒未轮到')
             return ("上一件本地操作还在进行中，这个先排队了但 30 秒没排上。"
                     "【可重试】等几秒再试一次，或者先做别的。")
         if _run_stopped():
+            fail('not_dispatched', 'cancelled', '入队前任务被停止')
             return '任务已停止，未派发本机工具。【别重试】'
         _QUEUE[c.id] = c
         receipt['state'] = 'unknown'
@@ -546,7 +566,11 @@ def call(name, args, wait=None):
                 _QUEUE.pop(c.id, None)
                 _ACTIVE.pop(c.id, None)
                 _STATS["cancelled"] = _STATS.get("cancelled", 0) + 1
-                receipt['state'] = 'unknown' if c.claimed_at else 'not_dispatched'
+                if c.claimed_at:
+                    fail('unknown', 'cancelled_in_flight',
+                         '任务在客户端执行期间被停止，无法确认是否已生效')
+                else:
+                    fail('not_dispatched', 'cancelled', '任务在派发前被停止')
                 return "你停止了当前操作。【别重试】这是你主动取消的，不是出错。"
             _COND.wait(0.5)
         if not c.done:
@@ -554,14 +578,17 @@ def call(name, args, wait=None):
             _ACTIVE.pop(c.id, None)
             _STATS["timeout"] += 1
             if c.claimed_at:
+                fail('unknown', 'timeout_after_dispatch',
+                     '客户端已认领但 %d 秒内没回结果，执行结果未知' % w)
                 return ("本机那边的「%s」执行超时了（等了 %d 秒还没回）。"
                         "【别重试】这台电脑可能卡住了或断了，跟他说一声，"
                         "别当它做完了。" % (name, w))
-            receipt['state'] = 'not_dispatched'
+            fail('not_dispatched', 'client_offline',
+                 '客户端未认领这条调用，%d 秒内没有设备来取' % w)
             return ("没有在线的电脑能执行「%s」—— 客户端没连着，或者没开这个能力。"
                     "【别重试】先确认客户端在线，别当成已经做完了。" % name)
         if c.refused:
-            receipt['state'] = 'denied'
+            fail('denied', 'approval_denied', c.result or '用户拒绝了这次操作')
             # 拒绝不是"出错"：说成出错，她会以为可以重试，或者自己换个办法绕过去。
             _STATS["refused"] += 1
             return c.result
@@ -573,9 +600,12 @@ def call(name, args, wait=None):
                            ("timeout", "timed out", "connection", "disconnect",
                             "busy", "econnrefused", "暂不可用"))
             tag = "【可重试】" if retryable else "【别重试】"
+            fail('failed', 'tool_failed', c.err)
             return "本机执行「%s」出错：%s %s" % (name, c.err, tag)
         _STATS["ok"] += 1
         receipt['state'] = 'returned'
+        if not (c.result or '').strip():
+            fail('returned', 'empty_output', '工具执行完成但没有任何输出')
         return c.result or "（%s 执行完了，但没有输出）" % name
 
 
