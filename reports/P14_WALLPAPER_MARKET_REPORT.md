@@ -208,4 +208,4 @@ vigil-plugins：`market.json`、`plugins/wallpaper/README.md`、`__init__.py`、
 - 本机 Python 构建器重建、Manifest 文件摘要逐项验证及运行时/索引/归档版本一致性检查：PASS。
 - GitHub Actions `Validate market packages` run `39615776316`（Linux/Python 3.12）：PASS。
 - GitHub Draft PR #1 标题已改为 `Wallpaper 3.2.1: local media and playlists`；未合并。市场索引 URL 固定指向含 ZIP 的提交 `95f96c6...`。
-- Vigil P14 分支已快进纳入远端的媒体票据续签和内置插件版本修复：`f94fded189451663b58db1621c060432e02c3365`。该内置候选源码版本为 3.2.0；公开插件市场候选现为 3.2.1，后者是对其运行时元数据的补丁版本。
+- Vigil P14 分支已快进纳入远端的媒体票据续签和内置插件版本修复：`f94fded189451663b58db1621c060432e02c3365`。Vigil P14 内置候选源码、插件 Manifest、运行时版本及公开插件候选现均为 3.2.1。默认市场仍由 Draft PR 控制，未提前更新。
