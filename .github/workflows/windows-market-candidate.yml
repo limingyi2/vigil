@@ -37,13 +37,28 @@ jobs:
         run: npm ci --prefix client
       - name: Build the candidate installer (no extended acceptance suite)
         run: python scripts/build_release.py --candidate
+      - name: Verify installer against build manifest
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $PWD 'client/dist-release'
+          $manifest = Get-Content (Join-Path $releaseDir 'release-manifest.json') -Raw | ConvertFrom-Json
+          $installer = Join-Path $releaseDir $manifest.setup_file
+          $contents = [System.IO.Path]::ChangeExtension($installer, '.contents.json')
+          if (-not $manifest.candidate) { throw 'Expected an unpublished candidate build' }
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Installer missing: $installer" }
+          if (-not (Test-Path -LiteralPath $contents -PathType Leaf)) { throw "Installer contents manifest missing: $contents" }
+          $file = Get-Item -LiteralPath $installer
+          if ($file.Length -ne [long]$manifest.size) { throw 'Installer size does not match release-manifest.json' }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne ([string]$manifest.sha256).ToLowerInvariant()) { throw 'Installer SHA-256 does not match release-manifest.json' }
+          Write-Output "Verified $($manifest.setup_file) ($($file.Length) bytes, SHA-256 $hash)"
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: vigil-windows-plugin-market-code30
           path: |
-            client/dist-release/Vigil.Setup.1.1.8-p9.3.20261020.exe
+            client/dist-release/Vigil.Setup.*.exe
             client/dist-release/release-manifest.json
-            client/dist-release/Vigil.Setup.1.1.8-p9.3.20261020.contents.json
+            client/dist-release/Vigil.Setup.*.contents.json
           if-no-files-found: error
           retention-days: 14
