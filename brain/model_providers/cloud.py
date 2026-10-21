@@ -76,6 +76,18 @@ class CloudProvider(ModelProvider):
     def _headers(self):
         return {"Authorization": "Bearer " + self.api_key}
 
+    def assistant_history_message(self, message, content_override=None, tool_calls=None):
+        out = super().assistant_history_message(message, content_override, tool_calls)
+        # Some OpenAI-compatible endpoints require their reasoning field to be
+        # echoed alongside tool calls. This is opt-in per endpoint capability;
+        # no provider/model name inference or cross-provider replay occurs.
+        opts = (self._cap_cfg.get('model_capabilities') or {}) if isinstance(self._cap_cfg, dict) else {}
+        field = opts.get('reasoning_history_field') if isinstance(opts, dict) else None
+        reasoning = message.get('reasoning') or message.get('reasoning_content')
+        if field == 'reasoning_content' and isinstance(reasoning, str) and reasoning:
+            out[field] = reasoning
+        return out
+
     def chat(self, payload, timeout=90):
         if not self.api_base or not self.api_key:
             # 与 brain.py 旧门语义一致：没配 key 时上层直接判"没稿"，

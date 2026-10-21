@@ -869,7 +869,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                         token_usage=usage_data, aggregate=item.get('token_usage_totals')))
                     _save(db, item)
                     if (completion.get('content') or '').strip():
-                        msgs.append(dict(role='assistant', content=completion['content']))
+                        msgs.append(provider.assistant_history_message(completion,
+                            content_override=completion['content']))
                     msgs.append(dict(role='user', content=(
                         '（系统提示：你上一条回复因达到单次最大输出长度被截断。'
                         '请从中断处继续完成任务，不要重复已说过的内容；'
@@ -921,9 +922,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     # 救回来的调用要重新装成**原生** tool_calls 写进记录，让循环按原
                     # 生协议继续。绝不能落进下面 xml_mode 的单批次兼容分支 —— 那条
                     # 路只允许一轮工具就强制总结，长任务会在第一轮末尾被腰斩。
-                    recovered_msg = dict(
-                        role='assistant',
-                        content=completion.get('content') or None,
+                    recovered_msg = provider.assistant_history_message(completion,
+                        content_override=completion.get('content') or None,
                         tool_calls=[dict(id=cid, type='function',
                                          function=dict(name=name, arguments=_json(args)))
                                     for cid, name, args, _sig in recovered])
@@ -963,8 +963,9 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             if recovered_msg is not None:
                 msgs.append(recovered_msg)
             elif not xml_mode:
-                msgs.append(dict(role='assistant', content=completion['content'] or None,
-                                     tool_calls=completion['tool_calls']))
+                msgs.append(provider.assistant_history_message(completion,
+                    content_override=completion.get('content') or None,
+                    tool_calls=completion['tool_calls']))
             # Some reasoning providers require the previous reasoning in the live
             # tool transcript. It is never copied to the ledger or model history.
             if completion.get('reasoning') and msgs and msgs[-1].get('role') == 'assistant':

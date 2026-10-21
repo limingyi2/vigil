@@ -1341,11 +1341,9 @@ class Brain:
                 else:
                     # 原生 FC 模式：OpenAI 格式回灌
                     # 1) 原样回传带 tool_calls 的 assistant 消息
-                    msgs.append({
-                        "role": "assistant",
-                        "content": _strip_xml_tool_calls(_raw_content),
-                        "tool_calls": tcs,
-                    })
+                    history_msg = mp.assistant_history_message(msg,
+                        content_override=_strip_xml_tool_calls(_raw_content), tool_calls=tcs)
+                    msgs.append(history_msg)
                     # 2) 每个调用配一条 role:tool 结果（tool_call_id 对齐）
                     for tc, (_name, _result) in zip(tcs, _tool_results):
                         msgs.append({

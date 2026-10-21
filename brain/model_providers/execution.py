@@ -52,7 +52,7 @@ def capabilities(cfg, provider=None):
     # Whitelist non-secret metadata before hashing or caching.
     opts = {k: overrides.get(k) for k in ('max_output_tokens', 'input_tokens',
         'context_tokens', 'output_parameter', 'requires_output_limit', 'compat_output_tokens',
-        'reasoning', 'reasoning_parameter', 'usage', 'native_tool_calls')}
+        'reasoning', 'reasoning_parameter', 'reasoning_history_field', 'usage', 'native_tool_calls')}
     key = (vendor, endpoint, model)
     signature = hashlib.sha256(json.dumps(opts, sort_keys=True).encode()).hexdigest()
     with _LOCK:
@@ -75,6 +75,8 @@ def capabilities(cfg, provider=None):
     record['reasoning_supported'] = opts['reasoning'] is True
     record['reasoning_parameter'] = (str(opts['reasoning_parameter'])
         if opts['reasoning_parameter'] in ('reasoning_effort', 'thinking', 'think') else None)
+    record['reasoning_history_field'] = (opts['reasoning_history_field']
+        if opts['reasoning_history_field'] == 'reasoning_content' else None)
     record['usage_supported'] = opts['usage'] is not False
     record['native_tool_calls'] = opts['native_tool_calls'] is not False
     record['reasoning_strategies'] = list(REASONING_STRATEGIES) if record['reasoning_supported'] else []

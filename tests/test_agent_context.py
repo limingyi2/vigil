@@ -54,3 +54,25 @@ def test_provider_normalize_keeps_common_usage_details_only():
     assert out['usage'] == {'prompt_tokens': 50, 'completion_tokens': 12,
         'prompt_tokens_details': {'cached_tokens': 20},
         'completion_tokens_details': {'reasoning_tokens': 4}}
+
+
+def test_reasoning_history_replay_is_explicit_and_provider_scoped():
+    from model_providers.cloud import CloudProvider
+    from model_providers.ollama import OllamaProvider
+
+    response = {'content': 'tool call', 'reasoning': 'private provider reasoning',
+                'tool_calls': [{'id': 'c1', 'type': 'function',
+                    'function': {'name': 'read', 'arguments': '{}'}}]}
+    default = CloudProvider({'provider': 'custom', 'model': 'm'})
+    replay = default.assistant_history_message(response)
+    assert 'reasoning_content' not in replay
+    assert replay['tool_calls'] == response['tool_calls']
+
+    opted_in = CloudProvider({'provider': 'custom', 'model': 'm',
+        'model_capabilities': {'reasoning_history_field': 'reasoning_content'}})
+    replay = opted_in.assistant_history_message(response)
+    assert replay['reasoning_content'] == response['reasoning']
+
+    local = OllamaProvider({'model': 'm', 'think': True})
+    replay = local.assistant_history_message(response)
+    assert 'reasoning_content' not in replay
