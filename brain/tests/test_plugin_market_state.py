@@ -125,13 +125,13 @@ def test_refresh_pulls_updated_manifest_from_a_fake_local_git_remote():
         assert [p["name"] for p in listed["plugins"]] == ["fixture"]
 
 
-def test_raw_urls_map_to_mirror_candidates_with_raw_last():
+def test_raw_urls_map_to_live_mirror_first_with_raw_last():
     url = "https://raw.githubusercontent.com/limingyi2/vigil-plugins/main/market.json"
     urls = market._candidate_urls(url)
-    assert urls[0] == "https://cdn.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
-    assert urls[1] == "https://fastly.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
-    assert urls[2] == "https://testingcf.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
-    assert urls[3] == "https://ghfast.top/" + url
+    assert urls[0] == "https://ghfast.top/" + url
+    assert urls[1] == "https://cdn.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
+    assert urls[2] == "https://fastly.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
+    assert urls[3] == "https://testingcf.jsdelivr.net/gh/limingyi2/vigil-plugins@main/market.json"
     assert urls[-1] == url
     # 非 GitHub Raw 地址原样透传，不做镜像映射
     assert market._candidate_urls("https://cdn.jsdelivr.net/gh/a/b@main/c.json") == [
@@ -162,14 +162,14 @@ def test_fetch_falls_through_to_first_reachable_mirror():
 
     def fake_urlopen(request, timeout):
         calls.append(urlparse(request.full_url).hostname)
-        if calls[-1] == "cdn.jsdelivr.net":
+        if calls[-1] in ("ghfast.top", "cdn.jsdelivr.net"):
             raise OSError("blocked")
         return FakeResponse()
 
     with patch.object(market, "urlopen", side_effect=fake_urlopen):
         data = market._fetch_bytes(url, 1024)
     assert data == b'{"plugins": []}'
-    assert calls == ["cdn.jsdelivr.net", "fastly.jsdelivr.net"]
+    assert calls == ["ghfast.top", "cdn.jsdelivr.net", "fastly.jsdelivr.net"]
     assert market._preferred_host["host"] == "fastly.jsdelivr.net"
     # 下一次下载直接命中记忆的源
     with patch.object(market, "urlopen", side_effect=fake_urlopen) as again:

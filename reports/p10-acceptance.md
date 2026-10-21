@@ -7,7 +7,7 @@
 - 证据：发送状态由 run 台账和 SSE 终态驱动；新增 `/api/agent/runs/active` 查询，run 保存 `conversation_id`。
 - 变更：刷新/切换会话恢复 queued/running 为暂停；迟到事件按 run ID、请求 ID、序号过滤；断流查询实际任务状态，running 不释放输入框。
 - 验收：`tests/test_p10_harness.py::test_active_run_is_session_scoped_and_survives_readback`、P2 Agent HTTP/run 全部通过。
-- 状态：PASS（浏览器连续 5 轮需 Electron 依赖后再跑）。
+- 状态：PASS；P2 Electron 回归已通过，包含断流、截断、取消、刷新恢复和渲染器异常检查。
 
 ## P10.2 跨模型适配
 
@@ -20,7 +20,7 @@
 
 - 统一 `tool` 事件包含 started/returned/error、唯一 step/call ID 和有界脱敏的参数/输出/错误。
 - UI 轻量行内显示执行中/完成/失败，详情使用原生折叠元素；重复事件更新同一行。
-- 状态：静态脚本检查 PASS；真实 Electron 截图 NOT RUN：worktree 缺少 `client/node_modules/electron`。
+- 状态：静态脚本检查 PASS；Electron P2 回归通过。基于用户原始截图的独立真实截图记录仍为 NOT RUN，本次环境只保存了脚本验收证据。
 
 ## P10.4 项目级自主审查
 
@@ -38,5 +38,6 @@
 
 - 新增/针对性：4 passed。
 - 关键既有套件：P2 Agent、Provider、Native FC、tools、run-mode、frontend invariants 全部通过。
-- 全仓：2 个既有 `brain/tests/test_plugin_market_state.py` 测试失败，均断言旧的 mirror 顺序（jsdelivr 首位），与本次改动无关。
-- Windows 安装包与 SHA-256：NOT RUN（未执行发布构建，未修改 master/未推送）。
+- 全仓：通过（`brain` 全量 pytest；3 个环境/外部依赖相关测试跳过）。镜像市场测试期望已同步当前 `origin/dev` 的 `ghfast.top` 首选顺序，并单独提交。
+- 客户端：`test-p2-stream-lifecycle.js` 17/17 通过；Electron `test-p2-electron.js` 7/7 通过。
+- Windows 安装包与 SHA-256：NOT RUN（未执行发布构建，未修改 master）。
