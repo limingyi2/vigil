@@ -1,4 +1,4 @@
-const { app, dialog } = require('electron');
+const { app, dialog, screen } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -99,10 +99,31 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     });
   }
   function encode(value) { return Buffer.from(String(value || ''), 'utf8').toString('base64'); }
+  // 目标窗口是独立顶层窗口，跟着绑定区域走，所以要的是屏幕物理像素：
+  // 渲染层给的是 CSS 坐标（相对内容区），这里加上内容区原点再按显示器缩放换算。
+  let lastBounds = null;
+  let boundsTimer = null;
   function boundsCommand(bounds) {
-    const dpr = Math.max(0.5, Math.min(4, Number(bounds && bounds.dpr) || 1));
-    const n = (key, fallback = 0) => Math.round((Number(bounds && bounds[key]) || fallback) * dpr);
-    return `BOUNDS\t${n('x')}\t${n('y')}\t${Math.max(1, n('width', 1))}\t${Math.max(1, n('height', 1))}`;
+    const target = getWindow();
+    if (!target || target.isDestroyed()) return null;
+    const content = target.getContentBounds();
+    const dip = {
+      x: content.x + (Number(bounds && bounds.x) || 0),
+      y: content.y + (Number(bounds && bounds.y) || 0),
+      width: Math.max(1, Number(bounds && bounds.width) || 1),
+      height: Math.max(1, Number(bounds && bounds.height) || 1),
+    };
+    const rect = screen.dipToScreenRect(target, dip);
+    return `BOUNDS\t${Math.round(rect.x)}\t${Math.round(rect.y)}\t${Math.max(1, Math.round(rect.width))}\t${Math.max(1, Math.round(rect.height))}`;
+  }
+  function pushBounds() {
+    if (!helper || !lastBounds) return;
+    const command = boundsCommand(lastBounds);
+    if (command) send(command);
+  }
+  function scheduleBoundsPush() {
+    if (boundsTimer) return;
+    boundsTimer = setTimeout(() => { boundsTimer = null; pushBounds(); }, 60);
   }
   function selectedExe(value) {
     const exePath = path.resolve(String(value || ''));
@@ -145,11 +166,19 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     startHelper(target);
     emit({ type: 'start-requested', exePath, profileName: String(profile && profile.name || '') });
     if (target && !target.isDestroyed()) target.focus();
-    send(`START\t${encode(exePath)}\t${encode(profile && profile.args)}\t${boundsCommand(bounds).split('\t').slice(1).join('\t')}`);
+    lastBounds = bounds || lastBounds;
+    const rectFields = (boundsCommand(bounds) || 'BOUNDS\t0\t0\t1\t1').split('\t').slice(1);
+    send(`START\t${encode(exePath)}\t${encode(profile && profile.args)}\t${rectFields.join('\t')}`);
     send('SHOW');
     return { ok: true, exePath, state: nativeState };
   });
-  const onBounds = (event, bounds) => { if (trusted(event) && helper) send(boundsCommand(bounds)); };
+  const onBounds = (event, bounds) => {
+    if (!trusted(event)) return;
+    lastBounds = bounds;
+    if (!helper) return;
+    const command = boundsCommand(bounds);
+    if (command) send(command);
+  };
   const onVisible = (event, visible) => { if (trusted(event) && helper) send(visible ? 'SHOW' : 'HIDE'); };
   const onAction = (event, action) => {
     if (!trusted(event) || !helper) return;
@@ -158,6 +187,13 @@ function createNativeWindowService({ ipcMain, getWindow }) {
   ipcMain.on('video-window:bounds', onBounds);
   ipcMain.on('video-window:visible', onVisible);
   ipcMain.on('video-window:action', onAction);
+  // 窗口被拖动/改大小时 CSS 坐标没变但屏幕位置变了，必须由主进程重算后补发。
+  const hostWindow = getWindow();
+  const onHostGeometry = () => scheduleBoundsPush();
+  if (hostWindow) {
+    hostWindow.on('move', onHostGeometry);
+    hostWindow.on('resize', onHostGeometry);
+  }
 
   return {
     hide: () => send('HIDE'),
@@ -185,6 +221,11 @@ function createNativeWindowService({ ipcMain, getWindow }) {
       ipcMain.removeListener('video-window:bounds', onBounds);
       ipcMain.removeListener('video-window:visible', onVisible);
       ipcMain.removeListener('video-window:action', onAction);
+      if (hostWindow && !hostWindow.isDestroyed()) {
+        hostWindow.removeListener('move', onHostGeometry);
+        hostWindow.removeListener('resize', onHostGeometry);
+      }
+      if (boundsTimer) { clearTimeout(boundsTimer); boundsTimer = null; }
     },
   };
 }

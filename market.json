@@ -4,8 +4,8 @@
   "plugins": [
     {
       "name": "wallpaper",
-      "desc": "恢复原版 Wallpaper Engine 插件：Workshop 自动探测、壁纸库、视频/网页壁纸、设置、透明背景、遮罩与毛玻璃。",
-      "version": "3.0.1",
+      "desc": "Wallpaper Engine 壁纸接入：创意工坊扫描、视频/网页播放，场景壁纸由 WebWallGL 实时渲染，带透明度/遮罩/毛玻璃/场景适配与帧率。",
+      "version": "3.2.1",
       "author": "limingyi2",
       "tags": [
         "Wallpaper Engine",
@@ -24,10 +24,10 @@
         "wallpaper.media.read"
       ],
       "artifact": {
-        "url": "https://raw.githubusercontent.com/limingyi2/vigil-plugins/c1c9b63703c6d733688640784a0be55421c67909/plugins/wallpaper/wallpaper-3.0.1.zip",
-        "sha256": "4e551ae17783870872be7c2635d1a396fe5269fa032b514aff7e536940b22616"
+        "url": "https://raw.githubusercontent.com/limingyi2/vigil-plugins/6a032adeca508876bc213f28ddd5015230da782c/plugins/wallpaper/wallpaper-3.2.1.zip",
+        "sha256": "ffaf0255218931d7778b9d839bc91344131ae59a1dd008d993b794cb3facf9ee"
       },
-      "updated": "2026-10-21"
+      "updated": "2026-10-22"
     }
   ]
-}\n
+}

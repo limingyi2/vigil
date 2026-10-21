@@ -5813,21 +5813,45 @@
     const select = $('videoProfileSelect');
     let profileRows = [];
     let active = true;
+    let windowShown = true;
+    let slotInView = true;
     const getBounds = () => {
       const rect = slot.getBoundingClientRect();
       return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 };
     };
     const updateBounds = () => { if (active && slot.isConnected) api.bounds(getBounds()); };
+    // 容器的显隐由“页面还在 + 主窗口没藏起来 + 绑定区域在视口里”共同决定。
+    // 不用 document.visibilityState：窗口被别的程序遮住时它也会变 hidden，
+    // 而恢复时并不保证回发事件，容器会一直停在隐藏状态。
+    const applyVisibility = () => {
+      if (!active || !slot.isConnected) return;
+      updateBounds();
+      api.visible(windowShown && slotInView);
+    };
     const observer = new ResizeObserver(updateBounds);
     observer.observe(slot);
     window.addEventListener('resize', updateBounds);
-    const visibility = () => api.visible(active && document.visibilityState === 'visible');
-    document.addEventListener('visibilitychange', visibility);
+    const offWindowVisibility = api.onWindowVisibility(visible => { windowShown = visible; applyVisibility(); });
+    const intersection = new IntersectionObserver(entries => {
+      const entry = entries[entries.length - 1];
+      slotInView = !!entry && entry.isIntersecting;
+      applyVisibility();
+    }, { threshold: 0 });
+    intersection.observe(slot);
     const offEvents = api.onEvent(event => {
       if (!active || !event) return;
+      // 托管成功后占位文字必须让位；否则容器被藏起来时页面看起来像是“没启动”。
+      if (event.type === 'attached' || event.type === 'start-reused' || event.type === 'recreated') {
+        slot.classList.add('is-hosted');
+        applyVisibility();
+      } else if (event.type === 'detached' || event.type === 'fallback' || event.type === 'exited' ||
+                 event.type === 'window-closed-resident' || event.type === 'helper-exit') {
+        slot.classList.remove('is-hosted');
+      }
       const labels = {
         ready: '原生窗口模块已就绪。', started: '软件进程已启动，正在发现主窗口…',
-        attached: `已托管窗口（PID ${event.pid}，DPI ${event.dpi}）。`,
+        'adopted-existing': '软件已经在运行，正在接管它现有的窗口…',
+        attached: `软件窗口已就位（PID ${event.pid}）。`,
         detached: event.restored ? '已解除托管，软件窗口已恢复。' : '解除托管时未能完整恢复窗口。',
         fallback: '无法托管此窗口，软件已恢复为独立窗口。',
         'start-reused': '软件已在运行，复用现有进程与窗口。',
@@ -5868,17 +5892,17 @@
         const launchProfile = profileRows.find(row => row.id === select.value);
         if (!launchProfile) { setStatus('请先在“软件设置”中添加或选择软件。'); return; }
         await api.action('ATTACH');
-        setStatus('正在启动软件…'); await api.start(launchProfile, getBounds()); api.visible(true);
+        setStatus('正在启动软件…'); await api.start(launchProfile, getBounds()); applyVisibility();
       } catch (error) { setStatus(error.message); }
     });
     $('videoDetach').onclick = () => api.action('DETACH');
     $('videoSettings').onclick = () => { state.settingsDetail = true; state.settingsSub = 'video-apps'; ctx.navigate('system'); };
     await refreshProfiles();
     api.action('STATUS');
-    updateBounds();
-    visibility();
+    applyVisibility();
     ctx.onDispose(() => {
-      active = false; observer.disconnect(); window.removeEventListener('resize', updateBounds); document.removeEventListener('visibilitychange', visibility); offEvents();
+      active = false; observer.disconnect(); intersection.disconnect();
+      window.removeEventListener('resize', updateBounds); offWindowVisibility(); offEvents();
       api.visible(false);
     });
   }
