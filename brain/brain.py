@@ -1161,6 +1161,8 @@ class Brain:
         self.last_cloud_seconds = 0.0
         _t0 = time.time()
         _uin = _uout = 0
+        _usage = None
+        _model_request_seconds = 0.0
         used = []
 
         try:
@@ -1508,10 +1510,13 @@ class Brain:
             from model_providers.execution import apply_reasoning_strategy
             payload, _reasoning_state = apply_reasoning_strategy(
                 payload, _api0, mp, 'balanced' if _know else 'fast')
+            yield {'type': 'model_request_started'}
             for attempt in range(2):
+                _request_started = None
                 try:
-                    for event in completion_events(mp, prepare(
-                            payload, _api0, step_tokens=output_reserve(_api0, mp)), timeout=120):
+                    prepared_payload = prepare(payload, _api0, step_tokens=output_reserve(_api0, mp))
+                    _request_started = time.monotonic()
+                    for event in completion_events(mp, prepared_payload, timeout=120):
                         if event['type'] == 'think_delta':
                             think_buf.append(event['text'])
                             yield {'type': 'think', 'text': event['text']}
@@ -1520,6 +1525,7 @@ class Brain:
                             yield {'type': 'text', 'text': event['text']}
                         elif event['type'] == 'completion':
                             result = event['result']
+                            _usage = result.get('usage')
                             usage = result['usage'] or {}
                             _uin = usage.get('prompt_tokens') or 0
                             _uout = usage.get('completion_tokens') or 0
@@ -1527,8 +1533,11 @@ class Brain:
                                 yield {'type': 'error', 'class': result['reason'],
                                        'msg': ERROR_MESSAGES.get(result['reason'], '模型响应不完整')}
                                 return
+                    _model_request_seconds += max(0.0, time.monotonic() - _request_started)
                     break
                 except Exception as e:
+                    if _request_started is not None:
+                        _model_request_seconds += max(0.0, time.monotonic() - _request_started)
                     from model_providers.execution import is_context_limit_error
                     if attempt == 0 and not think_buf and not text_buf and is_context_limit_error(e):
                         from conversation_context import build_context as _build_ctx
@@ -1581,7 +1590,14 @@ class Brain:
             self._commit_turn(user_text, full_text, src=self._cur_src,
                               conversation_id=self._cur_conversation)
 
-        yield {"type": "done", "text": full_text, "think": full_think}
+        from agent_context import usage_record
+        _token_usage = usage_record(_usage, input_text=json.dumps(payload.get('messages') or [], ensure_ascii=False),
+                                    output_text=full_text)
+        _token_usage['request_elapsed_seconds'] = round(max(0.001, _model_request_seconds), 3)
+        _token_usage['tokens_per_second'] = round(
+            _token_usage['output_tokens'] / max(0.001, _model_request_seconds), 2)
+        yield {"type": "done", "text": full_text, "think": full_think,
+               "token_rate": _token_usage}
 
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,

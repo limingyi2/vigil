@@ -1665,6 +1665,18 @@ def start_remote_api(brain):
                                    'run_id': rid, 'seq': event['seq']}
                         else:
                             yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid, 'seq': event['seq']}
+                            yield {'type': 'model_request_started', 'run_id': rid,
+                                   'step_id': payload.get('step_id'), 'seq': event['seq']}
+                    elif kind == 'step_finished' and payload.get('token_usage'):
+                        usage = payload.get('aggregate') or payload['token_usage']
+                        elapsed = float(usage.get('model_request_seconds')
+                                        or usage.get('request_elapsed_seconds') or 0)
+                        count = usage.get('output_tokens')
+                        yield {'type': 'token_rate', 'run_id': rid, 'step_id': payload.get('step_id'),
+                               'output_tokens': count, 'request_elapsed_seconds': elapsed,
+                               'estimated': bool(usage.get('estimated')),
+                               'reasoning_tokens': usage.get('reasoning_tokens'),
+                               'seq': event['seq']}
                     elif kind == 'tool_finished':
                         # 工具步骤进聊天流：她在干什么、结果如何，看得见。
                         yield {'type': 'tool', 'tool': payload.get('tool'),

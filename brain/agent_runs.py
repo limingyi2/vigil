@@ -777,8 +777,9 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             from model_providers.tool_protocol import ToolTextBoundary
             boundary = ToolTextBoundary()
             completion = None
+            prepared_payload = prepare(payload, cfg, step_tokens=reserve_out)
             request_started = time.monotonic()
-            for event in completion_events(provider, prepare(payload, cfg, step_tokens=reserve_out), timeout=max(0.001, timeout)):
+            for event in completion_events(provider, prepared_payload, timeout=max(0.001, timeout)):
                 with LOCK, _db() as db:
                     item = _get(db, rid, owner)
                     if item['status'] != 'running':
@@ -864,7 +865,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                         usage=completion.get('usage'), token_usage=usage_data,
                         request_elapsed_seconds=round(request_elapsed, 3),
                         finished_at=time.time())
-                    _event(db, item, 'step_finished', dict(step_id=sid, reason='length'))
+                    _event(db, item, 'step_finished', dict(step_id=sid, reason='length',
+                        token_usage=usage_data, aggregate=item.get('token_usage_totals')))
                     _save(db, item)
                     if (completion.get('content') or '').strip():
                         msgs.append(dict(role='assistant', content=completion['content']))
@@ -880,7 +882,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     request_elapsed_seconds=round(request_elapsed, 3),
                     finished_at=time.time())
                 item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
-                _event(db, item, 'step_finished', dict(step_id=sid, reason=reason))
+                _event(db, item, 'step_finished', dict(step_id=sid, reason=reason,
+                    token_usage=usage_data, aggregate=item.get('token_usage_totals')))
                 if reason not in ('normal', 'tool_calls'):
                     _finish(db, item, 'failed', reason)
                     return
