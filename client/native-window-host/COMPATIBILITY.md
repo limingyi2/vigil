@@ -25,6 +25,13 @@ $env:P15_TEST_ROOT = Join-Path $env:LOCALAPPDATA 'Vigil\P15-WindowHost-PoC\manua
 
 Choose an EXE using the PoC picker. The PoC writes newline-delimited JSON events to `native-window-host-events.jsonl` under `P15_TEST_ROOT`. For the Vigil integration, run `npm start`, add one or more EXEs under **设置 → 视频软件**, then select and launch a saved profile in **视频工作台**. Vigil writes events to `native-window-host-events.jsonl` under Electron's user data directory.
 
+## Preview artifact
+
+- Build: Windows x64 portable preview, Electron 28.3.3, using `electron-builder.p15.yml`.
+- Artifact: `Vigil P15 Preview 1.1.8-p9.3.20261021.1.exe` (70,092,537 bytes).
+- SHA-256: `04CF9C2CA19619A02418CCEBD8314B41E4738FBB39C6E517EF10EE15639A14DD`.
+- The preview packages `resources/native-window-host/native-window-host.exe`. It does not package the Vigil Brain sidecar because this checkout has no Brain release build input; this is a P15 client preview, not a complete Vigil release.
+
 ## Limits observed
 
 - These results cover only the listed applications and this Windows machine. They do not establish support for arbitrary Windows software.
