@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -148,6 +149,11 @@ function cdp(wsUrl) {
     // ── 1. 把 brain 拷到临时目录 ──
     console.log('\n[1] 准备隔离环境：' + tmp);
     copyDir(path.join(ROOT, 'brain'), path.join(tmp, 'brain'));
+    const brainConfigDir = path.join(tmp, 'brain', 'config');
+    fs.mkdirSync(brainConfigDir, { recursive: true });
+    fs.writeFileSync(path.join(brainConfigDir, 'config.json'), JSON.stringify({
+      brain_token: crypto.randomBytes(32).toString('hex'),
+    }), 'utf8');
     // 设备表绝不能跟着拷过去：里面可能有上次测试留下的 revoked 记录，
     // 注册按机器名去重会把 revoked 状态带回来，之后每次 verify 都 401
     try { fs.unlinkSync(path.join(tmp, 'brain', 'data', 'devices.json')); } catch (e) {}

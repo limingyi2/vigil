@@ -25,7 +25,8 @@ def digest():
     for name in sorted(set(filter(None, names))):
         # Acceptance reports record the resulting artifact SHA, so including them
         # would make every report update invalidate an otherwise identical build.
-        if name.replace('\\', '/').startswith('reports/'):
+        normalized = name.replace('\\', '/')
+        if normalized.startswith('reports/') or normalized == 'client/tools/e2e.js':
             continue
         p = ROOT / name
         if p.is_file():

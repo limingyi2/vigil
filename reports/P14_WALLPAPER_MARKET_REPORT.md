@@ -19,7 +19,7 @@
 | C 诊断真实市场连接 | PASS | Electron renderer→preload/IPC→Brain `/api/market/list`→GitHub Raw 实际请求成功；诊断分类和错误状态由 Brain 返回 |
 | D 至少一个 Scene 实时播放 | PASS | 真实 WebWallGL `mount()` 载入 loose Scene，canvas 两帧 SHA-256 不同；场景工程由隔离 fixture 提供，project/scene 通过认证媒体桥取得 |
 | E 聊天与插件安全隔离 | PARTIAL | contextIsolation/sandbox 保持，CSP 只允许本地回环媒体连接，媒体路径受 Brain containment 验证；全量既有聊天 E2E 因其读取旧 `brain/config/config.json` 路径失败，未能形成聊天通过证据 |
-| F Electron 集成测试 | PASS（核心场景） | 壁纸、市场生命周期和实时市场连接 Electron 测试通过；全量 `npm run e2e` 上述旧路径问题单独列出 |
+| F Electron 集成测试 | PASS（核心场景） | 壁纸、市场生命周期和实时市场连接 Electron 测试通过；既有聊天 E2E 单列 20/26 结果 |
 
 ## 实际链路与修改
 
@@ -49,7 +49,7 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 - `npx electron tools/test-market-live-electron.js`：PASS。真实 Electron renderer/preload/IPC 调用本地 Brain 市场 API，远程 GitHub Raw 清单返回 `ready`，版本 `1.1`，一项插件。
 - `python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q`（从 `brain/` 执行）：PASS，56 passed，3 skipped（共 59 项）。
 - 远程 Wallpaper 3.1.0 ZIP：真实 `_install_remote_directory()` 下载制品并验证制品 SHA、Manifest、五个文件 SHA；临时目录事务安装和卸载均 PASS。
-- `npm run e2e`：未通过。隔离 Brain 启动成功；当前既有脚本随后读取不存在的 `brain/config/config.json` 并终止。已增加 `VIGIL_BUILD_PYTHON` / 系统 Python 回退，消除了依赖虚拟环境路径的早期失败；没有改写该聊天 E2E 的配置/鉴权前置条件，所以不能声称完整聊天验收通过。
+- `npm run e2e`：PARTIAL，20/26。修复夹具缺失的临时 Brain token 及 Python 路径后，Electron 成功连接、进入聊天页、无 renderer 异常，本地工具用例通过；设备注册/能力/轮询断言、聊天记录断言和 CDP 截图超时仍失败，故 E 仍是 PARTIAL。
 - Renderer 测试捕获的 `ReadPixels` GPU stall 是测试为对比两帧执行 `canvas.toDataURL()` 造成的诊断开销，不等同于应用播放路径的 GPU 使用率测量。Wallpaper Engine 本机 Workshop 目录未作为测试数据；通用 Scene 工程已独立验证。
 
 ## 插件交付
@@ -70,12 +70,12 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 
 候选安装器：`client/dist-release/Vigil.Setup.1.1.8-p9.3.20261021.1.exe`
 Portable 候选：`client/dist-release/Vigil 1.1.8-p9.3.20261021.1.exe`
-release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。安装器大小 `242,259,732` bytes，SHA-256 `82196cecfc2fbee20416c67c6bcd380fc436a8642ad46032d5be726a986dda59`。候选 source commit：`bdf5cb65acfc60ae894973722420dcdeac51ea7a`。构建源码摘要排除报告文件，且验证器允许其后只有 `reports/` 变更，报告回填制品 SHA 后仍可复核。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
+release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。安装器大小 `242,259,732` bytes，SHA-256 `82196cecfc2fbee20416c67c6bcd380fc436a8642ad46032d5be726a986dda59`。候选 source commit：`bdf5cb65acfc60ae894973722420dcdeac51ea7a`。构建源码摘要排除报告和 `client/tools/e2e.js`（测试夹具），且验证器允许其后只有 `reports/` 变更，报告回填制品 SHA 后仍可复核。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
 
 ## 未完成与人工验收
 
 - 用户自定义图片/视频导入、搜索、播放列表尚未实现。
-- 安装器的完整聊天 E2E 受旧脚本配置路径阻断；需要修正测试夹具并重新运行后才能将 E 标为 PASS。
+- 安装器的完整聊天 E2E 仍有设备注册/轮询、聊天记录与截图断言未通过，修正这些独立问题并重跑后才能将 E 标为 PASS。
 - 用户机器上的真实 Steam Workshop/Wallpaper Engine 内容、用户配置迁移仍待人工验收；渲染器不依赖 Wallpaper Engine 程序运行。
 - 3.1.0 市场 PR 尚未合并，因此远端客户端主市场暂时继续提供 3.0.1；新包通过分支 URL 可安装并已验证。
 
