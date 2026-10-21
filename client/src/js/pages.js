@@ -963,6 +963,7 @@
       view.querySelector('#chatLoadState').hidden = true;
       busy = false;
       busyScope = null;
+      currentRequestId = null; liveReconcile = null; uncertainRunId = null;
       taEl.value = '';
       attachment = null;
       imgB64 = '';
@@ -1413,6 +1414,7 @@
       busy = false;
       busyScope = null;
       activeRunId = null; resumableRunId = null; pendingResumeOf = null;
+      currentRequestId = null; liveReconcile = null; uncertainRunId = null;
       setComposerMode('send');
       if (typeof taEl !== 'undefined') taEl.value = '';
       if (typeof clearAttachment === 'function') clearAttachment();
@@ -1437,6 +1439,7 @@
       busy = false;
       busyScope = null;
       activeRunId = null; resumableRunId = null; pendingResumeOf = null;
+      currentRequestId = null; liveReconcile = null; uncertainRunId = null;
       setComposerMode('send');
       taEl.value = '';
       if (typeof clearAttachment === 'function') clearAttachment();
@@ -2101,6 +2104,9 @@
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
+      // History is a recovery view, not the owner of an in-flight bubble.
+      // Replacing it here detaches its stream subscriber during long requests.
+      if (busy && busyScope === recordKey()) return;
       // The welcome page has no conversation context; never load unscoped
       // history or Creator Jobs while it is active.
       if (!activeConversationId) return;
@@ -2123,6 +2129,7 @@
       const r = pick(historyResponse);
       const creatorHistory = pick(creatorResponse);
       if (!msgs.isConnected || loadSeq !== conversationLoadSeq || activeConversationId !== loadConversationId) return;
+      if (busy && busyScope === recordKey()) return;
       if (!r.ok && !localRecords().length && !(creatorHistory.items || []).length) {
         if (force || lastCount < 0) {
           showRetry(r._err || '检查连接设置');
@@ -2441,6 +2448,7 @@
       let agentRunId = null;
       let lastAgentSeq = 0;
       let reconcileTimer = null;
+      let needsSnapshotText = false;
       const agentCancel = document.createElement('button');
       agentCancel.className = 'agent-cancel';
       agentCancel.textContent = '取消';
@@ -2497,8 +2505,11 @@
             onEvent({type:'error',text:snap.content || '',run_id:agentRunId,status,
               class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止'});
           } else {
-            textBuf = snap.content || textBuf;
-            textEl.innerHTML = U.md(textBuf, {codeActions:true});
+            if (needsSnapshotText) {
+              textBuf = snap.content || textBuf;
+              textEl.innerHTML = U.md(textBuf, {codeActions:true});
+              needsSnapshotText = false;
+            }
             busy = true; busyScope = turnScope;
             activeRunId = agentRunId; uncertainRunId = null;
             statusEl.textContent = '任务仍在执行 ';
@@ -2528,6 +2539,7 @@
         if (evt.conversation_id && evt.conversation_id !== sendConversationId) return;
         if (evt.job_id) return;
         if (evt.request_id && evt.request_id !== requestId) return;
+        if (evt.run_id && !agentRunId && evt.type !== 'agent_run') return;
         // Agent events without an id are legacy chat events.  Once an Agent
         // run is bound, accepting such an event would let a late stream from a
         // previous turn overwrite this turn's text or terminal state.
@@ -2550,6 +2562,7 @@
           statusEl.textContent = '执行中 ';
           statusEl.appendChild(agentCancel);
           setComposerMode('pause');
+          if (!reconcileTimer) reconcileTimer = setTimeout(reconcileRun, 2000);
         } else if (evt.type === 'stage') {
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
           thinkLabel.textContent = evt.stage === 'waiting_tool' ? '使用工具' : '思考中';
@@ -2589,6 +2602,7 @@
           scheduleRender();
         } else if (evt.type === 'done') {
           streamDone = true;
+          finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
           stopListening();
           activeRunId = null;
@@ -2619,10 +2633,12 @@
           refreshConversations().catch(() => {});
         } else if (evt.type === 'error') {
           if (evt.class === 'connection_lost' && agentRunId) {
+            needsSnapshotText = true;
             reconcileRun();
             return;
           }
           streamDone = true;
+          finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
           stopListening();
           activeRunId = null;

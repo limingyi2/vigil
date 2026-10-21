@@ -2757,7 +2757,7 @@ def start_remote_api(brain):
                         import copy as _rcopy
                         try:
                             _agent_item = _runs.resume(_resume_of, _owner, _rcopy.deepcopy(API_CFG),
-                                dict(request_id=body.get('request_id')), brain=brain, start=True)
+                                dict(request_id=body.get('request_id'), conversation_id=body.get('conversation_id') or '', src=_src), brain=brain, start=True)
                         except ValueError as _exc:
                             self._json(400, {'ok': False, 'err': str(_exc)})
                             return

@@ -47,6 +47,11 @@ exports.run=async h=>{
     await h.submit(task);
     if(task==='P12_NATIVE'){
       await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="tool"&&e.state==="started")','real in-flight tool');
+      if(process.env.VIGIL_P12_ROUND==='4'){
+        await h.evaluate('window.p12LiveTurn=document.querySelector("#msgs .turn:last-child");true');
+        await h.wait(8500); // Exercise the existing 8-second history poll during a gated tool.
+        assert.equal(await h.evaluate('window.p12LiveTurn.isConnected'),true,'history polling must not detach a live stream subscription');
+      }
       if(process.env.VIGIL_P12_ROUND==='3'){
         await h.screenshot('running-light');
         const cid=await h.evaluate('API.state.chatConversationId');
@@ -131,4 +136,10 @@ exports.run=async h=>{
   assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("任务已不存在")'));
   exports.release();
   console.log('PASS authoritative missing ledger record restores Send and reports interruption without replay');
+  for(let round=1;round<=10;round++){
+    await h.evaluate('window.__vigilE2EEvents=[];true');
+    await h.submit('P12_CHAT round '+round);
+    await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="done") && document.querySelector("#sendBtn").getAttribute("aria-label")==="发送消息"','ordinary chat '+round);
+  }
+  console.log('PASS ten consecutive real streamed chat turns all restore Send');
 };

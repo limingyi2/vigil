@@ -529,7 +529,11 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
         _event(db, item, 'resumed', dict(status=item['status']))
         _save(db, item)
         intent, src = item['intent'], item['src']
-    derived = dict(body, intent=intent, src=src)
+    parent_conversation = str(item.get('conversation_id') or '')
+    if parent_conversation and body.get('conversation_id') not in (None, '', parent_conversation):
+        raise ValueError('续跑不能改变会话归属')
+    derived = dict(body, intent=intent, src=src,
+                   conversation_id=parent_conversation or str(body.get('conversation_id') or ''))
     # 客户端续跑时会带来自己的 request_id（用于把事件绑回会话气泡）；
     # 没带或格式不对就生成一个。合法且未被用过 → 原样使用（create 幂等）。
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', str(derived.get('request_id') or '')):
