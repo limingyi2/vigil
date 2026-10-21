@@ -86,7 +86,10 @@ def test_isolated_bug_repair_has_real_fail_then_pass_evidence(tmp_path):
     source.write_text('def answer():\n    return 1\n', encoding='utf-8')
     test_file = root / 'test_calculator.py'
     test_file.write_text('from calculator import answer\n\ndef test_answer():\n    assert answer() == 2\n', encoding='utf-8')
-    command = [sys.executable, '-m', 'pytest', '-q', str(test_file)]
+    # Run both subprocesses without bytecode cache: replacing 'return 1' with
+    # 'return 2' preserves source size and can share the same mtime tick on CI.
+    # Otherwise the second pytest process can import stale calculator.pyc.
+    command = [sys.executable, '-B', '-m', 'pytest', '-q', str(test_file)]
     before = subprocess.run(command, cwd=str(root), capture_output=True, text=True)
     assert before.returncode != 0
     assert 'assert 1 == 2' in (before.stdout + before.stderr)
@@ -113,6 +116,7 @@ def test_isolated_bug_repair_has_real_fail_then_pass_evidence(tmp_path):
             'return 1', 'return 2', 'owner')
         assert plan['ok']
         assert project_repair.apply(plan['plan_id'], 'owner', approved=True)['status'] == 'applied'
+        assert source.read_text(encoding='utf-8') == 'def answer():\n    return 2\n'
         after = subprocess.run(command, cwd=str(root), capture_output=True, text=True)
         assert after.returncode == 0, after.stdout + after.stderr
         passed_run = {'steps': [{'step_id': 4, 'kind': 'tool', 'tool': 'local_exec',
