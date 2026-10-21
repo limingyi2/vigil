@@ -3,7 +3,8 @@
 日期：2026-10-21（Asia/Shanghai）
 工作分支：`codex/p14-wallpaper-market`
 起始提交：`0e24afe7c09fd561b7fd1d5b1d79a9000632f51b`
-状态：实现与验收完成核心项；候选安装器已构建，待实现提交后重建并回填最终 SHA。
+实现提交：见候选包 `release-manifest.json` 的 source_commit
+状态：核心验收完成，聊天全量 E2E 与用户素材验收仍待处理。
 
 ## 结果概览
 
@@ -46,7 +47,7 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 - Electron 场景截图：[wallpaper-code11.png](../client/_shots/wallpaper-code11.png)。测试使用无用户数据的临时 Electron `userData` 和临时 HTTP fixture。
 - `npx electron tools/test-plugin-market-electron.js`：PASS。覆盖按钮、连接状态、安装失败重试、安装启用、禁用、卸载、重启和旧 localStorage 导航顺序。
 - `npx electron tools/test-market-live-electron.js`：PASS。真实 Electron renderer/preload/IPC 调用本地 Brain 市场 API，远程 GitHub Raw 清单返回 `ready`，版本 `1.1`，一项插件。
-- `python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q`（从 `brain/` 执行）：PASS，51 passed，3 skipped。
+- `python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q`（从 `brain/` 执行）：PASS，56 passed，3 skipped（共 59 项）。
 - 远程 Wallpaper 3.1.0 ZIP：真实 `_install_remote_directory()` 下载制品并验证制品 SHA、Manifest、五个文件 SHA；临时目录事务安装和卸载均 PASS。
 - `npm run e2e`：未通过。隔离 Brain 启动成功；当前既有脚本随后读取不存在的 `brain/config/config.json` 并终止。已增加 `VIGIL_BUILD_PYTHON` / 系统 Python 回退，消除了依赖虚拟环境路径的早期失败；没有改写该聊天 E2E 的配置/鉴权前置条件，所以不能声称完整聊天验收通过。
 - Renderer 测试捕获的 `ReadPixels` GPU stall 是测试为对比两帧执行 `canvas.toDataURL()` 造成的诊断开销，不等同于应用播放路径的 GPU 使用率测量。Wallpaper Engine 本机 Workshop 目录未作为测试数据；通用 Scene 工程已独立验证。
@@ -58,15 +59,18 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 - Draft PR：[vigil-plugins#1](https://github.com/limingyi2/vigil-plugins/pull/1)
 - 新版本：3.1.0；WebWallGL 依赖：3.0.0
 - ZIP：`plugins/wallpaper/wallpaper-3.1.0.zip`
-- SHA-256：`83c8b696dae81d737895a5bff9e3dc38eef2347060879765556c8327f2f1eaba`
-- Manifest 的五个 payload 文件 hash 已逐个重算校验。`market.json` 固定引用包含该 ZIP 的提交 `39d4f561bd5f0d71894a663581a6aef3410b5992`，市场清单 URL 的更新已推送到分支 tip `a5d2dfbd47b48d765afc3ca711f61255b79380f5`。
+- SHA-256：`6839f0401aa36991eaa83ad523f4c3d9fcb5f941dac3768362005b93b87f799a`
+- Manifest 的五个 payload 文件 hash 已逐个重算校验。`market.json` 固定引用包含该 ZIP 的提交 `e4a9c4f0b678a0592307488a8501f258a3ad9613`，市场清单 URL 的更新已推送到分支 tip `20d92fd0cacec91456325215e7f7ae017936f875`。
 - 客户端市场主线需审核并合并该 PR 后才会显示 3.1.0；本轮没有自动合并。
+- 插件仓库 Actions 的 Linux/Python 3.12 重建检查：PASS。首次检查揭示 Windows/Linux zlib ZIP hash 不一致；打包器现使用固定 ZIP 存储模式及归一化 Unix header，跨平台重建 hash 为 `6839f0401aa36991eaa83ad523f4c3d9fcb5f941dac3768362005b93b87f799a`。
 
 ## Windows 候选包
 
 当前本地候选构建流程已实际运行：Python/PyInstaller 构建 Brain，electron-builder 生成 NSIS 安装器与 portable 包；`scripts/build_release.py --verify --candidate` 通过。第一次试构建发现源码在 Brain 构建后改变，构建脚本正确拒绝不一致包；之后从一致源快照重建成功。
 
-最终实现提交后会再次运行 candidate build 并回填本节：安装器路径、release manifest 的 source commit、尺寸及 SHA-256。候选包只用于验收，不代表正式发布。
+候选安装器：`client/dist-release/Vigil.Setup.1.1.8-p9.3.20261021.1.exe`
+Portable 候选：`client/dist-release/Vigil 1.1.8-p9.3.20261021.1.exe`
+release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。安装器大小 `242,259,652` bytes，SHA-256 `2963b8b75ea1891608c4aeb39973c46bad5016c9d47b09442e2b006d26e89f76`。候选记录的实现提交与 `release-manifest.json` 一致。构建源码摘要排除报告文件，便于在报告中回填制品 SHA 后仍通过一致性校验。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
 
 ## 未完成与人工验收
 
