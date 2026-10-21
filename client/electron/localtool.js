@@ -924,7 +924,7 @@ function _runOnce(exe, argv, cfg) {
       (err, stdout, stderr) => {
         if (err && err.code === 'ENOENT') { err.stdout = stdout; err.stderr = stderr; reject(err); return; }
         resolve({ stdout: stdout || '', stderr: stderr || '',
-          exitCode: err && Number.isInteger(err.code) ? err.code : 0,
+          exitCode: err ? (Number.isInteger(err.code) ? err.code : null) : 0,
           error: err ? String(err.message || err) : '' });
       });
   });
@@ -974,7 +974,7 @@ async function tool_exec(args, cfg) {
             (err, stdout, stderr) => {
               if (err && !Number.isInteger(err.code) && !(stdout || stderr)) { reject(err); return; }
               resolve({ stdout: stdout || '', stderr: stderr || '',
-                exitCode: err && Number.isInteger(err.code) ? err.code : 0,
+                exitCode: err ? (Number.isInteger(err.code) ? err.code : null) : 0,
                 error: err ? String(err.message || err) : '' });
             });
         });

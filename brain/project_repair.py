@@ -47,8 +47,8 @@ def _save(item):
 
 
 def _inside(root, path):
-    target = os.path.abspath(os.path.join(root, path)) if not os.path.isabs(path) else os.path.abspath(path)
-    root = os.path.abspath(root)
+    target = os.path.realpath(os.path.join(root, path)) if not os.path.isabs(path) else os.path.realpath(path)
+    root = os.path.realpath(root)
     try:
         return target if os.path.commonpath([root, target]) == root else None
     except ValueError:
@@ -97,6 +97,11 @@ def apply(plan_id, owner, approved=False):
         return {'ok': False, 'err': '修复方案已处理，不能重复执行', 'status': item['status']}
     if approved is not True:
         return {'ok': False, 'err': '需要明确授权后才能写入文件', 'status': 'awaiting_authorization'}
+    review = project_review.report(item.get('review_id'), owner)
+    scoped_path = _inside(review.get('root'), item.get('path')) if review.get('ok') else None
+    if not scoped_path or scoped_path != os.path.realpath(item.get('path') or ''):
+        item['status'] = 'blocked'; item['failure'] = '修复路径解析后超出审查项目目录'; _save(item)
+        return {'ok': False, 'err': item['failure'], 'status': 'blocked'}
     try:
         with open(item['path'], encoding='utf-8') as fh:
             current = fh.read()
@@ -156,7 +161,8 @@ def verify(plan_id, owner, run_id, step_id):
         step = next((s for s in (run or {}).get('steps', []) if s.get('step_id') == sid), None)
     except (TypeError, ValueError):
         run, step = None, None
-    if not run or not step or step.get('kind') != 'tool' or step.get('tool') != 'local_exec':
+    if not run or not step or step.get('kind') != 'tool' or step.get('tool') != 'local_exec' \
+            or step.get('status') != 'completed':
         return {'ok': False, 'err': '找不到可信的本机命令执行记录'}
     result = str(step.get('result') or '')
     match = re.search(r'\n\[VIGIL_EXEC_EXIT_CODE=(-?\d+)\]\s*$', result)
