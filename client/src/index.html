@@ -5,7 +5,7 @@
 <!-- 渲染层不发任何网络请求（全部经 IPC 走主进程），所以 connect-src 直接封死。
      这条 CSP 是那道"渲染层拿不到 token"的边界的一半，别删。 -->
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:; media-src 'self' blob: http://127.0.0.1:*; frame-src http://127.0.0.1:*; connect-src 'none'; object-src 'none'; base-uri 'none'">
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:; media-src 'self' blob: http://127.0.0.1:*; frame-src http://127.0.0.1:*; connect-src http://127.0.0.1:*; object-src 'none'; base-uri 'none'">
 <title>Vigil</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="chat.css">

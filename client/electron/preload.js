@@ -138,6 +138,7 @@ contextBridge.exposeInMainWorld('vigil', {
   plugins: {
     load: () => ipcRenderer.invoke('plugins:load'),
     resourceUrl: (path) => ipcRenderer.invoke('plugins:resource-url', path),
+    releaseResources: () => ipcRenderer.invoke('plugins:release-resources'),
   },
   // Narrow native capability for first-party local project tools; returns a selected folder only.
   projectPicker: {

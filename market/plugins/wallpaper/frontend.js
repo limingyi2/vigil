@@ -58,6 +58,15 @@
   var wePath = null;
   var libraryError = '';
   var ready = Promise.resolve();
+  var sceneInstance = null;
+  var sceneResizeObserver = null;
+  var visibilityHandler = null;
+  var applyGeneration = 0;
+  var enginePromise = null;
+  var engineScript = null;
+  var engineGlobalListeners = [];
+  var themeChangeHandler = null;
+  var disposed = false;
   function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -83,10 +92,127 @@
     return '/api/plugin/wallpaper/we/preview?id=' + encodeURIComponent(id);
   }
 
+  function destroyScene() {
+    if (sceneResizeObserver) { sceneResizeObserver.disconnect(); sceneResizeObserver = null; }
+    if (sceneInstance) {
+      try { sceneInstance.destroy({ releasePkgCache: true }); } catch (e) { console.warn('[wallpaper scene] destroy failed', e); }
+      sceneInstance = null;
+    }
+  }
+  function loadSceneEngine() {
+    if (window.WebWallGL && typeof window.WebWallGL.mount === 'function') return Promise.resolve(window.WebWallGL);
+    if (enginePromise) return enginePromise;
+    enginePromise = new Promise(function (resolve, reject) {
+      var script = engineScript = document.createElement('script');
+      var originalAdd = window.addEventListener;
+      var captured = [];
+      window.addEventListener = function (type, listener, options) {
+        if (type === 'contextmenu') captured.push({ type: type, listener: listener, options: options });
+        return originalAdd.call(this, type, listener, options);
+      };
+      function restoreAdd() {
+        window.addEventListener = originalAdd;
+        engineGlobalListeners = captured;
+      }
+      script.src = new URL('../node_modules/webwallgl/webwallgl.global.min.js', location.href).href;
+      script.async = true;
+      script.onload = function () {
+        restoreAdd();
+        if (window.WebWallGL && typeof window.WebWallGL.mount === 'function') resolve(window.WebWallGL);
+        else reject(new Error('WebWallGL 3.0.0 加载完成但 mount() 不可用'));
+      };
+      script.onerror = function () { restoreAdd(); reject(new Error('无法从本地安装包加载 WebWallGL 3.0.0'));
+        enginePromise = null; };
+      document.head.appendChild(script);
+    });
+    return enginePromise;
+  }
+  async function mountScene(container, id, generation) {
+    var status = document.createElement('div');
+    status.className = 'wp-scene-status';
+    status.textContent = '正在初始化 WebWallGL Scene…';
+    container.appendChild(status);
+    try {
+      var engine = await loadSceneEngine();
+      if (generation !== applyGeneration || !container.isConnected) return;
+      // The loopback URL is a short lived media ticket. Each subsequent relative
+      // path is still resolved and containment-checked by the Brain media route.
+      var ticket = await window.vigil.plugins.resourceUrl(mediaUrl(id, 'project.json'));
+      if (!ticket || !ticket.ok) throw new Error((ticket && ticket.err) || 'Brain 媒体票据申请失败');
+      var base = ticket.url.replace(/project\.json$/, '');
+      if (base === ticket.url) throw new Error('媒体桥返回了无效的 Scene 资源基址');
+      var instance = await engine.mount(container, {
+        source: engine.httpSource(base), fit: 'cover', fps: 30, volume: 0,
+        autoplay: true, scripts: false, mountTimeoutMs: 45000,
+        onDiagnostic: function (message, level) { console.info('[wallpaper scene][' + level + ']', String(message).slice(0, 240)); },
+        onReady: function () { container.dataset.liveReady = 'true'; console.info('[wallpaper scene] live first frame ready; id=' + id); },
+        onError: function (error) { console.error('[wallpaper scene] render error; id=' + id, error); },
+      });
+      if (generation !== applyGeneration || !container.isConnected) {
+        instance.destroy({ releasePkgCache: true });
+        return;
+      }
+      sceneInstance = instance;
+      container.removeChild(status);
+      instance.canvas.classList.add('wp-scene-canvas');
+      sceneResizeObserver = new ResizeObserver(function () {
+        // WebWallGL owns its ResizeObserver; trigger a layout read so the browser
+        // commits the new DPR / viewport dimensions before the next animation frame.
+        void container.getBoundingClientRect();
+      });
+      sceneResizeObserver.observe(container);
+      if (instance.info) container.dataset.sceneInfo = JSON.stringify(instance.info);
+      console.info('[wallpaper scene] live scene mounted; id=' + id, instance.info || {});
+    } catch (error) {
+      if (generation !== applyGeneration || !container.isConnected) return;
+      status.classList.add('error');
+      status.textContent = 'Scene 实时渲染失败：' + String(error && error.message || error) + '（下方仅为预览图）';
+      var fallback = document.createElement('img');
+      fallback.className = 'wp-scene-fallback';
+      fallback.alt = 'Scene 预览图（不是实时渲染）';
+      container.appendChild(fallback);
+      setResource(fallback, previewUrl(id));
+      console.error('[wallpaper scene] live mount failed; preview fallback only; id=' + id, error);
+    }
+  }
+  function disposeWallpaper() {
+    disposed = true;
+    applyGeneration++;
+    destroyScene();
+    if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
+    visibilityHandler = null;
+    bgLayer.replaceChildren();
+    scrimLayer.replaceChildren();
+    bgLayer.style.display = 'none';
+    scrimLayer.style.display = 'none';
+    document.body.classList.remove('wallpaper-active');
+    document.documentElement.style.removeProperty('--wp-glass-blur');
+    bgLayer.remove();
+    scrimLayer.remove();
+    if (themeChangeHandler && window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', themeChangeHandler);
+      themeChangeHandler = null;
+    }
+    engineGlobalListeners.forEach(function (entry) {
+      try { window.removeEventListener(entry.type, entry.listener, entry.options); } catch (_) {}
+    });
+    engineGlobalListeners = [];
+    if (engineScript) { engineScript.remove(); engineScript = null; }
+    enginePromise = null;
+    try { window.WebWallGL = null; } catch (_) {}
+    if (window.vigil && window.vigil.plugins && window.vigil.plugins.releaseResources) {
+      window.vigil.plugins.releaseResources().catch(function (error) {
+        console.warn('[wallpaper] media ticket cleanup failed', error);
+      });
+    }
+  }
+
   // ========== 应用壁纸到背景层 ==========
   function applyWallpaper(cfg) {
+    var generation = ++applyGeneration;
+    destroyScene();
     // 清空背景层
-    bgLayer.innerHTML = '';
+    bgLayer.replaceChildren();
 
     if (!cfg || !cfg.enabled || !cfg.wallpaper_id) {
       bgLayer.style.display = 'none';
@@ -121,12 +247,33 @@
       ifr.style.cssText = 'width:100%;height:100%;border:none;display:block;';
       bgLayer.appendChild(ifr);
       setResource(ifr, mediaUrl(id, file));
+    } else if (type === 'scene' && id) {
+      var scene = document.createElement('div');
+      scene.className = 'wp-scene-stage';
+      bgLayer.appendChild(scene);
+      mountScene(scene, id, generation);
     } else {
-      // scene / unknown：用预览图作为静态背景
+      // Unsupported types are explicitly preview-only and never claim live playback.
       var img = document.createElement('img');
       img.style.cssText = 'width:100%;height:100%;object-fit:cover;object-position:center;';
       bgLayer.appendChild(img);
       setResource(img, previewUrl(id));
+    }
+
+    if (!visibilityHandler) {
+      visibilityHandler = function () {
+        if (!sceneInstance) return;
+        if (document.hidden) {
+          sceneInstance.pause();
+          var activeStage = bgLayer.querySelector('.wp-scene-stage');
+          if (activeStage) activeStage.dataset.paused = 'true';
+        } else if (currentConfig && currentConfig.enabled) {
+          sceneInstance.resume();
+          var activeStage = bgLayer.querySelector('.wp-scene-stage');
+          if (activeStage) activeStage.dataset.paused = 'false';
+        }
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
     }
 
     // 遮罩
@@ -140,6 +287,7 @@
   // ========== 加载配置 & 壁纸库 ==========
   function loadConfig() {
     return apiGet('/api/plugin/wallpaper/config').then(function (r) {
+      if (disposed) return;
       if (r && r.ok) {
         currentConfig = r.config;
         wePath = r.config.we_path;
@@ -290,17 +438,20 @@
     if (window.VigilPlugin && typeof window.VigilPlugin.registerPage === 'function') {
       // after: 导航栏按钮多，push 到末尾会被滚动区吞掉；插在插件市场后面保证看得见
       window.VigilPlugin.registerPage({ id: 'wallpaper', name: '壁纸', icon: 'i-img', render: renderSettings, after: 'market' });
+      window.VigilPlugin.registerCleanup('wallpaper', disposeWallpaper);
     }
   }
 
   // ========== 启动 ==========
   function init() {
+    disposed = false;
     ready = Promise.all([loadConfig(), loadLibrary()]);
     registerPage();
     if (window.matchMedia) {
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      themeChangeHandler = function () {
         if (currentConfig) applyWallpaper(currentConfig);
-      });
+      };
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeChangeHandler);
     }
     console.log('[wallpaper v3] Wallpaper Engine 接入已加载');
   }

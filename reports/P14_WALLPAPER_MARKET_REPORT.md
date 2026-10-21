@@ -1,85 +1,94 @@
-# P14 Wallpaper Market report
+# P14 第二轮：Wallpaper 生命周期、市场诊断与 WebWallGL
 
-Date: 2026-10-21 (Asia/Shanghai)  
-Branch: `codex/p14-wallpaper-market`  
-Base: `e2c47407c6e5e1125ee3b65896138b6759acf89b`
+日期：2026-10-21（Asia/Shanghai）
+工作分支：`codex/p14-wallpaper-market`
+起始提交：`0e24afe7c09fd561b7fd1d5b1d79a9000632f51b`
+状态：实现与验收完成核心项；候选安装器已构建，待实现提交后重建并回填最终 SHA。
 
-## Summary
+## 结果概览
 
-This change aligns Vigil's checked-in market manifest with the live Vigil plugin repository and adds a timestamped, validated offline listing cache. It does **not** complete the requested Wallpaper Engine refactor. In particular, the published Wallpaper 3.0.1 package and the branch's 3.0.0 source both render Scene wallpapers as preview images; neither contains WebWallGL. Scene live rendering, user-imported media, and full lifecycle/performance acceptance remain blocked and are not represented as passing.
+本轮将 Wallpaper 插件做成显式可注销的动态贡献；接入固定版本 `webwallgl@3.0.0`，经 Electron 沙箱真实挂载并播放动态 Scene；补齐市场诊断分类和导出入口；完成远程插件 3.1.0 制品与独立发布分支。
 
-## Root cause and changed files
+验收矩阵：
 
-- `market.json` was stale: it advertised Wallpaper 3.0.0 and an older artifact. The live repository returned 3.0.1 at commit `c1c9b63703c6d733688640784a0be55421c67909` with SHA-256 `4e551ae17783870872be7c2635d1a396fe5269fa032b514aff7e536940b22616`.
-- `brain/plugins/plugin_market.py` already contained HTTPS GitHub Raw/mirror fetching, request timeouts, strict source allowlisting, SHA-256 validation, manifest/file hash checks, permission checks and transactional installation. It had no verified offline cache. It now stores a validated listing with a UTC fetch timestamp, validates it again before display, and labels it `cached_stale` when the online read fails. The cache path is under the runtime config directory.
-- `brain/tests/test_plugin_market_state.py` now covers timestamped stale-cache use and rejection of malformed cache data.
-- Navigation review: `client/src/js/pages.js` has the market as a built-in page and no hard-coded Wallpaper page. Wallpaper registers its page from its dynamically loaded plugin frontend. `client/src/js/app.js` builds the nav from `PAGES`, and plugin-enabled state is returned by `plugin_host.frontend_assets()`. The existing polling reloads the renderer when the frontend fingerprint changes. No navigation code was changed.
-
-## DSH comparison
-
-Reference reviewed: `elysia395/dsh-wallpaper-engine` README, `docs/HOW-IT-WORKS.md`, `docs/CODE-STRUCTURE.md`, and `docs/TROUBLESHOOTING.md`; renderer: `oneincase/webwallgl` README and package metadata. DSH is MIT licensed; WebWallGL package metadata declares MIT. No upstream code was copied into Vigil, so no upstream license file was added.
-
-| Capability | DSH / WebWallGL reference | Vigil at P14 checkout | P14 result |
-|---|---|---|---|
-| Scene real-time render | WebWallGL, live scene package parser, shaders, particles, scripts, properties and interaction | Scene branch displays `preview` image | BLOCKED; no renderer integrated |
-| Web wallpaper | WebWallGL mount with Wallpaper Engine API compatibility and sandbox | Sandboxed local iframe, relative local media URL proxy; no WE shim | Partial; existing path retained, no shim added |
-| Video wallpaper | Direct video layer with controls and fallbacks | Local video loop/autoplay/mute | Partial; no visible pause/volume controls |
-| Custom image/video | Import and manage user media | No import endpoint or custom-media library found | BLOCKED |
-| Workshop detection | Steam library discovery and workshop inventory | Windows registry, `libraryfolders.vdf`, common paths | Implemented in existing plugin; not tested on a real Steam installation |
-| Library, previews, search | Inventory, filtering, previews and switching | Inventory cards and previews; no search UI | Partial |
-| Scene audio/interaction | Packaged audio, scripts and mouse interaction | Not present | BLOCKED |
-| Glass/appearance | Multiple glass and visual controls | Opacity, scrim, blur | Partial |
-| Rotation / playlist | Rotation and playback queue | Not found | BLOCKED |
-| First frame / fallback | Live frame readiness and explicit fallback chain | Preview-first behavior; no live frame state | BLOCKED |
-| Enable, disable, uninstall, cleanup | Owned disposable contributions and resources | Feature gating and frontend injection exist; removal relies on reload/restart; no explicit disposer for wallpaper DOM/listeners/media | Partial; unload cleanup not validated |
-
-Advanced appearance presets, mascot, music linking, 3D parallax and theme presets were not ported. They are out of the completed implementation and have no acceptance evidence.
-
-## Verification evidence
-
-### Plugin market
-
-- **Real remote read: PASS.** `brain/plugins/plugin_market.py::_read_remote_market()` returned `ready`, version `1.1`, updated `2026-10-21`, with Wallpaper `3.0.1` and the SHA-256 above.
-- **Real artifact install transaction: PASS.** `_install_remote_directory()` fetched the live 3.0.1 ZIP, validated archive and manifest/file hashes, and committed it to a temporary isolated install directory. It returned `phase=committed`, `rollback=not_needed`, `static_validated=true`, and `restart_needed=true`. No user plugin directory was modified.
-- **Cache behavior: PASS in unit coverage.** A valid timestamped cache is shown as `cached_stale`; an invalid cached listing is rejected. Online freshness is not inferred from cached data.
-- **Install failure rollback, update/uninstall against a running Brain: BLOCKED.** The temporary artifact install succeeded; no production app/Brain session was attached to this worktree for fault injection or lifecycle verification.
-
-### Lifecycle and wallpaper
-
-- The existing plugin test suite covers structure and transaction behavior. No real Electron window or configured Brain was available in this worktree. The Electron wallpaper and market tests were not run because `client/node_modules` / Electron runtime are absent.
-- No Wallpaper Engine workshop was available to validate actual workshop content, video playback, web rendering, DPI/resize transitions, minimization, CPU/GPU/memory use, or performance.
-- **Scene live render: BLOCKED.** Inspected the live Vigil 3.0.1 artifact: its frontend contains no `WebWallGL` or `scene.pkg` loading path and still selects a static preview for Scene wallpapers. Therefore no live animation evidence exists.
-- **Windows candidate package: NOT BUILT.** Client dependencies and `dist/brain-release/vigil-brain` are absent from this checkout. Candidate `.exe` path, size, and SHA-256: N/A.
-
-## Test results
-
-Executed from the P14 worktree's `brain` directory:
-
-```text
-python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q
-37 passed, 3 skipped
-```
-
-The same test command from repository root failed collection because the existing tests import Brain modules by bare module name (`paths`, `plugin_ops`, etc.); rerunning from `brain` passed. No test assertions were weakened.
-
-| Acceptance item | Status | Evidence / reason |
+| 项目 | 状态 | 证据 |
 |---|---|---|
-| Real market read | PASS | Live GitHub response read and validated |
-| Remote install/hash/manifest transaction | PASS | Live 3.0.1 artifact installed in temporary isolation |
-| Offline cache state and timestamp | PASS | New unit tests, included in 37 passed |
-| Cache rejected when malformed | PASS | New unit test |
-| Online failure diagnostics | PARTIAL | Existing structured error plus timestamped cache label; no network fault UI run |
-| Failed install rollback | BLOCKED | No fault-injection/live Brain integration run |
-| Install/update/uninstall state synchronization | BLOCKED | No Electron/Brain runtime present |
-| Not-installed/disabled navigation | PARTIAL | Source path is dynamic; no live Electron state matrix run |
-| Wallpaper image/video/web | BLOCKED | No Electron runtime or real media inventory |
-| Scene live rendering | BLOCKED | Upstream package lacks WebWallGL integration; Vigil uses preview image |
-| Custom import, playlist, search | BLOCKED | Not implemented |
-| First-frame / resize / minimize / performance | BLOCKED | No integrated renderer or hardware run |
-| Windows installer | BLOCKED | Build prerequisites absent |
+| A 未安装不显示入口 | PASS | 隔离 Electron 市场测试检查启动状态与页面列表 |
+| B 安装、禁用、卸载、重启正确更新 | PASS | `test-plugin-market-electron.js` 覆盖安装启用、禁用、卸载和重启；禁用清除页面、样式、Wallpaper DOM，保留 localStorage 导航数据且重启不复活旧页 |
+| C 诊断真实市场连接 | PASS | Electron renderer→preload/IPC→Brain `/api/market/list`→GitHub Raw 实际请求成功；诊断分类和错误状态由 Brain 返回 |
+| D 至少一个 Scene 实时播放 | PASS | 真实 WebWallGL `mount()` 载入 loose Scene，canvas 两帧 SHA-256 不同；场景工程由隔离 fixture 提供，project/scene 通过认证媒体桥取得 |
+| E 聊天与插件安全隔离 | PARTIAL | contextIsolation/sandbox 保持，CSP 只允许本地回环媒体连接，媒体路径受 Brain containment 验证；全量既有聊天 E2E 因其读取旧 `brain/config/config.json` 路径失败，未能形成聊天通过证据 |
+| F Electron 集成测试 | PASS（核心场景） | 壁纸、市场生命周期和实时市场连接 Electron 测试通过；全量 `npm run e2e` 上述旧路径问题单独列出 |
 
-## Git and delivery
+## 实际链路与修改
 
-Implementation commit SHA: `86f2c8f796af40d413f81c86e641bf4792d4eb4a`. The final report-only commit is the branch tip.
-Windows candidate package: none built.  
-This work is limited to `codex/p14-wallpaper-market`; no merge was performed.
+### 插件生命周期和错误入口
+
+Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend 资源；`/api/plugins/frontend` 的安装/启用状态决定 Electron 前端注入内容。Renderer 以 fingerprint 对照注入状态，在变化时先注销旧 owner，再注入当前启用插件。
+
+`VigilPlugin` 现有页面 API 增加 owner 生命周期：插件注册的页面、CSS、清理回调及事件监听器均有 owner；注销时运行清理、移除页面和样式，并在当前页被移除时返回安全页面。壁纸清理销毁 WebWallGL、断开 ResizeObserver、移除 theme/visibility/引擎监听器、背景和遮罩 DOM、CSS 变量与媒体票据。市场测试还验证 localStorage 中旧导航顺序不会重新创建已卸载页面。
+
+### 市场连接诊断
+
+在 Renderer→IPC→Brain→Market API→远端 manifest/package 链路上统一返回结构化诊断类别：`timeout`、`proxy`、`dns`、`tls`、`http`、`auth`、`brain_unavailable`、`manifest_invalid`，并带阶段、HTTP 状态和安全消息。远程异常日志只记录 route/status/分类，不输出 Authorization 或 Token。市场页在失败时展示可操作诊断，并可导出 JSON 供用户提交；导出内容不含 token。
+
+### WebWallGL 与可信媒体
+
+依赖锁定为 `webwallgl@3.0.0`，由客户端安装包本地加载，不使用远程 CDN。插件先从 Brain 读取 `project.json`，再让 WebWallGL 加载 Scene；相对媒体请求使用有时限的本地回环票据，Brain 对每个相对路径重新做路径归属校验。Electron 保持 `contextIsolation: true` 与 `sandbox: true`，未开放任意 `file://` 读取。后台隐藏时 pause，恢复时 resume；ResizeObserver 更新挂载视口；卸载时 destroy 并释放 package cache。初始化失败展示真实错误，并保留明确标记的 preview-only 降级状态，不将静态图标成动态 Scene。
+
+## 可复现测试和证据
+
+在 Windows 11、Node 24.21.0、npm 11.19.0、Python 3.13.15 环境安装了项目声明依赖；Electron 28.3.3 和 PyInstaller 6.22.3 可用。
+
+- `npx electron tools/test-wallpaper-electron.js`：PASS。加载真实 WebWallGL 3.0.0；Scene 工程含 1 个 animated solid 层；校验动画帧变化、`project.json`/`scene.json` 认证读取、视频解码、嵌套网页资源、pause/resume、resize、关闭及插件清理。帧 SHA-256：
+  - `c0a0ba8be64c5adc305519865a0e3fdccd2d0833821fe09b05853bdcdadbc7d7`
+  - `31e78bacbe9b90cde43a86eedceec08210dc226df15c39abf9dfcf3cfcf3a5da`
+- Electron 场景截图：[wallpaper-code11.png](../client/_shots/wallpaper-code11.png)。测试使用无用户数据的临时 Electron `userData` 和临时 HTTP fixture。
+- `npx electron tools/test-plugin-market-electron.js`：PASS。覆盖按钮、连接状态、安装失败重试、安装启用、禁用、卸载、重启和旧 localStorage 导航顺序。
+- `npx electron tools/test-market-live-electron.js`：PASS。真实 Electron renderer/preload/IPC 调用本地 Brain 市场 API，远程 GitHub Raw 清单返回 `ready`，版本 `1.1`，一项插件。
+- `python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q`（从 `brain/` 执行）：PASS，51 passed，3 skipped。
+- 远程 Wallpaper 3.1.0 ZIP：真实 `_install_remote_directory()` 下载制品并验证制品 SHA、Manifest、五个文件 SHA；临时目录事务安装和卸载均 PASS。
+- `npm run e2e`：未通过。隔离 Brain 启动成功；当前既有脚本随后读取不存在的 `brain/config/config.json` 并终止。已增加 `VIGIL_BUILD_PYTHON` / 系统 Python 回退，消除了依赖虚拟环境路径的早期失败；没有改写该聊天 E2E 的配置/鉴权前置条件，所以不能声称完整聊天验收通过。
+- Renderer 测试捕获的 `ReadPixels` GPU stall 是测试为对比两帧执行 `canvas.toDataURL()` 造成的诊断开销，不等同于应用播放路径的 GPU 使用率测量。Wallpaper Engine 本机 Workshop 目录未作为测试数据；通用 Scene 工程已独立验证。
+
+## 插件交付
+
+已在独立 `vigil-plugins` 仓库分支 `codex/p14-wallpaper-webwallgl` 生成新制品，未覆盖 3.0.1、未合并：
+
+- Draft PR：[vigil-plugins#1](https://github.com/limingyi2/vigil-plugins/pull/1)
+- 新版本：3.1.0；WebWallGL 依赖：3.0.0
+- ZIP：`plugins/wallpaper/wallpaper-3.1.0.zip`
+- SHA-256：`83c8b696dae81d737895a5bff9e3dc38eef2347060879765556c8327f2f1eaba`
+- Manifest 的五个 payload 文件 hash 已逐个重算校验。`market.json` 固定引用包含该 ZIP 的提交 `39d4f561bd5f0d71894a663581a6aef3410b5992`，市场清单 URL 的更新已推送到分支 tip `a5d2dfbd47b48d765afc3ca711f61255b79380f5`。
+- 客户端市场主线需审核并合并该 PR 后才会显示 3.1.0；本轮没有自动合并。
+
+## Windows 候选包
+
+当前本地候选构建流程已实际运行：Python/PyInstaller 构建 Brain，electron-builder 生成 NSIS 安装器与 portable 包；`scripts/build_release.py --verify --candidate` 通过。第一次试构建发现源码在 Brain 构建后改变，构建脚本正确拒绝不一致包；之后从一致源快照重建成功。
+
+最终实现提交后会再次运行 candidate build 并回填本节：安装器路径、release manifest 的 source commit、尺寸及 SHA-256。候选包只用于验收，不代表正式发布。
+
+## 未完成与人工验收
+
+- 用户自定义图片/视频导入、搜索、播放列表尚未实现。
+- 安装器的完整聊天 E2E 受旧脚本配置路径阻断；需要修正测试夹具并重新运行后才能将 E 标为 PASS。
+- 用户机器上的真实 Steam Workshop/Wallpaper Engine 内容、用户配置迁移仍待人工验收；渲染器不依赖 Wallpaper Engine 程序运行。
+- 3.1.0 市场 PR 尚未合并，因此远端客户端主市场暂时继续提供 3.0.1；新包通过分支 URL 可安装并已验证。
+
+## 本轮修改文件
+
+- `brain/plugins/plugin_market.py`
+- `brain/tests/test_plugin_market_state.py`
+- `client/electron/main.js`
+- `client/electron/plugin-media.js`
+- `client/electron/preload.js`
+- `client/package.json`、`client/package-lock.json`
+- `client/src/index.html`
+- `client/src/js/app.js`、`client/src/js/pages.js`
+- `client/tools/e2e.js`
+- `client/tools/test-plugin-market-electron.js`
+- `client/tools/test-wallpaper-electron.js`
+- `client/tools/test-market-live-electron.js`
+- `market/plugins/wallpaper/__init__.py`
+- `market/plugins/wallpaper/frontend.js`、`frontend.css`
+- `reports/P14_WALLPAPER_MARKET_REPORT.md`

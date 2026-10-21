@@ -98,6 +98,10 @@ function createPluginMedia({ getBase, getToken }) {
       urls.set(key, result);
       return result;
     },
+    releaseResources() {
+      tickets.clear();
+      urls.clear();
+    },
     close() {
       if (server) { server.close(); if (server.closeAllConnections) server.closeAllConnections(); }
       server = null; opening = null; tickets.clear(); urls.clear();

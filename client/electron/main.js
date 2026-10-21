@@ -344,10 +344,30 @@ function request(method, urlStr, body, token, timeoutMs, perfLabel = '') {
     req.on('timeout', () => {
       req.destroy(new Error('请求超时'));
     });
-    req.on('error', (e) => finish({ ok: false, status: 0, err: e.message }));
+    req.on('error', (e) => finish({ ok: false, status: 0, err: e.message,
+      networkCode: String(e && e.code || '') }));
     if (data) req.write(data);
     req.end();
   });
+}
+
+function apiDiagnostic(result, method, route) {
+  const status = Number(result && result.status) || 0;
+  const code = String(result && result.networkCode || '');
+  let kind = 'brain_http_error';
+  if (!status) {
+    if (/TIMEOUT/i.test(code) || /timeout/i.test(String(result && result.err || ''))) kind = 'timeout';
+    else if (/ENOTFOUND|EAI_AGAIN|EAI_FAIL/i.test(code)) kind = 'dns';
+    else if (/CERT|TLS|SSL/i.test(code)) kind = 'tls';
+    else if (/PROXY|TUNNEL/i.test(code + ' ' + String(result && result.err || ''))) kind = 'proxy';
+    else kind = 'brain_unavailable';
+  } else if (status === 401 || status === 403) kind = 'authentication';
+  else if (status >= 400 && status < 500) kind = 'brain_http_error';
+  else if (status >= 500) kind = 'brain_server_error';
+  return { stage: 'electron_to_brain', kind, method, route, status,
+    networkCode: code || undefined,
+    message: status ? ('Brain HTTP ' + status) : String(result && result.err || 'Brain unavailable').slice(0, 180),
+    retryable: !status || status >= 500 };
 }
 
 // 二进制附件分块请求：与 JSON API 共用同一套目标限制和 token，
@@ -829,8 +849,8 @@ ipcMain.handle('plugins:load', async () => {
       if (!p.enabled || !p.js) continue;
       const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
       const wrapped =
-        '(function(){\ntry{\n' + String(p.js) +
-        '\n}catch(e){console.error("[插件 ' + name + ' 前端出错]",e);}\n})();';
+        '(function(){\nconst vp=window.VigilPlugin;const prev=vp&&vp._currentOwner;if(vp)vp._currentOwner=' + JSON.stringify(name) + ';\ntry{\n' + String(p.js) +
+        '\n}catch(e){console.error("[插件 ' + name + ' 前端出错]",e);}\nfinally{if(vp)vp._currentOwner=prev;}\n})();';
       try {
         await win.webContents.executeJavaScript(wrapped);
         loaded += 1;
@@ -847,6 +867,10 @@ ipcMain.handle('plugins:load', async () => {
 ipcMain.handle('plugins:resource-url', async (_e, resource) => {
   try { return { ok: true, url: await pluginMedia.url(resource) }; }
   catch (e) { return { ok: false, err: e.message }; }
+});
+ipcMain.handle('plugins:release-resources', () => {
+  pluginMedia.releaseResources();
+  return { ok: true };
 });
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:instance-id', () => APP_PROCESS_INSTANCE_ID);
@@ -991,7 +1015,10 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const cfg = readCfg();
   // sidecar 动态端口优先（重启后端口会变）
   const b = connectionBase();
-  if (!b) return {ok:false,status:0,err:sidecar.diagnosis() || '本地 Brain 未就绪'};
+  if (!b) {
+    const result = {ok:false,status:0,err:sidecar.diagnosis() || '本地 Brain 未就绪'};
+    return { ...result, diagnostic: apiDiagnostic(result, method, p.split('?')[0]) };
+  }
   const src = cfg.src || CLIENT_SRC;
   // 渠道用 query 带上：服务端按 src 分区（features / history / persona 都吃这个）。
   // URL 里已经写了 src 的（数据页看别的渠道历史）尊重写死的那个。
@@ -1007,8 +1034,10 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   const r = await request(method, b + withSrc, body, token, requestedTimeout, perfLabel);
   // Report the actual destination, without credentials, query strings or paths.
   const target = new URL(b).origin;
-  if (!r.ok && r.status === 401) return { ...r, target, err: 'token 不对（本机 Brain 的凭据被换过？设置 → 本地内核 可重启它）' };
-  return { ...r, target };
+  const diagnostic = r.ok ? undefined : apiDiagnostic(r, method, p.split('?')[0]);
+  if (!r.ok && r.status === 401) return { ...r, target,
+    err: 'token 不对（本机 Brain 的凭据被换过？设置 → 本地内核 可重启它）', diagnostic };
+  return { ...r, target, diagnostic };
 });
 
 ipcMain.handle('attachment:chunk', async (_e, { bytes, headers = {} } = {}) => {

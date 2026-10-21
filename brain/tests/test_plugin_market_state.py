@@ -220,3 +220,24 @@ def test_invalid_cached_market_is_not_displayed_as_verified():
                             "market": {"plugins": [{"name": "bad name"}]}}),
                 encoding="utf-8")
             assert market._read_cached_market() is None
+
+
+def test_remote_connection_failure_diagnostics_separate_timeout_dns_tls_and_proxy():
+    import socket
+    import ssl
+    from urllib.error import URLError
+
+    assert market._remote_diagnostic(URLError(socket.timeout("timed out")))["kind"] == "timeout"
+    assert market._remote_diagnostic(URLError(socket.gaierror("name resolution failed")))["kind"] == "dns"
+    assert market._remote_diagnostic(URLError(ssl.SSLError("certificate verify failed")))["kind"] == "tls"
+    assert market._remote_diagnostic(URLError("proxy tunnel failed"))["kind"] == "proxy"
+
+
+def test_live_market_corruption_has_explicit_manifest_diagnostic():
+    with tempfile.TemporaryDirectory() as home:
+        with patch.object(paths, "CONFIG_DIR", home), \
+             patch.object(market, "_fetch_bytes", return_value=b'{broken json'):
+            result = market._read_remote_market()
+    assert result["state"] == "read_failed"
+    assert result["diagnostic"]["stage"] == "remote_market"
+    assert result["diagnostic"]["kind"] == "invalid_manifest"

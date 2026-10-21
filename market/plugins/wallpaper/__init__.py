@@ -25,8 +25,8 @@ from pathlib import Path
 
 # ── 插件元信息 ──────────────────────────────────────────────
 NAME = "wallpaper"
-VERSION = "3.0.0"
-DESC = "Wallpaper Engine 壁纸接入：扫描 Steam 创意工坊，把视频/网页/场景壁纸渲染到客户端背景"
+VERSION = "3.1.0"
+DESC = "Wallpaper Engine 壁纸接入：视频/网页播放与 WebWallGL 实时 Scene 渲染"
 FEATURE = "wallpaper"
 
 # ── 配置持久化 ──────────────────────────────────────────────

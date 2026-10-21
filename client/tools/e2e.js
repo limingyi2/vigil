@@ -30,7 +30,8 @@ const WebSocket = require('ws');
 
 const ROOT = path.join(__dirname, '..', '..');
 const CLIENT = path.join(__dirname, '..');
-const PY = path.join(ROOT, 'venv', 'Scripts', 'python.exe');
+const VENV_PY = path.join(ROOT, 'venv', 'Scripts', 'python.exe');
+const PY = process.env.VIGIL_BUILD_PYTHON || (fs.existsSync(VENV_PY) ? VENV_PY : 'python');
 const ELECTRON = path.join(CLIENT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const BASE = 'http://127.0.0.1:8788';
 const CDP_PORT = 9333;
