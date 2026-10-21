@@ -99,7 +99,8 @@ def _finding(item, kind, severity, rel, line, snippet, title):
     if any(x.get('issue_id') == issue_id for x in item['findings']):
         return
     item['findings'].append({'issue_id': issue_id, 'kind': kind, 'severity': severity,
-        'status': 'confirmed', 'title': title, 'evidence': {
+        # Static patterns are leads for a semantic review, not proof of a bug.
+        'status': 'candidate', 'title': title, 'evidence': {
             'path': rel, 'line': line, 'snippet': snippet[:400]},
         'acceptance': '复现或补充针对该证据的回归测试后再关闭'})
 

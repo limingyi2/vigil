@@ -8,6 +8,7 @@ uncertain side effect or overwrite a concurrent edit.
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -61,6 +62,9 @@ def plan(review_id, issue_id, path, old, new, owner):
     finding = next((x for x in review.get('findings', []) if x.get('issue_id') == issue_id), None)
     if not finding:
         return {'ok': False, 'err': '问题 ID 不存在，不能制定修复方案'}
+    if finding.get('status') != 'confirmed':
+        return {'ok': False, 'err': '静态扫描提示尚未由实际证据确认，不能制定自动修复方案',
+                'status': finding.get('status', 'unknown')}
     target = _inside(review['root'], str(path or finding['evidence']['path']))
     if not target or not os.path.isfile(target):
         return {'ok': False, 'err': '修复路径不在审查项目内，或文件不存在'}
@@ -113,19 +117,65 @@ def apply(plan_id, owner, approved=False):
         os.replace(temp, item['path'])
     finally:
         if os.path.exists(temp): os.unlink(temp)
-    item['status'] = 'applied'; item['applied_at'] = time.time(); _save(item)
+    item['status'] = 'applied'; item['applied_at'] = time.time()
+    item['applied_sha256'] = hashlib.sha256(updated.encode()).hexdigest()
+    review = project_review.report(item.get('review_id'), owner)
+    relpath = os.path.relpath(item['path'], review['root']).replace('\\', '/') if review.get('ok') else os.path.basename(item['path'])
+    item['diff'] = {'path': relpath,
+                    'before_sha256': item['base_sha256'],
+                    'after_sha256': item['applied_sha256'],
+                    'replaced_chars': len(item['old']), 'inserted_chars': len(item['new'])}
+    _save(item)
     out = dict(item); out.pop('owner', None); out.pop('old', None); out.pop('new', None)
     out['ok'] = True
     return out
 
 
-def verify(plan_id, owner, passed, evidence='', command=''):
+def verify(plan_id, owner, run_id, step_id):
     item = _load(plan_id, owner)
     if not item:
         return {'ok': False, 'err': '修复方案不存在'}
-    item['verification'] = {'passed': bool(passed), 'evidence': str(evidence or '')[:2000],
-                            'command': str(command or '')[:240], 'at': time.time()}
-    item['status'] = 'verified' if passed else 'regression'
+    if item.get('status') not in ('applied', 'regression'):
+        return {'ok': False, 'err': '只有已应用且尚未验证通过的方案可以验证', 'status': item.get('status')}
+    try:
+        with open(item['path'], encoding='utf-8') as fh:
+            current_hash = hashlib.sha256(fh.read().encode()).hexdigest()
+    except OSError:
+        return {'ok': False, 'err': '修复文件当前不可读取，不能验证'}
+    if current_hash != item.get('applied_sha256'):
+        item['status'] = 'blocked'
+        item['failure'] = '修复应用后文件再次变化，验证证据无法绑定当前内容'
+        _save(item)
+        return {'ok': False, 'err': item['failure'], 'status': item['status']}
+    # Verification is derived from a durable Agent tool step. A model-supplied
+    # boolean or pasted test log is never sufficient evidence.
+    try:
+        import agent_runs
+        run = agent_runs.snapshot(str(run_id or ''), owner)
+        sid = int(step_id)
+        step = next((s for s in (run or {}).get('steps', []) if s.get('step_id') == sid), None)
+    except (TypeError, ValueError):
+        run, step = None, None
+    if not run or not step or step.get('kind') != 'tool' or step.get('tool') != 'local_exec':
+        return {'ok': False, 'err': '找不到可信的本机命令执行记录'}
+    result = str(step.get('result') or '')
+    match = re.search(r'\n\[VIGIL_EXEC_EXIT_CODE=(-?\d+)\]\s*$', result)
+    args = step.get('input') if isinstance(step.get('input'), dict) else {}
+    command = str(args.get('cmd') or '')
+    review = project_review.report(item.get('review_id'), owner)
+    root = os.path.normcase(os.path.abspath(review.get('root') or '')) if review.get('ok') else ''
+    if not match or not root or root.lower() not in os.path.normcase(command).lower():
+        return {'ok': False, 'err': '执行记录缺少可信退出码，或命令未明确指向审查项目'}
+    exit_code = int(match.group(1))
+    status = 'passed' if exit_code == 0 and step.get('result_state') == 'returned' else 'failed'
+    record = {'run_id': str(run_id), 'step_id': sid, 'command': command[:240],
+              'exit_code': exit_code, 'status': status,
+              'output': result[:4000], 'started_at': step.get('started_at'),
+              'finished_at': step.get('finished_at'), 'at': time.time()}
+    item.setdefault('verification_attempts', []).append(record)
+    item['verification_attempts'] = item['verification_attempts'][-20:]
+    item['verification'] = record
+    item['status'] = 'verified' if status == 'passed' else 'regression'
     _save(item)
     out = dict(item); out.pop('owner', None); out.pop('old', None); out.pop('new', None); out['ok'] = True
     return out
@@ -139,6 +189,6 @@ def invoke(name, args, owner=''):
     if name == 'project_repair_apply':
         return json.dumps(apply(args.get('plan_id'), owner, args.get('approved') is True), ensure_ascii=False)
     if name == 'project_repair_verify':
-        return json.dumps(verify(args.get('plan_id'), owner, args.get('passed') is True,
-                                 args.get('evidence'), args.get('command')), ensure_ascii=False)
+        return json.dumps(verify(args.get('plan_id'), owner, args.get('run_id'),
+                                 args.get('step_id')), ensure_ascii=False)
     return None

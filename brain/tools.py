@@ -221,9 +221,9 @@ _STATIC_SPECS = {
         "multi_args": True,
     },
     "project_repair_verify": {
-        "desc": "记录外部测试或实际运行得到的修复验收证据；没有证据不能标记通过。",
-        "params": [("plan_id", "修复方案 ID", True), ("passed", "测试是否通过", True, "boolean"),
-                   ("evidence", "测试输出或行为证据", True), ("command", "实际执行的命令", False)],
+        "desc": "从已持久化的 Agent local_exec 执行记录验证修复；不能用模型自报 passed 或粘贴日志验收。",
+        "params": [("plan_id", "修复方案 ID", True), ("run_id", "执行测试命令的 Agent run ID", True),
+                   ("step_id", "该 run 中 local_exec 工具步骤编号", True, "integer")],
         "multi_args": True,
     },
 }
