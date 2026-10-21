@@ -182,3 +182,41 @@ def test_fetch_still_rejects_disallowed_download_hosts():
     import pytest
     with pytest.raises(ValueError):
         market._fetch_bytes("https://evil.example.com/market.json", 1024)
+
+
+def test_offline_remote_market_uses_timestamped_validated_cache():
+    with tempfile.TemporaryDirectory() as home:
+        config_dir = Path(home) / "config"
+        config_dir.mkdir()
+        plugin = {
+            "name": "wallpaper", "version": "3.0.1",
+            "protocol": market.PLUGIN_PROTOCOL,
+            "permissions": ["wallpaper.config.write"],
+            "artifact": {
+                "url": "https://raw.githubusercontent.com/example/repo/main/wallpaper.zip",
+                "sha256": "a" * 64,
+            },
+        }
+        with patch.object(paths, "CONFIG_DIR", str(config_dir)):
+            market._write_market_cache({
+                "version": "1.1", "updated": "2026-10-21", "plugins": [plugin],
+                "state": "ready", "source_kind": "github",
+            })
+            with patch.object(market, "_fetch_bytes", side_effect=OSError("offline")):
+                result = market._read_remote_market()
+            assert result["state"] == "cached_stale"
+            assert result["source_kind"] == "github-cache"
+            assert result["fetched_at"]
+            assert "在线读取失败" in result["err"]
+
+
+def test_invalid_cached_market_is_not_displayed_as_verified():
+    with tempfile.TemporaryDirectory() as home:
+        config_dir = Path(home) / "config"
+        config_dir.mkdir()
+        with patch.object(paths, "CONFIG_DIR", str(config_dir)):
+            (config_dir / "plugin_market_cache.json").write_text(
+                json.dumps({"fetched_at": "2026-10-21T00:00:00+00:00",
+                            "market": {"plugins": [{"name": "bad name"}]}}),
+                encoding="utf-8")
+            assert market._read_cached_market() is None

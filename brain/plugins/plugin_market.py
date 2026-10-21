@@ -66,6 +66,53 @@ def _plugins_dir():
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "installed_plugins"))
 
 
+def _market_cache_path():
+    """Validated remote listing cache. Its timestamp is kept separate from source metadata."""
+    try:
+        from paths import CONFIG_DIR
+        return os.path.join(str(CONFIG_DIR), "plugin_market_cache.json")
+    except Exception:
+        return os.path.join(os.path.expanduser("~"), ".vigil", "plugin_market_cache.json")
+
+
+def _read_cached_market():
+    try:
+        with open(_market_cache_path(), "r", encoding="utf-8") as stream:
+            cache = json.load(stream)
+        market = cache.get("market")
+        fetched_at = cache.get("fetched_at")
+        if not isinstance(fetched_at, str) or not isinstance(market, dict):
+            return None
+        checked = _validate_market(market, "github-cache")
+        if checked.get("state") not in ("ready", "empty"):
+            return None
+        checked["state"] = "cached_stale"
+        checked["fetched_at"] = fetched_at
+        return checked
+    except Exception:
+        return None
+
+
+def _write_market_cache(market):
+    """Persist only a freshly downloaded and fully validated listing."""
+    try:
+        from datetime import datetime, timezone
+        path = _market_cache_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = json.dumps({
+            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "market": {k: v for k, v in market.items() if k not in ("state", "source_kind")},
+        }, ensure_ascii=False, indent=2)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    except Exception as exc:
+        print("[插件市场] 已验证市场缓存写入失败：%s" % str(exc)[:80], flush=True)
+
+
 def _list_local():
     """已安装的插件名集合。"""
     installed = set()
@@ -154,8 +201,16 @@ def _read_remote_market():
     """默认公开目录；安装版不需要配置开发机上的本地 clone。"""
     try:
         market = json.loads(_fetch_bytes(REMOTE_MARKET_URL, 512 * 1024).decode("utf-8-sig"))
-        return _validate_market(market, "github")
+        market = _validate_market(market, "github")
+        if market.get("state") in ("ready", "empty"):
+            _write_market_cache(market)
+        return market
     except Exception as exc:
+        cached = _read_cached_market()
+        if cached:
+            cached["err"] = "在线读取失败，显示于 %s 验证的缓存：%s" % (
+                cached["fetched_at"], str(exc)[:100])
+            return cached
         return {"state": "read_failed", "plugins": [], "source_kind": "github",
                 "err": "GitHub 插件市场读取失败：%s" % str(exc)[:100]}
 
@@ -259,6 +314,7 @@ def api_list(body, query):
         "state_message": {
             "not_configured": "尚未配置本地插件市场仓库",
             "read_failed": market.get("err") or "市场仓库读取失败",
+            "cached_stale": market.get("err") or "当前显示离线缓存，尚未验证在线市场状态",
             "empty": "市场仓库可用，但没有已发布插件",
             "ready": "插件市场已就绪",
         }.get(market.get("state"), "市场仓库读取失败"),
@@ -266,6 +322,7 @@ def api_list(body, query):
         "source": market.get("source_kind", "local"),
         "market_version": market.get("version", ""),
         "updated": market.get("updated", ""),
+        "fetched_at": market.get("fetched_at", ""),
         "plugins": plugins,
         "installed_count": len(installed),
     }
