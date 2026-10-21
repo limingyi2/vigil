@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <cwctype>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -344,6 +346,73 @@ std::set<DWORD> RefreshProcesses(Host& host) {
   return live;
 }
 
+std::wstring Lowercase(std::wstring value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) { return static_cast<wchar_t>(::towlower(c)); });
+  return value;
+}
+
+// 目标路径可能来自用户输入或 Electron，分隔符正反斜杠混用、还可能重复；
+// 比对前统一成小写单反斜杠，否则同一条路径会因写法不同而匹配不上。
+std::wstring NormalizePathForCompare(const std::wstring& value) {
+  std::wstring result;
+  result.reserve(value.size());
+  wchar_t previous = 0;
+  for (wchar_t ch : value) {
+    if (ch == L'/') ch = L'\\';
+    if (ch == L'\\' && previous == L'\\') continue;
+    result.push_back(static_cast<wchar_t>(::towlower(ch)));
+    previous = ch;
+  }
+  return result;
+}
+
+// Launcher-style applications (Jianying, some portable builds) hand off to another
+// executable in the same folder and exit immediately. The process family then looks
+// empty even though the application is running, so adopt same-folder processes by
+// image path instead of relying on parent links that the launcher already broke.
+bool AdoptProcessesInDirectory(Host& host, const std::wstring& exePath) {
+  if (exePath.empty()) return false;
+  const size_t slash = exePath.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) return false;
+  const std::wstring prefix = NormalizePathForCompare(exePath.substr(0, slash + 1));
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return false;
+  std::vector<DWORD> matches;
+  DWORD scanned = 0, resolved = 0;
+  std::wstring sample;
+  PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      ++scanned;
+      if (entry.th32ProcessID == GetCurrentProcessId() || host.trackedProcesses.count(entry.th32ProcessID)) continue;
+      HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+      if (!process) continue;
+      wchar_t buffer[MAX_PATH]{};
+      DWORD size = static_cast<DWORD>(MAX_PATH);
+      const bool ok = QueryFullProcessImageNameW(process, 0, buffer, &size) != FALSE;
+      CloseHandle(process);
+      if (!ok || size == 0) continue;
+      ++resolved;
+      if (sample.empty()) sample.assign(buffer, size);
+      const std::wstring path = NormalizePathForCompare(std::wstring(buffer, size));
+      if (path.size() <= prefix.size() || path.compare(0, prefix.size(), prefix) != 0) continue;
+      matches.push_back(entry.th32ProcessID);
+      if (matches.size() > 64) break;
+    } while (Process32NextW(snapshot, &entry));
+  }
+  CloseHandle(snapshot);
+  if (matches.empty()) {
+    if (GetEnvironmentVariableW(L"VIGIL_P15_ADOPT_DEBUG", nullptr, 0) > 0) {
+      Emit(L"{\"type\":\"adopt-miss\",\"prefix\":\"" + JsonEscape(prefix) + L"\",\"scanned\":" + std::to_wstring(scanned) +
+        L",\"resolved\":" + std::to_wstring(resolved) + L",\"sample\":\"" + JsonEscape(sample) + L"\"}");
+    }
+    return false;
+  }
+  for (DWORD pid : matches) TrackProcess(host, pid);
+  return true;
+}
+
+
 void ClearSessionState(Host& host) {
   for (const auto& item : host.trackedProcesses) if (item.second) CloseHandle(item.second);
   host.trackedProcesses.clear();
@@ -383,57 +452,74 @@ void EmitRestoreResult(const wchar_t* type, const RestoreResult& result, HWND hw
 
 void HideContainer(Host& host) {
   if (IsWindow(host.container)) ShowWindow(host.container, SW_HIDE);
+  if (IsWindow(host.mainWindow)) ShowWindow(host.mainWindow, SW_HIDE);
   host.visible = false;
 }
 
 void UpdateBounds(Host& host, int x, int y, int width, int height) {
+  // bounds 是目标窗口的屏幕物理像素矩形；跟随模式下直接贴上去，不再经过容器。
   host.bounds = { x, y, x + std::max(width, 1), y + std::max(height, 1) };
-  if (IsWindow(host.container)) SetWindowPos(host.container, nullptr, x, y, std::max(width, 1), std::max(height, 1), SWP_NOZORDER | SWP_NOACTIVATE);
-  if (host.attached && IsWindow(host.mainWindow)) {
-    SetWindowPos(host.mainWindow, nullptr, 0, 0, std::max(width, 1), std::max(height, 1), SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+  if (host.attached && IsWindow(host.mainWindow) && host.visible) {
+    SetWindowPos(host.mainWindow, nullptr, x, y, std::max(width, 1), std::max(height, 1),
+      SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+  }
+}
+
+void ApplyVisibility(Host& host) {
+  if (!host.attached || !IsWindow(host.mainWindow)) return;
+  if (host.visible) {
+    const int width = std::max<int>(1, static_cast<int>(host.bounds.right - host.bounds.left));
+    const int height = std::max<int>(1, static_cast<int>(host.bounds.bottom - host.bounds.top));
+    SetWindowPos(host.mainWindow, HWND_TOP, host.bounds.left, host.bounds.top, width, height,
+      SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
+  } else {
+    ShowWindow(host.mainWindow, SW_HIDE);
   }
 }
 
 bool EmbedWindow(Host& host, HWND target, bool popup) {
-  if (!IsWindow(target) || !IsWindow(host.container)) return false;
-  WindowState state = SaveWindow(target, popup);
-  if (!popup) {
-    host.mainWindow = target;
-    host.mainState = state;
-    host.mainPid = 0;
-    GetWindowThreadProcessId(target, &host.mainPid);
-    host.attached = true;
-  }
+  // 弹窗保持独立显示，不进工作台区域。
+  if (!IsWindow(target) || popup) return false;
+  WindowState state = SaveWindow(target, false);
+  host.mainWindow = target;
+  host.mainState = state;
+  host.mainPid = 0;
+  GetWindowThreadProcessId(target, &host.mainPid);
+  host.attached = true;
   try {
-    const LONG_PTR style = (state.style & ~static_cast<LONG_PTR>(WS_POPUP | WS_CAPTION | WS_THICKFRAME)) | WS_CHILD;
+    // 跟随模式：跨进程 SetParent 的窗口在 Win10/11 拿不到 DWM 合成，画面上什么都没有。
+    // 所以不改父窗口，只去掉边框、挂到 Vigil 名下当 owned window，再把它贴在绑定区域上。
+    const LONG_PTR style = (state.style & ~static_cast<LONG_PTR>(WS_POPUP | WS_CAPTION | WS_THICKFRAME |
+      WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)) | WS_POPUP;
     SetWindowLongPtrChecked(target, GWL_STYLE, style);
-    if (state.exStyle & WS_EX_APPWINDOW) SetWindowLongPtrChecked(target, GWL_EXSTYLE, state.exStyle & ~static_cast<LONG_PTR>(WS_EX_APPWINDOW));
+    const LONG_PTR exStyle = state.exStyle & ~static_cast<LONG_PTR>(WS_EX_APPWINDOW);
+    if (exStyle != state.exStyle) SetWindowLongPtrChecked(target, GWL_EXSTYLE, exStyle);
     SetLastError(ERROR_SUCCESS);
-    const HWND previousParent = SetParent(target, host.container);
-    const DWORD error = GetLastError();
-    const HWND actualParent = GetParent(target);
-    Emit(L"{\"type\":\"set-parent-result\",\"applied\":" + std::wstring(actualParent == host.container ? L"true" : L"false") +
-      L",\"returnNull\":" + (previousParent ? L"false" : L"true") + L",\"lastError\":" + std::to_wstring(error) +
-      L",\"parentHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(actualParent)) + L",\"expectedParentHwnd\":" +
-      std::to_wstring(reinterpret_cast<uintptr_t>(host.container)) + L"}");
-    if (actualParent != host.container) {
-      EmitError(L"set-parent", error ? error : ERROR_ACCESS_DENIED, L"Windows rejected SetParent; target remains an independent window.");
+    SetWindowLongPtrW(target, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(host.parent));
+    const DWORD ownerError = GetLastError();
+    const HWND owner = GetWindow(target, GW_OWNER);
+    Emit(L"{\"type\":\"follow-result\",\"style\":" + std::to_wstring(style) +
+      L",\"ownerHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(owner)) +
+      L",\"expectedOwnerHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(host.parent)) +
+      L",\"lastError\":" + std::to_wstring(ownerError) + L"}");
+    const int width = std::max<int>(1, static_cast<int>(host.bounds.right - host.bounds.left));
+    const int height = std::max<int>(1, static_cast<int>(host.bounds.bottom - host.bounds.top));
+    // 软件常记住上次的最大化状态，先还原，否则它会自己铺满整块屏幕。
+    if (state.placement.showCmd == SW_SHOWMAXIMIZED || state.placement.showCmd == SW_SHOWMINIMIZED ||
+        IsZoomed(target) || IsIconic(target)) {
+      ShowWindow(target, SW_RESTORE);
+    }
+    if (!SetWindowPos(target, HWND_TOP, host.bounds.left, host.bounds.top, width, height,
+        SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOOWNERZORDER)) {
+      EmitError(L"set-position", GetLastError(), L"Windows rejected the window placement; the original window was restored.");
       return false;
     }
-    const int width = host.bounds.right - host.bounds.left;
-    const int height = host.bounds.bottom - host.bounds.top;
-    int x = 0, y = 0, w = width, h = height;
-    if (popup) {
-      w = std::max(320, std::min(760, width - 32));
-      h = std::max(180, std::min(520, height - 32));
-      x = (width - w) / 2; y = (height - h) / 2;
-    }
-    if (!SetWindowPos(target, popup ? HWND_TOP : nullptr, x, y, w, h, SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW)) {
-      const DWORD positionError = GetLastError();
-      EmitError(L"set-position", positionError, L"Windows rejected the hosted window resize; the original window was restored.");
-      return false;
-    }
-    if (popup) return false;
+    RECT applied{};
+    GetWindowRect(target, &applied);
+    Emit(L"{\"type\":\"follow-applied\",\"rect\":[" + std::to_wstring(applied.left) + L"," + std::to_wstring(applied.top) +
+      L"," + std::to_wstring(applied.right) + L"," + std::to_wstring(applied.bottom) + L"],\"requested\":[" +
+      std::to_wstring(host.bounds.left) + L"," + std::to_wstring(host.bounds.top) + L"," +
+      std::to_wstring(width) + L"," + std::to_wstring(height) + L"]}");
     return true;
   } catch (DWORD error) {
     EmitError(L"set-style", error, L"Could not change the external window style; it remains standalone.");
@@ -581,7 +667,7 @@ void ProcessCommand(Host& host, const std::wstring& line) {
     const std::wstring exe = Base64ToWide(fields[1]);
     const std::wstring args = Base64ToWide(fields[2]);
     if (exe.empty()) { EmitError(L"start", ERROR_INVALID_PARAMETER, L"The EXE path is empty or invalid UTF-8."); return; }
-    if (host.launched && RefreshProcesses(host).empty()) {
+    if (host.launched && RefreshProcesses(host).empty() && !AdoptProcessesInDirectory(host, host.exePath)) {
       Emit(L"{\"type\":\"exited\",\"reason\":\"all-target-processes-exited\"}");
       if (!ClearSession(host)) return;
     }
@@ -605,7 +691,7 @@ void ProcessCommand(Host& host, const std::wstring& line) {
         }
         UpdateBounds(host, number(3, 0), number(4, 0), number(5, 1), number(6, 1));
         host.visible = true;
-        if (IsWindow(host.container)) ShowWindow(host.container, SW_SHOWNA);
+        ApplyVisibility(host);
         if (host.detachedByUser) {
           host.detachedByUser = false; host.fallback = false;
           host.discoveryStartedAt = GetTickCount64(); host.windowLostAt = 0;
@@ -677,7 +763,7 @@ void ProcessCommand(Host& host, const std::wstring& line) {
     return;
   }
   if (command == L"BOUNDS" && fields.size() >= 5) { UpdateBounds(host, number(1,0), number(2,0), number(3,1), number(4,1)); return; }
-  if (command == L"SHOW") { if (IsWindow(host.container)) ShowWindow(host.container, SW_SHOWNA); host.visible = true; return; }
+  if (command == L"SHOW") { host.visible = true; ApplyVisibility(host); return; }
   if (command == L"HIDE") { HideContainer(host); return; }
   if (command == L"FOCUS") {
     if (host.attached && IsWindow(host.mainWindow)) {
@@ -814,8 +900,16 @@ int wmain(int argc, wchar_t** argv) {
     if (IsWindow(parent) && host.launched && host.restoreIntent == RestoreIntent::none) {
       const auto pids = RefreshProcesses(host);
       if (pids.empty()) {
-        const DWORD oldPid = host.launchPid;
-        if (ClearSession(host)) Emit(L"{\"type\":\"exited\",\"pid\":" + std::to_wstring(oldPid) + L",\"reason\":\"all-target-processes-exited\"}");
+        // 启动器退出后进程族会断链，但目标软件可能已经在跑（启动器把参数交给了它）。
+        // 先把同目录进程收回托管，实在找不到才算真的退出。
+        if (AdoptProcessesInDirectory(host, host.exePath)) {
+          Emit(L"{\"type\":\"adopted-existing\",\"reason\":\"launcher-exited\",\"launchPid\":" +
+            std::to_wstring(host.launchPid) + L",\"tracked\":" + std::to_wstring(host.trackedProcesses.size()) + L"}");
+          host.discoveryStartedAt = GetTickCount64();
+        } else {
+          const DWORD oldPid = host.launchPid;
+          if (ClearSession(host)) Emit(L"{\"type\":\"exited\",\"pid\":" + std::to_wstring(oldPid) + L",\"reason\":\"all-target-processes-exited\"}");
+        }
       } else {
         if (host.attached && !IsWindow(host.mainWindow)) {
           host.mainWindow = nullptr; host.mainPid = 0; host.attached = false;
@@ -825,6 +919,23 @@ int wmain(int argc, wchar_t** argv) {
       EmitState(host, L"window-rebuilding");
         }
         if (host.attached && IsWindow(host.mainWindow)) {
+          // 软件会自己改尺寸（记住最大化、按项目恢复布局），偏离绑定位就拉回来。
+          if (host.visible) {
+            RECT actual{};
+            if (GetWindowRect(host.mainWindow, &actual)) {
+              const int wantWidth = static_cast<int>(host.bounds.right - host.bounds.left);
+              const int wantHeight = static_cast<int>(host.bounds.bottom - host.bounds.top);
+              const int actualWidth = static_cast<int>(actual.right - actual.left);
+              const int actualHeight = static_cast<int>(actual.bottom - actual.top);
+              if (std::abs(static_cast<int>(actual.left) - static_cast<int>(host.bounds.left)) > 4 ||
+                  std::abs(static_cast<int>(actual.top) - static_cast<int>(host.bounds.top)) > 4 ||
+                  std::abs(actualWidth - wantWidth) > 4 || std::abs(actualHeight - wantHeight) > 4) {
+                if (IsZoomed(host.mainWindow)) ShowWindow(host.mainWindow, SW_RESTORE);
+                SetWindowPos(host.mainWindow, nullptr, host.bounds.left, host.bounds.top, wantWidth, wantHeight,
+                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+              }
+            }
+          }
           const bool targetVisible = IsWindowVisible(host.mainWindow) != FALSE;
           if (host.visible && !targetVisible && !host.targetWindowHidden) {
             host.targetWindowHidden = true;
@@ -851,9 +962,9 @@ int wmain(int argc, wchar_t** argv) {
             else {
               if (host.windowLostAt) Emit(L"{\"type\":\"recreated\",\"pid\":" + std::to_wstring(host.mainPid) + L",\"hwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(host.mainWindow)) + L"}");
               host.windowLostAt = 0;
-              ShowWindow(host.container, host.visible ? SW_SHOWNA : SW_HIDE);
+              ApplyVisibility(host);
               RECT attachedRect{}; GetWindowRect(windows.front().hwnd, &attachedRect);
-              Emit(L"{\"type\":\"attached\",\"pid\":" + std::to_wstring(host.mainPid) + L",\"hwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(windows.front().hwnd)) + L",\"parentHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(GetParent(windows.front().hwnd))) + L",\"dpi\":" + std::to_wstring(GetDpiForWindow(windows.front().hwnd)) + L",\"screenRect\":[" + std::to_wstring(attachedRect.left) + L"," + std::to_wstring(attachedRect.top) + L"," + std::to_wstring(attachedRect.right) + L"," + std::to_wstring(attachedRect.bottom) + L"]}");
+              Emit(L"{\"type\":\"attached\",\"pid\":" + std::to_wstring(host.mainPid) + L",\"hwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(windows.front().hwnd)) + L",\"parentHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(GetParent(windows.front().hwnd))) + L",\"ownerHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(GetWindow(windows.front().hwnd, GW_OWNER))) + L",\"dpi\":" + std::to_wstring(GetDpiForWindow(windows.front().hwnd)) + L",\"screenRect\":[" + std::to_wstring(attachedRect.left) + L"," + std::to_wstring(attachedRect.top) + L"," + std::to_wstring(attachedRect.right) + L"," + std::to_wstring(attachedRect.bottom) + L"]}");
               EmitState(host, L"attached", host.mainPid, host.mainWindow);
             }
           } else if (host.windowLostAt && GetTickCount64() - host.windowLostAt > kWindowRebuildGraceMs) {

@@ -138,6 +138,7 @@ contextBridge.exposeInMainWorld('vigil', {
   plugins: {
     load: () => ipcRenderer.invoke('plugins:load'),
     resourceUrl: (path) => ipcRenderer.invoke('plugins:resource-url', path),
+    sceneLiveUrl: () => ipcRenderer.invoke('plugins:scene-live-url'),
     releaseResources: () => ipcRenderer.invoke('plugins:release-resources'),
   },
   wallpaperImports: {
@@ -171,6 +172,12 @@ contextBridge.exposeInMainWorld('vigil', {
       const handler = (_event, message) => fn(message);
       ipcRenderer.on('video-window:event', handler);
       return () => ipcRenderer.removeListener('video-window:event', handler);
+    },
+    // 主窗口自身显隐（托盘唤回、最小化恢复），用来重算托管容器的可见性
+    onWindowVisibility: (fn) => {
+      const handler = (_event, visible) => fn(!!visible);
+      ipcRenderer.on('video-window:window-visible', handler);
+      return () => ipcRenderer.removeListener('video-window:window-visible', handler);
     },
   },
 

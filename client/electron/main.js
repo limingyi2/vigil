@@ -530,7 +530,24 @@ function createWindow() {
       callback({});
     });
   nativeWindowService = require('./native-window-service').createNativeWindowService({ ipcMain, getWindow: () => win });
-  win.on('hide', () => { if (nativeWindowService) nativeWindowService.hide(); });
+  // 托管的软件窗口是 Electron 窗口的原生子窗口，只能由主进程改显隐。
+  // 这里只广播“主窗口自己是否隐藏”，由渲染层结合当前页面决定要不要重新显示；
+  // 主进程不直接 SHOW，否则停在聊天页时外部窗口会盖住界面。
+  const broadcastWindowVisibility = (visible) => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('video-window:window-visible', !!visible);
+  };
+  win.on('hide', () => {
+    if (nativeWindowService) nativeWindowService.hide();
+    broadcastWindowVisibility(false);
+  });
+  // 隐藏到托盘再唤回时没有这层广播，容器就一直藏在原处，页面却以为已经托管好了。
+  win.on('show', () => broadcastWindowVisibility(true));
+  win.on('restore', () => broadcastWindowVisibility(true));
+  win.on('minimize', () => {
+    if (nativeWindowService) nativeWindowService.hide();
+    broadcastWindowVisibility(false);
+  });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
   // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。
@@ -913,6 +930,11 @@ ipcMain.handle('plugins:load', async () => {
 ipcMain.handle('plugins:resource-url', async (_e, resource) => {
   try { return { ok: true, url: await pluginMedia.url(resource) }; }
   catch (e) { return { ok: false, err: e.message }; }
+});
+// 场景渲染页（WebWallGL 产物在 asar 里，由本地只读服务供出）。
+ipcMain.handle('plugins:scene-live-url', async () => {
+  try { return { ok: true, url: await pluginMedia.sceneLiveUrl() }; }
+  catch (e) { return { ok: false, err: String(e && e.message || e) }; }
 });
 ipcMain.handle('plugins:release-resources', () => {
   pluginMedia.releaseResources();
