@@ -1502,6 +1502,7 @@ class Brain:
         text_buf = []
         _t0 = time.time()
         _uin = _uout = 0
+        _model_request_seconds = 0.0
 
         try:
             from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
