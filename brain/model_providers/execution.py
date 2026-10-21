@@ -241,6 +241,22 @@ def normalize(data):
         return result
 
 
+def assistant_history_message(provider, message, content_override=None, tool_calls=None):
+    """Use the provider's replay contract, with a safe standard fallback."""
+    hook = getattr(provider, 'assistant_history_message', None)
+    if callable(hook):
+        result = hook(message, content_override=content_override, tool_calls=tool_calls)
+        if isinstance(result, dict) and result.get('role') == 'assistant':
+            return result
+    message = message if isinstance(message, dict) else {}
+    out = {'role': 'assistant', 'content': message.get('content', '')
+           if content_override is None else content_override}
+    calls = tool_calls if tool_calls is not None else message.get('tool_calls')
+    if calls:
+        out['tool_calls'] = calls
+    return out
+
+
 ERROR_MESSAGES = {'length': '模型输出被截断，未生成完整结果',
     'empty_content': '模型未返回正文',
     'thinking_only': '模型仅返回思考，未得到正文',

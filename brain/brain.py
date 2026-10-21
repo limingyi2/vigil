@@ -1341,7 +1341,8 @@ class Brain:
                 else:
                     # 原生 FC 模式：OpenAI 格式回灌
                     # 1) 原样回传带 tool_calls 的 assistant 消息
-                    history_msg = mp.assistant_history_message(msg,
+                    from model_providers.execution import assistant_history_message
+                    history_msg = assistant_history_message(mp, msg,
                         content_override=_strip_xml_tool_calls(_raw_content), tool_calls=tcs)
                     msgs.append(history_msg)
                     # 2) 每个调用配一条 role:tool 结果（tool_call_id 对齐）
@@ -1594,6 +1595,7 @@ class Brain:
         _token_usage['request_elapsed_seconds'] = round(max(0.001, _model_request_seconds), 3)
         _token_usage['tokens_per_second'] = round(
             _token_usage['output_tokens'] / max(0.001, _model_request_seconds), 2)
+        _token_usage['rate_estimated'] = _token_usage['estimated_output']
         yield {"type": "done", "text": full_text, "think": full_think,
                "token_rate": _token_usage}
 
