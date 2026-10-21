@@ -112,8 +112,15 @@ def main(installer, expected_commit, output, expected_version='1.1.0'):
     uninstall_result = run_logged([str(uninstallers[0]), '/S', '/LOG=' + str(nsis_uninstall_log)], env=env,
                                   log_path=root / 'installer-uninstall.json', timeout=300)
     assert uninstall_result.returncode == 0, f'NSIS uninstaller exited {uninstall_result.returncode}'
-    time.sleep(1)
-    remaining_app_files = [str(path.relative_to(install)) for path in install.rglob('*') if path.is_file()] if install.exists() else []
+    # NSIS exits before its deferred cleanup has always settled on Windows;
+    # wait for removal rather than sampling one second after process exit.
+    deadline = time.monotonic() + 30
+    remaining_app_files = []
+    while time.monotonic() < deadline:
+        remaining_app_files = [str(path.relative_to(install)) for path in install.rglob('*') if path.is_file()] if install.exists() else []
+        if not remaining_app_files:
+            break
+        time.sleep(0.25)
     assert not remaining_app_files, f'Program files remain after uninstall: {remaining_app_files[:10]}'
     retained_after = {name: sha256(Path(name)) for name in retained_before if Path(name).is_file()}
     assert retained_after == retained_before, 'Uninstall changed or removed user profile data'
