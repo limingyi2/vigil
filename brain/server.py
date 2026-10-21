@@ -1674,7 +1674,7 @@ def start_remote_api(brain):
                         count = usage.get('output_tokens')
                         yield {'type': 'token_rate', 'run_id': rid, 'step_id': payload.get('step_id'),
                                'output_tokens': count, 'request_elapsed_seconds': elapsed,
-                               'estimated': bool(usage.get('estimated')),
+                               'estimated': bool(usage.get('estimated_output', usage.get('estimated'))),
                                'reasoning_tokens': usage.get('reasoning_tokens'),
                                'seq': event['seq']}
                     elif kind == 'tool_finished':

@@ -1278,7 +1278,7 @@
       const elapsed = Number(data.request_elapsed_seconds || 0);
       const count = Number(data.output_tokens);
       const rate = Number(data.tokens_per_second || (elapsed > 0 ? count / elapsed : 0));
-      paintTokenRate(rate, !!data.estimated, data.reasoning_tokens);
+      paintTokenRate(rate, !!(data.rate_estimated ?? data.estimated), data.reasoning_tokens);
     }
     const applySessions = () => {};
     // 模型快速切换：点左上角那个模型名弹出已保存的模型清单，点一条即切。
