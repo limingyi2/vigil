@@ -280,6 +280,8 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     '    with open(os.environ["VIGIL_E2E_PLUGIN_TRACE"], "a", encoding="utf-8") as f:',
     '        f.write(json.dumps({"tool":"smoke_ping","mode":mode}) + "\\n")',
     '    if mode == "fail": raise RuntimeError("fixture plugin execution failure")',
+    // Give the streaming acceptance test an observable real in-flight tool.
+    '    if os.environ.get("VIGIL_E2E_SCENARIO") == "p12": time.sleep(0.15)',
     '    if mode == "crash":',
     '        release = Path(os.environ["VIGIL_E2E_PLUGIN_RELEASE"] )',
     '        for _ in range(1500):',

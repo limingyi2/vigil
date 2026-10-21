@@ -1387,6 +1387,10 @@
     let resumableRunId = null;
     let composerMode = 'send';
     let pendingResumeOf = null;
+    let pausePending = false;
+    let liveReconcile = null;
+    let currentRequestId = null;
+    let uncertainRunId = null;
     let conversationLoadSeq = 0;
     let renderedDraftConversationId = '';
     function finishBusy(scope) {
@@ -2020,7 +2024,9 @@
         composerMode = 'send';
         drawComposerIcon();
       }
-      if (composerMode === 'pause') {
+      if (composerMode === 'uncertain') {
+        button.disabled = !global.vigil;
+      } else if (composerMode === 'pause') {
         button.disabled = !global.vigil || !activeRunId;
       } else if (composerMode === 'resume') {
         button.disabled = !global.vigil || !resumableRunId;
@@ -2030,7 +2036,7 @@
       }
       button.classList.toggle('is-sending', busy && composerMode === 'send');
       button.setAttribute('aria-busy', String(busy));
-      const label = composerMode === 'pause' ? '暂停任务'
+      const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）' : composerMode === 'pause' ? '暂停任务'
         : composerMode === 'resume' ? '继续上次任务（输入框有字则发送新消息）'
         : (busy ? '正在发送…' : '发送消息');
       button.setAttribute('aria-label', label);
@@ -2042,11 +2048,11 @@
     }
     function drawComposerIcon() {
       const button = view.querySelector('#sendBtn');
-      button.innerHTML = icon(composerMode === 'pause' ? 'pause'
+      button.innerHTML = icon(composerMode === 'uncertain' ? 'refresh' : composerMode === 'pause' ? 'pause'
         : composerMode === 'resume' ? 'play' : 'arrow-up', 'sm');
     }
     function setComposerMode(mode) {
-      composerMode = (mode === 'pause' || mode === 'resume') ? mode : 'send';
+      composerMode = ['pause','resume','uncertain'].includes(mode) ? mode : 'send';
       drawComposerIcon();
       updateComposer();
     }
@@ -2141,6 +2147,27 @@
         if (job.conversation_id === loadConversationId || (r.conversation && r.conversation.legacy && job.legacy_unassigned))
           records.set(job.request_id, {...job,input:job.feedback || job.requirement});
       }
+      // Local display rows are hints; only a scoped Brain snapshot owns the composer.
+      let unknownRun = null;
+      if (!busy) {
+        const latest = [...records.values()].filter(i=>i.kind==='chat' && i.run_id)
+          .sort((a,b)=>(b.created_at || 0)-(a.created_at || 0))[0];
+        if (latest) {
+          const authority=await global.VigilAgentState.lookup(get,{runId:latest.run_id,
+            conversationId:loadConversationId,requestId:latest.request_id,src:state.src || 'pc'});
+          if (loadSeq !== conversationLoadSeq || activeConversationId !== loadConversationId) return;
+          if (authority.kind==='snapshot') records.set(latest.request_id,{...latest,...authority.item,kind:'chat'});
+          else if (['missing','replaced'].includes(authority.kind)) {
+            records.set(latest.request_id,{...latest,status:'interrupted',can_resume:false,
+              error:{message:'任务记录已不存在或已变化，未重放工具'}});
+            if (authority.item) records.set(authority.item.request_id,{...authority.item,kind:'chat'});
+          } else if (['queued','running','pending','state_unknown'].includes(latest.status)) {
+            unknownRun=latest.run_id;
+            records.set(latest.request_id,{...latest,status:'state_unknown',can_resume:false,
+              error:{message:authority.kind==='forbidden'?'身份无权限，任务状态待确认':'连接异常，任务状态待确认'}});
+          }
+        }
+      }
       const jobsToWatch = [];
       // 断点续跑恢复：最近一条 chat 记录若停在可续跑状态，发送键恢复成"继续"。
       let lastResumable = null;
@@ -2150,9 +2177,9 @@
         const input = item.input || item.requirement || '';
         const status = item.status || 'pending';
         if (item.kind === 'chat' && item.run_id) {
-          if ((item.created_at || 0) > newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; }
+          if ((item.created_at || 0) >= newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; lastActive = null; }
           if (['queued', 'running'].includes(status)) lastActive = item;
-          if (['paused','paused_budget','interrupted','failed'].includes(status)) lastResumable = item;
+          if (item.can_resume !== false && ['paused','paused_budget','interrupted'].includes(status)) lastResumable = item;
         }
         // Successful legacy chat already has its own durable pair. Reuse it.
         if (item.kind === 'chat' && status === 'succeeded' && items.some((m,i)=>m.role==='user'&&m.text===input&&items[i+1]?.text===item.content)) {
@@ -2178,7 +2205,10 @@
       items.sort((a,b)=>toMs(a.t)-toMs(b.t));
       // 恢复判断放渲染后：只信"最近一条"chat 记录，旧的可续跑任务不抢按钮。
       if (!busy) {
-        if (lastActive && lastActive.run_id) {
+        if (unknownRun) {
+          activeRunId = null; resumableRunId = null; uncertainRunId = unknownRun;
+          setComposerMode('uncertain');
+        } else if (lastActive && lastActive.run_id) {
           // 页面刷新/切换会丢掉 renderer 内存，但不会停止 Brain 的任务。
           // 先恢复实际运行中的 run，避免把发送键误画成继续或发送。
           activeRunId = lastActive.run_id;
@@ -2191,6 +2221,8 @@
         } else {
           activeRunId = null;
           resumableRunId = null;
+          uncertainRunId = null;
+          liveReconcile = null;
           setComposerMode('send');
         }
       }
@@ -2347,6 +2379,9 @@
       if (activeConversationId !== sendConversationId) { finishBusy(sendScope); return; }
       const sendingImg = imgB64;
       const requestId = 'req_' + crypto.randomUUID();
+      currentRequestId = requestId;
+      liveReconcile = null;
+      uncertainRunId = null;
       const turnScope = sendScope;
       const remember = patch => rememberTurn(requestId, patch, turnScope);
       remember({input:resumeOf ? '继续上次任务' : text,kind:'chat',status:'pending'});
@@ -2454,35 +2489,48 @@
       // only a terminal snapshot is allowed to release the composer.
       async function reconcileRun() {
         if (streamDone || !agentRunId || activeConversationId !== sendConversationId ||
-            turnScope !== recordKey()) return;
-        try {
-          const snap = pick(await get('/api/agent/runs/' + encodeURIComponent(agentRunId) +
-            '?src=pc&conversation_id=' + encodeURIComponent(sendConversationId || '')));
-          const status = snap && snap.status;
-          if (['succeeded'].includes(status)) {
-            onEvent({type:'done', text:snap.content || snap.result || '', run_id:agentRunId,
-              seq:snap.event_cursor});
-          } else if (['paused','paused_budget','interrupted','failed','cancelled'].includes(status)) {
-            const error = snap.error || {};
-            onEvent({type:'error', text:snap.content || '', run_id:agentRunId, seq:snap.event_cursor,
-              status, class:error.reason || error.class || 'service_error',
-              msg:error.message || '任务已停止'});
+            turnScope !== recordKey() || currentRequestId !== requestId) return;
+        if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
+        const authority = await global.VigilAgentState.lookup(get, {runId:agentRunId,
+          conversationId:sendConversationId,requestId,src:state.src || 'pc'});
+        if (streamDone || activeConversationId !== sendConversationId || currentRequestId !== requestId) return;
+        if (authority.kind === 'snapshot') {
+          const snap = authority.item, status = snap.status;
+          if (status === 'succeeded') {
+            onEvent({type:'done',text:snap.content || snap.result || '',run_id:agentRunId});
+          } else if (global.VigilAgentState.stopped.has(status)) {
+            onEvent({type:'error',text:snap.content || '',run_id:agentRunId,status,
+              class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止'});
           } else {
-            statusEl.textContent = '连接已恢复，任务仍在执行 ';
+            textBuf = snap.content || textBuf;
+            textEl.innerHTML = U.md(textBuf, {codeActions:true});
+            busy = true; busyScope = turnScope;
+            activeRunId = agentRunId; uncertainRunId = null;
+            statusEl.textContent = '任务仍在执行 ';
             statusEl.appendChild(agentCancel);
             setComposerMode('pause');
             reconcileTimer = setTimeout(reconcileRun, 2000);
           }
-        } catch (_) {
-          // A transient health failure must not turn a running task into a
-          // false interruption.  Retry the state lookup while keeping Pause.
+        } else if (authority.kind === 'missing' || authority.kind === 'replaced') {
+          onEvent({type:'error',run_id:agentRunId,status:'interrupted',class:'run_missing',
+            can_resume:false,msg:authority.kind === 'missing' ? '任务已不存在；执行状态已同步，未重放工具' : '任务记录已变化；请查看当前会话任务'});
+          if (authority.kind === 'replaced') void loadMsgs(true);
+        } else {
+          // Unknown is not success or cancellation. Release the stale Pause
+          // control, keep its request identity, and allow a read-only recheck.
+          activeRunId = null; resumableRunId = null; uncertainRunId = agentRunId;
+          busy = false; busyScope = null;
+          statusEl.textContent = authority.kind === 'forbidden' ? '身份无权限，任务状态待确认' : '连接异常，任务状态待确认';
+          setComposerMode('uncertain');
           reconcileTimer = setTimeout(reconcileRun, 2000);
         }
       }
+      liveReconcile = reconcileRun;
 
       // 监听流式事件
       const onEvent = (evt) => {
-        if (activeConversationId !== sendConversationId) return;
+        if (activeConversationId !== sendConversationId || currentRequestId !== requestId) return;
+        if (evt.conversation_id && evt.conversation_id !== sendConversationId) return;
         if (evt.job_id) return;
         if (evt.request_id && evt.request_id !== requestId) return;
         // Agent events without an id are legacy chat events.  Once an Agent
@@ -2579,9 +2627,10 @@
           activeRunId = null;
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
-            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
+            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'},can_resume:evt.can_resume !== false});
           // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
-          const resumable = ['paused','paused_budget','interrupted'].includes(evt.status);
+          uncertainRunId = null; liveReconcile = null;
+          const resumable = evt.can_resume !== false && ['paused','paused_budget','interrupted'].includes(evt.status);
           if (resumable && agentRunId) resumableRunId = agentRunId;
           setComposerMode(resumable && resumableRunId ? 'resume' : 'send');
           if (resumable) {
@@ -2683,20 +2732,25 @@
     // 发送键/回车的统一入口：按 composer 三态分派。
     function composerAction() {
       const ta = view.querySelector('#ta');
+      if (composerMode === 'uncertain' && !ta.value.trim()) { if (liveReconcile) void liveReconcile(); else void loadMsgs(true); return; }
       if (composerMode === 'pause' && activeRunId) { firePause(); return; }
       if (composerMode === 'resume' && resumableRunId &&
           !ta.value.trim() && !imgB64 && !attachment) { resumeTurn(resumableRunId); return; }
       send();
     }
     async function firePause() {
-      if (!activeRunId) return;
+      if (!activeRunId || pausePending) return;
+      const rid=activeRunId, cid=activeConversationId, request=currentRequestId;
+      pausePending=true;
       try {
-        const r = pick(await post('/api/agent/runs/' + encodeURIComponent(activeRunId) + '/pause', {}));
-        if (!r.ok) throw new Error(r._err || '暂停未确认');
-        // 后续"已暂停"气泡由 SSE 的 paused 事件驱动，这里不抢画。
-      } catch (e) {
-        toast('暂停未确认：' + String(e.message || e).slice(0, 80));
-      }
+        const r=pick(await post('/api/agent/runs/'+encodeURIComponent(rid)+'/pause',
+          {src:state.src || 'pc',conversation_id:cid}));
+        if (activeConversationId !== cid || activeRunId !== rid || currentRequestId !== request) return;
+        // Apply the actual snapshot even if the terminal SSE event was lost.
+        if (liveReconcile) await liveReconcile();
+        else await loadMsgs(true);
+        if (!r.ok) toast('暂停未确认：'+(r._err || '正在核对任务状态'));
+      } finally { pausePending=false; }
     }
     async function resumeTurn(rid) {
       if (busy || !rid) return;

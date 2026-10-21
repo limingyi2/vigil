@@ -1676,6 +1676,20 @@ def start_remote_api(brain):
                         # 看门狗检测到的同参复用：自我纠错的可见信号。
                         yield {'type': 'tool_reused', 'run_id': rid, 'seq': event['seq']}
                     elif kind == 'snapshot':
+                        # A fast tool can finish between subscription polls.
+                        # Replay its real step evidence by ID before the terminal
+                        # answer; a snapshot cursor is not a tool event sequence.
+                        for step in payload.get('steps', []):
+                            if step.get('kind') != 'tool':
+                                continue
+                            evidence = dict(type='tool', tool=step.get('tool'),
+                                step_id=step.get('step_id'), call_id=step.get('call_id'),
+                                input=step.get('input'), run_id=rid,
+                                request_id=item['request_id'], historical=True)
+                            yield dict(evidence, state='started')
+                            if step.get('status') != 'running':
+                                yield dict(evidence, state=step.get('result_state') or step.get('status'),
+                                    output=agent_runs._safe_event_value(step.get('result') or ''), error=step.get('error'))
                         if payload['status'] not in agent_runs.STOPPED:
                             # A buffer gap must replace the preview, never append it twice.
                             yield {'type': 'run_snapshot', 'text': payload['content'], 'run_id': rid,
