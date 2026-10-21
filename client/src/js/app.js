@@ -30,22 +30,41 @@
     const navPages = PAGES.filter(p => p.id !== 'system' && p.id !== 'settings' && p.id !== 'market');
     const marketPage = PAGES.find(p => p.id === 'market');
     if (marketPage) navPages.splice(navPages.findIndex(p => p.id === 'chat') + 1, 0, marketPage);
+    navPages.push({id:'settings',name:'设置',icon:'set'});
+    let saved=[];try{saved=JSON.parse(localStorage.getItem('vigil.primary-nav.order.v1')||'[]');}catch(_){}
+    if(!Array.isArray(saved))saved=[];
+    const order=[...new Set([...saved,...navPages.map(p=>p.id)])];
+    navPages.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
     gnavEl.innerHTML = '<div class="gnav-brand" aria-label="Vigil">Vigil</div>' +
       navPages.map((p) => {
       // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，别让按钮变成空白图标
       const ic = String(p.icon === 'image' ? 'img' : p.icon || '').replace(/^i-/, '') || 'puzzle';
-      return '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
+      return (p.id==='settings' && navPages.at(-1).id==='settings' ? '<div class="nav-spacer" aria-hidden="true"></div>' : '') + '<button draggable="true" '+(p.id==='settings'?'id="settingsBtn" ':'')+'class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
       U.icon(ic, 'md') +
       '<span class="gnav-label">' + esc(p.id === 'chat' ? '会话' : p.name) + '</span></button>'; }).join('') +
-      '<div class="nav-spacer" aria-hidden="true"></div>' +
-      '<button class="gbtn nav-settings" id="settingsBtn" data-tip="设置" title="设置" aria-label="打开设置窗口">' +
-      U.icon('set', 'md') + '<span class="gnav-label">设置</span></button>';
+      '';
+    let dragged=null;
+    gnavEl.querySelectorAll('.gbtn').forEach(b=>{
+      b.addEventListener('dragstart',e=>{dragged=b.dataset.page;e.dataTransfer.setData('text/plain',dragged);e.dataTransfer.effectAllowed='move';b.classList.add('dragging');});
+      b.addEventListener('dragend',()=>{dragged=null;b.classList.remove('dragging');});
+      b.addEventListener('dragover',e=>{if(dragged)e.preventDefault();});
+      b.addEventListener('drop',e=>{e.preventDefault();if(!dragged || dragged===b.dataset.page)return;
+        const ids=navPages.map(p=>p.id).filter(id=>id!==dragged);ids.splice(ids.indexOf(b.dataset.page),0,dragged);
+        try{localStorage.setItem('vigil.primary-nav.order.v1',JSON.stringify(ids));}catch(_){}buildNav();});
+    });
+    if(!settingsWindow && !document.getElementById('primaryNavToggle')){
+      const toggle=document.createElement('button');toggle.id='primaryNavToggle';toggle.type='button';toggle.className='primary-nav-toggle';
+      const apply=collapsed=>{document.body.classList.toggle('primary-nav-collapsed',collapsed);toggle.setAttribute('aria-expanded',String(!collapsed));toggle.setAttribute('aria-label',collapsed?'展开一级导航':'隐藏一级导航');toggle.title=toggle.getAttribute('aria-label');toggle.textContent=collapsed?'›':'‹';};
+      let collapsed=false;try{collapsed=localStorage.getItem('vigil.primary-nav.collapsed.v1')==='1';}catch(_){}apply(collapsed);
+      toggle.onclick=()=>{const next=!document.body.classList.contains('primary-nav-collapsed');apply(next);try{localStorage.setItem('vigil.primary-nav.collapsed.v1',next?'1':'0');}catch(_){}};
+      document.body.appendChild(toggle);
+    }
     gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.addEventListener('click', () => {
         if (b.id === 'settingsBtn') {
           if (window.vigil && window.vigil.settings) window.vigil.settings.open({ section: 'model' });
           else { state.settingsSub = 'model'; go('system'); }
-        } else go(b.dataset.page);
+        } else if(b.dataset.page !== state.page) go(b.dataset.page);
       }));
   }
 
@@ -426,14 +445,7 @@
       setStatus();
       refreshStats();
       perf('brain-connect-end', state.conn.ok ? 'ok=' + state.conn.ms + 'ms' : 'failed');
-      if (state.page === 'chat') {
-        // Connection can finish after the first usable chat page is visible.
-        // Refresh its initial history only while it is still untouched; an
-        // unconditional rerender can detach an in-flight reply bubble/listener.
-        const messages = document.getElementById('msgs');
-        const composer = document.getElementById('ta');
-        if (!messages || (!messages.children.length && !(composer && composer.value))) void go('chat');
-      }
+      if(state.page==='chat')window.dispatchEvent(new Event('vigil-brain-connected'));
       if (!settingsWindow) maybeWizard();
     });
 

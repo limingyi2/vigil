@@ -59,7 +59,7 @@ const waitFor = async (fn, label, target = () => mainWindow) => {
   }
   throw new Error('Timed out waiting for ' + label);
 };
-const evalIn = (win, script) => win.webContents.executeJavaScript(script, true);
+const evalIn = async (win, script) => {try{return await win.webContents.executeJavaScript(script,true);}catch(error){throw new Error('Renderer: '+script+'; '+error.message);}};
 const savedPayload = () => ({
   ok: true,
   models: modelRows.map(row => ({ ...row, active: row.provider === current.provider
@@ -245,7 +245,7 @@ async function run() {
   contextCapacity=100000;
   await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
   await waitFor("document.querySelector('#mqContextValue').textContent==='受限 100,000 Token'",'capacity limit');
-  assert.ok(await evalIn(mainWindow,"document.querySelector('#mqContextNote').textContent.includes('受限 100,000 Token')"));
+  assert.equal(await evalIn(mainWindow,"Boolean(document.querySelector('#mqContextNote'))"),false,'explanatory note removed; capacity remains in value');
   contextCapacity=0;
   await evalIn(mainWindow,"document.querySelector('#mqClose').click();document.querySelector('#modelBtn').click()");
   await waitFor("document.querySelector('#mqContextValue').textContent==='300K'",'unknown capacity uses selected target');

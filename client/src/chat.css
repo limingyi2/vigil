@@ -669,3 +669,13 @@ body[data-vigil-page="chat"] .session-row.in-workspace .session-open { padding-l
   .chatwrap .cr-code { max-height:320px; }
   .chatwrap .chat-ws-note { display:none; }
 }
+
+/* The control remains reachable when the primary rail is hidden. */
+.primary-nav-toggle{position:fixed;z-index:110;left:calc(var(--rail,62px) - 10px);top:50%;width:20px;height:28px;padding:0;border:1px solid var(--line);border-radius:7px;background:var(--chat-sidebar,var(--bg));color:var(--muted);cursor:pointer;font-size:18px}
+.primary-nav-toggle:hover{color:var(--text);background:var(--bg)}
+body.primary-nav-collapsed .app{grid-template-columns:0 minmax(0,1fr)}
+body.primary-nav-collapsed .gnav{visibility:hidden;width:0;padding:0;border:0;overflow:hidden}
+body.primary-nav-collapsed .primary-nav-toggle{left:2px}
+body.settings-window .primary-nav-toggle{display:none}
+.gbtn.dragging{opacity:.4}
+.agent-thinking{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:13px;padding:7px 0}

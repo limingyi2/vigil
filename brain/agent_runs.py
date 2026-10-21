@@ -135,7 +135,7 @@ def _safe_event_value(value, limit=12000):
     if isinstance(value, list):
         return [_safe_event_value(v, limit) for v in value[:128]]
     text = str(value or '')
-    text = re.sub(r'((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)(?:Bearer\s+)?[^\s,;"\']+',
+    text = re.sub(r'((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*["\']?)(?:Bearer\s+)?[^\s,;"\']+',
                   r'\1[已隐藏]', text, flags=re.I)
     text = re.sub(r'\bBearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [已隐藏]', text, flags=re.I)
     for key, secret in os.environ.items():
@@ -852,7 +852,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     _event(db, item, 'text_delta', dict(text=tail, step_id=sid))
                 completion['content'] = boundary.text
                 reason = completion['reason']
-                if boundary.malformed and reason in ('normal', 'tool_calls', 'length'):
+                if boundary.malformed and reason in ('normal', 'length'):
                     reason = 'invalid_tool'
                 xml_mode = False
                 if reason == 'normal' and boundary.blocks:

@@ -95,10 +95,6 @@
   }
   function streamBodyHtml(thinkId, textId) {
     return '<div class="agent-progress"><div class="agent-elapsed" role="status"></div><div class="live-steps" id="liveSteps" hidden></div></div>' +
-      '<div class="think-block streaming" hidden><button class="think-toggle" type="button">' +
-      icon('brain', 'sm') + '<span class="think-label">思考中</span> <span class="think-caret">▴</span></button>' +
-      '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div>' +
-      '</div></div>' +
       '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
       '<div class="foot"><span class="stream-status">正在生成…</span></div>';
   }
@@ -744,7 +740,7 @@
       // 同一个动作不在两处出现，用户也不用先在左栏找入口。
       '<div class="session-new"><button class="session-new-button" id="newTopicBtn" title="新建空白会话（不属于任何工作区）" aria-label="新对话">' + icon('chat', 'sm') + '<span>新对话</span></button></div>' +
       '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>' +
-      '<div class="panel-footer"><button class="panel-settings" id="settingsOpen" title="设置" aria-label="打开设置">' + icon('set', 'sm') + '<span>设置</span></button></div>';
+      '';
     const sessList = panel.querySelector('#sessList');
 
     const SESS_KEY = 'vigil.chat.active.v2:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
@@ -803,6 +799,7 @@
       }
     }
     async function refreshConversations() {
+      const selectedAtRead=activeConversationId;
       if (API.runtime.preview) {
         const id = '00000000-0000-4000-8000-000000000001';
         sessionItems = [{id,title:'预览对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false}];
@@ -810,9 +807,10 @@
         state.chatConversationId = activeConversationId; drawSessions(); return activeConversationId;
       }
       const r = pick(await get('/api/conversations?src=pc'));
+      if (!msgs.isConnected) return activeConversationId;
       if (!r.ok || !Array.isArray(r.items)) throw new Error(r._err || '会话列表加载失败');
       sessionItems = r.items.filter((item) => item.legacy || item.has_content !== false);
-      if (activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
+      if (!busy && !submitPending && activeConversationId===selectedAtRead && activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
       state.chatConversationId = activeConversationId;
       drawSessions();
       drawWorkspaceBar();
@@ -1184,7 +1182,6 @@
       toast('会话已删除');
     }
     panel.querySelector('#newTopicBtn').addEventListener('click', () => { if (!busy) showWelcomeHome(true, true); });
-    panel.querySelector('#settingsOpen').addEventListener('click', () => ctx.navigate('settings'));
 
     view.innerHTML =
       '<div class="split no-right">' +
@@ -1220,12 +1217,6 @@
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
       '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="今天帮你做些什么？@ 添加上下文，/ 调用技能与指令"></textarea>' +
-      '        <div class="creatorbar" id="creatorBar" hidden>' +
-      '          <span class="muted" style="font-size:12px">创作模式：直接描述你要的插件/技能，Agent 生成草稿（只保存与审核，不自动安装）</span>' +
-      '          <div class="sp"></div>' +
-      '          <button class="chip" data-kind="plugin">插件</button>' +
-      '          <button class="chip" data-kind="skill">技能</button>' +
-      '        </div>' +
       '        <div class="cbar">' +
       '          <button class="ibtn cbar-add" id="clipBtn" title="添加图片、视频或普通文件" aria-label="添加附件">' + icon('plus', 'sm') + '</button>' +
       '          <button class="chip" id="creatorBtn" title="创作模式：用自然语言让 Agent 生成插件/技能草稿">创作：关</button>' +
@@ -1279,12 +1270,6 @@
       toast(creatorMode === 'off' ? '已回到普通对话'
         : '创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿，发消息即生成');
     });
-    view.querySelector('#creatorBar').querySelectorAll('.chip[data-kind]').forEach((c) =>
-      c.addEventListener('click', () => {
-        creatorMode = c.dataset.kind;
-        applyCreatorMode();
-        toast('创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿');
-      }));
     // Delegate copy actions so history reloads and completed streams share one binding.
     msgs.addEventListener('click', async (e) => {
       const button = e.target.closest('[data-copy-code]');
@@ -1377,6 +1362,7 @@
 
     let lastCount = -1;
     let busy = false;
+    let submitPending = false;
     let busyScope = null;
     // 发送键三态（发送/暂停/继续）：
     // - pause：本会话有 agent run 在跑，点它 = 暂停任务
@@ -1479,6 +1465,7 @@
       return createConversationPromise;
     }
     async function initializeConversationView() {
+      const initialSelectionSeq=conversationLoadSeq;
       try {
         appInstanceId = global.vigil && global.vigil.appInstanceId
           ? String(await global.vigil.appInstanceId() || '') : 'browser-session';
@@ -1490,17 +1477,19 @@
         && rendererSelection.mode === 'conversation' ? rendererSelection.conversation_id : '';
       const restoreDraft = rendererSelection && rendererSelection.app_instance === appInstanceId
         && rendererSelection.mode === 'draft';
-      if (!await loadRecordScope()) { showWelcomeHome(false); return; }
+      if (!await loadRecordScope()) { if(msgs.isConnected)showWelcomeHome(false); return; }
+      if(!msgs.isConnected)return;
       // Workspaces are a separate index; a failed read must not block the chat
       // list, so it runs alongside and degrades to the "not available" note.
       refreshWorkspaces().catch(() => {});
       try { await refreshConversations(); }
       catch (error) {
+        if(!msgs.isConnected)return;
         showWelcomeHome(false);
         sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">会话列表暂不可用</div>';
         return;
       }
-      if (!msgs.isConnected) return;
+      if (!msgs.isConnected || initialSelectionSeq!==conversationLoadSeq || busy || submitPending || activeConversationId) return;
       if (restoreId && sessionItems.some((item) => item.id === restoreId)) {
         await activateConversation(restoreId, {persist:false});
       } else if (restoreDraft) {
@@ -1518,15 +1507,11 @@
     if (['off', 'plugin', 'skill'].indexOf(creatorMode) < 0) creatorMode = 'off';
     function applyCreatorMode() {
       const btn = view.querySelector('#creatorBtn');
-      const bar = view.querySelector('#creatorBar');
       const ta = view.querySelector('#ta');
-      if (!btn || !bar || !ta) return;
+      if (!btn || !ta) return;
       const label = creatorMode === 'off' ? '关' : creatorMode === 'plugin' ? '插件' : '技能';
       btn.textContent = '创作：' + label;
       btn.classList.toggle('on', creatorMode !== 'off');
-      bar.hidden = creatorMode === 'off';
-      bar.querySelectorAll('.chip[data-kind]').forEach((c) =>
-        c.classList.toggle('on', c.dataset.kind === creatorMode));
       ta.placeholder = creatorMode === 'off'
         ? '今天帮你做些什么？@ 添加上下文，/ 调用技能与指令'
         : '描述你想要的' + (creatorMode === 'skill' ? '技能' : '插件')
@@ -2036,7 +2021,8 @@
           !!(attachment && (attachment.failed || (attachment.kind === 'image' && !imgB64)));
       }
       button.classList.toggle('is-sending', busy && composerMode === 'send');
-      button.setAttribute('aria-busy', String(busy));
+      button.disabled = button.disabled || submitPending;
+      button.setAttribute('aria-busy', String(busy || submitPending));
       const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）' : composerMode === 'pause' ? '暂停任务'
         : composerMode === 'resume' ? '继续上次任务（输入框有字则发送新消息）'
         : (busy ? '正在发送…' : '发送消息');
@@ -2299,8 +2285,13 @@
       const resumeOf = pendingResumeOf; pendingResumeOf = null;
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy) return;
-      if (!await loadRecordScope() || busy) return;
+      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) return;
+      submitPending = true;
+      updateComposer();
+      let scopeReady;
+      try { scopeReady = await loadRecordScope(); }
+      finally { submitPending = false; updateComposer(); }
+      if (!scopeReady || busy) return;
       if (attachment && attachment.failed) return;
       if (attachment && attachment.kind === 'image' && !imgB64) {
         attachment.status = '图片尚未读取完成';
@@ -2422,27 +2413,15 @@
         '</div></div>');
       msgs.scrollTop = msgs.scrollHeight;
 
-      // 思考过程折叠/展开
-      const thinkToggle = msgs.querySelector('#' + turnId + ' .think-toggle');
-      const thinkLabel = msgs.querySelector('#' + turnId + ' .think-label');
-      const thinkContent = document.getElementById(thinkId);
       const turnStart = Date.now();
       const elapsedEl = msgs.querySelector('#'+turnId+' .agent-elapsed');
       const updateElapsed=()=>{elapsedEl.textContent=global.VigilAgentView.elapsed(Date.now()-turnStart);};
       updateElapsed();
       const elapsedTimer=setInterval(()=>{if(!elapsedEl.isConnected || streamDone)clearInterval(elapsedTimer);else updateElapsed();},1000);
-      thinkToggle && thinkToggle.addEventListener('click', () => {
-        thinkContent.hidden = !thinkContent.hidden;
-        thinkToggle.querySelector('.think-caret').textContent = thinkContent.hidden ? '▾' : '▴';
-      });
-
-      const thinkInner = document.getElementById(thinkId + '_inner');
       const textEl = document.getElementById(textId);
       const statusEl = msgs.querySelector('#' + turnId + ' .stream-status');
-      let thinkBuf = '';
       let textBuf = '';
       let streamDone = false;
-      let thinkDirty = false;
       let textDirty = false;
       let rafPending = false;
       let agentRunId = null;
@@ -2475,10 +2454,6 @@
         requestAnimationFrame(() => {
           rafPending = false;
           if (activeConversationId !== sendConversationId) return;
-          if (thinkDirty) {
-            thinkInner.textContent = thinkBuf;
-            thinkDirty = false;
-          }
           if (textDirty) {
             textEl.textContent = textBuf;
             textDirty = false;
@@ -2533,6 +2508,18 @@
       }
       liveReconcile = reconcileRun;
 
+      // Display factual Chinese phase states, never raw provider reasoning.
+      let thinkingRow=null, thinkingFinished=false;
+      function startThinking(){
+        if(thinkingRow || thinkingFinished)return;
+        const steps=msgs.querySelector('#'+turnId+' #liveSteps');steps.hidden=false;
+        thinkingRow=document.createElement('div');thinkingRow.className='agent-thinking';
+        thinkingRow.innerHTML=icon('brain','sm')+'<span>思考中</span>';steps.appendChild(thinkingRow);
+      }
+      function finishThinking(label='已完成思考'){
+        if(thinkingRow){thinkingRow.querySelector('span:last-child').textContent=label;thinkingRow=null;}
+        thinkingFinished=true;
+      }
       // 监听流式事件
       const onEvent = (evt) => {
         if (activeConversationId !== sendConversationId || currentRequestId !== requestId) return;
@@ -2564,10 +2551,11 @@
           setComposerMode('pause');
           if (!reconcileTimer) reconcileTimer = setTimeout(reconcileRun, 2000);
         } else if (evt.type === 'stage') {
+          if(evt.stage==='generating'){thinkingFinished=false;startThinking();}
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
-          thinkLabel.textContent = evt.stage === 'waiting_tool' ? '使用工具' : '思考中';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool') {
+          finishThinking();
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
           const ok = evt.state === 'returned';
           const failed = ['not_dispatched', 'unknown', 'failed'].includes(evt.state);
@@ -2589,18 +2577,15 @@
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'think' && evt.text) {
-          thinkToggle.parentElement.hidden = false;
-          thinkBuf += evt.text;
-          thinkLabel.textContent = '思考中';
-          thinkDirty = true;
-          scheduleRender();
+          startThinking();
         } else if (evt.type === 'text' && evt.text) {
-          if (!textBuf) thinkLabel.textContent = '作答中';
+          finishThinking();
           textBuf += evt.text;
           remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'done') {
+          finishThinking();
           streamDone = true;
           finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
@@ -2611,23 +2596,9 @@
           textBuf = evt.result ?? evt.text ?? textBuf;
           remember({content:textBuf,status:'succeeded',error:null});
           // 强制刷新最后一帧
-          if (thinkDirty) { thinkInner.textContent = thinkBuf; thinkDirty = false; }
           if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
           // 正文渲染成 Markdown
           textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true });
-          // 思考过程如果为空，隐藏整个思考块；有内容则收起，标签换成
-          // "已完成 · Xs"，点一下能展开回看（含工具步骤，仿 WorkBuddy）。
-          const steps = msgs.querySelector('#' + turnId + ' #liveSteps');
-          const stepCount = steps ? steps.children.length : 0;
-          const secs = Math.max(1, Math.round((Date.now() - turnStart) / 1000));
-          if (!thinkBuf.trim() && !stepCount) {
-            const tb = msgs.querySelector('#' + turnId + ' .think-block');
-            if (tb) tb.remove();
-          } else {
-            if (thinkLabel) thinkLabel.textContent = '已完成 · ' + secs + 's' + (stepCount ? ' · ' + stepCount + ' 步' : '');
-            thinkToggle.querySelector('.think-caret').textContent = '▾';
-            thinkContent.hidden = true;
-          }
           statusEl.textContent = fmtTime(Date.now(), 'time');
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
@@ -2637,6 +2608,7 @@
             reconcileRun();
             return;
           }
+          finishThinking(evt.type==='error'?'思考已停止':'已完成思考');
           streamDone = true;
           finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
@@ -2658,7 +2630,6 @@
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
             interrupted:'执行中断'})[evt.status] || '失败';
-          if (thinkLabel) thinkLabel.textContent = statusEl.textContent;
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         }
@@ -3079,6 +3050,14 @@
 
     showWelcomeHome(false);
     void initializeConversationView();
+    const onBrainConnected=()=>{
+      if(!msgs.isConnected)return;
+      void refreshConversations().catch(()=>{});
+      void refreshWorkspaces().catch(()=>{});
+      if(activeConversationId)void loadMsgs(false);
+    };
+    window.addEventListener('vigil-brain-connected',onBrainConnected);
+    ctx.onDispose(()=>window.removeEventListener('vigil-brain-connected',onBrainConnected));
     clearInterval(chatTimer);
     chatTimer = setInterval(() => {
       if (state.page === 'chat' && state.conn.ok) loadMsgs(false);

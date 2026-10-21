@@ -83,7 +83,7 @@ def test_partial_or_malformed_protocol_fails_without_dispatch_or_leak(tmp_path, 
         assert '<tool_call' not in json.dumps(value)
 
 
-@pytest.mark.parametrize('sample', ['代码示例：`<tool_call>` 是标签。', '```xml\n' + XML + '\n```\n这是 XML 教程。', '普通 <root>XML</root> 教程'])
+@pytest.mark.parametrize('sample', ['代码示例：`<tool_call>` 是标签。', '```xml\n' + XML + '\n```\n这是 XML 教程。', '~~~xml\n'+XML+'\n~~~', '普通 <root>XML</root> 教程'])
 def test_quoted_code_and_ordinary_xml_are_preserved(tmp_path, sample):
     result, _, count, _ = execute(tmp_path, [[{'content': c} for c in sample]])
     assert result['status'] == 'succeeded', result.get('error')
@@ -97,3 +97,11 @@ def test_native_call_stays_structured_through_provider_normalization():
     events = list(completion_events(provider, {}))
     assert not [event for event in events if event['type'] == 'text_delta']
     assert events[-1]['result']['tool_calls'][0]['function']['name'] == 'write_note'
+
+
+def test_valid_native_has_priority_over_an_incomplete_xml_duplicate(tmp_path):
+    native = dict(call(text='native'), index=0)
+    result, _, count, _ = execute(tmp_path, [[{'tool_calls':[native], 'content':XML[:-10]}], [{'content':'完成'}]])
+    assert result['status'] == 'succeeded', result.get('error')
+    assert count == 1
+    assert '<tool_call' not in result['content']

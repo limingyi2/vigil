@@ -5,7 +5,7 @@
     if(Array.isArray(value))return value.slice(0,128).map(redact);
     if(value && typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,v])=>
       [key,/(api.?key|token|password|secret|credential)/i.test(key)?'[已隐藏]':redact(v)]));
-    return String(value ?? '').replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)(?:Bearer\s+)?[^\s,;"']+/gi,'$1[已隐藏]')
+    return String(value ?? '').replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*["']?)(?:Bearer\s+)?[^\s,;"']+/gi,'$1[已隐藏]')
       .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,'Bearer [已隐藏]').slice(0,12000);
   };
   function step(meta, open=false) {
@@ -23,7 +23,7 @@
     const detail=Object.entries({参数:input,结果:meta.output,错误:meta.error}).filter(([,v])=>v!==undefined && v!=='')
       .map(([title,v])=>'<div class="agent-detail-label">'+title+'</div><pre>'+esc(typeof v==='object'?JSON.stringify(redact(v),null,2):redact(v))+'</pre>').join('');
     return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'"'+(open?' open':'')+'>'+
-      '<summary><span class="agent-step-icon" aria-hidden="true">'+(command?'⌘':edit?'↗':'›')+'</span><span>'+esc(label)+'</span>'+
+      '<summary><svg class="i xs agent-step-icon" aria-hidden="true"><use href="#i-'+(command?'term':edit?'book':'folder')+'"/></svg><span>'+esc(label)+'</span>'+
       (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+'</summary>'+detail+'</details>';
   }
   function elapsed(ms) {

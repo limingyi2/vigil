@@ -348,6 +348,7 @@ async function startBrain(modelBase, fixedPort, options = {}) {
   const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
   if (!fs.existsSync(python)) throw new Error('Python interpreter not found: ' + python);
   const env = { ...process.env, VIGIL_HOME: home, VIGIL_PORT: String(port),
+    BRAIN_MUTEX: 'Local\\VigilAcceptance-' + path.basename(root),
     VIGIL_E2E_PLUGIN_TRACE: pluginTrace, VIGIL_E2E_PLUGIN_RELEASE: pluginReleasePath,
     PYTHONDONTWRITEBYTECODE: '1', PYTHONUNBUFFERED: '1' };
   const logFile = fs.openSync(path.join(root, 'brain.log'), 'w');
@@ -522,7 +523,7 @@ async function waitFor(predicate, label, timeout = 15000) {
   }
   throw new Error('Timed out waiting for ' + label + '; renderer=' + String(await evaluate("document.querySelector('#msgs')?.innerText || ''")) +
     '; streamEvents=' + JSON.stringify(await evaluate('window.__vigilE2EEvents || []')) +
-    '; fakeProviderRequests=' + modelRequests.length);
+    '; fakeProviderRequests=' + modelRequests.length + '; sessions=' + await evaluate('document.querySelectorAll("[data-session]").length'));
 }
 async function assertToolCall(traceFile, mode) {
   const deadline = Date.now() + 5000;
@@ -873,7 +874,9 @@ async function run() {
   const legacyFirstPrompt = 'LEGACY_FIRST_PROMPT';
   await evaluate("document.querySelector('#newTopicBtn').click()");
   await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'return to welcome before renderer refresh');
-  await evaluate("document.querySelector('#reloadBtn').click()");
+  await cdpSend('Page.reload');
+  await waitFor('window.API?.state.conn.ok && document.querySelector("#ta")', 'renderer reload reconnects');
+  await evaluate('window.__vigilE2EEvents=[];window.vigil.onStreamEvent(e=>window.__vigilE2EEvents.push(e));true');
   await waitFor("document.querySelectorAll('[data-session]').length===10 && !document.querySelector('#hero').hidden", 'ten saved sessions on welcome page');
   assert.equal(await evaluate('API.state.chatConversationId'), '', 'ten saved sessions must not auto-select the last chat');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'home must not show saved messages or Creator cards');

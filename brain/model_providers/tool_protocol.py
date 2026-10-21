@@ -37,6 +37,17 @@ class ToolTextBoundary:
                 if len(self.block) > 65536:
                     raise ProviderResponseError('工具协议超过长度限制')
                 break
+            if self.pending[0] == '~' and self.code_ticks <= 0:
+                ticks = len(self.pending) - len(self.pending.lstrip('~'))
+                if ticks == len(self.pending) and not final:
+                    break
+                if ticks >= 3 and not self.code_ticks:
+                    self.code_ticks = -ticks
+                elif self.code_ticks == -ticks:
+                    self.code_ticks = 0
+                output.append(self.pending[:ticks])
+                self.pending = self.pending[ticks:]
+                continue
             if self.pending[0] == '`':
                 ticks = len(self.pending) - len(self.pending.lstrip('`'))
                 if ticks == len(self.pending) and not final:

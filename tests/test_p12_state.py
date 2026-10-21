@@ -25,3 +25,4 @@ def test_tool_detail_redaction_includes_command_assignments_and_environment(tmp_
     assert 'hidden echo' not in str(result)
     assert 'credential' not in str(result)
     assert 'abc123' not in str(result)
+    assert 'quoted-secret' not in runs._safe_event_value('API_KEY="quoted-secret" command')
