@@ -140,6 +140,12 @@ contextBridge.exposeInMainWorld('vigil', {
     resourceUrl: (path) => ipcRenderer.invoke('plugins:resource-url', path),
     releaseResources: () => ipcRenderer.invoke('plugins:release-resources'),
   },
+  wallpaperImports: {
+    list: () => ipcRenderer.invoke('wallpaper-import:list'),
+    add: () => ipcRenderer.invoke('wallpaper-import:add'),
+    url: (id) => ipcRenderer.invoke('wallpaper-import:url', id),
+    delete: (id) => ipcRenderer.invoke('wallpaper-import:delete', id),
+  },
   // Narrow native capability for first-party local project tools; returns a selected folder only.
   projectPicker: {
     pickDirectory: () => ipcRenderer.invoke('project-picker:directory'),

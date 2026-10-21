@@ -514,14 +514,13 @@ function createWindow() {
     },
   });
   // The renderer needs a dynamic port for WebWallGL's authenticated media bridge.
-  // All other renderer XHR/fetch traffic to localhost must be blocked here.
+  // Loopback is a capability boundary for every resource type (frames, images,
+  // media, workers as well as fetch/XHR), not just script initiated requests.
   const wallpaperRendererId = win.webContents.id;
   win.webContents.session.webRequest.onBeforeRequest(
-    { urls: ['http://127.0.0.1/*'] },
+    { urls: ['http://127.0.0.1/*', 'http://localhost/*', 'http://[::1]/*'] },
     (details, callback) => {
-      if (details.webContentsId === wallpaperRendererId
-          && (details.resourceType === 'xhr' || details.resourceType === 'fetch')
-          && !pluginMedia.isApprovedUrl(details.url)) {
+      if (shouldCancelLoopbackRequest(details, wallpaperRendererId, pluginMedia.isApprovedUrl.bind(pluginMedia))) {
         callback({ cancel: true });
         return;
       }
@@ -655,10 +654,36 @@ function openSettingsWindow(options) {
 const localtool = require('./localtool');
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
-const pluginMedia = require('./plugin-media').createPluginMedia({
+const { createPluginMedia, shouldCancelLoopbackRequest } = require('./plugin-media');
+const pluginMedia = createPluginMedia({
   getBase: () => connectionBase(),
   getToken,
 });
+const wallpaperImportRoot = path.join(app.getPath('userData'), 'wallpaper-imports');
+const wallpaperImportManifest = path.join(wallpaperImportRoot, 'manifest.json');
+function readWallpaperImports() {
+  try {
+    const entries = JSON.parse(fs.readFileSync(wallpaperImportManifest, 'utf8'));
+    if (!Array.isArray(entries)) return [];
+    return entries.filter(item => {
+      if (!item || !/^[a-f0-9-]{36}$/i.test(item.id) || !/^[a-f0-9-]{36}\.[a-z0-9]+$/i.test(item.stored)) return false;
+      const file = path.join(wallpaperImportRoot, item.stored);
+      try {
+        const st = fs.lstatSync(file);
+        if (!st.isFile() || st.isSymbolicLink()) return false;
+        pluginMedia.registerLocal(item.id, file, item.mime);
+        return true;
+      } catch (_) { return false; }
+    });
+  } catch (_) { return []; }
+}
+let wallpaperImports = readWallpaperImports();
+function saveWallpaperImports() {
+  fs.mkdirSync(wallpaperImportRoot, { recursive: true });
+  const temp = wallpaperImportManifest + '.tmp';
+  fs.writeFileSync(temp, JSON.stringify(wallpaperImports, null, 2), { mode: 0o600 });
+  fs.renameSync(temp, wallpaperImportManifest);
+}
 
 // 本地内核（sidecar）一起步就养上；找不到 exe 时它自己会保持 failed 并给出原因
 sidecar.init(app, readCfg);
@@ -885,6 +910,55 @@ ipcMain.handle('plugins:resource-url', async (_e, resource) => {
 ipcMain.handle('plugins:release-resources', () => {
   pluginMedia.releaseResources();
   return { ok: true };
+});
+ipcMain.handle('wallpaper-import:list', async () => ({ ok: true, items: wallpaperImports.map(({id,name,mime,size,kind}) => ({id,name,mime,size,kind})) }));
+ipcMain.handle('wallpaper-import:url', async (_e, id) => {
+  try { return { ok: true, url: await pluginMedia.localUrl(String(id || '')) }; }
+  catch (e) { return { ok: false, err: String(e.message || e) }; }
+});
+ipcMain.handle('wallpaper-import:add', async () => {
+  if (!win || win.isDestroyed()) return { ok: false, err: '窗口尚未准备好' };
+  const picked = await dialog.showOpenDialog(win, { title: '导入壁纸图片或视频', properties: ['openFile'],
+    filters: [{ name: '壁纸媒体', extensions: ['png','jpg','jpeg','webp','mp4','webm'] }] });
+  if (picked.canceled || !picked.filePaths[0]) return { ok: true, canceled: true };
+  try {
+    const source = path.resolve(picked.filePaths[0]);
+    const st = fs.lstatSync(source);
+    if (!st.isFile() || st.isSymbolicLink()) throw new Error('请选择普通文件，不支持符号链接');
+    const ext = path.extname(source).toLowerCase();
+    const isVideo = ['.mp4','.webm'].includes(ext);
+    const max = isVideo ? 1024 * 1024 * 1024 : 50 * 1024 * 1024;
+    if (!st.size || st.size > max) throw new Error(isVideo ? '视频必须小于 1 GiB' : '图片必须小于 50 MiB');
+    const fd = fs.openSync(source, 'r'); const head = Buffer.alloc(Math.min(st.size, 16));
+    try { fs.readSync(fd, head, 0, head.length, 0); } finally { fs.closeSync(fd); }
+    const valid = ext === '.png' ? head.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+      : ['.jpg','.jpeg'].includes(ext) ? head[0]===0xff && head[1]===0xd8 && head[2]===0xff
+      : ext === '.webp' ? head.toString('ascii',0,4)==='RIFF' && head.toString('ascii',8,12)==='WEBP'
+      : ext === '.mp4' ? head.toString('ascii',4,8)==='ftyp'
+      : ext === '.webm' ? head.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3])) : false;
+    if (!valid) throw new Error('文件扩展名与媒体内容不匹配或文件已损坏');
+    const id = crypto.randomUUID(); const mime = ({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.mp4':'video/mp4','.webm':'video/webm'})[ext];
+    const stored = id + ext; fs.mkdirSync(wallpaperImportRoot, { recursive: true });
+    const target = path.join(wallpaperImportRoot, stored); fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+    pluginMedia.registerLocal(id, target, mime);
+    const item = { id, name: path.basename(source).slice(0,240), stored, mime, size: st.size, kind: isVideo ? 'video' : 'image' };
+    wallpaperImports.push(item); saveWallpaperImports();
+    return { ok: true, item: {id:item.id,name:item.name,mime:item.mime,size:item.size,kind:item.kind} };
+  } catch (e) { return { ok: false, err: String(e.message || e).slice(0,200) }; }
+});
+ipcMain.handle('wallpaper-import:delete', async (_e, id) => {
+  const index = wallpaperImports.findIndex(item => item.id === id);
+  if (index < 0) return { ok: false, err: '导入素材不存在' };
+  const [item] = wallpaperImports.splice(index, 1);
+  try { saveWallpaperImports(); }
+  catch (e) { wallpaperImports.splice(index, 0, item); return { ok:false, err:String(e.message || e) }; }
+  pluginMedia.unregisterLocal(item.id);
+  try { fs.unlinkSync(path.join(wallpaperImportRoot, item.stored)); return { ok: true }; }
+  catch (e) {
+    wallpaperImports.splice(index, 0, item);
+    try { saveWallpaperImports(); pluginMedia.registerLocal(item.id, path.join(wallpaperImportRoot,item.stored), item.mime); } catch (_) {}
+    return { ok:false, err:String(e.message || e) };
+  }
 });
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:instance-id', () => APP_PROCESS_INSTANCE_ID);

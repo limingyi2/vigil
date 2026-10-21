@@ -8,7 +8,7 @@ const http = require('http');
 const assert = require('assert/strict');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-const { createPluginMedia } = require('../electron/plugin-media');
+const { createPluginMedia, shouldCancelLoopbackRequest } = require('../electron/plugin-media');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-wallpaper-test-'));
 app.setPath('userData', path.join(tmp, 'electron'));
 app.disableHardwareAcceleration();
@@ -38,6 +38,9 @@ async function main() {
     requests.push(req.url);
     if (req.headers.authorization !== 'Bearer fixture-secret') { res.writeHead(401); return res.end(); }
     const u = new URL(req.url, 'http://local');
+    if (u.searchParams.get('id') === '999' && u.searchParams.get('file') === 'project.json') {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"err":"fixture scene missing"}');
+    }
     if (u.searchParams.get('file') === 'project.json' || u.searchParams.get('file') === 'scene.json') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       return res.end(JSON.stringify(u.searchParams.get('file') === 'project.json' ? project : scene));
@@ -59,16 +62,30 @@ async function main() {
   await new Promise(r => backend.listen(0, '127.0.0.1', r));
   media = createPluginMedia({ getBase: () => 'http://127.0.0.1:' + backend.address().port,
     getToken: async () => 'fixture-secret' });
+  const localId = crypto.randomUUID();
+  const localFile = path.join(tmp, 'imported.png'); fs.writeFileSync(localFile, png);
+  media.registerLocal(localId, localFile, 'image/png');
+  const localVideoId = crypto.randomUUID();
+  media.registerLocal(localVideoId, path.join(tmp, 'test.mp4'), 'video/mp4');
+  let imports = [{ id: localId, name: 'Imported fixture.png', mime: 'image/png', size: png.length, kind: 'image' },
+    { id: localVideoId, name: 'Imported fixture.mp4', mime: 'video/mp4', size: video.length, kind: 'video' }];
   ipcMain.handle('fixture:media', async (_, p) => {
     const url = await media.url(p);
     issuedMediaUrls.push(url);
     return { ok: true, url };
   });
   ipcMain.handle('fixture:release', () => media.releaseResources());
+  ipcMain.handle('fixture:imports', async (_, action, id) => {
+    if (action === 'list') return { ok: true, items: imports };
+    if (action === 'url') { try { return { ok: true, url: await media.localUrl(id) }; } catch(e) { return { ok:false,err:e.message }; } }
+    if (action === 'delete') { imports = imports.filter(item => item.id !== id); media.unregisterLocal(id); return { ok:true }; }
+    return { ok:true, canceled:true };
+  });
   let config = { enabled: false, opacity: 0.7, scrim: 0.4, muted: true };
   const library = [{ id: '123', title: '<Test scene>', type: 'scene', file: 'scene.pkg' },
     { id: '456', title: 'Video', type: 'video', file: 'test.mp4' },
-    { id: '789', title: 'Web', type: 'web', file: 'index.html' }];
+    { id: '789', title: 'Web', type: 'web', file: 'index.html' },
+    { id: '999', title: 'Broken Scene fixture', type: 'scene', file: 'scene.pkg' }];
   ipcMain.handle('fixture:api', async (_, method, resource, body) => {
     if (resource.includes('/we/library')) return { ok: true, json: { ok: true, wallpapers: library, we_path: 'Fixture' } };
     if (method === 'POST') config = { ...config, ...body };
@@ -76,6 +93,7 @@ async function main() {
   });
   fs.writeFileSync(path.join(tmp, 'preload.js'), `const {contextBridge,ipcRenderer}=require('electron');
     contextBridge.exposeInMainWorld('vigil',{plugins:{resourceUrl:p=>ipcRenderer.invoke('fixture:media',p),releaseResources:()=>ipcRenderer.invoke('fixture:release')},
+      wallpaperImports:{list:()=>ipcRenderer.invoke('fixture:imports','list'),add:()=>ipcRenderer.invoke('fixture:imports','add'),url:id=>ipcRenderer.invoke('fixture:imports','url',id),delete:id=>ipcRenderer.invoke('fixture:imports','delete',id)},
       api:(m,p,b)=>ipcRenderer.invoke('fixture:api',m,p,b)});`);
   const csp = fs.readFileSync(path.join(root, 'client/src/index.html'), 'utf8').match(/content="(default-src[^"]+)"/)[1];
   fs.writeFileSync(path.join(tmp, 'index.html'), `<meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -83,6 +101,8 @@ async function main() {
   win = new BrowserWindow({ show: false, width: 1100, height: 900,
     webPreferences: { preload: path.join(tmp, 'preload.js'), contextIsolation: true, sandbox: true,
       backgroundThrottling: false, offscreen: true } });
+  win.webContents.session.webRequest.onBeforeRequest({ urls: ['http://127.0.0.1/*','http://localhost/*','http://[::1]/*'] },
+    (details, callback) => callback(shouldCancelLoopbackRequest(details, win.webContents.id, media.isApprovedUrl.bind(media)) ? { cancel:true } : {}));
   win.webContents.on('console-message', (_, level, message) => { if (level >= 2) console.log('[renderer]', message); });
   await win.loadFile(path.join(tmp, 'index.html'));
   await win.webContents.insertCSS(fs.readFileSync(path.join(root, 'client/src/styles.css'), 'utf8') +
@@ -98,9 +118,13 @@ async function main() {
     throw new Error('Timeout: ' + expression);
   }
   await ev(`fixturePage.render({view:document.getElementById('view')})`);
-  await until(`document.querySelectorAll('.wp-card').length===3`);
+  await until(`document.querySelectorAll('.wp-card').length===6`);
   assert.equal(await ev(`document.querySelector('.wp-title').textContent`), '<Test scene>');
   await until(`Array.from(document.querySelectorAll('.wp-thumb img')).every(i=>i.complete&&i.naturalWidth>0)`);
+  const beforeDeniedRequest = requests.length;
+  await ev(`window.__deniedImage=new Image();window.__deniedImage.src='http://127.0.0.1:${backend.address().port}/api/plugin/wallpaper/we/media?id=123&file=denied.png';void 0`);
+  await wait(150);
+  assert.equal(requests.length, beforeDeniedRequest, 'Electron must cancel direct loopback image requests without an issued ticket');
   await ev(`document.querySelector('[data-id="123"]').click()`);
   await until(`!!document.querySelector('.wp-scene-stage canvas')`);
   await until(`document.querySelector('.wp-scene-stage')?.dataset.liveReady==='true'`);
@@ -147,12 +171,47 @@ async function main() {
   await until(`document.querySelector('.wallpaper-bg video')?.readyState>=2`);
   await ev(`document.querySelector('[data-id="789"]').click()`);
   await until(`window.webReady===true`);
+  console.log('fixture: WEB wallpaper ready');
   assert(requests.some(p => p.includes('assets%2Fimage.png')));
+  await ev(`window.__p14OriginalMount=WebWallGL.mount;window.__p14FailedInstanceDestroyed=0;window.__p14FailMountOnce=true;WebWallGL.mount=function(){if(window.__p14FailMountOnce){window.__p14FailMountOnce=false;var e=new Error('fixture mount rejection');e.instance={destroy:function(){window.__p14FailedInstanceDestroyed++}};return Promise.reject(e)}return window.__p14OriginalMount.apply(this,arguments)};void 0`);
+  await ev(`document.querySelector('[data-id="999"]').click()`);
+  await until(`!!document.querySelector('.wp-scene-status.error')`);
+  assert.match(await ev(`document.querySelector('.wp-scene-status.error').textContent`), /Scene 实时渲染失败/);
+  assert.equal(await ev(`window.__p14FailedInstanceDestroyed`), 1, 'Failed partial WebWallGL instances must be destroyed');
+  const failedLoads = requests.filter(p => p.includes('id=999') && p.includes('file=project.json')).length;
+  await ev(`document.querySelector('.wp-scene-retry').click()`);
+  for (let i=0; i<100 && requests.filter(p => p.includes('id=999') && p.includes('file=project.json')).length <= failedLoads; i++) await wait(100);
+  assert(requests.filter(p => p.includes('id=999') && p.includes('file=project.json')).length > failedLoads,
+    'Retry button should request the Scene project again');
+  await until(`!!document.querySelector('.wp-scene-status.error')`);
+  await ev(`document.querySelector('[data-id="456"]').click()`);
+  await until(`document.querySelector('.wallpaper-bg video')?.readyState>=2`);
+  assert.equal(await ev(`!!document.querySelector('.wp-scene-stage')`), false, 'A stale Scene failure must not cover a newer wallpaper selection');
+  await until(`!!document.querySelector('.wp-card[data-id="local:${localVideoId}"]')`);
+  await ev(`document.querySelector('.wp-card[data-id="local:${localVideoId}"]').click()`);
+  await until(`document.querySelector('.wallpaper-bg video')?.readyState>=2`);
+  console.log('fixture: local video decoded');
+  await until(`!!document.querySelector('.wp-card[data-id="local:${localId}"]')`);
+  console.log('fixture: local card ready');
+  await ev(`document.querySelector('.wp-card[data-id="local:${localId}"]').click()`);
+  console.log('fixture: local selected');
+  await until(`document.querySelector('.wallpaper-bg img')?.naturalWidth===1`);
+  console.log('fixture: local image decoded');
+  await until(`!!document.querySelector('#wp-playlist li')`);
+  await ev(`document.querySelector('#wp-search').value='does not match';document.querySelector('#wp-search').dispatchEvent(new Event('input',{bubbles:true}))`);
+  assert.equal(await ev(`Array.from(document.querySelectorAll('.wp-card')).filter(x=>!x.hidden).length`), 0, 'Name search should filter wallpaper cards');
+  await ev(`document.querySelector('#wp-search').value='';document.querySelector('#wp-search').dispatchEvent(new Event('input',{bubbles:true}));window.confirm=()=>true;document.querySelector('.wp-delete').click()`);
+  await until(`!document.querySelector('.wp-card[data-id="local:${localId}"]')`);
   await ev(`document.getElementById('wp-close').click()`);
   await until(`!document.body.classList.contains('wallpaper-active')`);
   await ev(`window.fixtureDispose()`);
   assert.equal(await ev(`!!document.getElementById('wallpaper-bg-layer')`), false, 'Plugin unload must remove background DOM');
   assert.equal(await ev(`document.documentElement.style.getPropertyValue('--wp-glass-blur')`), '');
+  await win.webContents.executeJavaScript(fs.readFileSync(path.join(plugin, 'frontend.js'), 'utf8'));
+  await until(`!!document.getElementById('wallpaper-bg-layer')`);
+  assert.equal(await ev(`document.querySelectorAll('#wallpaper-bg-layer').length`), 1, 'Repeated plugin activation must not duplicate the background layer');
+  await ev(`window.fixtureDispose()`);
+  assert.equal(await ev(`!!document.getElementById('wallpaper-bg-layer')`), false, 'Repeated unload must remove the second instance');
   assert(issuedMediaUrls.length > 0);
   assert(issuedMediaUrls.every(url => !media.isApprovedUrl(url)), 'Plugin unload must revoke all issued media tickets');
   console.log('PASS: registration, library, previews, live WebWallGL animated Scene, authenticated Scene assets, video decoding, nested web assets, disable');

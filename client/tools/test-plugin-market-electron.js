@@ -36,6 +36,10 @@ async function run(){
   ipcMain.handle('api',(_,req)=>response(req.method,req.path));
   for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}}))ipcMain.handle(name,()=>value);
   ipcMain.handle('plugins:release-resources',()=>({ok:true}));
+  ipcMain.handle('wallpaper-import:list',()=>({ok:true,items:[]}));
+  ipcMain.handle('wallpaper-import:add',()=>({ok:true,canceled:true}));
+  ipcMain.handle('wallpaper-import:url',()=>({ok:false,err:'not found'}));
+  ipcMain.handle('wallpaper-import:delete',()=>({ok:false,err:'not found'}));
   ipcMain.handle('plugins:load',async()=>{
     if(!wallpaperState.installed||!wallpaperState.enabled)return{ok:true,loaded:0,errors:[]};
     const js=require('fs').readFileSync(path.resolve(client,'../market/plugins/wallpaper/frontend.js'),'utf8');

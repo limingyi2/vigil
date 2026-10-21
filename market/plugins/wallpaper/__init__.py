@@ -341,6 +341,10 @@ def api_config_post(body, query):
                   "opacity", "scrim", "blur", "muted", "we_path"]:
             if k in body:
                 cfg[k] = body[k]
+        if "playlist" in body and isinstance(body["playlist"], list):
+            # IDs are plain identifiers, never paths or executable resource URLs.
+            cfg["playlist"] = [str(item)[:80] for item in body["playlist"][:500]
+                                if isinstance(item, (str, int))]
     _save_config(cfg)
     return {"ok": True, "config": cfg}
 

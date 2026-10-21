@@ -3,6 +3,12 @@
 (function () {
   'use strict';
 
+  // Injection may happen again after a market refresh. Tear down the previous
+  // owner before creating any DOM, listeners, or WebGL state.
+  if (typeof window.__vigilWallpaperDispose === 'function') {
+    try { window.__vigilWallpaperDispose(); } catch (e) { console.warn('[wallpaper] prior instance cleanup failed', e); }
+  }
+
   // ========== 工具 ==========
   // 插件运行在 Electron 的 file:// 渲染层，CSP 禁止直接 fetch。
   // 所有大脑请求必须经过主进程代理的 VigilAPI，token 也只留在主进程。
@@ -55,6 +61,7 @@
   // ========== 状态 ==========
   var currentConfig = null;
   var library = [];       // WE 壁纸库
+  var customLibrary = [];
   var wePath = null;
   var libraryError = '';
   var ready = Promise.resolve();
@@ -74,14 +81,22 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
     });
   }
-  function setResource(element, resource) {
+  function setResource(element, resource, generation) {
     if (!window.vigil || !window.vigil.plugins || !window.vigil.plugins.resourceUrl) {
       console.error('[wallpaper] 客户端缺少媒体桥，请升级客户端');
       return;
     }
     window.vigil.plugins.resourceUrl(resource).then(function (r) {
-      if (r && r.ok && element.isConnected) element.src = r.url;
+      if (r && r.ok && element.isConnected && (generation == null || generation === applyGeneration) && !disposed) element.src = r.url;
       else if (!r || !r.ok) console.error('[wallpaper] 媒体地址失败:', r && r.err);
+    });
+  }
+  function setLocalResource(element, id, generation) {
+    var bridge = window.vigil && window.vigil.wallpaperImports;
+    if (!bridge || !bridge.url) return;
+    bridge.url(id).then(function (r) {
+      if (r && r.ok && element.isConnected && (generation == null || generation === applyGeneration) && !disposed) element.src = r.url;
+      else if (!r || !r.ok) console.error('[wallpaper] 导入媒体不可访问:', r && r.err);
     });
   }
 
@@ -166,6 +181,14 @@
       if (instance.info) container.dataset.sceneInfo = JSON.stringify(instance.info);
       console.info('[wallpaper scene] live scene mounted; id=' + id, instance.info || {});
     } catch (error) {
+      // WebWallGL can reject mount() after allocating a partial instance and
+      // attaches it to the error. Reclaim that GPU/package state on every path,
+      // including a stale selection that was superseded while mounting.
+      if (error && error.instance && typeof error.instance.destroy === 'function') {
+        try { error.instance.destroy({ releasePkgCache: true }); } catch (destroyError) {
+          console.warn('[wallpaper scene] failed mount cleanup failed', destroyError);
+        }
+      }
       if (generation !== applyGeneration || !container.isConnected) return;
       status.classList.add('error');
       status.textContent = 'Scene 实时渲染失败：' + String(error && error.message || error) + '（下方仅为预览图）';
@@ -174,6 +197,14 @@
       fallback.alt = 'Scene 预览图（不是实时渲染）';
       container.appendChild(fallback);
       setResource(fallback, previewUrl(id));
+      var retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'wp-scene-retry'; retry.textContent = '重新加载 Scene';
+      retry.addEventListener('click', function () {
+        if (generation !== applyGeneration || disposed) return;
+        activeWallpaperKey = null;
+        applyWallpaper(currentConfig);
+      });
+      container.appendChild(retry);
       console.error('[wallpaper scene] live mount failed; preview fallback only; id=' + id, error);
     }
   }
@@ -182,6 +213,10 @@
     activeWallpaperKey = null;
     applyGeneration++;
     destroyScene();
+    var video = bgLayer.querySelector('video');
+    if (video) { try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {} }
+    var frame = bgLayer.querySelector('iframe');
+    if (frame) { try { frame.src = 'about:blank'; } catch (_) {} }
     if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
     visibilityHandler = null;
     bgLayer.replaceChildren();
@@ -208,6 +243,7 @@
         console.warn('[wallpaper] media ticket cleanup failed', error);
       });
     }
+    if (window.__vigilWallpaperDispose === disposeWallpaper) delete window.__vigilWallpaperDispose;
   }
 
   // Visual appearance and playback have separate lifetimes.
@@ -240,6 +276,10 @@
     activeWallpaperKey = key;
     var generation = ++applyGeneration;
     destroyScene();
+    var oldVideo = bgLayer.querySelector('video');
+    if (oldVideo) { try { oldVideo.pause(); oldVideo.removeAttribute('src'); oldVideo.load(); } catch (_) {} }
+    var oldFrame = bgLayer.querySelector('iframe');
+    if (oldFrame) { try { oldFrame.src = 'about:blank'; } catch (_) {} }
     bgLayer.replaceChildren();
     applyAppearance(cfg);
     if (!key) return;
@@ -248,7 +288,15 @@
     var type = cfg.wallpaper_type;
     var file = cfg.wallpaper_file;
 
-    if (type === 'video' && file) {
+    if ((type === 'local-video' || type === 'local-image') && id) {
+      var localId = String(id).replace(/^local:/, '');
+      if (type === 'local-video') {
+        var lv = document.createElement('video'); lv.autoplay = true; lv.loop = true; lv.muted = cfg.muted !== false; lv.playsInline = true;
+        lv.style.cssText = 'width:100%;height:100%;object-fit:cover;'; bgLayer.appendChild(lv); setLocalResource(lv, localId, generation);
+      } else {
+        var li = document.createElement('img'); li.style.cssText = 'width:100%;height:100%;object-fit:cover;'; bgLayer.appendChild(li); setLocalResource(li, localId, generation);
+      }
+    } else if (type === 'video' && file) {
       // 视频壁纸：<video> 循环播放
       var v = document.createElement('video');
       v.autoplay = true;
@@ -257,14 +305,14 @@
       v.playsInline = true;
       v.style.cssText = 'width:100%;height:100%;object-fit:cover;object-position:center;';
       bgLayer.appendChild(v);
-      setResource(v, mediaUrl(id, file));
+      setResource(v, mediaUrl(id, file), generation);
     } else if (type === 'web' && file) {
       // 网页壁纸：<iframe sandbox> 隔离
       var ifr = document.createElement('iframe');
       ifr.sandbox = 'allow-scripts';
       ifr.style.cssText = 'width:100%;height:100%;border:none;display:block;';
       bgLayer.appendChild(ifr);
-      setResource(ifr, mediaUrl(id, file));
+      setResource(ifr, mediaUrl(id, file), generation);
     } else if (type === 'scene' && id) {
       var scene = document.createElement('div');
       scene.className = 'wp-scene-stage';
@@ -310,7 +358,10 @@
     });
   }
   function loadLibrary(force) {
-    return apiGet('/api/plugin/wallpaper/we/library' + (force ? '?refresh=1' : '')).then(function (r) {
+    return Promise.all([apiGet('/api/plugin/wallpaper/we/library' + (force ? '?refresh=1' : '')),
+      window.vigil && window.vigil.wallpaperImports ? window.vigil.wallpaperImports.list() : Promise.resolve({ok:true,items:[]})]).then(function (values) {
+      var r = values[0];
+      customLibrary = values[1] && values[1].ok ? values[1].items || [] : [];
       if (r && r.ok) {
         libraryError = '';
         library = r.wallpapers || [];
@@ -351,12 +402,16 @@
       + '<input type="checkbox" id="wp-enabled" ' + (cfg.enabled ? 'checked' : '') + '></div>';
 
     // 壁纸库网格
-    html += '<div class="wp-section"><div class="wp-section-title">壁纸库 (' + library.length + ')</div>'
+    html += '<div class="wp-section"><div class="wp-section-title">壁纸库 (' + (library.length + customLibrary.length) + ')</div>'
       + '<div class="wp-library" id="wp-library">';
     if (library.length === 0) {
       html += '<div class="wp-empty">' + esc(libraryError || (wePath ? '壁纸库为空，订阅壁纸后重新扫描。' : '未找到 Wallpaper Engine 创意工坊目录。')) + '</div>';
     }
-    html += '</div></div>';
+    html += '</div><div class="wp-row"><label>搜索</label><input id="wp-search" type="search" placeholder="按名称搜索"></div>'
+      + '<div class="wp-row"><label>类型</label><select id="wp-filter"><option value="">全部类型</option><option value="video">视频</option><option value="web">网页</option><option value="scene">Scene</option><option value="local-image">导入图片</option><option value="local-video">导入视频</option></select></div>'
+      + '<div class="wp-row"><button id="wp-import">导入图片/视频</button></div>'
+      + '<div class="wp-row"><label>播放列表</label><button id="wp-prev">上一张</button><button id="wp-next">下一张</button></div>'
+      + '<div class="wp-section-title">播放列表顺序（点击加入/移出）</div><ol id="wp-playlist"></ol></div>';
 
     // 当前选中
     if (cfg.wallpaper_id) {
@@ -392,6 +447,11 @@
     bind('wp-muted', 'change', function (e) { saveConfig({ muted: e.target.checked }); });
     bind('wp-close', 'click', function () { saveConfig({ enabled: false, wallpaper_id: null }); });
     bind('wp-refresh', 'click', function () { loadLibrary(true).then(function () { renderSettings(ctx); }); });
+    bind('wp-search', 'input', filterCards);
+    bind('wp-filter', 'change', filterCards);
+    bind('wp-prev', 'click', function () { stepPlaylist(-1); });
+    bind('wp-next', 'click', function () { stepPlaylist(1); });
+    bind('wp-import', 'click', function () { window.vigil.wallpaperImports.add().then(function (r) { if (r && r.ok && r.item) { customLibrary.push(r.item); renderSettings(ctx); } else if (r && !r.canceled) alert(r && r.err || '导入失败'); }); });
 
     // 滑块实时预览
     function bindSlider(id, valId, key, scale) {
@@ -411,6 +471,33 @@
     bindSlider('wp-opacity', 'wp-opacity-val', 'opacity', 100);
     bindSlider('wp-scrim', 'wp-scrim-val', 'scrim', 100);
     bindSlider('wp-blur', 'wp-blur-val', 'blur', 1);
+
+    function filterCards() {
+      var q = (document.getElementById('wp-search').value || '').toLocaleLowerCase();
+      var type = document.getElementById('wp-filter').value;
+      libEl.querySelectorAll('.wp-card').forEach(function (card) {
+        var w = library.concat(customLibrary.map(function(item){return {id:'local:'+item.id,title:item.name,type:item.kind==='video'?'local-video':'local-image'};})).find(function (item) { return String(item.id) === card.dataset.id; });
+        card.hidden = !!((type && card.dataset.type !== type) || (q && !(w && String(w.title || '').toLocaleLowerCase().includes(q))));
+      });
+    }
+    function playlist() { return Array.isArray(currentConfig.playlist) ? currentConfig.playlist.map(String) : []; }
+    function stepPlaylist(direction) {
+      var all = library.concat(customLibrary.map(function(item){return {id:'local:'+item.id,title:item.name,type:item.kind==='video'?'local-video':'local-image',file:item.name};}));
+      var ids = playlist().filter(function (id) { return all.some(function (w) { return String(w.id) === id; }); });
+      if (!ids.length) return;
+      var index = ids.indexOf(String(currentConfig.wallpaper_id));
+      index = (index + direction + ids.length) % ids.length;
+      var w = all.find(function (item) { return String(item.id) === ids[index]; });
+      if (w) saveConfig({ enabled: true, wallpaper_id: w.id, wallpaper_type: w.type, wallpaper_file: w.file || '' });
+    }
+    var listEl = document.getElementById('wp-playlist');
+    playlist().forEach(function (id, index) {
+      var w = library.concat(customLibrary.map(function(item){return {id:'local:'+item.id,title:item.name,type:item.kind==='video'?'local-video':'local-image',file:item.name};})).find(function (item) { return String(item.id) === id; });
+      var li = document.createElement('li'); li.textContent = w ? w.title : id + '（已删除或不可访问）';
+      [-1, 1].forEach(function (delta) { var b = document.createElement('button'); b.textContent = delta < 0 ? '↑' : '↓'; b.disabled = index + delta < 0 || index + delta >= playlist().length; b.onclick = function () { var p = playlist(), n = index + delta; var t = p[index]; p[index] = p[n]; p[n] = t; saveConfig({ playlist: p }); renderSettings(ctx); }; li.appendChild(b); });
+      var remove = document.createElement('button'); remove.textContent = '移出'; remove.onclick = function () { var p = playlist().filter(function (entry) { return entry !== id; }); saveConfig({ playlist: p }); renderSettings(ctx); }; li.appendChild(remove);
+      listEl.appendChild(li);
+    });
 
     // 渲染壁纸库网格
     var libEl = document.getElementById('wp-library');
@@ -440,9 +527,24 @@
           // 更新 active 状态
           for (var j = 0; j < cards.length; j++) cards[j].classList.remove('active');
           card.classList.add('active');
-          saveConfig({ enabled: true, wallpaper_id: id, wallpaper_type: type, wallpaper_file: file });
+          var nextPlaylist = playlist();
+          if (!nextPlaylist.includes(String(id))) nextPlaylist.push(String(id));
+          saveConfig({ enabled: true, wallpaper_id: id, wallpaper_type: type, wallpaper_file: file, playlist: nextPlaylist });
+          renderSettings(ctx);
         });
       }
+    }
+    if (libEl && customLibrary.length) {
+      customLibrary.forEach(function (item) {
+        var id='local:'+item.id, type=item.kind==='video'?'local-video':'local-image';
+        var card=document.createElement('div'); card.className='wp-card'; card.dataset.id=id; card.dataset.type=type; card.dataset.file=item.name;
+        card.innerHTML='<div class="wp-thumb"></div><div class="wp-info"><div class="wp-title"></div><div class="wp-type"></div><button class="wp-delete">删除导入素材</button></div>';
+        card.querySelector('.wp-title').textContent=item.name; card.querySelector('.wp-type').textContent=(item.kind==='video'?'视频':'图片')+' · '+Math.ceil(item.size/1024)+' KB';
+        libEl.appendChild(card);
+        if(type==='local-image'){var thumb=document.createElement('img'); thumb.loading='lazy'; card.querySelector('.wp-thumb').appendChild(thumb); setLocalResource(thumb,item.id);}
+        card.querySelector('.wp-delete').addEventListener('click',function(e){e.stopPropagation(); if(!confirm('删除此导入素材？'))return; window.vigil.wallpaperImports.delete(item.id).then(function(r){if(r&&r.ok){customLibrary=customLibrary.filter(function(x){return x.id!==item.id;}); var update={playlist:playlist().filter(function(id){return id!=='local:'+item.id;})}; if(String(currentConfig.wallpaper_id)==='local:'+item.id)Object.assign(update,{enabled:false,wallpaper_id:null,wallpaper_type:null,wallpaper_file:null}); saveConfig(update); renderSettings(ctx);}else alert(r&&r.err||'删除失败');});});
+        card.addEventListener('click',function(e){if(e.target.closest('.wp-delete'))return; var p=playlist(); if(!p.includes(id))p.push(id); saveConfig({enabled:true,wallpaper_id:id,wallpaper_type:type,wallpaper_file:item.name,playlist:p}); renderSettings(ctx);});
+      });
     }
   }
 
@@ -458,6 +560,7 @@
   // ========== 启动 ==========
   function init() {
     disposed = false;
+    window.__vigilWallpaperDispose = disposeWallpaper;
     ready = Promise.all([loadConfig(), loadLibrary()]);
     registerPage();
     if (window.matchMedia) {
