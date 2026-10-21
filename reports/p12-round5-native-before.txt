@@ -1,0 +1,19 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______ test_valid_native_has_priority_over_an_incomplete_xml_duplicate _______
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-183/test_valid_native_has_priority0')
+
+    def test_valid_native_has_priority_over_an_incomplete_xml_duplicate(tmp_path):
+        native = dict(call(text='native'), index=0)
+        result, _, count, _ = execute(tmp_path, [[{'tool_calls':[native], 'content':XML[:-10]}], [{'content':'���'}]])
+>       assert result['status'] == 'succeeded', result.get('error')
+E       AssertionError: {'message': '�������ơ���������ñ�ʶ��Ч��δ�ɷ��������ߣ�detail ���Ǿ�����һ�����Ϸ���', 'reason': 'invalid_tool'}
+E       assert 'failed' == 'succeeded'
+E         
+E         - succeeded
+E         + failed
+
+tests\test_p12_protocol.py:105: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_p12_protocol.py::test_valid_native_has_priority_over_an_incomplete_xml_duplicate

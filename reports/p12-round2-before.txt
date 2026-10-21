@@ -1,0 +1,26 @@
+PASS real Electron + Brain P12_XML streaming, tool execution and final answer
+PASS real Electron + Brain P12_NATIVE streaming, tool execution and final answer
+PASS P12 round1 end-to-end protocol boundaries
+Error: Timed out waiting for pause confirmed and resume available; renderer=P12_XML
+已完成 · 1s · 1 步
+▾
+
+先检查工具。
+
+已完成任务。可以继续发送下一条消息。
+
+17:36
+P12_NATIVE
+
+已完成任务。可以继续发送下一条消息。
+
+17:36
+P12_PAUSE
+作答中
+▴
+正在检查文件。
+模型生成中 取消; streamEvents=[{"type":"agent_run","run_id":"run_4b9fc0b948614df8ade79677519cd25e","request_id":"req_dd92ff80-53b7-4efa-a217-58f1eb47d949"},{"type":"stage","stage":"generating","run_id":"run_4b9fc0b948614df8ade79677519cd25e","seq":2},{"type":"text","text":"正在检查文件。","run_id":"run_4b9fc0b948614df8ade79677519cd25e","request_id":"req_dd92ff80-53b7-4efa-a217-58f1eb47d949","seq":3}]; fakeProviderRequests=5
+    at Object.waitFor (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-electron-brain-e2e.js:499:9)
+    at async exports.run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-p12-e2e.js:54:3)
+    at async run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-electron-brain-e2e.js:782:5)
+Brain log retained until cleanup: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-1QIo4m\brain.log

@@ -1,0 +1,42 @@
+✔ authoritative running snapshot keeps request and conversation identity (0.7921ms)
+✔ authoritative paused snapshot keeps request and conversation identity (0.0825ms)
+✔ authoritative paused_budget snapshot keeps request and conversation identity (0.5629ms)
+✔ authoritative succeeded snapshot keeps request and conversation identity (0.1011ms)
+✔ authoritative failed snapshot keeps request and conversation identity (0.0861ms)
+✔ authoritative cancelled snapshot keeps request and conversation identity (0.0722ms)
+✔ authoritative interrupted snapshot keeps request and conversation identity (0.0764ms)
+✔ missing ledger after restart is rechecked against current conversation without generation (0.1179ms)
+✔ HTTP 0 cannot become fictitious running/success state (0.1624ms)
+✔ HTTP 401 cannot become fictitious running/success state (0.1257ms)
+✔ HTTP 403 cannot become fictitious running/success state (0.0968ms)
+✔ HTTP 409 cannot become fictitious running/success state (0.1043ms)
+✔ HTTP 500 cannot become fictitious running/success state (0.1097ms)
+✔ stale request or cross-conversation snapshot cannot take over composer (0.1702ms)
+✔ tool evidence updates a stable identity with command and collapsed real details (1.1336ms)
+✔ command errors stay errors and parameters/results are escaped and redacted (0.272ms)
+✔ duration is derived from actual elapsed time (0.1664ms)
+✔ native project picker exposes only the directory-selection IPC (1.783ms)
+✔ Branch Atlas frontend parses and uses the native picker plus read-only inspect route (0.5159ms)
+✔ 100 shared chat/Creator rounds release IPC and subscriber callbacks (0.9436ms)
+✔ shared subscriptions isolate errors, reentrant removal and duplicate callbacks (0.8471ms)
+✔ detaching a chat bubble removes its subscription and observer immediately (4.2021ms)
+✔ terminal cleanup is idempotent and later events cannot affect completed turns (1.3847ms)
+✔ Creator terminal snapshot shows stage, code, parser facts, advice and log ID as text (12.0426ms)
+✔ each Creator failure stage remains distinguishable on reload (1.547ms)
+✔ Creator 404 is a durable failed request with HTTP status and actual destination (1.3735ms)
+✔ Creator rejects confirmed client errors but preserves uncertain network/server outcomes (1.5887ms)
+✔ API pick preserves transport status and safe destination without trusting JSON ok on HTTP failure (0.6673ms)
+✔ Creator files render compact previews and lazy-render independent source panels (2.4173ms)
+✔ Creator full source can be copied without expanding its preview (1.6077ms)
+✔ Creator approval and install clicks consume the returned one-time approval (2.1675ms)
+✔ Creator approval transport failure displays destination and error, then re-enables approval (1.7653ms)
+✔ Creator install failure prevents blind retry and asks for fresh approval (1.3506ms)
+✔ production chat disposes both terminal events, exceptions, fallback and missing-done timeout (0.8671ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1595.8145

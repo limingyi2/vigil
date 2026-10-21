@@ -1,0 +1,3 @@
+FAKE_PROVIDER request=1 stream=true
+PASS Electron chat Agent SSE resumes the same durable run through three network cuts and retains all streamed chunks
+PASS integrated smoke total: 1

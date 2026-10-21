@@ -1,0 +1,4 @@
+PASS real model actual file search/read and post-tool reasoning SSE=57 state=发送消息
+PASS real model continuous follow-up SSE=6 state=发送消息
+PASS real model pause and resume SSE=107 state=确认任务状态（连接异常或状态待确认）
+Kept test directory: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-BdfVeL

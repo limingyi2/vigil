@@ -1,0 +1,39 @@
+.........F...F                                                           [100%]
+================================== FAILURES ===================================
+_ test_quoted_code_and_ordinary_xml_are_preserved[~~~xml\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n~~~] _
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-178/test_quoted_code_and_ordinary_2')
+sample = '~~~xml\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n~~~'
+
+    @pytest.mark.parametrize('sample', ['代码示例：`<tool_call>` 是标签。', '```xml\n' + XML + '\n```\n这是 XML 教程。', '~~~xml\n'+XML+'\n~~~', '普通 <root>XML</root> 教程'])
+    def test_quoted_code_and_ordinary_xml_are_preserved(tmp_path, sample):
+        result, _, count, _ = execute(tmp_path, [[{'content': c} for c in sample]])
+>       assert result['status'] == 'succeeded', result.get('error')
+E       AssertionError: {'message': '执行服务异常，已停止后续派发', 'reason': 'internal_error'}
+E       assert 'failed' == 'succeeded'
+E         
+E         - succeeded
+E         + failed
+
+tests\test_p12_protocol.py:89: AssertionError
+___ test_tool_detail_redaction_includes_command_assignments_and_environment ___
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-178/test_tool_detail_redaction_inc0')
+
+    def test_tool_detail_redaction_includes_command_assignments_and_environment(tmp_path):
+        with patch.dict('os.environ',{'EXAMPLE_API_KEY':'private-value'}):
+            result=runs._safe_event_value({'cmd':'API_KEY=hidden echo private-value','token':'credential','output':'Bearer abc123'})
+        assert 'private-value' not in str(result)
+        assert 'hidden echo' not in str(result)
+        assert 'credential' not in str(result)
+        assert 'abc123' not in str(result)
+>       assert 'quoted-secret' not in runs._safe_event_value('API_KEY="quoted-secret" command')
+E       assert 'quoted-secret' not in 'API_KEY="qu...ret" command'
+E         
+E         'quoted-secret' is contained here:
+E           API_KEY="quoted-secret" command
+
+tests\test_p12_state.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_p12_protocol.py::test_quoted_code_and_ordinary_xml_are_preserved[~~~xml\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n~~~]
+FAILED tests/test_p12_state.py::test_tool_detail_redaction_includes_command_assignments_and_environment

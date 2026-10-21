@@ -1,0 +1,9 @@
+PASS real Electron + Brain P12_XML streaming, tool execution and final answer
+PASS real Electron + Brain P12_NATIVE streaming, tool execution and final answer
+PASS P12 round1 end-to-end protocol boundaries
+PASS pause uses conversation owner and duplicate clicks do not keep the composer busy
+PASS pause/resume returns to Send without replaying a confirmed tool
+PASS Brain process restart keeps durable interrupted status and clears stale Pause
+PASS next message after task completion/restart stays in the same conversation
+PASS authoritative missing ledger record restores Send and reports interruption without replay
+Kept test directory: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-2XZXGh

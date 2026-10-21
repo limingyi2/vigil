@@ -63,7 +63,7 @@ async function main() {
     if(mode === 'transport-failure') return {ok:false,status:0,err:'fixture timeout'};
     if(mode === 'truncated') {
       event.sender.send('api:stream:event',{type:'text',request_id:body.request_id,text:'不完整片段'});
-      event.sender.send('api:stream:event',{type:'error',request_id:body.request_id,class:'connection_lost',status:'interrupted',msg:'服务端提前关闭连接'});
+      event.sender.send('api:stream:event',{type:'error',request_id:body.request_id,class:'connection_lost',status:'interrupted',msg:'fixture truncated stream'});
       return {ok:false,status:0,err:'fixture truncated stream'};
     }
     const run = {run_id:'run_'+streams,request_id:body.request_id,input:body.text,status:'running',content:'',

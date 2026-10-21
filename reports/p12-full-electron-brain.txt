@@ -1,0 +1,69 @@
+PASS directory plugin frontend.js registers a page and frontend.css is applied in real Electron
+PASS cold start with no history opens a clean welcome page without creating a conversation
+FAKE_PROVIDER request=1 stream=false
+FAKE_PROVIDER request=2 stream=false
+FAKE_PROVIDER request=3 stream=false
+FAKE_PROVIDER request=4 stream=false
+FAKE_PROVIDER request=5 stream=false
+FAKE_PROVIDER request=6 stream=false
+FAKE_PROVIDER request=7 stream=false
+FAKE_PROVIDER request=8 stream=false
+FAKE_PROVIDER request=9 stream=false
+FAKE_PROVIDER request=10 stream=false
+FAKE_PROVIDER request=11 stream=false
+FAKE_PROVIDER request=12 stream=false
+FAKE_PROVIDER request=13 stream=false
+FAKE_PROVIDER request=14 stream=false
+FAKE_PROVIDER request=15 stream=false
+FAKE_PROVIDER request=16 stream=false
+FAKE_PROVIDER request=17 stream=false
+FAKE_PROVIDER request=18 stream=false
+PASS ten saved conversations remain visible on welcome; legacy opens only after explicit selection
+FAKE_PROVIDER request=19 stream=false
+FAKE_PROVIDER request=20 stream=false
+FAKE_PROVIDER request=21 stream=false
+PASS first message from welcome creates a scoped conversation and completes a plugin call
+FAKE_PROVIDER request=22 stream=true
+PASS multiple SSE text events and one terminal event are rendered exactly once
+FAKE_PROVIDER request=23 stream=false
+FAKE_PROVIDER request=24 stream=false
+FAKE_PROVIDER request=25 stream=false
+FAKE_PROVIDER request=26 stream=false
+FAKE_PROVIDER request=27 stream=false
+FAKE_PROVIDER request=28 stream=false
+FAKE_PROVIDER request=29 stream=false
+FAKE_PROVIDER request=30 stream=false
+FAKE_PROVIDER request=31 stream=false
+FAKE_PROVIDER request=32 stream=true
+PASS real Electron + Fake Provider: A/B isolation, Creator restore, renderer reload, Brain restart, and cold-launch welcome
+FAKE_PROVIDER request=33 stream=false
+FAKE_PROVIDER request=34 stream=false
+FAKE_PROVIDER request=35 stream=false
+PASS plugin execution failure reaches model and renderer without success marker
+FAKE_PROVIDER request=36 stream=true
+PASS Brain process disconnect is surfaced as interrupted and unlocks chat
+FAKE_PROVIDER request=37 stream=true
+FAKE_PROVIDER request=38 stream=true
+PASS Electron→Brain Agent run is durable and duplicate request IDs do not repeat a tool side effect
+FAKE_PROVIDER request=39 stream=true
+PASS accepted Provider request with a lost response stays failed/uncertain and is not replayed on duplicate request_id
+FAKE_PROVIDER request=40 stream=true
+PASS uncertain tool result remains failed/unknown and a repeated request does not replay its side effect
+FAKE_PROVIDER request=41 stream=true
+PASS live Electron cancellation leaves an explicit cancelled Brain state and prevents the next tool dispatch
+FAKE_PROVIDER request=42 stream=true
+UI_SLOW_CANCEL_DIAGNOSTIC {"runStatus":"cancelled","step":{"call_id":"p1-cancel-in-tool","input":{"mode":"slow_cancel"},"input_digest":"915e4433ea81fa8e963faa2060eb7c835ff312613bf74a108b3f9ff22e6f6ca3","kind":"tool","result":null,"result_state":"in_flight","started_at":1792578387.118832,"status":"running","step_id":2,"tool":"smoke_ping"},"ui":{"recordStatus":"cancelled","busy":"false","cancelButton":false,"tail":"P1_AGENT_CANCEL_IN_TOOL 请调用 smoke_ping 执行隔离慢工具\n已处理 0 秒\n已完成思考\n正在执行 smoke_ping\n\n出错了：已取消后续调度；在途工具可能仍在执行（结果不完整）\n已取消"}}
+PASS renderer cancels an already-dispatched side-effecting tool, preserves terminal state, and prevents follow-up dispatch
+FAKE_PROVIDER request=43 stream=true
+PASS bounded Provider timeout produces a non-success terminal state and blocks later tool dispatch
+FAKE_PROVIDER request=44 stream=true
+PASS an in-flight Agent run finishes once after Electron exit and its terminal result restores after relaunch
+FAKE_PROVIDER request=45 stream=true
+EVENT_BURST_DIAGNOSTIC {"emitted_text_events":1200,"cursor":1204,"retained_rows":256,"first_retained_seq":949,"last_retained_seq":1204,"duration_ms":4679}
+PASS SSE disconnect/resume retains 1200 events as a bounded 256-row ledger and returns an authoritative gap snapshot
+FAKE_PROVIDER request=46 stream=true
+PASS Brain crash after durable tool dispatch recovers as interrupted/unknown without replaying a side effect
+FAKE_PROVIDER request=47 stream=true
+FAKE_PROVIDER request=48 stream=true
+PASS Electron chat Agent SSE automatically resumes the same run from its last durable cursor after a network cut
+PASS integrated smoke total: 18

@@ -1,0 +1,8 @@
+PASS real Electron + Brain P12_XML streaming, tool execution and final answer
+AssertionError [ERR_ASSERTION]: history polling must not detach a live stream subscription
+
+false !== true
+
+    at exports.run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-p12-e2e.js:53:16)
+    at async run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-electron-brain-e2e.js:806:5)
+Brain log retained until cleanup: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-bdHNPv\brain.log

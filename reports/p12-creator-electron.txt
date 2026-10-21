@@ -1,0 +1,10 @@
+
+PASS 20 ordinary streaming turns complete without cross-turn updates
+PASS all seven Creator stages show structured errors, parser location, advice and log ID safely
+PASS Creator installation review opens in a fixed drawer without moving the composer or chat scroll
+PASS Creator file card starts with a six-line collapsed preview and both actions
+PASS clicking expand renders the full file without expanding neighboring files
+PASS collapse restores preview and copy writes the entire file while collapsed; other file stays collapsed
+PASS drawer preserves explicit approval, one-time install confirmation, and consumed-approval result
+PASS Creator failure details survive page navigation and rehydration
+PASS missing Creator API shows HTTP/target, persists failed and never resubmits on navigation

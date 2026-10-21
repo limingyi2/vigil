@@ -1,0 +1,15 @@
+PASS real Electron + Brain P12_XML streaming, tool execution and final answer
+PASS real Electron + Brain P12_NATIVE streaming, tool execution and final answer
+PASS P12 round1 end-to-end protocol boundaries
+PASS pause uses conversation owner and duplicate clicks do not keep the composer busy
+PASS pause/resume returns to Send without replaying a confirmed tool
+PASS Brain process restart keeps durable interrupted status and clears stale Pause
+PASS next message after task completion/restart stays in the same conversation
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("任务已不存在")'))
+
+    at exports.run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-p12-e2e.js:136:10)
+    at async run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-electron-brain-e2e.js:806:5)
+Brain log retained until cleanup: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-3MbNsL\brain.log
+Kept test directory: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-3MbNsL
