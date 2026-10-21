@@ -4224,9 +4224,9 @@
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
     // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
-    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['video-apps', '视频软件'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'video-apps' ? 'video' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('本地内核', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -4843,6 +4843,54 @@
       }));
     }
 
+    async function videoApps() {
+      ctx.topbar.querySelector('h1').textContent = '视频软件';
+      const api = global.vigil && global.vigil.videoWindow;
+      if (!api) {
+        v.innerHTML = '<div class="card">视频窗口配置需要在 Windows 桌面客户端中管理。</div>';
+        return;
+      }
+      let rows = [];
+      let selectedId = '';
+      let creating = false;
+      const draw = async () => {
+        rows = await api.profiles();
+        if (!creating && !rows.some(row => row.id === selectedId)) selectedId = rows[0] ? rows[0].id : '';
+        const current = rows.find(row => row.id === selectedId) || { id: '', name: '', exePath: '', args: '' };
+        v.innerHTML = '<div class="card video-settings-card"><div class="video-settings-head"><div><b>已保存的软件</b><div class="muted">添加任意本地 Windows EXE，工作台只显示这里保存的软件。</div></div><button class="btn" id="vaNew">新建配置</button></div>' +
+          (rows.length ? '<div class="video-settings-list">' + rows.map(row => '<button class="video-settings-row ' + (row.id === selectedId ? 'on' : '') + '" data-profile="' + esc(row.id) + '"><b>' + esc(row.name) + '</b><small>' + esc(row.exePath) + '</small></button>').join('') + '</div>' : '<div class="video-empty">还没有配置。选择“新建配置”添加软件。</div>') +
+          '<div class="video-settings-form"><label>配置名称<input id="vaName" maxlength="80" placeholder="例如：剪映" value="' + esc(current.name) + '"></label>' +
+          '<label>EXE 路径<div class="video-path-row"><input id="vaExe" readonly placeholder="选择本机 EXE" value="' + esc(current.exePath) + '"><button class="btn" id="vaPick">选择 EXE</button></div></label>' +
+          '<details class="video-advanced"><summary>高级启动选项</summary><label>启动参数<input id="vaArgs" maxlength="2048" placeholder="可留空" value="' + esc(current.args || '') + '"></label></details>' +
+          '<div class="video-actions"><button class="btn primary" id="vaSave">保存配置</button>' + (current.id ? '<button class="btn" id="vaDelete">删除配置</button>' : '') + '<span class="video-status" id="vaStatus" role="status"></span></div></div></div>';
+        v.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => { creating = false; selectedId = button.dataset.profile; draw(); }));
+        const setMessage = message => { const target = v.querySelector('#vaStatus'); if (target) target.textContent = message; };
+        v.querySelector('#vaNew').addEventListener('click', () => { creating = true; selectedId = ''; draw(); });
+        v.querySelector('#vaPick').addEventListener('click', async () => {
+          try {
+            const file = await api.pickExe();
+            if (file) { v.querySelector('#vaExe').value = file; if (!v.querySelector('#vaName').value) v.querySelector('#vaName').value = file.split(/[\\/]/).pop().replace(/\.exe$/i, ''); }
+          } catch (error) { setMessage(error.message); }
+        });
+        v.querySelector('#vaSave').addEventListener('click', async () => {
+          try {
+            const exePath = v.querySelector('#vaExe').value;
+            if (!exePath) { setMessage('请先选择 EXE 文件。'); return; }
+            const saved = await api.saveProfile({ id: selectedId, name: v.querySelector('#vaName').value, exePath, args: v.querySelector('#vaArgs').value });
+            const match = saved.find(row => row.exePath.toLowerCase() === exePath.toLowerCase() && row.name === v.querySelector('#vaName').value.trim());
+            creating = false; selectedId = match ? match.id : selectedId;
+            toast('软件配置已保存'); await draw();
+          } catch (error) { setMessage(error.message); }
+        });
+        const remove = v.querySelector('#vaDelete');
+        if (remove) remove.addEventListener('click', async () => {
+          if (!await confirmDialog('删除此软件配置？')) return;
+          await api.deleteProfile(selectedId); creating = false; selectedId = ''; await draw();
+        });
+      };
+      await draw();
+    }
+
     async function about() {
       ctx.topbar.querySelector('h1').textContent = '关于';
       v.innerHTML = '<div class="card">' +
@@ -4892,7 +4940,7 @@
       } catch (e) { /* 无云端配置等，静默 */ }
     }
 
-    const draw = { conn, model, danger, about };
+    const draw = { conn, model, 'video-apps': videoApps, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -5002,6 +5050,7 @@
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
+      {title:'视频软件', desc:'管理视频工作台中的本地软件', icon:'video', page:'system', sub:'video-apps'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
       {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
     ];
@@ -5613,8 +5662,84 @@
     await load();
   }
 
+  async function renderVideoWorkbench(ctx) {
+    ctx.topbar.innerHTML = '<div class="top-title">视频工作台</div><div class="top-subtitle">托管本机 Windows 软件</div>';
+    ctx.view.innerHTML = `
+      <section class="video-workbench">
+        <div class="video-host-frame"><div class="video-host-slot" id="videoHostSlot"><span>启动软件后，窗口将在此处显示</span></div></div>
+        <div class="video-tools">
+          <label class="video-profile-label"><span>软件</span><select id="videoProfileSelect"><option value="">尚未配置软件</option></select></label>
+          <button class="btn primary" id="videoStart">启动并托管</button>
+          <button class="btn" id="videoDetach">解除托管</button>
+          <button class="btn video-settings-link" id="videoSettings">软件设置</button>
+          <span class="video-status" id="videoStatus" role="status">在“软件设置”中添加本机 Windows 软件。</span>
+        </div>
+      </section>`;
+
+    const $ = id => ctx.view.querySelector('#' + id);
+    const api = global.vigil && global.vigil.videoWindow;
+    const status = $('videoStatus');
+    const setStatus = value => { status.textContent = String(value || ''); };
+    if (!api) { setStatus('此页面需要在 Windows 桌面客户端中运行。'); return; }
+    const slot = $('videoHostSlot');
+    const select = $('videoProfileSelect');
+    let profileRows = [];
+    let active = true;
+    const getBounds = () => {
+      const rect = slot.getBoundingClientRect();
+      return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 };
+    };
+    const updateBounds = () => { if (active && slot.isConnected) api.bounds(getBounds()); };
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(slot);
+    window.addEventListener('resize', updateBounds);
+    const visibility = () => api.visible(active && document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', visibility);
+    const offEvents = api.onEvent(event => {
+      if (!active || !event) return;
+      const labels = {
+        ready: '原生窗口模块已就绪。', started: '软件进程已启动，正在发现主窗口…',
+        attached: `已托管窗口（PID ${event.pid}，DPI ${event.dpi}）。`,
+        detached: event.restored ? '已解除托管，软件窗口已恢复。' : '解除托管时未能完整恢复窗口。',
+        fallback: '无法托管此窗口，软件已恢复为独立窗口。',
+        popup: '检测到软件弹窗并放入工作区。',
+        recreated: '检测到软件重建窗口，正在重新托管…',
+      };
+      if (labels[event.type]) setStatus(labels[event.type]);
+      else if (event.type === 'error') setStatus(`窗口托管错误（${event.stage}，${event.code}）：${event.message}`);
+      else if (event.type === 'helper-error' || event.type === 'protocol-error') setStatus(event.message || '原生窗口模块错误。');
+      else if (event.type === 'helper-exit') setStatus('原生窗口模块已退出。');
+    });
+    async function refreshProfiles() {
+      profileRows = await api.profiles();
+      const previous = select.value;
+      select.replaceChildren(new Option(profileRows.length ? '选择软件' : '尚未配置软件', ''));
+      profileRows.forEach(profile => select.add(new Option(profile.name, profile.id)));
+      if (profileRows.some(profile => profile.id === previous)) select.value = previous;
+      else if (profileRows.length === 1) select.value = profileRows[0].id;
+    }
+    $('videoStart').addEventListener('click', async () => {
+      try {
+        const launchProfile = profileRows.find(row => row.id === select.value);
+        if (!launchProfile) { setStatus('请先在“软件设置”中添加或选择软件。'); return; }
+        await api.action('ATTACH');
+        setStatus('正在启动软件…'); await api.start(launchProfile, getBounds()); api.visible(true);
+      } catch (error) { setStatus(error.message); }
+    });
+    $('videoDetach').onclick = () => api.action('DETACH');
+    $('videoSettings').onclick = () => { state.settingsDetail = true; state.settingsSub = 'video-apps'; ctx.navigate('system'); };
+    await refreshProfiles();
+    updateBounds();
+    visibility();
+    ctx.onDispose(() => {
+      active = false; observer.disconnect(); window.removeEventListener('resize', updateBounds); document.removeEventListener('visibilitychange', visibility); offEvents();
+      api.visible(false);
+    });
+  }
+
   global.PAGES = [
     { id: 'chat', name: '工作台', icon: 'chat', render: renderChat },
+    { id: 'video-workbench', name: '视频工作台', icon: 'video', render: renderVideoWorkbench },
     // 插件市场升为一级入口：装插件是高频动作，不该藏在能力与扩展的子页里。
     { id: 'market', name: '插件市场', icon: 'puzzle', render: renderPluginMarket },
     { id: 'settings', name: '设置', icon: 'set', render: renderSettingsHome },

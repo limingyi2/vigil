@@ -1,0 +1,22 @@
+appId: com.vigil.client.p15preview
+productName: Vigil P15 Preview
+electronDist: node_modules/electron/dist
+directories:
+  output: ${env.LOCALAPPDATA}/Vigil/P15-WindowHost-Artifact
+files:
+  - electron/**
+  - src/**
+  - assets/**
+  - version.json
+  - package.json
+  - '!src/_harness.html'
+  - '!src/js/_devstub.js'
+asarUnpack:
+  - '**/node_modules/keytar/**'
+extraResources:
+  - from: native-window-host/build/Release/native-window-host.exe
+    to: native-window-host/native-window-host.exe
+win:
+  icon: assets/icon.ico
+  target:
+    - portable

@@ -150,6 +150,23 @@ contextBridge.exposeInMainWorld('vigil', {
     probe: (p) => ipcRenderer.invoke('workspace:probe', p),
   },
 
+  // P15 native HWND hosting. Only these named operations cross the sandboxed bridge.
+  videoWindow: {
+    pickExe: () => ipcRenderer.invoke('video-window:pick-exe'),
+    profiles: () => ipcRenderer.invoke('video-window:profiles'),
+    saveProfile: (profile) => ipcRenderer.invoke('video-window:save-profile', profile),
+    deleteProfile: (id) => ipcRenderer.invoke('video-window:delete-profile', id),
+    start: (profile, bounds) => ipcRenderer.invoke('video-window:start', profile, bounds),
+    bounds: (value) => ipcRenderer.send('video-window:bounds', value),
+    visible: (value) => ipcRenderer.send('video-window:visible', !!value),
+    action: (value) => ipcRenderer.send('video-window:action', value),
+    onEvent: (fn) => {
+      const handler = (_event, message) => fn(message);
+      ipcRenderer.on('video-window:event', handler);
+      return () => ipcRenderer.removeListener('video-window:event', handler);
+    },
+  },
+
   platform: process.platform,
   agentCenter: {
     notify: (event) => ipcRenderer.invoke('agent-center:notify', event),

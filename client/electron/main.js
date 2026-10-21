@@ -38,6 +38,8 @@ let win = null;
 let settingsWin = null;
 let settingsWinReady = false;
 let pendingSettingsTarget = null;
+let nativeWindowService = null;
+let nativeWindowQuitPending = false;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
@@ -493,6 +495,8 @@ function createWindow() {
       spellcheck: false,
     },
   });
+  nativeWindowService = require('./native-window-service').createNativeWindowService({ ipcMain, getWindow: () => win });
+  win.on('hide', () => { if (nativeWindowService) nativeWindowService.hide(); });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
   // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。
@@ -549,6 +553,8 @@ function createWindow() {
     }
   });
   win.on('closed', () => {
+    if (nativeWindowService) nativeWindowService.dispose();
+    nativeWindowService = null;
     win = null;
   });
 }
@@ -1200,7 +1206,15 @@ if (!app.requestSingleInstanceLock()) {
 
 // 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
 // 也会走 before-quit —— 那时必须放行 close，不然关不了机）
-app.on('before-quit', () => { quitting = true; pluginMedia.close(); });
+app.on('before-quit', (event) => {
+  quitting = true;
+  pluginMedia.close();
+  if (nativeWindowService && !nativeWindowQuitPending) {
+    nativeWindowQuitPending = true;
+    event.preventDefault();
+    nativeWindowService.shutdown().finally(() => app.quit());
+  }
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

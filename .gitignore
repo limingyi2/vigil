@@ -206,6 +206,7 @@ vigil-client/src/_harness.html
 client/dist/
 client/dist-*/
 client/dist_*/
+client/native-window-host/build/
 client/_shots/
 client/src/_harness.html
 
