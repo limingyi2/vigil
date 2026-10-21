@@ -5482,7 +5482,14 @@
   }
 
 
+  const marketPending = new Map();
   async function renderPluginMarket(ctx) {
+    let disposed = false;
+    const onMarketChanged = () => { if (!disposed) void load(); };
+    window.addEventListener('vigil-market-changed', onMarketChanged);
+    ctx.onDispose(() => { disposed = true; window.removeEventListener('vigil-market-changed', onMarketChanged); });
+    ctx.panel.innerHTML = '';
+    ctx.view.classList.add('market-view');
     ctx.topbar.innerHTML =
       '<span class="tag">§ 插件市场</span>' +
       '<div style="flex:1"></div>' +
@@ -5490,19 +5497,22 @@
       '<span class="muted" id="pmRepo" style="margin-left:12px"></span>';
 
     ctx.view.innerHTML =
-      '<div class="wrap">' +
+      '<div class="wrap market-wrap">' +
+      '<h1>插件市场</h1><p class="muted market-intro">为工作区添加插件，管理已安装的功能。</p>' +
       '<div id="pmStatus" class="muted" role="status" style="margin-bottom:12px"></div>' +
-      '<div id="pmGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px"></div>' +
+      '<div id="pmGrid" class="market-grid"></div>' +
       '<div id="pmEmpty" class="muted" role="status" style="text-align:center;padding:40px;display:none"></div>' +
       '</div>';
 
     let marketData = null;
 
     async function load() {
+      if (disposed) return;
       const grid = ctx.view.querySelector('#pmGrid');
       grid.innerHTML = '<div class="muted">加载中...</div>';
       try {
         const r = await API.get('/api/market/list');
+        if (disposed) return;
         if (!r || !r.ok || !r.json) {
           grid.innerHTML = '<div class="muted">加载失败：' + esc((r && r.err) || '未知错误') + '</div>';
           return;
@@ -5513,6 +5523,7 @@
         ctx.view.querySelector('#pmStatus').textContent = r.json.state === 'ready' ? '' : (r.json.state_message || '市场状态未知');
         draw();
       } catch (e) {
+        if (disposed) return;
         grid.innerHTML = '<div class="muted">加载失败：' + esc(e.message) + '</div>';
       }
     }
@@ -5541,7 +5552,7 @@
         return (
           '<div class="card" style="display:flex;flex-direction:column;gap:8px">' +
           '<div style="display:flex;align-items:center;gap:8px">' +
-          '<span style="font-size:20px">📦</span>' +
+          '<span class="market-icon" aria-hidden="true">' + icon('puzzle', 'md') + '</span>' +
           '<strong>' + esc(p.name) + '</strong>' +
           '<span class="muted" style="font-size:12px">v' + esc(p.version || '?') + '</span>' +
           badge +
@@ -5556,31 +5567,23 @@
 
       // 绑定按钮事件
       grid.querySelectorAll('button[data-action]').forEach(function (btn) {
+        if (marketPending.has(btn.dataset.name)) {
+          btn.disabled = true;
+          btn.textContent = marketPending.get(btn.dataset.name) === 'install' ? '安装中...' : '卸载中...';
+        }
         btn.addEventListener('click', async function () {
           const action = btn.dataset.action;
           const name = btn.dataset.name;
+          if (marketPending.has(name)) return;
+          marketPending.set(name, action);
           btn.disabled = true;
           btn.textContent = action === 'install' ? '安装中...' : '卸载中...';
           try {
             const r = await API.post('/api/market/' + action, { name: name });
             if (r && r.ok && r.json && r.json.ok) {
-              await load();
-              if (name === 'wallpaper' && window.vigil?.sidecar?.restart && window.vigil?.sidecar?.onState) {
-                toast(action === 'install' ? 'Wallpaper 已安装，正在重启本地 Brain…' : 'Wallpaper 已卸载，正在重启本地 Brain…');
-                let reloaded = false;
-                window.vigil.sidecar.onState((status) => {
-                  if (!reloaded && status && status.status === 'ready') {
-                    reloaded = true;
-                    window.location.reload();
-                  }
-                });
-                const restarted = await window.vigil.sidecar.restart();
-                if (!restarted || !restarted.ok || restarted.external) {
-                  toast('插件已安装；请重启本地 Brain 后刷新客户端');
-                }
-              } else if (r.json.msg) {
-                toast(r.json.msg);
-              }
+              marketPending.delete(name);
+              if (!disposed) await load();
+              if (r.json.msg) toast(r.json.msg);
             } else {
               toast((r && r.json && r.json.err) || '操作失败');
               btn.disabled = false;
@@ -5590,6 +5593,10 @@
             toast('操作失败：' + e.message);
             btn.disabled = false;
             btn.textContent = action === 'install' ? '安装' : '卸载';
+          } finally {
+            marketPending.delete(name);
+            if (!disposed && marketData) draw();
+            if (disposed) window.dispatchEvent(new Event('vigil-market-changed'));
           }
         });
       });

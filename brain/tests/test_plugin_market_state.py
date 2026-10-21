@@ -173,12 +173,118 @@ def test_fetch_falls_through_to_first_reachable_mirror():
     assert market._preferred_host["host"] == "fastly.jsdelivr.net"
     # 下一次下载直接命中记忆的源
     with patch.object(market, "urlopen", side_effect=fake_urlopen) as again:
-        market._fetch_bytes(url, 1024)
+        market._fetch_bytes("https://raw.githubusercontent.com/example/repo/main/package.zip", 1024)
         assert urlparse(again.call_args[0][0].full_url).hostname == "fastly.jsdelivr.net"
     market._preferred_host["host"] = ""
+
+
+def test_mutable_index_keeps_fresh_source_priority_after_cdn_download():
+    market._preferred_host['host'] = 'cdn.jsdelivr.net'
+    try:
+        assert market._candidate_urls(market.REMOTE_MARKET_URL)[0].startswith('https://ghfast.top/')
+    finally:
+        market._preferred_host['host'] = ''
 
 
 def test_fetch_still_rejects_disallowed_download_hosts():
     import pytest
     with pytest.raises(ValueError):
         market._fetch_bytes("https://evil.example.com/market.json", 1024)
+
+
+def _package(extra=False, bad_hash=False, duplicate=False):
+    import hashlib
+    import io
+    import zipfile
+    files = {'__init__.py': b'NAME = "fixture"\nDESC = "Fixture"\n',
+             'frontend.js': b'window.fixture = true;', 'frontend.css': b'.fixture {}',
+             'version.json': b'{"version":"1.0.0"}'}
+    manifest = {'schema': 'vigil.brain-plugin/v1', 'name': 'fixture', 'version': '1.0.0',
+                'protocol': market.PLUGIN_PROTOCOL, 'permissions': [], 'entry': '__init__.py',
+                'frontend': {'script': 'frontend.js', 'style': 'frontend.css'},
+                'files': [{'path': n, 'sha256': hashlib.sha256(b).hexdigest()} for n, b in files.items()]}
+    if extra:
+        manifest['files'] = [x for x in manifest['files'] if x['path'] != 'version.json']
+    if bad_hash:
+        manifest['files'][0]['sha256'] = '0' * 64
+    if duplicate:
+        manifest['files'].append(manifest['files'][0])
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        for n, b in files.items():
+            archive.writestr('fixture/' + n, b)
+        archive.writestr('fixture/manifest.json', json.dumps(manifest))
+    data = buffer.getvalue()
+    meta = {k: manifest[k] for k in ('name', 'version', 'protocol', 'permissions')}
+    meta['artifact'] = {'url': 'https://raw.githubusercontent.com/example/repo/commit/fixture.zip',
+                        'sha256': hashlib.sha256(data).hexdigest()}
+    return meta, data
+
+
+def test_complete_package_install_refresh_uninstall_and_reinstall(tmp_path):
+    import plugin_ops
+    import restart_state
+    meta, data = _package()
+    target = tmp_path / 'installed'
+    with patch.object(plugin_ops, '_PLUG_DIR', str(target)), \
+         patch.object(plugin_ops, 'REGISTRY', str(target / '_registry.json')), \
+         patch.object(market, '_plugins_dir', return_value=str(target)), \
+         patch.object(market, '_read_market', return_value={'state': 'ready', 'plugins': [meta]}), \
+         patch.object(market, '_fetch_bytes', return_value=data), \
+         patch.object(restart_state, 'note_change'):
+        for action in ('install', 'uninstall', 'install'):
+            result = getattr(market, 'api_' + action)({'name': 'fixture'}, {})
+            assert result['ok'], result
+            installed = action == 'install'
+            assert market.api_list({}, {})['plugins'][0]['installed'] == installed
+            assert (target / 'fixture' / 'frontend.js').exists() == installed
+        assert not list(target.glob('_tmp*'))
+
+
+def test_validation_and_network_failures_preserve_existing_install(tmp_path):
+    import plugin_ops
+    target = tmp_path / 'installed'
+    target.mkdir()
+    old = target / 'fixture'
+    old.mkdir()
+    (old / '__init__.py').write_bytes(b'old plugin')
+    registry = target / '_registry.json'
+    registry.write_bytes(b'{"version":1,"plugins":{"fixture":{"version":"old"}}}')
+    original = registry.read_bytes()
+    with patch.object(plugin_ops, '_PLUG_DIR', str(target)), \
+         patch.object(plugin_ops, 'REGISTRY', str(registry)):
+        for args, expected in [({'extra': True}, '未声明：version.json'),
+                               ({'bad_hash': True}, '文件 SHA-256'),
+                               ({'duplicate': True}, '重复路径')]:
+            meta, data = _package(**args)
+            with patch.object(market, '_fetch_bytes', return_value=data):
+                ok, result = market._install_remote_directory(meta, 'fixture')
+            assert not ok and expected in result['err']
+            assert result['stage'].startswith('Manifest')
+        with patch.object(market, '_fetch_bytes', side_effect=OSError('connection reset')):
+            ok, result = market._install_remote_directory(meta, 'fixture')
+        assert not ok and result['stage'] == '下载制品'
+        with patch.object(market, '_fetch_bytes', return_value=b'tampered archive'):
+            ok, result = market._install_remote_directory(meta, 'fixture')
+        assert not ok and result['stage'] == '制品 SHA-256 校验'
+        assert (old / '__init__.py').read_bytes() == b'old plugin'
+        assert registry.read_bytes() == original
+        assert sorted(p.name for p in target.iterdir()) == ['_registry.json', 'fixture']
+
+
+def test_stale_mirror_hash_falls_through_to_verified_artifact():
+    import hashlib
+    class Response:
+        def __init__(self, data): self.data = data
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self, size): return self.data
+    market._preferred_host['host'] = ''
+    try:
+        with patch.object(market, 'urlopen', side_effect=[Response(b'old cache'), Response(b'correct')]) as fetch:
+            data = market._fetch_bytes('https://raw.githubusercontent.com/a/b/commit/p.zip', 1024,
+                                      expected_sha=hashlib.sha256(b'correct').hexdigest())
+        assert data == b'correct'
+        assert fetch.call_count == 2
+    finally:
+        market._preferred_host['host'] = ''
