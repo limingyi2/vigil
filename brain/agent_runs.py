@@ -135,6 +135,12 @@ def _safe_event_value(value, limit=12000):
     if isinstance(value, list):
         return [_safe_event_value(v, limit) for v in value[:128]]
     text = str(value or '')
+    text = re.sub(r'((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*["\']?)(?:Bearer\s+)?[^\s,;"\']+',
+                  r'\1[已隐藏]', text, flags=re.I)
+    text = re.sub(r'\bBearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [已隐藏]', text, flags=re.I)
+    for key, secret in os.environ.items():
+        if _SECRET_FIELD.search(key) and len(secret) >= 6:
+            text = text.replace(secret, '[已隐藏]')
     return text[:limit] + ('…[已截断]' if len(text) > limit else '')
 
 
@@ -382,7 +388,10 @@ def hide(owner):
 
 def display_records(owner):
     return [dict(request_id=i['request_id'], run_id=i['run_id'], input=i['intent'],
-        content=i['content'], status=i['status'], error=i['error'], created_at=i['created_at'])
+        content=i['content'], result=i.get('result'), steps=[dict(s,
+            input=_safe_event_value(s.get('input')),
+            result=_safe_event_value(s.get('result'))) if s['kind']=='tool' else s for s in i['steps']],
+        status=i['status'], error=i['error'], created_at=i['created_at'])
         for i in listing(owner)]
 
 
@@ -520,7 +529,11 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
         _event(db, item, 'resumed', dict(status=item['status']))
         _save(db, item)
         intent, src = item['intent'], item['src']
-    derived = dict(body, intent=intent, src=src)
+    parent_conversation = str(item.get('conversation_id') or '')
+    if parent_conversation and body.get('conversation_id') not in (None, '', parent_conversation):
+        raise ValueError('续跑不能改变会话归属')
+    derived = dict(body, intent=intent, src=src,
+                   conversation_id=parent_conversation or str(body.get('conversation_id') or ''))
     # 客户端续跑时会带来自己的 request_id（用于把事件绑回会话气泡）；
     # 没带或格式不对就生成一个。合法且未被用过 → 原样使用（create 幂等）。
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', str(derived.get('request_id') or '')):
@@ -796,6 +809,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                                              'applied': None,
                                              'downgrade': strategy_state.get('downgrade')}
                         _save(db, item)
+            from model_providers.tool_protocol import ToolTextBoundary
+            boundary = ToolTextBoundary()
             completion = None
             for event in completion_events(provider, prepare(payload, cfg, step_tokens=reserve_out), timeout=max(0.001, timeout)):
                 with LOCK, _db() as db:
@@ -810,6 +825,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     if event['type'] == 'completion':
                         completion = event['result']
                     elif event['type'] == 'text_delta':
+                        event = dict(event, text=boundary.feed(event['text']))
                         # 展示用正文到顶就停止累积，任务继续跑：模型一次写太长不该
                         # 让整项任务死掉。最终 result 另按 MAX_TEXT 截断并留标记。
                         room = MAX_TEXT - len(item['content'])
@@ -830,15 +846,23 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     return
                 since += 1  # 本轮模型请求已完整收尾（含 length 续写路径），计入检查点节奏
                 completion = completion or dict(reason='connection_lost')
+                tail = boundary.feed('', final=True)
+                if tail:
+                    item['content'] += tail
+                    _event(db, item, 'text_delta', dict(text=tail, step_id=sid))
+                completion['content'] = boundary.text
                 reason = completion['reason']
+                if boundary.malformed and reason in ('normal', 'length'):
+                    reason = 'invalid_tool'
                 xml_mode = False
-                if reason == 'normal' and '<tool_call' in completion.get('content', '').lower():
+                if reason == 'normal' and boundary.blocks:
                     # Preserve the existing explicitly opted-in provider protocol;
                     # arbitrary content/XML never gains an execution path.
                     if specs and getattr(provider, 'supports_xml_tools', False) and cfg.get('allow_xml_tool_fallback', True) is not False:
-                        from brain import _parse_xml_tool_calls
-                        completion['tool_calls'] = _parse_xml_tool_calls(completion['content'],
-                            allowed_names={s['function']['name'] for s in specs})
+                        try:
+                            completion['tool_calls'] = boundary.calls({s['function']['name'] for s in specs})
+                        except ValueError:
+                            completion['tool_calls'] = []
                         xml_mode = bool(completion['tool_calls'])
                     reason = 'tool_calls' if xml_mode else 'invalid_tool'
                 if reason == 'length' and ((completion.get('content') or '').strip()
@@ -872,11 +896,11 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     return
                 if reason == 'normal':
                     # XML 兜底时正文里带着 <tool_call> 原文，不能当成她的回答露给用户。
-                    final = _strip_xml_calls(completion['content'])
+                    final = completion['content']
                     if len(final) > MAX_TEXT:
                         item['result_truncated'] = True
                     item['result'] = final[:MAX_TEXT]
-                    item['content'] = _strip_xml_calls(item.get('content') or '')[:MAX_TEXT]
+                    item['content'] = (item.get('content') or '')[:MAX_TEXT]
                     _finish(db, item, 'succeeded')
                     return
                 _save(db, item)
@@ -891,11 +915,11 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 # 声明过的协议，不是从任意文本里抠命令。
                 recovered, recovered_msg = [], None
                 if (not xml_mode and getattr(provider, 'supports_xml_tools', False)
-                        and '<tool_call' in (completion.get('content') or '').lower()):
-                    from brain import _parse_xml_tool_calls
-                    parsed = _parse_xml_tool_calls(
-                        completion['content'],
-                        allowed_names={s['function']['name'] for s in specs})
+                        and cfg.get('allow_xml_tool_fallback', True) is not False and boundary.blocks):
+                    try:
+                        parsed = boundary.calls({s['function']['name'] for s in specs})
+                    except ValueError:
+                        parsed = []
                     try:
                         recovered = _calls(parsed, specs) if parsed else []
                     except (ValueError, TypeError, KeyError, AttributeError):
@@ -906,7 +930,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     # 路只允许一轮工具就强制总结，长任务会在第一轮末尾被腰斩。
                     recovered_msg = dict(
                         role='assistant',
-                        content=_strip_xml_calls(completion.get('content') or '') or None,
+                        content=completion.get('content') or None,
                         tool_calls=[dict(id=cid, type='function',
                                          function=dict(name=name, arguments=_json(args)))
                                     for cid, name, args, _sig in recovered])
@@ -935,7 +959,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                         with LOCK, _db() as db:
                             item = _get(db, rid, owner)
                             _finish(db, item, 'failed', 'invalid_tool',
-                                    '%s | arguments=%s' % (exc, raw))
+                                    str(exc))
                         return
                     msgs.append(dict(role='user', content=(
                         '（系统提示：你上一次的工具调用无法解析（%s）。'

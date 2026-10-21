@@ -1052,7 +1052,14 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
   let agentCursor = 0;
   let resumeCount = 0;
   let lastConnectionError = null;
-  const onEvent = (evt) => {
+  const onEvent = (event) => {
+    if (resumableAgentChat && event.request_id && event.request_id !== body.request_id) return;
+    // Every IPC subscriber shares one bus. Bind even legacy terminal/tool
+    // projections to the originating request before publishing them.
+    let evt = resumableAgentChat ? {...event,request_id:body.request_id,
+      conversation_id:body.conversation_id || body.session_id || ''} : event;
+    if (resumableAgentChat && agentRunId && evt.type==='error' && !evt.run_id)
+      evt={...evt,run_id:agentRunId};
     if (resumableAgentChat && evt.type === 'agent_run' && evt.run_id &&
         (!evt.request_id || evt.request_id === body.request_id)) agentRunId = evt.run_id;
     if (resumableAgentChat && agentRunId && evt.run_id === agentRunId &&

@@ -94,10 +94,7 @@
     } catch (_) { toast('当前记录未能保存到本机，请先复制内容'); }
   }
   function streamBodyHtml(thinkId, textId) {
-    return '<div class="think-block streaming"><button class="think-toggle" type="button">' +
-      icon('brain', 'sm') + '<span class="think-label">思考中</span> <span class="think-caret">▴</span></button>' +
-      '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div>' +
-      '<div class="live-steps" id="liveSteps" hidden></div></div>' +
+    return '<div class="agent-progress"><div class="agent-elapsed" role="status"></div><div class="live-steps" id="liveSteps" hidden></div></div>' +
       '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
       '<div class="foot"><span class="stream-status">正在生成…</span></div>';
   }
@@ -498,9 +495,7 @@
       const note = view.querySelector('#mqContextNote');
       if (value) value.textContent = policy ? policy.label : '读取中…';
       if (contextToggle) contextToggle.disabled = !policy || switching;
-      if (note) note.textContent = !policy ? '当前无法读取上下文窗口设置' : policy.limited
-        ? '已按模型容量调整为 ' + policy.label + '。'
-        : 'Vigil 按此目标管理当前请求；服务商可能另有限制。';
+      if (note) note.textContent = '';
       contextMenu.querySelectorAll('[data-context-tier]').forEach((button) => {
         const checked = !!policy && Number(button.dataset.contextTier) === policy.selected;
         button.setAttribute('aria-checked', String(checked));
@@ -553,7 +548,7 @@
         || (nameOf(m) + ' ' + provOf(m) + ' ' + m.model).toLowerCase().indexOf(q) >= 0);
       if (!rows.length) {
         listEl.innerHTML = '<div class="muted" style="padding:12px 0;font-size:12px">'
-          + (all.length ? '没有匹配的模型' : '还没有保存过模型：在设置里选一次，这里就有了') + '</div>';
+          + (all.length ? '没有匹配的模型' : '暂无模型') + '</div>';
         return;
       }
       listEl.innerHTML = rows.map((m) => {
@@ -566,9 +561,8 @@
           '" aria-pressed="' + String(!!m.active) + '">' +
           '<span class="mq-check" aria-hidden="true">' + (m.active ? icon('check', 'sm') : '') + '</span>' +
           '<span class="lb">' +
-          '<b>' + esc(nameOf(m)) + (m.unsaved ? ' <span class="muted">(未保存)</span>' : '') + '</b>' +
-          '<span class="muted">' + esc(provOf(m)) + ' · ' + esc(m.model) + '</span>' +
-          '</span>' + status +
+          '<b>' + esc(nameOf(m)) + '</b>' +
+          '</span>' +
           '</button>' + (m.unsaved ? '' : '<button class="mq-x" type="button" data-x="' + i +
             '" title="从清单里移除（不影响当前设置）" aria-label="从清单里移除 ' + esc(nameOf(m)) + '">×</button>') + '</div>';
       }).join('');
@@ -746,7 +740,7 @@
       // 同一个动作不在两处出现，用户也不用先在左栏找入口。
       '<div class="session-new"><button class="session-new-button" id="newTopicBtn" title="新建空白会话（不属于任何工作区）" aria-label="新对话">' + icon('chat', 'sm') + '<span>新对话</span></button></div>' +
       '<div class="plist" id="sessList"><div class="empty">还没有聊过</div></div>' +
-      '<div class="panel-footer"><button class="panel-settings" id="settingsOpen" title="设置" aria-label="打开设置">' + icon('set', 'sm') + '<span>设置</span></button></div>';
+      '';
     const sessList = panel.querySelector('#sessList');
 
     const SESS_KEY = 'vigil.chat.active.v2:' + String(state.base || '') + ':' + String((state.cfg || {}).device_id || '');
@@ -805,6 +799,7 @@
       }
     }
     async function refreshConversations() {
+      const selectedAtRead=activeConversationId;
       if (API.runtime.preview) {
         const id = '00000000-0000-4000-8000-000000000001';
         sessionItems = [{id,title:'预览对话',created_at:Date.now()/1000,updated_at:Date.now()/1000,legacy:false}];
@@ -812,9 +807,10 @@
         state.chatConversationId = activeConversationId; drawSessions(); return activeConversationId;
       }
       const r = pick(await get('/api/conversations?src=pc'));
+      if (!msgs.isConnected) return activeConversationId;
       if (!r.ok || !Array.isArray(r.items)) throw new Error(r._err || '会话列表加载失败');
       sessionItems = r.items.filter((item) => item.legacy || item.has_content !== false);
-      if (activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
+      if (!busy && !submitPending && activeConversationId===selectedAtRead && activeConversationId && !sessionItems.some((x) => x.id === activeConversationId)) activeConversationId = '';
       state.chatConversationId = activeConversationId;
       drawSessions();
       drawWorkspaceBar();
@@ -965,6 +961,7 @@
       view.querySelector('#chatLoadState').hidden = true;
       busy = false;
       busyScope = null;
+      currentRequestId = null; liveReconcile = null; uncertainRunId = null;
       taEl.value = '';
       attachment = null;
       imgB64 = '';
@@ -1185,7 +1182,6 @@
       toast('会话已删除');
     }
     panel.querySelector('#newTopicBtn').addEventListener('click', () => { if (!busy) showWelcomeHome(true, true); });
-    panel.querySelector('#settingsOpen').addEventListener('click', () => ctx.navigate('settings'));
 
     view.innerHTML =
       '<div class="split no-right">' +
@@ -1207,7 +1203,7 @@
       '              <span>上下文窗口</span><b id="mqContextValue">读取中…</b><span aria-hidden="true">›</span></button>' +
       '            <div id="mqContextMenu" class="mq-context-menu" role="menu" aria-label="云端上下文窗口" hidden>' +
                      [96000,128000,300000].map((tier) => '<button type="button" role="menuitemradio" aria-checked="false" data-context-tier="' + tier + '"><span class="mq-check" aria-hidden="true"></span>' + (tier / 1000) + 'K</button>').join('') +
-      '            </div><p id="mqContextNote" class="mq-detail-note" role="status"></p>' +
+      '            </div>' +
       '          </div>' +
       '        </div>' +
       '        <div class="lpadd mqfoot">' +
@@ -1221,12 +1217,6 @@
       '      <div class="col">' +
       '      <div class="attach" id="attach" hidden></div>' +
       '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="今天帮你做些什么？@ 添加上下文，/ 调用技能与指令"></textarea>' +
-      '        <div class="creatorbar" id="creatorBar" hidden>' +
-      '          <span class="muted" style="font-size:12px">创作模式：直接描述你要的插件/技能，Agent 生成草稿（只保存与审核，不自动安装）</span>' +
-      '          <div class="sp"></div>' +
-      '          <button class="chip" data-kind="plugin">插件</button>' +
-      '          <button class="chip" data-kind="skill">技能</button>' +
-      '        </div>' +
       '        <div class="cbar">' +
       '          <button class="ibtn cbar-add" id="clipBtn" title="添加图片、视频或普通文件" aria-label="添加附件">' + icon('plus', 'sm') + '</button>' +
       '          <button class="chip" id="creatorBtn" title="创作模式：用自然语言让 Agent 生成插件/技能草稿">创作：关</button>' +
@@ -1280,12 +1270,6 @@
       toast(creatorMode === 'off' ? '已回到普通对话'
         : '创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿，发消息即生成');
     });
-    view.querySelector('#creatorBar').querySelectorAll('.chip[data-kind]').forEach((c) =>
-      c.addEventListener('click', () => {
-        creatorMode = c.dataset.kind;
-        applyCreatorMode();
-        toast('创作模式：生成' + (creatorMode === 'skill' ? '技能' : '插件') + '草稿');
-      }));
     // Delegate copy actions so history reloads and completed streams share one binding.
     msgs.addEventListener('click', async (e) => {
       const button = e.target.closest('[data-copy-code]');
@@ -1378,6 +1362,7 @@
 
     let lastCount = -1;
     let busy = false;
+    let submitPending = false;
     let busyScope = null;
     // 发送键三态（发送/暂停/继续）：
     // - pause：本会话有 agent run 在跑，点它 = 暂停任务
@@ -1387,6 +1372,10 @@
     let resumableRunId = null;
     let composerMode = 'send';
     let pendingResumeOf = null;
+    let pausePending = false;
+    let liveReconcile = null;
+    let currentRequestId = null;
+    let uncertainRunId = null;
     let conversationLoadSeq = 0;
     let renderedDraftConversationId = '';
     function finishBusy(scope) {
@@ -1411,6 +1400,7 @@
       busy = false;
       busyScope = null;
       activeRunId = null; resumableRunId = null; pendingResumeOf = null;
+      currentRequestId = null; liveReconcile = null; uncertainRunId = null;
       setComposerMode('send');
       if (typeof taEl !== 'undefined') taEl.value = '';
       if (typeof clearAttachment === 'function') clearAttachment();
@@ -1435,6 +1425,7 @@
       busy = false;
       busyScope = null;
       activeRunId = null; resumableRunId = null; pendingResumeOf = null;
+      currentRequestId = null; liveReconcile = null; uncertainRunId = null;
       setComposerMode('send');
       taEl.value = '';
       if (typeof clearAttachment === 'function') clearAttachment();
@@ -1474,6 +1465,7 @@
       return createConversationPromise;
     }
     async function initializeConversationView() {
+      const initialSelectionSeq=conversationLoadSeq;
       try {
         appInstanceId = global.vigil && global.vigil.appInstanceId
           ? String(await global.vigil.appInstanceId() || '') : 'browser-session';
@@ -1485,17 +1477,19 @@
         && rendererSelection.mode === 'conversation' ? rendererSelection.conversation_id : '';
       const restoreDraft = rendererSelection && rendererSelection.app_instance === appInstanceId
         && rendererSelection.mode === 'draft';
-      if (!await loadRecordScope()) { showWelcomeHome(false); return; }
+      if (!await loadRecordScope()) { if(msgs.isConnected)showWelcomeHome(false); return; }
+      if(!msgs.isConnected)return;
       // Workspaces are a separate index; a failed read must not block the chat
       // list, so it runs alongside and degrades to the "not available" note.
       refreshWorkspaces().catch(() => {});
       try { await refreshConversations(); }
       catch (error) {
+        if(!msgs.isConnected)return;
         showWelcomeHome(false);
         sessList.innerHTML = '<div class="empty" style="text-align:left;padding:18px 12px">会话列表暂不可用</div>';
         return;
       }
-      if (!msgs.isConnected) return;
+      if (!msgs.isConnected || initialSelectionSeq!==conversationLoadSeq || busy || submitPending || activeConversationId) return;
       if (restoreId && sessionItems.some((item) => item.id === restoreId)) {
         await activateConversation(restoreId, {persist:false});
       } else if (restoreDraft) {
@@ -1513,15 +1507,11 @@
     if (['off', 'plugin', 'skill'].indexOf(creatorMode) < 0) creatorMode = 'off';
     function applyCreatorMode() {
       const btn = view.querySelector('#creatorBtn');
-      const bar = view.querySelector('#creatorBar');
       const ta = view.querySelector('#ta');
-      if (!btn || !bar || !ta) return;
+      if (!btn || !ta) return;
       const label = creatorMode === 'off' ? '关' : creatorMode === 'plugin' ? '插件' : '技能';
       btn.textContent = '创作：' + label;
       btn.classList.toggle('on', creatorMode !== 'off');
-      bar.hidden = creatorMode === 'off';
-      bar.querySelectorAll('.chip[data-kind]').forEach((c) =>
-        c.classList.toggle('on', c.dataset.kind === creatorMode));
       ta.placeholder = creatorMode === 'off'
         ? '今天帮你做些什么？@ 添加上下文，/ 调用技能与指令'
         : '描述你想要的' + (creatorMode === 'skill' ? '技能' : '插件')
@@ -1609,8 +1599,8 @@
       const installed = local.installed || [];
       const modeRow = (mode, name, model, note) =>
         '<button class="plus-row' + (mode === cur ? ' on' : '') + '" type="button" data-mode="' + mode + '">' +
-        '<span class="plus-lb"><b>' + esc(name) + '</b><span>' + esc(model || '未配置') + '</span></span>' +
-        '<span class="plus-note">' + esc(note) + '</span>' +
+        '<span class="plus-lb"><b>' + esc(name) + '</b></span>' +
+        (mode === 'local' && local.reachable === false ? '<span class="plus-note">未启动</span>' : '') +
         (mode === cur ? '<span class="plus-check">' + icon('check', 'sm') + '</span>' : '') +
         '</button>';
       const localNote = local.reachable === false
@@ -1624,7 +1614,7 @@
           '<div class="plus-row muted-row">' +
           '<span class="plus-lb"><b>默认模型</b><span>' + esc((st.cloud || {}).model || '由 Brain 配置决定') + '</span></span>' +
           '<span class="plus-note">Brain 版本较旧</span></div>'
-        : '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
+        : '<div class="plus-sec">模型</div>' +
           modeRow('cloud', '默认模型', (st.cloud || {}).model,
             (st.cloud || {}).ready ? '随时可用' : '缺密钥或模型') +
           modeRow('local', '本地模型', local.model, localNote) +
@@ -1642,11 +1632,11 @@
         '<div class="plus-sec">添加</div>' +
         '<button class="plus-row" type="button" data-plus="file">' +
         '<span class="plus-rail plus-ic">' + icon('clip', 'sm') + '</span>' +
-        '<span class="plus-lb"><b>图片、视频或文件</b><span>单个不超过 256MB</span></span>' +
+        '<span class="plus-lb"><b>图片、视频或文件</b></span>' +
         '<span class="plus-note">' + (attachment ? '已附加 1 个' : '') + '</span>' +
         '</button>' +
         modeSection +
-        '<div class="plus-sec">创作模式<span class="plus-hint">与模型选择互不影响</span></div>' +
+        '<div class="plus-sec">创作模式</div>' +
         '<div class="plus-seg">' +
         ['off', 'plugin', 'skill'].map((k) =>
           '<button type="button" data-cr="' + k + '"' + (creatorMode === k ? ' class="on"' : '') + '>' +
@@ -2020,7 +2010,9 @@
         composerMode = 'send';
         drawComposerIcon();
       }
-      if (composerMode === 'pause') {
+      if (composerMode === 'uncertain') {
+        button.disabled = !global.vigil;
+      } else if (composerMode === 'pause') {
         button.disabled = !global.vigil || !activeRunId;
       } else if (composerMode === 'resume') {
         button.disabled = !global.vigil || !resumableRunId;
@@ -2029,8 +2021,9 @@
           !!(attachment && (attachment.failed || (attachment.kind === 'image' && !imgB64)));
       }
       button.classList.toggle('is-sending', busy && composerMode === 'send');
-      button.setAttribute('aria-busy', String(busy));
-      const label = composerMode === 'pause' ? '暂停任务'
+      button.disabled = button.disabled || submitPending;
+      button.setAttribute('aria-busy', String(busy || submitPending));
+      const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）' : composerMode === 'pause' ? '暂停任务'
         : composerMode === 'resume' ? '继续上次任务（输入框有字则发送新消息）'
         : (busy ? '正在发送…' : '发送消息');
       button.setAttribute('aria-label', label);
@@ -2042,11 +2035,11 @@
     }
     function drawComposerIcon() {
       const button = view.querySelector('#sendBtn');
-      button.innerHTML = icon(composerMode === 'pause' ? 'pause'
+      button.innerHTML = icon(composerMode === 'uncertain' ? 'refresh' : composerMode === 'pause' ? 'pause'
         : composerMode === 'resume' ? 'play' : 'arrow-up', 'sm');
     }
     function setComposerMode(mode) {
-      composerMode = (mode === 'pause' || mode === 'resume') ? mode : 'send';
+      composerMode = ['pause','resume','uncertain'].includes(mode) ? mode : 'send';
       drawComposerIcon();
       updateComposer();
     }
@@ -2084,27 +2077,22 @@
      * 没有这个你只能对着一个转圈的省略号猜它在干嘛。
      */
     function addStep(name, text, kind, meta = {}) {
-      const box = msgs.querySelector('#liveSteps');
+      const turns = msgs.querySelectorAll('.turn');
+      const target = meta.turn_id ? msgs.querySelector('#'+meta.turn_id) : turns[turns.length-1];
+      const box = target && target.querySelector('#liveSteps');
       if (!box) return;
       box.hidden = false;
-      const cls = kind === 'danger' ? 'warn' : kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : 'neutral';
-      const key = String(meta.call_id || meta.step_id || name || 'tool').replace(/[^A-Za-z0-9_-]/g, '_');
-      let row = box.querySelector('[data-step-key="' + key + '"]');
-      const detail = (meta.input !== undefined || meta.output !== undefined || meta.error) ?
-        '<details class="step-detail"><summary>详情</summary><pre>' +
-        esc(JSON.stringify({参数:meta.input,输出:meta.output,错误:meta.error}, null, 2)) +
-        '</pre></details>' : '';
-      const html =
-        '<div data-step-key="' + esc(key) + '">' +
-        '<span class="sname">' + esc(name.replace(/^local_/, '')) + '</span>' +
-        '<span class="stext">' + esc(String(text || '').slice(0, 90)) + '</span>' +
-        '<span class="tag ' + cls + '">' + esc(kind === 'danger' ? '提醒' : kind === 'err' ? '失败' : kind === 'ok' ? '完成' : '执行中') + '</span>' +
-        detail + '</div>';
-      if (row) row.outerHTML = html;
-      else box.insertAdjacentHTML('beforeend', html);
+      const event = {...meta,tool:name,state:meta.state || (kind==='ok'?'returned':kind==='err'?'failed':'started')};
+      const key=encodeURIComponent(String(event.run_id || '')+':'+String(event.call_id || event.step_id || name));
+      const row=[...box.querySelectorAll('[data-step-key]')].find(n=>n.dataset.stepKey===key);
+      const html=global.VigilAgentView.step(event,!!row?.open);
+      if(row)row.outerHTML=html;else box.insertAdjacentHTML('beforeend',html);
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
+      // History is a recovery view, not the owner of an in-flight bubble.
+      // Replacing it here detaches its stream subscriber during long requests.
+      if (busy && busyScope === recordKey()) return;
       // The welcome page has no conversation context; never load unscoped
       // history or Creator Jobs while it is active.
       if (!activeConversationId) return;
@@ -2127,6 +2115,7 @@
       const r = pick(historyResponse);
       const creatorHistory = pick(creatorResponse);
       if (!msgs.isConnected || loadSeq !== conversationLoadSeq || activeConversationId !== loadConversationId) return;
+      if (busy && busyScope === recordKey()) return;
       if (!r.ok && !localRecords().length && !(creatorHistory.items || []).length) {
         if (force || lastCount < 0) {
           showRetry(r._err || '检查连接设置');
@@ -2141,6 +2130,27 @@
         if (job.conversation_id === loadConversationId || (r.conversation && r.conversation.legacy && job.legacy_unassigned))
           records.set(job.request_id, {...job,input:job.feedback || job.requirement});
       }
+      // Local display rows are hints; only a scoped Brain snapshot owns the composer.
+      let unknownRun = null;
+      if (!busy) {
+        const latest = [...records.values()].filter(i=>i.kind==='chat' && i.run_id)
+          .sort((a,b)=>(b.created_at || 0)-(a.created_at || 0))[0];
+        if (latest) {
+          const authority=await global.VigilAgentState.lookup(get,{runId:latest.run_id,
+            conversationId:loadConversationId,requestId:latest.request_id,src:state.src || 'pc'});
+          if (loadSeq !== conversationLoadSeq || activeConversationId !== loadConversationId) return;
+          if (authority.kind==='snapshot') records.set(latest.request_id,{...latest,...authority.item,kind:'chat'});
+          else if (['missing','replaced'].includes(authority.kind)) {
+            records.set(latest.request_id,{...latest,status:'interrupted',can_resume:false,
+              error:{message:'任务记录已不存在或已变化，未重放工具'}});
+            if (authority.item) records.set(authority.item.request_id,{...authority.item,kind:'chat'});
+          } else if (['queued','running','pending','state_unknown'].includes(latest.status)) {
+            unknownRun=latest.run_id;
+            records.set(latest.request_id,{...latest,status:'state_unknown',can_resume:false,
+              error:{message:authority.kind==='forbidden'?'身份无权限，任务状态待确认':'连接异常，任务状态待确认'}});
+          }
+        }
+      }
       const jobsToWatch = [];
       // 断点续跑恢复：最近一条 chat 记录若停在可续跑状态，发送键恢复成"继续"。
       let lastResumable = null;
@@ -2150,9 +2160,9 @@
         const input = item.input || item.requirement || '';
         const status = item.status || 'pending';
         if (item.kind === 'chat' && item.run_id) {
-          if ((item.created_at || 0) > newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; }
+          if ((item.created_at || 0) >= newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; lastActive = null; }
           if (['queued', 'running'].includes(status)) lastActive = item;
-          if (['paused','paused_budget','interrupted','failed'].includes(status)) lastResumable = item;
+          if (item.can_resume !== false && ['paused','paused_budget','interrupted'].includes(status)) lastResumable = item;
         }
         // Successful legacy chat already has its own durable pair. Reuse it.
         if (item.kind === 'chat' && status === 'succeeded' && items.some((m,i)=>m.role==='user'&&m.text===input&&items[i+1]?.text===item.content)) {
@@ -2171,14 +2181,17 @@
         }
         const message = (item.error ? creatorErrorText(item.error) : '') || ({pending:'排队中…',running:'执行中…',
           failed:'请求失败',cancelled:'已取消',interrupted:'已中断',succeeded:'任务完成'})[status] || status;
-        items.push({role:'assistant',text:item.content || '',statusNote:status === 'succeeded' ? '' : message,t,
+        items.push({role:'assistant',text:item.status==='succeeded' ? (item.result ?? item.content ?? '') : (item.content || ''),statusNote:status === 'succeeded' ? '' : message,t,
           request_id:item.request_id,partial:status!=='succeeded',
           run:item.run_id ? item : null});
       }
       items.sort((a,b)=>toMs(a.t)-toMs(b.t));
       // 恢复判断放渲染后：只信"最近一条"chat 记录，旧的可续跑任务不抢按钮。
       if (!busy) {
-        if (lastActive && lastActive.run_id) {
+        if (unknownRun) {
+          activeRunId = null; resumableRunId = null; uncertainRunId = unknownRun;
+          setComposerMode('uncertain');
+        } else if (lastActive && lastActive.run_id) {
           // 页面刷新/切换会丢掉 renderer 内存，但不会停止 Brain 的任务。
           // 先恢复实际运行中的 run，避免把发送键误画成继续或发送。
           activeRunId = lastActive.run_id;
@@ -2191,6 +2204,8 @@
         } else {
           activeRunId = null;
           resumableRunId = null;
+          uncertainRunId = null;
+          liveReconcile = null;
           setComposerMode('send');
         }
       }
@@ -2235,11 +2250,12 @@
         const runable = m.run && ['queued','running'].includes(m.run.status);
         const note = (m.statusNote ? '<div class="run-note"><span>' + esc(m.statusNote) + '</span>' +
           (runable ? '<button class="agent-cancel" data-run="' + esc(m.run.run_id) + '">取消</button>' : '') + '</div>' : '');
+        const evidence = (m.run?.steps || []).map((step,index,steps)=>step.kind==='tool' ? global.VigilAgentView.step({...step,run_id:m.run.run_id,state:step.result_state || step.status,output:step.result}) : (index < steps.length-1 && step.content ? '<div class="agent-commentary">'+U.md(step.content)+'</div>' : '')).join('');
         const body = m.text
           ? '<div class="txt md">' + t + '</div>' + note
           : (note || '<div class="txt md"></div>');
         return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
-          body +
+          (evidence ? '<div class="agent-progress live-steps">'+evidence+'</div>' : '') + body +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span>' +
           '</div></div></div>';
       }).join('');
@@ -2269,8 +2285,13 @@
       const resumeOf = pendingResumeOf; pendingResumeOf = null;
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy) return;
-      if (!await loadRecordScope() || busy) return;
+      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) return;
+      submitPending = true;
+      updateComposer();
+      let scopeReady;
+      try { scopeReady = await loadRecordScope(); }
+      finally { submitPending = false; updateComposer(); }
+      if (!scopeReady || busy) return;
       if (attachment && attachment.failed) return;
       if (attachment && attachment.kind === 'image' && !imgB64) {
         attachment.status = '图片尚未读取完成';
@@ -2347,6 +2368,9 @@
       if (activeConversationId !== sendConversationId) { finishBusy(sendScope); return; }
       const sendingImg = imgB64;
       const requestId = 'req_' + crypto.randomUUID();
+      currentRequestId = requestId;
+      liveReconcile = null;
+      uncertainRunId = null;
       const turnScope = sendScope;
       const remember = patch => rememberTurn(requestId, patch, turnScope);
       remember({input:resumeOf ? '继续上次任务' : text,kind:'chat',status:'pending'});
@@ -2389,28 +2413,21 @@
         '</div></div>');
       msgs.scrollTop = msgs.scrollHeight;
 
-      // 思考过程折叠/展开
-      const thinkToggle = msgs.querySelector('#' + turnId + ' .think-toggle');
-      const thinkLabel = msgs.querySelector('#' + turnId + ' .think-label');
-      const thinkContent = document.getElementById(thinkId);
       const turnStart = Date.now();
-      thinkToggle && thinkToggle.addEventListener('click', () => {
-        thinkContent.hidden = !thinkContent.hidden;
-        thinkToggle.querySelector('.think-caret').textContent = thinkContent.hidden ? '▾' : '▴';
-      });
-
-      const thinkInner = document.getElementById(thinkId + '_inner');
+      const elapsedEl = msgs.querySelector('#'+turnId+' .agent-elapsed');
+      const updateElapsed=()=>{elapsedEl.textContent=global.VigilAgentView.elapsed(Date.now()-turnStart);};
+      updateElapsed();
+      const elapsedTimer=setInterval(()=>{if(!elapsedEl.isConnected || streamDone)clearInterval(elapsedTimer);else updateElapsed();},1000);
       const textEl = document.getElementById(textId);
       const statusEl = msgs.querySelector('#' + turnId + ' .stream-status');
-      let thinkBuf = '';
       let textBuf = '';
       let streamDone = false;
-      let thinkDirty = false;
       let textDirty = false;
       let rafPending = false;
       let agentRunId = null;
       let lastAgentSeq = 0;
       let reconcileTimer = null;
+      let needsSnapshotText = false;
       const agentCancel = document.createElement('button');
       agentCancel.className = 'agent-cancel';
       agentCancel.textContent = '取消';
@@ -2437,10 +2454,6 @@
         requestAnimationFrame(() => {
           rafPending = false;
           if (activeConversationId !== sendConversationId) return;
-          if (thinkDirty) {
-            thinkInner.textContent = thinkBuf;
-            thinkDirty = false;
-          }
           if (textDirty) {
             textEl.textContent = textBuf;
             textDirty = false;
@@ -2454,37 +2467,66 @@
       // only a terminal snapshot is allowed to release the composer.
       async function reconcileRun() {
         if (streamDone || !agentRunId || activeConversationId !== sendConversationId ||
-            turnScope !== recordKey()) return;
-        try {
-          const snap = pick(await get('/api/agent/runs/' + encodeURIComponent(agentRunId) +
-            '?src=pc&conversation_id=' + encodeURIComponent(sendConversationId || '')));
-          const status = snap && snap.status;
-          if (['succeeded'].includes(status)) {
-            onEvent({type:'done', text:snap.content || snap.result || '', run_id:agentRunId,
-              seq:snap.event_cursor});
-          } else if (['paused','paused_budget','interrupted','failed','cancelled'].includes(status)) {
-            const error = snap.error || {};
-            onEvent({type:'error', text:snap.content || '', run_id:agentRunId, seq:snap.event_cursor,
-              status, class:error.reason || error.class || 'service_error',
-              msg:error.message || '任务已停止'});
+            turnScope !== recordKey() || currentRequestId !== requestId) return;
+        if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
+        const authority = await global.VigilAgentState.lookup(get, {runId:agentRunId,
+          conversationId:sendConversationId,requestId,src:state.src || 'pc'});
+        if (streamDone || activeConversationId !== sendConversationId || currentRequestId !== requestId) return;
+        if (authority.kind === 'snapshot') {
+          const snap = authority.item, status = snap.status;
+          if (status === 'succeeded') {
+            onEvent({type:'done',text:snap.content || snap.result || '',run_id:agentRunId});
+          } else if (global.VigilAgentState.stopped.has(status)) {
+            onEvent({type:'error',text:snap.content || '',run_id:agentRunId,status,
+              class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止'});
           } else {
-            statusEl.textContent = '连接已恢复，任务仍在执行 ';
+            if (needsSnapshotText) {
+              textBuf = snap.content || textBuf;
+              textEl.innerHTML = U.md(textBuf, {codeActions:true});
+              needsSnapshotText = false;
+            }
+            busy = true; busyScope = turnScope;
+            activeRunId = agentRunId; uncertainRunId = null;
+            statusEl.textContent = '任务仍在执行 ';
             statusEl.appendChild(agentCancel);
             setComposerMode('pause');
             reconcileTimer = setTimeout(reconcileRun, 2000);
           }
-        } catch (_) {
-          // A transient health failure must not turn a running task into a
-          // false interruption.  Retry the state lookup while keeping Pause.
+        } else if (authority.kind === 'missing' || authority.kind === 'replaced') {
+          onEvent({type:'error',run_id:agentRunId,status:'interrupted',class:'run_missing',
+            can_resume:false,msg:authority.kind === 'missing' ? '任务已不存在；执行状态已同步，未重放工具' : '任务记录已变化；请查看当前会话任务'});
+          if (authority.kind === 'replaced') void loadMsgs(true);
+        } else {
+          // Unknown is not success or cancellation. Release the stale Pause
+          // control, keep its request identity, and allow a read-only recheck.
+          activeRunId = null; resumableRunId = null; uncertainRunId = agentRunId;
+          busy = false; busyScope = null;
+          statusEl.textContent = authority.kind === 'forbidden' ? '身份无权限，任务状态待确认' : '连接异常，任务状态待确认';
+          setComposerMode('uncertain');
           reconcileTimer = setTimeout(reconcileRun, 2000);
         }
       }
+      liveReconcile = reconcileRun;
 
+      // Display factual Chinese phase states, never raw provider reasoning.
+      let thinkingRow=null, thinkingFinished=false;
+      function startThinking(){
+        if(thinkingRow || thinkingFinished)return;
+        const steps=msgs.querySelector('#'+turnId+' #liveSteps');steps.hidden=false;
+        thinkingRow=document.createElement('div');thinkingRow.className='agent-thinking';
+        thinkingRow.innerHTML=icon('brain','sm')+'<span>思考中</span>';steps.appendChild(thinkingRow);
+      }
+      function finishThinking(label='已完成思考'){
+        if(thinkingRow){thinkingRow.querySelector('span:last-child').textContent=label;thinkingRow=null;}
+        thinkingFinished=true;
+      }
       // 监听流式事件
       const onEvent = (evt) => {
-        if (activeConversationId !== sendConversationId) return;
+        if (activeConversationId !== sendConversationId || currentRequestId !== requestId) return;
+        if (evt.conversation_id && evt.conversation_id !== sendConversationId) return;
         if (evt.job_id) return;
         if (evt.request_id && evt.request_id !== requestId) return;
+        if (evt.run_id && !agentRunId && evt.type !== 'agent_run') return;
         // Agent events without an id are legacy chat events.  Once an Agent
         // run is bound, accepting such an event would let a late stream from a
         // previous turn overwrite this turn's text or terminal state.
@@ -2507,16 +2549,23 @@
           statusEl.textContent = '执行中 ';
           statusEl.appendChild(agentCancel);
           setComposerMode('pause');
+          if (!reconcileTimer) reconcileTimer = setTimeout(reconcileRun, 2000);
         } else if (evt.type === 'stage') {
+          if(evt.stage==='generating'){thinkingFinished=false;startThinking();}
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
-          thinkLabel.textContent = evt.stage === 'waiting_tool' ? '使用工具' : '思考中';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool') {
+          finishThinking();
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
           const ok = evt.state === 'returned';
           const failed = ['not_dispatched', 'unknown', 'failed'].includes(evt.state);
+          if (textBuf.trim() && !evt.historical) {
+            const steps=msgs.querySelector('#'+turnId+' #liveSteps');
+            steps.insertAdjacentHTML('beforeend','<div class="agent-commentary">'+U.md(textBuf)+'</div>');
+            textBuf='';textDirty=false;textEl.innerHTML='';
+          }
           addStep(evt.tool || 'tool', ok ? '完成' : failed ? '失败' : '执行中',
-            ok ? 'ok' : failed ? 'err' : 'neutral', evt);
+            ok ? 'ok' : failed ? 'err' : 'neutral', {...evt,turn_id:turnId});
           statusEl.textContent = (evt.state === 'started' ? '正在调用 ' : '调用 ') + (evt.tool || '工具') + ' ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool_reused') {
@@ -2528,60 +2577,49 @@
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'think' && evt.text) {
-          thinkBuf += evt.text;
-          thinkLabel.textContent = '思考中';
-          thinkDirty = true;
-          scheduleRender();
+          startThinking();
         } else if (evt.type === 'text' && evt.text) {
-          if (!textBuf) thinkLabel.textContent = '作答中';
+          finishThinking();
           textBuf += evt.text;
           remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'done') {
+          finishThinking();
           streamDone = true;
+          finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
           stopListening();
           activeRunId = null;
           resumableRunId = null;
           setComposerMode('send');
-          textBuf = evt.text || textBuf;
+          textBuf = evt.result ?? evt.text ?? textBuf;
           remember({content:textBuf,status:'succeeded',error:null});
           // 强制刷新最后一帧
-          if (thinkDirty) { thinkInner.textContent = thinkBuf; thinkDirty = false; }
           if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
           // 正文渲染成 Markdown
           textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true });
-          // 思考过程如果为空，隐藏整个思考块；有内容则收起，标签换成
-          // "已完成 · Xs"，点一下能展开回看（含工具步骤，仿 WorkBuddy）。
-          const steps = msgs.querySelector('#' + turnId + ' #liveSteps');
-          const stepCount = steps ? steps.children.length : 0;
-          const secs = Math.max(1, Math.round((Date.now() - turnStart) / 1000));
-          if (!thinkBuf.trim() && !stepCount) {
-            const tb = msgs.querySelector('#' + turnId + ' .think-block');
-            if (tb) tb.remove();
-          } else {
-            if (thinkLabel) thinkLabel.textContent = '已完成 · ' + secs + 's' + (stepCount ? ' · ' + stepCount + ' 步' : '');
-            thinkToggle.querySelector('.think-caret').textContent = '▾';
-            thinkContent.hidden = true;
-          }
           statusEl.textContent = fmtTime(Date.now(), 'time');
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         } else if (evt.type === 'error') {
           if (evt.class === 'connection_lost' && agentRunId) {
+            needsSnapshotText = true;
             reconcileRun();
             return;
           }
+          finishThinking(evt.type==='error'?'思考已停止':'已完成思考');
           streamDone = true;
+          finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
           stopListening();
           activeRunId = null;
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
-            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
+            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'},can_resume:evt.can_resume !== false});
           // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
-          const resumable = ['paused','paused_budget','interrupted'].includes(evt.status);
+          uncertainRunId = null; liveReconcile = null;
+          const resumable = evt.can_resume !== false && ['paused','paused_budget','interrupted'].includes(evt.status);
           if (resumable && agentRunId) resumableRunId = agentRunId;
           setComposerMode(resumable && resumableRunId ? 'resume' : 'send');
           if (resumable) {
@@ -2592,7 +2630,6 @@
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
             interrupted:'执行中断'})[evt.status] || '失败';
-          if (thinkLabel) thinkLabel.textContent = statusEl.textContent;
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         }
@@ -2683,20 +2720,25 @@
     // 发送键/回车的统一入口：按 composer 三态分派。
     function composerAction() {
       const ta = view.querySelector('#ta');
+      if (composerMode === 'uncertain' && !ta.value.trim()) { if (liveReconcile) void liveReconcile(); else void loadMsgs(true); return; }
       if (composerMode === 'pause' && activeRunId) { firePause(); return; }
       if (composerMode === 'resume' && resumableRunId &&
           !ta.value.trim() && !imgB64 && !attachment) { resumeTurn(resumableRunId); return; }
       send();
     }
     async function firePause() {
-      if (!activeRunId) return;
+      if (!activeRunId || pausePending) return;
+      const rid=activeRunId, cid=activeConversationId, request=currentRequestId;
+      pausePending=true;
       try {
-        const r = pick(await post('/api/agent/runs/' + encodeURIComponent(activeRunId) + '/pause', {}));
-        if (!r.ok) throw new Error(r._err || '暂停未确认');
-        // 后续"已暂停"气泡由 SSE 的 paused 事件驱动，这里不抢画。
-      } catch (e) {
-        toast('暂停未确认：' + String(e.message || e).slice(0, 80));
-      }
+        const r=pick(await post('/api/agent/runs/'+encodeURIComponent(rid)+'/pause',
+          {src:state.src || 'pc',conversation_id:cid}));
+        if (activeConversationId !== cid || activeRunId !== rid || currentRequestId !== request) return;
+        // Apply the actual snapshot even if the terminal SSE event was lost.
+        if (liveReconcile) await liveReconcile();
+        else await loadMsgs(true);
+        if (!r.ok) toast('暂停未确认：'+(r._err || '正在核对任务状态'));
+      } finally { pausePending=false; }
     }
     async function resumeTurn(rid) {
       if (busy || !rid) return;
@@ -3008,6 +3050,14 @@
 
     showWelcomeHome(false);
     void initializeConversationView();
+    const onBrainConnected=()=>{
+      if(!msgs.isConnected)return;
+      void refreshConversations().catch(()=>{});
+      void refreshWorkspaces().catch(()=>{});
+      if(activeConversationId)void loadMsgs(false);
+    };
+    window.addEventListener('vigil-brain-connected',onBrainConnected);
+    ctx.onDispose(()=>window.removeEventListener('vigil-brain-connected',onBrainConnected));
     clearInterval(chatTimer);
     chatTimer = setInterval(() => {
       if (state.page === 'chat' && state.conn.ok) loadMsgs(false);
@@ -4948,7 +4998,6 @@
       ctx.navigate('chat');
     });
     const cards = [
-      {title:'插件市场', desc:'从可信来源安装和管理 Brain 插件', icon:'puzzle', page:'market'},
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'auto', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},

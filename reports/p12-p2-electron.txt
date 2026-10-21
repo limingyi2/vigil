@@ -1,0 +1,9 @@
+
+PASS Run snapshot replaces preview; authoritative final text is not duplicated
+PASS A failed stream transport is shown immediately and saved as interrupted
+PASS A truncated stream displays partial output as interrupted, never as success
+PASS Live run cancellation uses the owner-scoped API and preserves cancelled state
+PASS Reload restores server run and partial output without generating again
+PASS Restored run remains cancellable without opening a new executor
+PASS Production renderer has no uncaught errors
+Evidence: C:\Users\limingyi\AppData\Local\Temp\vigil-p2-electron-D9jeQB\results.json

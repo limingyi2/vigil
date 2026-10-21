@@ -1,0 +1,40 @@
+........................................................................ [  4%]
+.....................................................................s.. [  9%]
+........................................................................ [ 14%]
+.....................................................s........s......... [ 19%]
+........................................................................ [ 24%]
+........................................................................ [ 29%]
+........................................................................ [ 34%]
+........................................................................ [ 39%]
+........................................................................ [ 44%]
+........................................................................ [ 49%]
+........................................................................ [ 54%]
+.................................s...................................... [ 59%]
+....................................................sss................. [ 64%]
+........................................................................ [ 69%]
+.................sss.................................................... [ 74%]
+................................................s....................... [ 79%]
+........................................................................ [ 84%]
+........................................................................ [ 89%]
+.................................................................sss.... [ 94%]
+....................................................s...........s...s... [ 99%]
+............                                                             [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_delegation.py:160: ��ǰ���������� junction
+SKIPPED [1] tests\test_frontend_invariants.py:95: app_conn.json ���ڱ���
+SKIPPED [1] tests\test_frontend_invariants.py:46: ��Ŀ¼ _chat.html ���ڣ�������⣬��¡�󱾾�û�У�
+SKIPPED [1] tests\test_plugins.py:16: ���ز���Բ�ű�λ�ڱ����Ե� .workbuddy/ Ŀ¼����ǰ����δ�ṩ
+SKIPPED [1] tests\test_relation.py:235: assets/chat.html ����
+SKIPPED [1] tests\test_relation.py:224: assets/chat.html ����
+SKIPPED [1] tests\test_relation.py:219: assets/chat.html ����
+SKIPPED [1] tests\test_secret_not_leaked.py:134: assets/chat.html ���ڣ��ֿ������ʡ�ԣ�
+SKIPPED [1] tests\test_secret_not_leaked.py:118: assets/chat.html ���ڣ��ֿ������ʡ�ԣ�
+SKIPPED [1] tests\test_secret_not_leaked.py:125: assets/chat.html ���ڣ��ֿ������ʡ�ԣ�
+SKIPPED [1] tests\test_version_sync.py:64: ��Ŀ¼ _chat.html ���ڣ�������⣬��¡�󱾾�û�У�
+SKIPPED [1] brain\tests\test_plugin_transactions.py:220: Windows symlink creation requires a privilege not enabled in this test environment
+SKIPPED [1] brain\tests\test_plugin_transactions.py:209: Windows symlink creation requires a privilege not enabled in this test environment
+SKIPPED [1] brain\tests\test_plugin_transactions.py:234: Windows symlink creation requires a privilege not enabled in this test environment
+SKIPPED [1] brain\tests\test_skill_host_security.py:199: symlink creation unavailable: OSError
+SKIPPED [1] brain\tests\test_skill_structure.py:100: symlink unavailable
+SKIPPED [1] brain\tests\test_skill_structure.py:129: mkfifo unavailable
+1435 passed, 17 skipped in 92.52s (0:01:32)

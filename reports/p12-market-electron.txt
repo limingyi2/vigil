@@ -1,0 +1,5 @@
+
+PASS plugin market has a single primary navigation entry
+PASS plugin market is connected and lists Wallpaper without local repo configuration
+PASS install failure preserves backend error and restores retry state
+PASS install success refreshes market/plugin state from server response

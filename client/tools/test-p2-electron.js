@@ -28,6 +28,8 @@ function response(method, raw, body) {
     const item={id:`00000000-0000-4000-8000-${suffix}`,title:'新对话',created_at:Date.now()/1000,updated_at:Date.now()/1000};
     conversations.unshift(item);data={ok:true,item};
   }
+  if(method==='GET' && /^\/api\/agent\/runs\/run_/.test(p)){const item=runs.get(p.split('/')[4]);return {ok:!!item,status:item?200:404,json:item || {ok:false}};}
+  if(p==='/api/agent/runs/active')data={ok:true,item:[...runs.values()].find(r=>r.status==='running')||null};
   if (p === '/api/persona') data = {name:'Fixture',key:'default',templates:[]};
   if (p === '/api/history') data = {items:[],display_turns:[...runs.values()]};
   if (p === '/api/creator/jobs') data = {items:[]};
@@ -46,7 +48,12 @@ function response(method, raw, body) {
   return {ok:true,status:200,json:data};
 }
 async function main() {
-  ipcMain.handle('api',(_, {method,path:p,body})=>response(method,p,body));
+  let initialList=true;
+  ipcMain.handle('api',async(_, {method,path:p,body})=>{
+    const result=response(method,p,body);
+    if(initialList && method==='GET' && p.startsWith('/api/conversations')){initialList=false;await wait(400);}
+    return result;
+  });
   ipcMain.handle('api:stream', async (event, {body})=>{
     streams++;
     assert.match(body.request_id,/^req_/);
@@ -56,7 +63,7 @@ async function main() {
     if(mode === 'transport-failure') return {ok:false,status:0,err:'fixture timeout'};
     if(mode === 'truncated') {
       event.sender.send('api:stream:event',{type:'text',request_id:body.request_id,text:'不完整片段'});
-      event.sender.send('api:stream:event',{type:'error',request_id:body.request_id,class:'connection_lost',status:'interrupted',msg:'服务端提前关闭连接'});
+      event.sender.send('api:stream:event',{type:'error',request_id:body.request_id,class:'connection_lost',status:'interrupted',msg:'fixture truncated stream'});
       return {ok:false,status:0,err:'fixture truncated stream'};
     }
     const run = {run_id:'run_'+streams,request_id:body.request_id,input:body.text,status:'running',content:'',
@@ -136,4 +143,4 @@ async function main() {
   console.log('Evidence: '+path.join(tmp,'results.json'));
   win.destroy(); app.exit(0);
 }
-app.whenReady().then(main).catch(error=>{console.error(error.stack);if(win)win.destroy();app.exit(1);});
+app.whenReady().then(main).catch(error=>{console.error(error.stack);console.error(JSON.stringify(rendererErrors));if(win)win.destroy();app.exit(1);});

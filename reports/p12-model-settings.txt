@@ -1,0 +1,7 @@
+
+PASS three cloud context tiers, capacity limits, retrieval implementation remains hidden, mode switches preserve chat
+PASS compact model picker shows one current marker and opens model management
+PASS bottom-left settings opens its own model window
+PASS named model is saved with a masked API key
+PASS recreated client reads and switches to the saved model
+PASS full client process restart reads the persisted model and active selection

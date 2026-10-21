@@ -77,6 +77,9 @@ async function startModel() {
     const toolMessage = [...messages].reverse().find(m => m && m.role === 'tool');
     const call = { payload, messages, userText, toolNames: (payload.tools || []).map(t => t.function && t.function.name) };
     modelRequests.push(call);
+    if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
+      return require('./test-p12-e2e').respond(req, res, call, wait);
+    }
     console.log('FAKE_PROVIDER request=' + modelRequests.length + ' stream=' + Boolean(payload.stream));
     for (let i = modelWaiters.length - 1; i >= 0; i--) {
       if (modelWaiters[i].predicate(call)) modelWaiters.splice(i, 1)[0].resolve(call);
@@ -262,6 +265,19 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     agent_execution: { enabled: agentEnabled }, features: { tools: true },
     persona_file: 'personas/default.json',
   };
+  if (process.env.VIGIL_E2E_SCENARIO === 'p12') Object.assign(brainConfig,
+    {provider:'xiaomi',model:'mimo-fixture',agent_execution:{enabled:true,checkpoint_every:0}});
+  if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
+    const marketRepo=path.join(home,'market');fs.mkdirSync(marketRepo,{recursive:true});
+    fs.copyFileSync(path.join(repo,'market.json'),path.join(marketRepo,'market.json'));
+    brainConfig.market_repo=marketRepo;
+    fs.copyFileSync(path.join(brainDir,'plugins/plugin_market.py'),path.join(home,'plugins/plugin_market.py'));
+    if(process.env.VIGIL_P12_REAL==='1'){
+      const actual=JSON.parse(fs.readFileSync(path.join(process.env.APPDATA,'vigil-client/brain/config/config.json'),'utf8'));
+      Object.assign(brainConfig,{model:actual.model,provider:actual.provider || 'custom',
+        agent_execution:{enabled:true,checkpoint_every:0,max_steps:8,max_requests:4,max_tool_calls:4,max_seconds:120,request_timeout:60,reasoning_strategy:'fast'}});
+    }
+  }
   fs.writeFileSync(path.join(home, 'config', 'config.json'), JSON.stringify(brainConfig), 'utf8');
   const pluginDir = path.join(home, 'plugins', 'vigil_smoke');
   fs.mkdirSync(pluginDir, { recursive: true });
@@ -275,6 +291,8 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     '    with open(os.environ["VIGIL_E2E_PLUGIN_TRACE"], "a", encoding="utf-8") as f:',
     '        f.write(json.dumps({"tool":"smoke_ping","mode":mode}) + "\\n")',
     '    if mode == "fail": raise RuntimeError("fixture plugin execution failure")',
+    // Give the streaming acceptance test an observable real in-flight tool.
+    '    if os.environ.get("VIGIL_E2E_SCENARIO") == "p12": time.sleep(0.15)',
     '    if mode == "crash":',
     '        release = Path(os.environ["VIGIL_E2E_PLUGIN_RELEASE"] )',
     '        for _ in range(1500):',
@@ -292,6 +310,19 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     'TOOL_SPECS = {"smoke_ping": {"desc":"E2E plugin call", "params":[("mode","test mode",True,"string")], "arg_param":"mode"}}',
     '',
   ].join('\n'), 'utf8');
+  if(process.env.VIGIL_P12_REAL==='1')fs.appendFileSync(path.join(pluginDir,'__init__.py'),[
+    'ROOT=Path('+JSON.stringify(repo)+').resolve()',
+    'def p12_file_find(pattern):',
+    '    return json.dumps([str(p.relative_to(ROOT)) for p in ROOT.glob(pattern) if p.is_file()][:8])',
+    'def p12_file_read(path):',
+    '    target=(ROOT/path).resolve()',
+    '    if not target.is_relative_to(ROOT) or not target.is_file(): return "拒绝访问"',
+    '    with open(os.environ["VIGIL_E2E_PLUGIN_TRACE"],"a",encoding="utf-8") as f: f.write(json.dumps({"tool":"p12_file_read","path":path})+"\\n")',
+    '    return target.read_text(encoding="utf-8")[:4096]',
+    'TOOLS.update(p12_file_find=p12_file_find,p12_file_read=p12_file_read)',
+    'TOOL_SPECS.update(p12_file_find={"desc":"Find actual project files by a root-relative glob","params":[("pattern","Use README*",True,"string")],"arg_param":"pattern"},p12_file_read={"desc":"Read a project file, bounded to 4096 characters","params":[("path","Relative project file path",True,"string")],"arg_param":"path"})',
+    ''
+  ].join('\n'),'utf8');
   fs.writeFileSync(path.join(pluginDir, 'frontend.js'), [
     'window.VigilPlugin.registerPage({',
     '  id: "e2e-plugin-page", name: "E2E Plugin", icon: "plug",',
@@ -317,6 +348,7 @@ async function startBrain(modelBase, fixedPort, options = {}) {
   const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
   if (!fs.existsSync(python)) throw new Error('Python interpreter not found: ' + python);
   const env = { ...process.env, VIGIL_HOME: home, VIGIL_PORT: String(port),
+    BRAIN_MUTEX: 'Local\\VigilAcceptance-' + path.basename(root),
     VIGIL_E2E_PLUGIN_TRACE: pluginTrace, VIGIL_E2E_PLUGIN_RELEASE: pluginReleasePath,
     PYTHONDONTWRITEBYTECODE: '1', PYTHONUNBUFFERED: '1' };
   const logFile = fs.openSync(path.join(root, 'brain.log'), 'w');
@@ -417,7 +449,7 @@ async function evaluate(expression) {
 }
 async function screenshot(name) {
   const result = await cdpSend('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
-  const dir = path.join(repo, 'reports', 'p6.1-evidence');
+  const dir = path.join(repo, 'reports', process.env.VIGIL_E2E_SCENARIO==='p12'?'p12-evidence':'p6.1-evidence');
   fs.mkdirSync(dir, {recursive:true});
   fs.writeFileSync(path.join(dir, name + '.png'), Buffer.from(result.data, 'base64'));
 }
@@ -491,7 +523,7 @@ async function waitFor(predicate, label, timeout = 15000) {
   }
   throw new Error('Timed out waiting for ' + label + '; renderer=' + String(await evaluate("document.querySelector('#msgs')?.innerText || ''")) +
     '; streamEvents=' + JSON.stringify(await evaluate('window.__vigilE2EEvents || []')) +
-    '; fakeProviderRequests=' + modelRequests.length);
+    '; fakeProviderRequests=' + modelRequests.length + '; sessions=' + await evaluate('document.querySelectorAll("[data-session]").length'));
 }
 async function assertToolCall(traceFile, mode) {
   const deadline = Date.now() + 5000;
@@ -771,6 +803,12 @@ async function safeCleanup() {
 
 async function run() {
   const modelBase = await startModel();
+  if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
+    await require('./test-p12-e2e').run({modelBase,startBrain,startElectron,evaluate,waitFor,submit,
+      screenshot,wait,root,home,repo,token,modelRequests,stopBrain:async()=>{await stopChild(brain,true);brain=null;},
+      stopElectron:async()=>{await stopChild(electron,true);electron=null;}});
+    return;
+  }
   const focusedSlowToolCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-slow-tool';
   const focusedModelCancel = process.env.VIGIL_E2E_SCENARIO === 'agent-cancel-during-model';
   const focusedProviderFailure = process.env.VIGIL_E2E_SCENARIO === 'agent-ui-provider-failure';
@@ -836,7 +874,9 @@ async function run() {
   const legacyFirstPrompt = 'LEGACY_FIRST_PROMPT';
   await evaluate("document.querySelector('#newTopicBtn').click()");
   await waitFor("API.state.chatConversationId==='' && !document.querySelector('#hero').hidden", 'return to welcome before renderer refresh');
-  await evaluate("document.querySelector('#reloadBtn').click()");
+  await cdpSend('Page.reload');
+  await waitFor('window.API?.state.conn.ok && document.querySelector("#ta")', 'renderer reload reconnects');
+  await evaluate('window.__vigilE2EEvents=[];window.vigil.onStreamEvent(e=>window.__vigilE2EEvents.push(e));true');
   await waitFor("document.querySelectorAll('[data-session]').length===10 && !document.querySelector('#hero').hidden", 'ten saved sessions on welcome page');
   assert.equal(await evaluate('API.state.chatConversationId'), '', 'ten saved sessions must not auto-select the last chat');
   assert.equal(await evaluate("document.querySelector('#msgs').innerText"), '', 'home must not show saved messages or Creator cards');

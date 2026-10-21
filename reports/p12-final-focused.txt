@@ -1,0 +1,5 @@
+...s........s..............                                              [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_frontend_invariants.py:95: app_conn.json ���ڱ���
+SKIPPED [1] tests\test_frontend_invariants.py:46: ��Ŀ¼ _chat.html ���ڣ�������⣬��¡�󱾾�û�У�
+25 passed, 2 skipped in 2.19s

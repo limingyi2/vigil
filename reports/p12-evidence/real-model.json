@@ -1,0 +1,5383 @@
+{
+  "model": "mimo-v2.6-flash",
+  "provider": "xiaomi",
+  "requestLimit": 12,
+  "requests": 2,
+  "observations": [
+    {
+      "number": 1,
+      "model": "mimo-v2.6-flash",
+      "protocol": [],
+      "rawEvents": [
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "",
+                "role": "assistant",
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "The user asks for"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " three short improvement suggestions"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " based on already"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "-read"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " project content, but"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " I haven't actually"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " read any project files"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " in this conversation —"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " there"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "'s no prior"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " context with"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " file"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " contents. I"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " should be"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " honest: I don"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "'t have previously"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " read project"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " content in this session"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": ". But"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " they"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " say"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " \"请"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "继续使用已读"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "取的项目内容"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "\" — I must"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " not fabricate."
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " I should state that"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " no"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " project"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " content has actually"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " been read in this session ("
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "no prior"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " tool results available"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "), and offer to"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " read"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " files or"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " accept"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " past"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "ed content. Alternatively"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " give"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " generic"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " suggestions clearly"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " labeled as generic"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "."
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " Keep"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " short"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": ","
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " in Chinese."
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "这里",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "需要",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "先说明一个",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "事实",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "：这次",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "会话里我",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "并没有真正",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "读取过任何",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "项目文件，",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "也没有已",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "返回",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "的读",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "取结果可以",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "引用。如果",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "我直接",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "“",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "基于已",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "读内容”给",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "建议，就",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "等于在",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "编造依据，所以我",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "不能那样做。\n\n可以",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "给你两个选择",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "：\n\n1. 你把项目的关键",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "内容",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "（比如",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": " README、核心",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "模块",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "代码",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "、目录",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "结构）贴过来",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "，我马上",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "给出针对",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "具体内容",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "的三条简",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "短改",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "进建议。\n2. 或者",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "允许我用",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "工具读取项目",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "文件，我再",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "基于真实",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "内容给",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "建议。\n\n如果你",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "只是",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "想要",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "一份",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "不针对",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "具体项目的通用清单",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "，我可以先",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "给三条",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "常见的",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "：\n\n",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "- ",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "补齐",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "入口",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "文档：README ",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "里写清安装",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "、",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "运行、测试",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "三条",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "命令，降低",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "上",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "手成本。\n-",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": " 收敛配置",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "来源",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "：把散落",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "的环境",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "变量集中",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "到一个",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "配置模块",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "，",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "缺",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "省值",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "和",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "校验放在一起，避免运行",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "期",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "c5e2173a-351f-4077-84b9-fd247662dc4d_10676c06abad48c4b6f3ec1b0e0ba24c",
+          "choices": [
+            {
+              "delta": {
+                "content": "才发现",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        }
+      ],
+      "status": "pending",
+      "http": 200
+    },
+    {
+      "number": 2,
+      "model": "mimo-v2.6-flash",
+      "protocol": [],
+      "rawEvents": [
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "",
+                "role": "assistant",
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576670,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "User"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576670,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " asks for three short"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576670,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " improvement suggestions based"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576670,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " on already"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576670,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": "-read"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " project content, no"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " tools. But I"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " have"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " no actual project"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " content in context"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " (summary says archived"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": ")."
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " I should be"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " honest—I"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " can give"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " general suggestions or"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576671,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " note I lack details"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": ". The instruction"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " says don't call"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " tools. Best"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": ": provide three brief"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " improvement"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " suggestions, noting"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " they're general since"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " project"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " content"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " isn't in current"
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": " context."
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "基于当前",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576672,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "上下文中",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "没有",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "保留",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "具体的",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "项目文件细节",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "（此前已",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "读取内容",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "归",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "档，",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "未",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "在本次",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "上下",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "文中",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "重现",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "），我给出",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576673,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "三条通用且",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "通常",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "适用",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "的改",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "进建议：\n\n",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "1. **明确",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "优先",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "级与",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "验收标准**：",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "在",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "任务",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "或",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "需求",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "层面",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "，为",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "每",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "项工作标注",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576674,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "优先",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "级，并",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "补充",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "可验证的验收",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "标准，",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "避免\"",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "完成\"",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "的定义模糊。\n\n",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "2. **补充",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "自动化",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "验证",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "**：为核心",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "流程增加自动化测试或 lint",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "/CI",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576675,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " 检查",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "，让",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "回归",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "问题在提交阶段",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "被",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "拦截",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "，而不是依赖",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "人工排查",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "。\n\n3.",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " **改善文档",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "与上下",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "文留存",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "**：将",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "关键决策、",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576676,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "断",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "点状态",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "和复",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "现步骤写入",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " README",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " 或专门",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "的 notes",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " 文件，确保",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "中断",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "续",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "跑时",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576677,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "无需",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "重新推",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576678,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "断上下",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "文。\n\n如果你",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "希望得到",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "针对项目",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "具体内容",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "的建议",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "，可以",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576679,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "让我",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "重新读取相关",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "文件（例如",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " README",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": " 或关键",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "模块），我可以",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "在此",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "基础上给出更有",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "针对性的三条",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "建议",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": "。",
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": null,
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk"
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [
+            {
+              "delta": {
+                "content": null,
+                "role": null,
+                "tool_calls": null,
+                "reasoning_content": null
+              },
+              "finish_reason": "stop",
+              "index": 0
+            }
+          ],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk",
+          "usage": null
+        },
+        {
+          "id": "6e7e9bea-dfa7-4107-9504-03b717a5cd1b_cefb8e69c01a448f86c9350271463b21",
+          "choices": [],
+          "created": 1792576680,
+          "model": "mimo-v2.6-flash",
+          "object": "chat.completion.chunk",
+          "usage": {
+            "completion_tokens": 269,
+            "prompt_tokens": 360,
+            "total_tokens": 629,
+            "completion_tokens_details": {
+              "reasoning_tokens": 76
+            },
+            "prompt_tokens_details": null
+          }
+        }
+      ],
+      "status": "received",
+      "http": 200
+    }
+  ],
+  "results": [
+    {
+      "name": "pause and resume",
+      "events": [
+        {
+          "type": "agent_run",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8"
+        },
+        {
+          "type": "stage",
+          "stage": "generating",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "seq": 2
+        },
+        {
+          "type": "think",
+          "text": "User",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 3
+        },
+        {
+          "type": "think",
+          "text": " asks for three short",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 4
+        },
+        {
+          "type": "think",
+          "text": " improvement suggestions based",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 5
+        },
+        {
+          "type": "think",
+          "text": " on already",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 6
+        },
+        {
+          "type": "think",
+          "text": "-read",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 7
+        },
+        {
+          "type": "think",
+          "text": " project content, no",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 8
+        },
+        {
+          "type": "think",
+          "text": " tools. But I",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 9
+        },
+        {
+          "type": "think",
+          "text": " have",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 10
+        },
+        {
+          "type": "think",
+          "text": " no actual project",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 11
+        },
+        {
+          "type": "think",
+          "text": " content in context",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 12
+        },
+        {
+          "type": "think",
+          "text": " (summary says archived",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 13
+        },
+        {
+          "type": "think",
+          "text": ").",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 14
+        },
+        {
+          "type": "think",
+          "text": " I should be",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 15
+        },
+        {
+          "type": "think",
+          "text": " honest—I",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 16
+        },
+        {
+          "type": "think",
+          "text": " can give",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 17
+        },
+        {
+          "type": "think",
+          "text": " general suggestions or",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 18
+        },
+        {
+          "type": "think",
+          "text": " note I lack details",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 19
+        },
+        {
+          "type": "think",
+          "text": ". The instruction",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 20
+        },
+        {
+          "type": "think",
+          "text": " says don't call",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 21
+        },
+        {
+          "type": "think",
+          "text": " tools. Best",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 22
+        },
+        {
+          "type": "think",
+          "text": ": provide three brief",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 23
+        },
+        {
+          "type": "think",
+          "text": " improvement",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 24
+        },
+        {
+          "type": "think",
+          "text": " suggestions, noting",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 25
+        },
+        {
+          "type": "think",
+          "text": " they're general since",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 26
+        },
+        {
+          "type": "think",
+          "text": " project",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 27
+        },
+        {
+          "type": "think",
+          "text": " content",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 28
+        },
+        {
+          "type": "think",
+          "text": " isn't in current",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 29
+        },
+        {
+          "type": "think",
+          "text": " context.",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 30
+        },
+        {
+          "type": "text",
+          "text": "基于当前",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 31
+        },
+        {
+          "type": "text",
+          "text": "上下文中",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 32
+        },
+        {
+          "type": "text",
+          "text": "没有",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 33
+        },
+        {
+          "type": "text",
+          "text": "保留",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 34
+        },
+        {
+          "type": "text",
+          "text": "具体的",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 35
+        },
+        {
+          "type": "text",
+          "text": "项目文件细节",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 36
+        },
+        {
+          "type": "text",
+          "text": "（此前已",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 37
+        },
+        {
+          "type": "text",
+          "text": "读取内容",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 38
+        },
+        {
+          "type": "text",
+          "text": "归",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 39
+        },
+        {
+          "type": "text",
+          "text": "档，",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 40
+        },
+        {
+          "type": "text",
+          "text": "未",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 41
+        },
+        {
+          "type": "text",
+          "text": "在本次",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 42
+        },
+        {
+          "type": "text",
+          "text": "上下",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 43
+        },
+        {
+          "type": "text",
+          "text": "文中",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 44
+        },
+        {
+          "type": "text",
+          "text": "重现",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 45
+        },
+        {
+          "type": "text",
+          "text": "），我给出",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 46
+        },
+        {
+          "type": "text",
+          "text": "三条通用且",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 47
+        },
+        {
+          "type": "text",
+          "text": "通常",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 48
+        },
+        {
+          "type": "text",
+          "text": "适用",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 49
+        },
+        {
+          "type": "text",
+          "text": "的改",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 50
+        },
+        {
+          "type": "text",
+          "text": "进建议：\n\n",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 51
+        },
+        {
+          "type": "text",
+          "text": "1. **明确",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 52
+        },
+        {
+          "type": "text",
+          "text": "优先",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 53
+        },
+        {
+          "type": "text",
+          "text": "级与",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 54
+        },
+        {
+          "type": "text",
+          "text": "验收标准**：",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 55
+        },
+        {
+          "type": "text",
+          "text": "在",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 56
+        },
+        {
+          "type": "text",
+          "text": "任务",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 57
+        },
+        {
+          "type": "text",
+          "text": "或",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 58
+        },
+        {
+          "type": "text",
+          "text": "需求",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 59
+        },
+        {
+          "type": "text",
+          "text": "层面",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 60
+        },
+        {
+          "type": "text",
+          "text": "，为",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 61
+        },
+        {
+          "type": "text",
+          "text": "每",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 62
+        },
+        {
+          "type": "text",
+          "text": "项工作标注",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 63
+        },
+        {
+          "type": "text",
+          "text": "优先",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 64
+        },
+        {
+          "type": "text",
+          "text": "级，并",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 65
+        },
+        {
+          "type": "text",
+          "text": "补充",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 66
+        },
+        {
+          "type": "text",
+          "text": "可验证的验收",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 67
+        },
+        {
+          "type": "text",
+          "text": "标准，",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 68
+        },
+        {
+          "type": "text",
+          "text": "避免\"",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 69
+        },
+        {
+          "type": "text",
+          "text": "完成\"",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 70
+        },
+        {
+          "type": "text",
+          "text": "的定义模糊。\n\n",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 71
+        },
+        {
+          "type": "text",
+          "text": "2. **补充",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 72
+        },
+        {
+          "type": "text",
+          "text": "自动化",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 73
+        },
+        {
+          "type": "text",
+          "text": "验证",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 74
+        },
+        {
+          "type": "text",
+          "text": "**：为核心",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 75
+        },
+        {
+          "type": "text",
+          "text": "流程增加自动化测试或 lint",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 76
+        },
+        {
+          "type": "text",
+          "text": "/CI",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 77
+        },
+        {
+          "type": "text",
+          "text": " 检查",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 78
+        },
+        {
+          "type": "text",
+          "text": "，让",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 79
+        },
+        {
+          "type": "text",
+          "text": "回归",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 80
+        },
+        {
+          "type": "text",
+          "text": "问题在提交阶段",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 81
+        },
+        {
+          "type": "text",
+          "text": "被",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 82
+        },
+        {
+          "type": "text",
+          "text": "拦截",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 83
+        },
+        {
+          "type": "text",
+          "text": "，而不是依赖",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 84
+        },
+        {
+          "type": "text",
+          "text": "人工排查",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 85
+        },
+        {
+          "type": "text",
+          "text": "。\n\n3.",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 86
+        },
+        {
+          "type": "text",
+          "text": " **改善文档",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 87
+        },
+        {
+          "type": "text",
+          "text": "与上下",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 88
+        },
+        {
+          "type": "text",
+          "text": "文留存",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 89
+        },
+        {
+          "type": "text",
+          "text": "**：将",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 90
+        },
+        {
+          "type": "text",
+          "text": "关键决策、",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 91
+        },
+        {
+          "type": "text",
+          "text": "断",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 92
+        },
+        {
+          "type": "text",
+          "text": "点状态",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 93
+        },
+        {
+          "type": "text",
+          "text": "和复",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 94
+        },
+        {
+          "type": "text",
+          "text": "现步骤写入",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 95
+        },
+        {
+          "type": "text",
+          "text": " README",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 96
+        },
+        {
+          "type": "text",
+          "text": " 或专门",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 97
+        },
+        {
+          "type": "text",
+          "text": "的 notes",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 98
+        },
+        {
+          "type": "text",
+          "text": " 文件，确保",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 99
+        },
+        {
+          "type": "text",
+          "text": "中断",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 100
+        },
+        {
+          "type": "text",
+          "text": "续",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 101
+        },
+        {
+          "type": "text",
+          "text": "跑时",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 102
+        },
+        {
+          "type": "text",
+          "text": "无需",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 103
+        },
+        {
+          "type": "text",
+          "text": "重新推",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 104
+        },
+        {
+          "type": "text",
+          "text": "断上下",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 105
+        },
+        {
+          "type": "text",
+          "text": "文。\n\n如果你",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 106
+        },
+        {
+          "type": "text",
+          "text": "希望得到",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 107
+        },
+        {
+          "type": "text",
+          "text": "针对项目",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 108
+        },
+        {
+          "type": "text",
+          "text": "具体内容",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 109
+        },
+        {
+          "type": "text",
+          "text": "的建议",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 110
+        },
+        {
+          "type": "text",
+          "text": "，可以",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 111
+        },
+        {
+          "type": "text",
+          "text": "让我",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 112
+        },
+        {
+          "type": "text",
+          "text": "重新读取相关",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 113
+        },
+        {
+          "type": "text",
+          "text": "文件（例如",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 114
+        },
+        {
+          "type": "text",
+          "text": " README",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 115
+        },
+        {
+          "type": "text",
+          "text": " 或关键",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 116
+        },
+        {
+          "type": "text",
+          "text": "模块），我可以",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 117
+        },
+        {
+          "type": "text",
+          "text": "在此",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 118
+        },
+        {
+          "type": "text",
+          "text": "基础上给出更有",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 119
+        },
+        {
+          "type": "text",
+          "text": "针对性的三条",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 120
+        },
+        {
+          "type": "text",
+          "text": "建议",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 121
+        },
+        {
+          "type": "text",
+          "text": "。",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "request_id": "req_f884a269-95c5-4a21-b0fc-5b7ac8402ea8",
+          "seq": 122
+        },
+        {
+          "type": "done",
+          "text": "基于当前上下文中没有保留具体的项目文件细节（此前已读取内容归档，未在本次上下文中重现），我给出三条通用且通常适用的改进建议：\n\n1. **明确优先级与验收标准**：在任务或需求层面，为每项工作标注优先级，并补充可验证的验收标准，避免\"完成\"的定义模糊。\n\n2. **补充自动化验证**：为核心流程增加自动化测试或 lint/CI 检查，让回归问题在提交阶段被拦截，而不是依赖人工排查。\n\n3. **改善文档与上下文留存**：将关键决策、断点状态和复现步骤写入 README 或专门的 notes 文件，确保中断续跑时无需重新推断上下文。\n\n如果你希望得到针对项目具体内容的建议，可以让我重新读取相关文件（例如 README 或关键模块），我可以在此基础上给出更有针对性的三条建议。",
+          "result": "基于当前上下文中没有保留具体的项目文件细节（此前已读取内容归档，未在本次上下文中重现），我给出三条通用且通常适用的改进建议：\n\n1. **明确优先级与验收标准**：在任务或需求层面，为每项工作标注优先级，并补充可验证的验收标准，避免\"完成\"的定义模糊。\n\n2. **补充自动化验证**：为核心流程增加自动化测试或 lint/CI 检查，让回归问题在提交阶段被拦截，而不是依赖人工排查。\n\n3. **改善文档与上下文留存**：将关键决策、断点状态和复现步骤写入 README 或专门的 notes 文件，确保中断续跑时无需重新推断上下文。\n\n如果你希望得到针对项目具体内容的建议，可以让我重新读取相关文件（例如 README 或关键模块），我可以在此基础上给出更有针对性的三条建议。",
+          "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+          "seq": 124
+        }
+      ],
+      "terminal": {
+        "type": "done",
+        "text": "基于当前上下文中没有保留具体的项目文件细节（此前已读取内容归档，未在本次上下文中重现），我给出三条通用且通常适用的改进建议：\n\n1. **明确优先级与验收标准**：在任务或需求层面，为每项工作标注优先级，并补充可验证的验收标准，避免\"完成\"的定义模糊。\n\n2. **补充自动化验证**：为核心流程增加自动化测试或 lint/CI 检查，让回归问题在提交阶段被拦截，而不是依赖人工排查。\n\n3. **改善文档与上下文留存**：将关键决策、断点状态和复现步骤写入 README 或专门的 notes 文件，确保中断续跑时无需重新推断上下文。\n\n如果你希望得到针对项目具体内容的建议，可以让我重新读取相关文件（例如 README 或关键模块），我可以在此基础上给出更有针对性的三条建议。",
+        "result": "基于当前上下文中没有保留具体的项目文件细节（此前已读取内容归档，未在本次上下文中重现），我给出三条通用且通常适用的改进建议：\n\n1. **明确优先级与验收标准**：在任务或需求层面，为每项工作标注优先级，并补充可验证的验收标准，避免\"完成\"的定义模糊。\n\n2. **补充自动化验证**：为核心流程增加自动化测试或 lint/CI 检查，让回归问题在提交阶段被拦截，而不是依赖人工排查。\n\n3. **改善文档与上下文留存**：将关键决策、断点状态和复现步骤写入 README 或专门的 notes 文件，确保中断续跑时无需重新推断上下文。\n\n如果你希望得到针对项目具体内容的建议，可以让我重新读取相关文件（例如 README 或关键模块），我可以在此基础上给出更有针对性的三条建议。",
+        "run_id": "run_bcac64a4993f48d3ad4fbd4c492538a6",
+        "seq": 124
+      },
+      "button": {
+        "label": "发送消息",
+        "busy": "false"
+      }
+    }
+  ]
+}

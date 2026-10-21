@@ -1,0 +1,162 @@
+FFFF.FFFF..                                                              [100%]
+================================== FAILURES ===================================
+_______ test_protocol_never_enters_deltas_snapshots_or_history[chunks0] _______
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_protocol_never_enters_del0')
+chunks = ['<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>']
+
+    @pytest.mark.parametrize('chunks', [[XML], list(XML), ['先检查文件。\n', XML, '\n已提交调用。'], [XML + XML.replace('note</', 'other</')]])
+    def test_protocol_never_enters_deltas_snapshots_or_history(tmp_path, chunks):
+        result, events, count, provider = execute(tmp_path, [[{'content': c} for c in chunks], [{'content': '完成'}]])
+        assert result['status'] == 'succeeded', result.get('error')
+        assert count == (2 if len(chunks) == 1 and chunks[0].count('<tool_call>') == 2 else 1)
+        for value in [result, events, *provider.snapshots]:
+            serialized = json.dumps(value, ensure_ascii=False)
+>           assert '<tool_call' not in serialized and '<function=' not in serialized
+E           assert ('<tool_call' not in '{"budget": ...5041.653579}'
+E             
+E             '<tool_call' is contained here:
+E               ontent": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>", "finished_at": 1792575041.6272237, "kind": "model", "reason": "tool_calls", "started_at": 1792575041.5856938, "status": "completed", "step_id": 1, "usage": null}, {"call_id": "xml_1792575041627211100_0", "finished_at": 1792575041.6354344, "input": {"text": "note"}, "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272", "kind": "tool", "reason": null, "receipts": [], "result": "saved", "result_chars": 5, "result_state": "return...
+E             
+E             ...Full output truncated (2 lines hidden), use '-vv' to show)
+
+tests\test_p12_protocol.py:62: AssertionError
+_______ test_protocol_never_enters_deltas_snapshots_or_history[chunks1] _______
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_protocol_never_enters_del1')
+chunks = ['<', 't', 'o', 'o', 'l', '_', ...]
+
+    @pytest.mark.parametrize('chunks', [[XML], list(XML), ['先检查文件。\n', XML, '\n已提交调用。'], [XML + XML.replace('note</', 'other</')]])
+    def test_protocol_never_enters_deltas_snapshots_or_history(tmp_path, chunks):
+        result, events, count, provider = execute(tmp_path, [[{'content': c} for c in chunks], [{'content': '完成'}]])
+        assert result['status'] == 'succeeded', result.get('error')
+        assert count == (2 if len(chunks) == 1 and chunks[0].count('<tool_call>') == 2 else 1)
+        for value in [result, events, *provider.snapshots]:
+            serialized = json.dumps(value, ensure_ascii=False)
+>           assert '<tool_call' not in serialized and '<function=' not in serialized
+E           assert ('<tool_call' not in '{"budget": ...042.3648372}'
+E             
+E             '<tool_call' is contained here:
+E               ontent": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>", "finished_at": 1792575042.3396316, "kind": "model", "reason": "tool_calls", "started_at": 1792575041.957729, "status": "completed", "step_id": 1, "usage": null}, {"call_id": "xml_1792575042339621500_0", "finished_at": 1792575042.3465576, "input": {"text": "note"}, "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272", "kind": "tool", "reason": null, "receipts": [], "result": "saved", "result_chars": 5, "result_state": "returne...
+E             
+E             ...Full output truncated (2 lines hidden), use '-vv' to show)
+
+tests\test_p12_protocol.py:62: AssertionError
+_______ test_protocol_never_enters_deltas_snapshots_or_history[chunks2] _______
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_protocol_never_enters_del2')
+chunks = ['先检查文件。\n', '<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>', '\n已提交调用。']
+
+    @pytest.mark.parametrize('chunks', [[XML], list(XML), ['先检查文件。\n', XML, '\n已提交调用。'], [XML + XML.replace('note</', 'other</')]])
+    def test_protocol_never_enters_deltas_snapshots_or_history(tmp_path, chunks):
+        result, events, count, provider = execute(tmp_path, [[{'content': c} for c in chunks], [{'content': '完成'}]])
+        assert result['status'] == 'succeeded', result.get('error')
+        assert count == (2 if len(chunks) == 1 and chunks[0].count('<tool_call>') == 2 else 1)
+        for value in [result, events, *provider.snapshots]:
+            serialized = json.dumps(value, ensure_ascii=False)
+>           assert '<tool_call' not in serialized and '<function=' not in serialized
+E           assert ('<tool_call' not in '{"budget": ...5042.441567}'
+E             
+E             '<tool_call' is contained here:
+E                "先检查文件。\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n已提交调用。", "finished_at": 1792575042.4156349, "kind": "model", "reason": "tool_calls", "started_at": 1792575042.3932118, "status": "completed", "step_id": 1, "usage": null}, {"call_id": "xml_1792575042415623500_0", "finished_at": 1792575042.4231007, "input": {"text": "note"}, "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272", "kind": "tool", "reason": null, "receipts": [], "result": "saved", "result_chars": 5, "result_state":...
+E             
+E             ...Full output truncated (2 lines hidden), use '-vv' to show)
+
+tests\test_p12_protocol.py:62: AssertionError
+_______ test_protocol_never_enters_deltas_snapshots_or_history[chunks3] _______
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_protocol_never_enters_del3')
+chunks = ['<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call><tool_call><function=write_note><parameter=text>other</parameter></function></tool_call>']
+
+    @pytest.mark.parametrize('chunks', [[XML], list(XML), ['先检查文件。\n', XML, '\n已提交调用。'], [XML + XML.replace('note</', 'other</')]])
+    def test_protocol_never_enters_deltas_snapshots_or_history(tmp_path, chunks):
+        result, events, count, provider = execute(tmp_path, [[{'content': c} for c in chunks], [{'content': '完成'}]])
+        assert result['status'] == 'succeeded', result.get('error')
+        assert count == (2 if len(chunks) == 1 and chunks[0].count('<tool_call>') == 2 else 1)
+        for value in [result, events, *provider.snapshots]:
+            serialized = json.dumps(value, ensure_ascii=False)
+>           assert '<tool_call' not in serialized and '<function=' not in serialized
+E           assert ('<tool_call' not in '{"budget": ...042.5222673}'
+E             
+E             '<tool_call' is contained here:
+E               ontent": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call><tool_call><function=write_note><parameter=text>other</parameter></function></tool_call>", "finished_at": 1792575042.486625, "kind": "model", "reason": "tool_calls", "started_at": 1792575042.4723134, "status": "completed", "step_id": 1, "usage": null}, {"call_id": "xml_1792575042486610500_0", "finished_at": 1792575042.4939218, "input": {"text": "note"}, "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272", "kind": "tool", "reaso...
+E             
+E             ...Full output truncated (2 lines hidden), use '-vv' to show)
+
+tests\test_p12_protocol.py:62: AssertionError
+_ test_partial_or_malformed_protocol_fails_without_dispatch_or_leak[chunks0] __
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_partial_or_malformed_prot0')
+chunks = [{'content': '<tool_call><function=write_note>'}, ConnectionError('lost')]
+
+    @pytest.mark.parametrize('chunks', [[{'content': '<tool_call><function=write_note>'}, ConnectionError('lost')],
+                                      [{'content': XML.replace('</function>', '')}]])
+    def test_partial_or_malformed_protocol_fails_without_dispatch_or_leak(tmp_path, chunks):
+        result, events, count, provider = execute(tmp_path, [chunks])
+        assert result['status'] == 'failed'
+        assert count == 0
+        for value in [result, events, *provider.snapshots]:
+>           assert '<tool_call' not in json.dumps(value)
+E           assert '<tool_call' not in '{"budget": ...042.6913002}'
+E             
+E             '<tool_call' is contained here:
+E               ontent": "<tool_call><function=write_note>", "conversation_id": "", "created_at": 1792575042.6722405, "error": {"message": "\u6a21\u578b\u8fde\u63a5\u4e2d\u65ad\u6216\u8d85\u65f6", "reason": "connection_lost"}, "event_cursor": 4, "intent": "write", "model_snapshot": {"model": null, "provider": "cloud"}, "reasoning": {"applied": null, "downgrade": "\u6a21\u578b\u672a\u786e\u8ba4\u539f\u751f\u63a8\u7406\u53c2\u6570\uff0c\u5df2\u4f7f\u7528\u666e\u901a\u751f\u6210", "requested": "balanced"}, "request_id": "p12_protocol_fixture", "result": null, "resume_from...
+E             
+E             ...Full output truncated (2 lines hidden), use '-vv' to show
+
+tests\test_p12_protocol.py:83: AssertionError
+_ test_partial_or_malformed_protocol_fails_without_dispatch_or_leak[chunks1] __
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_partial_or_malformed_prot1')
+chunks = [{'content': '<tool_call><function=write_note><parameter=text>note</parameter></tool_call>'}]
+
+    @pytest.mark.parametrize('chunks', [[{'content': '<tool_call><function=write_note>'}, ConnectionError('lost')],
+                                      [{'content': XML.replace('</function>', '')}]])
+    def test_partial_or_malformed_protocol_fails_without_dispatch_or_leak(tmp_path, chunks):
+        result, events, count, provider = execute(tmp_path, [chunks])
+        assert result['status'] == 'failed'
+>       assert count == 0
+E       assert 1 == 0
+
+tests\test_p12_protocol.py:81: AssertionError
+_ test_quoted_code_and_ordinary_xml_are_preserved[\u4ee3\u7801\u793a\u4f8b\uff1a`<tool_call>` \u662f\u6807\u7b7e\u3002] _
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_quoted_code_and_ordinary_0')
+sample = '代码示例：`<tool_call>` 是标签。'
+
+    @pytest.mark.parametrize('sample', ['代码示例：`<tool_call>` 是标签。', '```xml\n' + XML + '\n```\n这是 XML 教程。', '普通 <root>XML</root> 教程'])
+    def test_quoted_code_and_ordinary_xml_are_preserved(tmp_path, sample):
+        result, _, count, _ = execute(tmp_path, [[{'content': c} for c in sample]])
+>       assert result['status'] == 'succeeded', result.get('error')
+E       AssertionError: {'message': '工具名称、参数或调用标识无效，未派发该批工具（detail 里是具体哪一步不合法）', 'reason': 'invalid_tool'}
+E       assert 'failed' == 'succeeded'
+E         
+E         - succeeded
+E         + failed
+
+tests\test_p12_protocol.py:89: AssertionError
+_ test_quoted_code_and_ordinary_xml_are_preserved[```xml\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n```\n\u8fd9\u662f XML \u6559\u7a0b\u3002] _
+
+tmp_path = WindowsPath('C:/Users/limingyi/AppData/Local/Temp/pytest-of-limingyi/pytest-171/test_quoted_code_and_ordinary_1')
+sample = '```xml\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n```\n这是 XML 教程。'
+
+    @pytest.mark.parametrize('sample', ['代码示例：`<tool_call>` 是标签。', '```xml\n' + XML + '\n```\n这是 XML 教程。', '普通 <root>XML</root> 教程'])
+    def test_quoted_code_and_ordinary_xml_are_preserved(tmp_path, sample):
+        result, _, count, _ = execute(tmp_path, [[{'content': c} for c in sample]])
+>       assert result['status'] == 'succeeded', result.get('error')
+E       AssertionError: {'message': '执行服务异常，已停止后续派发', 'reason': 'internal_error'}
+E       assert 'failed' == 'succeeded'
+E         
+E         - succeeded
+E         + failed
+
+tests\test_p12_protocol.py:89: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_p12_protocol.py::test_protocol_never_enters_deltas_snapshots_or_history[chunks0]
+FAILED tests/test_p12_protocol.py::test_protocol_never_enters_deltas_snapshots_or_history[chunks1]
+FAILED tests/test_p12_protocol.py::test_protocol_never_enters_deltas_snapshots_or_history[chunks2]
+FAILED tests/test_p12_protocol.py::test_protocol_never_enters_deltas_snapshots_or_history[chunks3]
+FAILED tests/test_p12_protocol.py::test_partial_or_malformed_protocol_fails_without_dispatch_or_leak[chunks0]
+FAILED tests/test_p12_protocol.py::test_partial_or_malformed_protocol_fails_without_dispatch_or_leak[chunks1]
+FAILED tests/test_p12_protocol.py::test_quoted_code_and_ordinary_xml_are_preserved[\u4ee3\u7801\u793a\u4f8b\uff1a`<tool_call>` \u662f\u6807\u7b7e\u3002]
+FAILED tests/test_p12_protocol.py::test_quoted_code_and_ordinary_xml_are_preserved[```xml\n<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>\n```\n\u8fd9\u662f XML \u6559\u7a0b\u3002]

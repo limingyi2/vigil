@@ -1,0 +1,9 @@
+FAKE_PROVIDER unexpected=GET /v1/models
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+'true' !== 'false'
+
+    at finish (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-p12-real.js:58:72)
+    at async exports.run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-p12-real.js:65:5)
+    at async run (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-electron-brain-e2e.js:806:5)
+Brain log retained until cleanup: C:\Users\limingyi\AppData\Local\Temp\vigil-p5-joint-P67Pka\brain.log

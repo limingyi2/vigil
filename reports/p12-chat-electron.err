@@ -1,0 +1,7 @@
+Error: ENOENT: no such file or directory, open 'C:\Users\limingyi\AppData\Local\Temp\vigil-chat-v2-sYf66j\vendor\lib\index.js'
+    at Object.openSync (node:fs:603:3)
+    at Object.func [as openSync] (node:electron/js2c/node_init:2:2214)
+    at Object.readFileSync (node:fs:471:35)
+    at t.readFileSync (node:electron/js2c/node_init:2:9771)
+    at setup (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-chat-v2-electron.js:150:21)
+    at main (C:\Users\limingyi\.codex\worktrees\p12-agent-stream\zhixia\client\tools\test-chat-v2-electron.js:357:114)

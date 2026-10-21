@@ -1,0 +1,6814 @@
+[
+  {
+    "case": "split_xml",
+    "raw": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "l"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "_"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "c"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "a"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "l"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "l"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": ">"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "f"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "u"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "n"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "c"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "i"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "n"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "="
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "w"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "r"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "i"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "_"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "n"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": ">"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "p"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "a"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "r"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "a"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "m"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "r"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "="
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "x"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": ">"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "n"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "/"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "p"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "a"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "r"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "a"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "m"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "e"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "r"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": ">"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "/"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "f"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "u"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "n"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "c"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "i"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "n"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": ">"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "/"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "t"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "o"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "l"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "_"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "c"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "a"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "l"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "l"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": ">"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "完成"
+            }
+          }
+        ]
+      }
+    ],
+    "normalized": [
+      {
+        "type": "text_delta",
+        "text": "<"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "l"
+      },
+      {
+        "type": "text_delta",
+        "text": "_"
+      },
+      {
+        "type": "text_delta",
+        "text": "c"
+      },
+      {
+        "type": "text_delta",
+        "text": "a"
+      },
+      {
+        "type": "text_delta",
+        "text": "l"
+      },
+      {
+        "type": "text_delta",
+        "text": "l"
+      },
+      {
+        "type": "text_delta",
+        "text": ">"
+      },
+      {
+        "type": "text_delta",
+        "text": "<"
+      },
+      {
+        "type": "text_delta",
+        "text": "f"
+      },
+      {
+        "type": "text_delta",
+        "text": "u"
+      },
+      {
+        "type": "text_delta",
+        "text": "n"
+      },
+      {
+        "type": "text_delta",
+        "text": "c"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "i"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "n"
+      },
+      {
+        "type": "text_delta",
+        "text": "="
+      },
+      {
+        "type": "text_delta",
+        "text": "w"
+      },
+      {
+        "type": "text_delta",
+        "text": "r"
+      },
+      {
+        "type": "text_delta",
+        "text": "i"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "_"
+      },
+      {
+        "type": "text_delta",
+        "text": "n"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": ">"
+      },
+      {
+        "type": "text_delta",
+        "text": "<"
+      },
+      {
+        "type": "text_delta",
+        "text": "p"
+      },
+      {
+        "type": "text_delta",
+        "text": "a"
+      },
+      {
+        "type": "text_delta",
+        "text": "r"
+      },
+      {
+        "type": "text_delta",
+        "text": "a"
+      },
+      {
+        "type": "text_delta",
+        "text": "m"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "r"
+      },
+      {
+        "type": "text_delta",
+        "text": "="
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "x"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": ">"
+      },
+      {
+        "type": "text_delta",
+        "text": "n"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "<"
+      },
+      {
+        "type": "text_delta",
+        "text": "/"
+      },
+      {
+        "type": "text_delta",
+        "text": "p"
+      },
+      {
+        "type": "text_delta",
+        "text": "a"
+      },
+      {
+        "type": "text_delta",
+        "text": "r"
+      },
+      {
+        "type": "text_delta",
+        "text": "a"
+      },
+      {
+        "type": "text_delta",
+        "text": "m"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "e"
+      },
+      {
+        "type": "text_delta",
+        "text": "r"
+      },
+      {
+        "type": "text_delta",
+        "text": ">"
+      },
+      {
+        "type": "text_delta",
+        "text": "<"
+      },
+      {
+        "type": "text_delta",
+        "text": "/"
+      },
+      {
+        "type": "text_delta",
+        "text": "f"
+      },
+      {
+        "type": "text_delta",
+        "text": "u"
+      },
+      {
+        "type": "text_delta",
+        "text": "n"
+      },
+      {
+        "type": "text_delta",
+        "text": "c"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "i"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "n"
+      },
+      {
+        "type": "text_delta",
+        "text": ">"
+      },
+      {
+        "type": "text_delta",
+        "text": "<"
+      },
+      {
+        "type": "text_delta",
+        "text": "/"
+      },
+      {
+        "type": "text_delta",
+        "text": "t"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "o"
+      },
+      {
+        "type": "text_delta",
+        "text": "l"
+      },
+      {
+        "type": "text_delta",
+        "text": "_"
+      },
+      {
+        "type": "text_delta",
+        "text": "c"
+      },
+      {
+        "type": "text_delta",
+        "text": "a"
+      },
+      {
+        "type": "text_delta",
+        "text": "l"
+      },
+      {
+        "type": "text_delta",
+        "text": "l"
+      },
+      {
+        "type": "text_delta",
+        "text": ">"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "",
+          "reasoning": "",
+          "tool_calls": [
+            {
+              "id": "xml_fc4f5764daa1454c9f37da83494bb6c1",
+              "type": "function",
+              "function": {
+                "name": "write_note",
+                "arguments": "{\"text\": \"note\"}"
+              }
+            }
+          ],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      },
+      {
+        "type": "text_delta",
+        "text": "完成"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "完成",
+          "reasoning": "",
+          "tool_calls": [],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      }
+    ],
+    "brain_events": {
+      "snapshot": {
+        "budget": {
+          "consumed": {
+            "requests": 2,
+            "seconds": 0.385,
+            "steps": 3,
+            "tool_calls": 1
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "完成",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 9,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": "完成",
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "completed",
+        "status": "succeeded",
+        "steps": [
+          {
+            "content": "",
+            "finished_at": 1792578018.55841,
+            "kind": "model",
+            "reason": "tool_calls",
+            "started_at": 1792578018.2071278,
+            "status": "completed",
+            "step_id": 1,
+            "usage": null
+          },
+          {
+            "call_id": "xml_fc4f5764daa1454c9f37da83494bb6c1",
+            "finished_at": 1792578018.5661597,
+            "input": {
+              "text": "note"
+            },
+            "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+            "kind": "tool",
+            "reason": null,
+            "receipts": [],
+            "result": "saved",
+            "result_chars": 5,
+            "result_state": "returned",
+            "started_at": 1792578018.562579,
+            "status": "completed",
+            "step_id": 2,
+            "tool": "write_note",
+            "truncated": false
+          },
+          {
+            "content": "完成",
+            "finished_at": 1792578018.583968,
+            "kind": "model",
+            "reason": "normal",
+            "started_at": 1792578018.5699487,
+            "status": "completed",
+            "step_id": 3,
+            "usage": null
+          }
+        ],
+        "updated_at": 1792578018.5843716
+      },
+      "events": [
+        {
+          "payload": {
+            "status": "queued"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 1,
+          "ts": 1792578018.1970084,
+          "type": "run_created"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 2,
+          "ts": 1792578018.2071319,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "reason": "tool_calls",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 3,
+          "ts": 1792578018.5584173,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "call_id": "xml_fc4f5764daa1454c9f37da83494bb6c1",
+            "input": {
+              "text": "note"
+            },
+            "kind": "tool",
+            "stage": "waiting_tool",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 4,
+          "ts": 1792578018.5627203,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "call_id": "xml_fc4f5764daa1454c9f37da83494bb6c1",
+            "error": "",
+            "input": {
+              "text": "note"
+            },
+            "output": "saved",
+            "result_state": "returned",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 5,
+          "ts": 1792578018.5665362,
+          "type": "tool_finished"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 3
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 6,
+          "ts": 1792578018.5699522,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "step_id": 3,
+            "text": "完成"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 7,
+          "ts": 1792578018.576566,
+          "type": "text_delta"
+        },
+        {
+          "payload": {
+            "reason": "normal",
+            "step_id": 3
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 8,
+          "ts": 1792578018.5839727,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "error": null,
+            "status": "succeeded"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+          "seq": 9,
+          "ts": 1792578018.5843554,
+          "type": "done"
+        }
+      ],
+      "gap": false
+    },
+    "snapshots": [
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.214539
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2182517
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2221632
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2258592
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.229573
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2337873
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2378683
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2417324
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2458007
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2497275
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2537935
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2578695
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.261857
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2655797
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2697227
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2735052
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2775059
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2815733
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2855196
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2894285
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2931776
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.2970943
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3008025
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3046188
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3082175
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3122692
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3163853
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3203018
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3243523
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3282611
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.332211
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3360891
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.340048
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3439436
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.347754
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3514435
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.355245
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3589213
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.362973
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3670316
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3711429
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3752623
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.379417
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3831682
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3868685
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3905134
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.394309
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.3978899
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.402031
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.406049
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4098234
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.413861
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4177332
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4215882
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.425148
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.428916
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4325473
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4364278
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.440605
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4447737
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.448971
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4530983
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.457037
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4608579
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4648027
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4688928
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4727542
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4766512
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4802876
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.484116
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4880662
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4919224
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4957254
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.4999707
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5042424
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5078652
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5116172
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5156796
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5195284
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5232024
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5269718
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5307794
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5347996
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.53886
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5427392
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.5468566
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.008,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.2071278,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.550846
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 2,
+            "seconds": 0.371,
+            "steps": 3,
+            "tool_calls": 1
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "完成",
+        "conversation_id": "",
+        "created_at": 1792578018.1966448,
+        "error": null,
+        "event_cursor": 7,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "content": "",
+            "finished_at": 1792578018.55841,
+            "kind": "model",
+            "reason": "tool_calls",
+            "started_at": 1792578018.2071278,
+            "status": "completed",
+            "step_id": 1,
+            "usage": null
+          },
+          {
+            "call_id": "xml_fc4f5764daa1454c9f37da83494bb6c1",
+            "finished_at": 1792578018.5661597,
+            "input": {
+              "text": "note"
+            },
+            "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+            "kind": "tool",
+            "reason": null,
+            "receipts": [],
+            "result": "saved",
+            "result_chars": 5,
+            "result_state": "returned",
+            "started_at": 1792578018.562579,
+            "status": "completed",
+            "step_id": 2,
+            "tool": "write_note",
+            "truncated": false
+          },
+          {
+            "kind": "model",
+            "started_at": 1792578018.5699487,
+            "status": "running",
+            "step_id": 3
+          }
+        ],
+        "updated_at": 1792578018.5769203
+      }
+    ],
+    "terminal": {
+      "budget": {
+        "consumed": {
+          "requests": 2,
+          "seconds": 0.385,
+          "steps": 3,
+          "tool_calls": 1
+        },
+        "max_requests": 60,
+        "max_seconds": 1800,
+        "max_steps": 120,
+        "max_tool_calls": 100,
+        "request_timeout": 90
+      },
+      "content": "完成",
+      "conversation_id": "",
+      "created_at": 1792578018.1966448,
+      "error": null,
+      "event_cursor": 9,
+      "intent": "write",
+      "model_snapshot": {
+        "model": null,
+        "provider": "cloud"
+      },
+      "reasoning": {
+        "applied": null,
+        "downgrade": "模型未确认原生推理参数，已使用普通生成",
+        "requested": "balanced"
+      },
+      "request_id": "p12_protocol_fixture",
+      "result": "完成",
+      "resume_from": null,
+      "run_id": "run_a2ff3efec3b8459e8339f3cc6489e007",
+      "src": "pc",
+      "stage": "completed",
+      "status": "succeeded",
+      "steps": [
+        {
+          "content": "",
+          "finished_at": 1792578018.55841,
+          "kind": "model",
+          "reason": "tool_calls",
+          "started_at": 1792578018.2071278,
+          "status": "completed",
+          "step_id": 1,
+          "usage": null
+        },
+        {
+          "call_id": "xml_fc4f5764daa1454c9f37da83494bb6c1",
+          "finished_at": 1792578018.5661597,
+          "input": {
+            "text": "note"
+          },
+          "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+          "kind": "tool",
+          "reason": null,
+          "receipts": [],
+          "result": "saved",
+          "result_chars": 5,
+          "result_state": "returned",
+          "started_at": 1792578018.562579,
+          "status": "completed",
+          "step_id": 2,
+          "tool": "write_note",
+          "truncated": false
+        },
+        {
+          "content": "完成",
+          "finished_at": 1792578018.583968,
+          "kind": "model",
+          "reason": "normal",
+          "started_at": 1792578018.5699487,
+          "status": "completed",
+          "step_id": 3,
+          "usage": null
+        }
+      ],
+      "updated_at": 1792578018.5843716
+    },
+    "tool_count": 1
+  },
+  {
+    "case": "prose_xml",
+    "raw": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "先检查文件。"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "完成"
+            }
+          }
+        ]
+      }
+    ],
+    "normalized": [
+      {
+        "type": "text_delta",
+        "text": "先检查文件。"
+      },
+      {
+        "type": "text_delta",
+        "text": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "先检查文件。",
+          "reasoning": "",
+          "tool_calls": [
+            {
+              "id": "xml_02819b7b460a42a683f9b80ef2f16ebd",
+              "type": "function",
+              "function": {
+                "name": "write_note",
+                "arguments": "{\"text\": \"note\"}"
+              }
+            }
+          ],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      },
+      {
+        "type": "text_delta",
+        "text": "完成"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "完成",
+          "reasoning": "",
+          "tool_calls": [],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      }
+    ],
+    "brain_events": {
+      "snapshot": {
+        "budget": {
+          "consumed": {
+            "requests": 2,
+            "seconds": 0.046,
+            "steps": 3,
+            "tool_calls": 1
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "先检查文件。\n\n完成",
+        "conversation_id": "",
+        "created_at": 1792578018.5989027,
+        "error": null,
+        "event_cursor": 11,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": "完成",
+        "resume_from": null,
+        "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+        "src": "pc",
+        "stage": "completed",
+        "status": "succeeded",
+        "steps": [
+          {
+            "content": "先检查文件。",
+            "finished_at": 1792578018.6229637,
+            "kind": "model",
+            "reason": "tool_calls",
+            "started_at": 1792578018.6054702,
+            "status": "completed",
+            "step_id": 1,
+            "usage": null
+          },
+          {
+            "call_id": "xml_02819b7b460a42a683f9b80ef2f16ebd",
+            "finished_at": 1792578018.6301851,
+            "input": {
+              "text": "note"
+            },
+            "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+            "kind": "tool",
+            "reason": null,
+            "receipts": [],
+            "result": "saved",
+            "result_chars": 5,
+            "result_state": "returned",
+            "started_at": 1792578018.6268337,
+            "status": "completed",
+            "step_id": 2,
+            "tool": "write_note",
+            "truncated": false
+          },
+          {
+            "content": "完成",
+            "finished_at": 1792578018.6477075,
+            "kind": "model",
+            "reason": "normal",
+            "started_at": 1792578018.6339223,
+            "status": "completed",
+            "step_id": 3,
+            "usage": null
+          }
+        ],
+        "updated_at": 1792578018.6481433
+      },
+      "events": [
+        {
+          "payload": {
+            "status": "queued"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 1,
+          "ts": 1792578018.5992804,
+          "type": "run_created"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 2,
+          "ts": 1792578018.6054738,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "step_id": 1,
+            "text": "先检查文件。"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 3,
+          "ts": 1792578018.6118953,
+          "type": "text_delta"
+        },
+        {
+          "payload": {
+            "reason": "tool_calls",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 4,
+          "ts": 1792578018.6229672,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "call_id": "xml_02819b7b460a42a683f9b80ef2f16ebd",
+            "input": {
+              "text": "note"
+            },
+            "kind": "tool",
+            "stage": "waiting_tool",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 5,
+          "ts": 1792578018.626976,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "call_id": "xml_02819b7b460a42a683f9b80ef2f16ebd",
+            "error": "",
+            "input": {
+              "text": "note"
+            },
+            "output": "saved",
+            "result_state": "returned",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 6,
+          "ts": 1792578018.6305487,
+          "type": "tool_finished"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 3
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 7,
+          "ts": 1792578018.6339252,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "step_id": 3,
+            "text": "\n\n"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 8,
+          "ts": 1792578018.6343374,
+          "type": "text_delta"
+        },
+        {
+          "payload": {
+            "step_id": 3,
+            "text": "完成"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 9,
+          "ts": 1792578018.640664,
+          "type": "text_delta"
+        },
+        {
+          "payload": {
+            "reason": "normal",
+            "step_id": 3
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 10,
+          "ts": 1792578018.6477125,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "error": null,
+            "status": "succeeded"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+          "seq": 11,
+          "ts": 1792578018.648127,
+          "type": "done"
+        }
+      ],
+      "gap": false
+    },
+    "snapshots": [
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.004,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "先检查文件。",
+        "conversation_id": "",
+        "created_at": 1792578018.5989027,
+        "error": null,
+        "event_cursor": 3,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.6054702,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.612242
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.004,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "先检查文件。",
+        "conversation_id": "",
+        "created_at": 1792578018.5989027,
+        "error": null,
+        "event_cursor": 3,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.6054702,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.6157703
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 2,
+            "seconds": 0.033,
+            "steps": 3,
+            "tool_calls": 1
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "先检查文件。\n\n完成",
+        "conversation_id": "",
+        "created_at": 1792578018.5989027,
+        "error": null,
+        "event_cursor": 9,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "content": "先检查文件。",
+            "finished_at": 1792578018.6229637,
+            "kind": "model",
+            "reason": "tool_calls",
+            "started_at": 1792578018.6054702,
+            "status": "completed",
+            "step_id": 1,
+            "usage": null
+          },
+          {
+            "call_id": "xml_02819b7b460a42a683f9b80ef2f16ebd",
+            "finished_at": 1792578018.6301851,
+            "input": {
+              "text": "note"
+            },
+            "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+            "kind": "tool",
+            "reason": null,
+            "receipts": [],
+            "result": "saved",
+            "result_chars": 5,
+            "result_state": "returned",
+            "started_at": 1792578018.6268337,
+            "status": "completed",
+            "step_id": 2,
+            "tool": "write_note",
+            "truncated": false
+          },
+          {
+            "kind": "model",
+            "started_at": 1792578018.6339223,
+            "status": "running",
+            "step_id": 3
+          }
+        ],
+        "updated_at": 1792578018.641002
+      }
+    ],
+    "terminal": {
+      "budget": {
+        "consumed": {
+          "requests": 2,
+          "seconds": 0.046,
+          "steps": 3,
+          "tool_calls": 1
+        },
+        "max_requests": 60,
+        "max_seconds": 1800,
+        "max_steps": 120,
+        "max_tool_calls": 100,
+        "request_timeout": 90
+      },
+      "content": "先检查文件。\n\n完成",
+      "conversation_id": "",
+      "created_at": 1792578018.5989027,
+      "error": null,
+      "event_cursor": 11,
+      "intent": "write",
+      "model_snapshot": {
+        "model": null,
+        "provider": "cloud"
+      },
+      "reasoning": {
+        "applied": null,
+        "downgrade": "模型未确认原生推理参数，已使用普通生成",
+        "requested": "balanced"
+      },
+      "request_id": "p12_protocol_fixture",
+      "result": "完成",
+      "resume_from": null,
+      "run_id": "run_3bdf0380ef1d4424856f48e2f19f5191",
+      "src": "pc",
+      "stage": "completed",
+      "status": "succeeded",
+      "steps": [
+        {
+          "content": "先检查文件。",
+          "finished_at": 1792578018.6229637,
+          "kind": "model",
+          "reason": "tool_calls",
+          "started_at": 1792578018.6054702,
+          "status": "completed",
+          "step_id": 1,
+          "usage": null
+        },
+        {
+          "call_id": "xml_02819b7b460a42a683f9b80ef2f16ebd",
+          "finished_at": 1792578018.6301851,
+          "input": {
+            "text": "note"
+          },
+          "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+          "kind": "tool",
+          "reason": null,
+          "receipts": [],
+          "result": "saved",
+          "result_chars": 5,
+          "result_state": "returned",
+          "started_at": 1792578018.6268337,
+          "status": "completed",
+          "step_id": 2,
+          "tool": "write_note",
+          "truncated": false
+        },
+        {
+          "content": "完成",
+          "finished_at": 1792578018.6477075,
+          "kind": "model",
+          "reason": "normal",
+          "started_at": 1792578018.6339223,
+          "status": "completed",
+          "step_id": 3,
+          "usage": null
+        }
+      ],
+      "updated_at": 1792578018.6481433
+    },
+    "tool_count": 1
+  },
+  {
+    "case": "multi",
+    "raw": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call><tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>"
+            }
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "完成"
+            }
+          }
+        ]
+      }
+    ],
+    "normalized": [
+      {
+        "type": "text_delta",
+        "text": "<tool_call><function=write_note><parameter=text>note</parameter></function></tool_call><tool_call><function=write_note><parameter=text>note</parameter></function></tool_call>"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "",
+          "reasoning": "",
+          "tool_calls": [
+            {
+              "id": "xml_ddcb5f0e0b0440739402c955d3f64bea",
+              "type": "function",
+              "function": {
+                "name": "write_note",
+                "arguments": "{\"text\": \"note\"}"
+              }
+            },
+            {
+              "id": "xml_575ba97aac744d7d85c92bbc3f2fd2f5",
+              "type": "function",
+              "function": {
+                "name": "write_note",
+                "arguments": "{\"text\": \"note\"}"
+              }
+            }
+          ],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      },
+      {
+        "type": "text_delta",
+        "text": "完成"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "完成",
+          "reasoning": "",
+          "tool_calls": [],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      }
+    ],
+    "brain_events": {
+      "snapshot": {
+        "budget": {
+          "consumed": {
+            "requests": 2,
+            "seconds": 0.046,
+            "steps": 3,
+            "tool_calls": 1
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "完成",
+        "conversation_id": "",
+        "created_at": 1792578018.662018,
+        "error": null,
+        "event_cursor": 10,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": "完成",
+        "resume_from": null,
+        "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+        "src": "pc",
+        "stage": "completed",
+        "status": "succeeded",
+        "steps": [
+          {
+            "content": "",
+            "finished_at": 1792578018.6821961,
+            "kind": "model",
+            "reason": "tool_calls",
+            "started_at": 1792578018.6686149,
+            "status": "completed",
+            "step_id": 1,
+            "usage": null
+          },
+          {
+            "call_id": "xml_ddcb5f0e0b0440739402c955d3f64bea",
+            "finished_at": 1792578018.6891851,
+            "input": {
+              "text": "note"
+            },
+            "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+            "kind": "tool",
+            "reason": null,
+            "receipts": [],
+            "result": "saved",
+            "result_chars": 5,
+            "result_state": "returned",
+            "started_at": 1792578018.6858406,
+            "status": "completed",
+            "step_id": 2,
+            "tool": "write_note",
+            "truncated": false
+          },
+          {
+            "content": "完成",
+            "finished_at": 1792578018.7104878,
+            "kind": "model",
+            "reason": "normal",
+            "started_at": 1792578018.6960018,
+            "status": "completed",
+            "step_id": 3,
+            "usage": null
+          }
+        ],
+        "updated_at": 1792578018.7108812
+      },
+      "events": [
+        {
+          "payload": {
+            "status": "queued"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 1,
+          "ts": 1792578018.662396,
+          "type": "run_created"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 2,
+          "ts": 1792578018.668618,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "reason": "tool_calls",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 3,
+          "ts": 1792578018.6822004,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "call_id": "xml_ddcb5f0e0b0440739402c955d3f64bea",
+            "input": {
+              "text": "note"
+            },
+            "kind": "tool",
+            "stage": "waiting_tool",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 4,
+          "ts": 1792578018.6859863,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "call_id": "xml_ddcb5f0e0b0440739402c955d3f64bea",
+            "error": "",
+            "input": {
+              "text": "note"
+            },
+            "output": "saved",
+            "result_state": "returned",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 5,
+          "ts": 1792578018.6895616,
+          "type": "tool_finished"
+        },
+        {
+          "payload": {
+            "call_id": "xml_575ba97aac744d7d85c92bbc3f2fd2f5",
+            "step_id": 2,
+            "tool": "write_note"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 6,
+          "ts": 1792578018.6930008,
+          "type": "tool_reused"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 3
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 7,
+          "ts": 1792578018.6960046,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "step_id": 3,
+            "text": "完成"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 8,
+          "ts": 1792578018.7026067,
+          "type": "text_delta"
+        },
+        {
+          "payload": {
+            "reason": "normal",
+            "step_id": 3
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 9,
+          "ts": 1792578018.7104921,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "error": null,
+            "status": "succeeded"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+          "seq": 10,
+          "ts": 1792578018.7108655,
+          "type": "done"
+        }
+      ],
+      "gap": false
+    },
+    "snapshots": [
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.004,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.662018,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.6686149,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.6752617
+      },
+      {
+        "budget": {
+          "consumed": {
+            "requests": 2,
+            "seconds": 0.032,
+            "steps": 3,
+            "tool_calls": 1
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "完成",
+        "conversation_id": "",
+        "created_at": 1792578018.662018,
+        "error": null,
+        "event_cursor": 8,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "content": "",
+            "finished_at": 1792578018.6821961,
+            "kind": "model",
+            "reason": "tool_calls",
+            "started_at": 1792578018.6686149,
+            "status": "completed",
+            "step_id": 1,
+            "usage": null
+          },
+          {
+            "call_id": "xml_ddcb5f0e0b0440739402c955d3f64bea",
+            "finished_at": 1792578018.6891851,
+            "input": {
+              "text": "note"
+            },
+            "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+            "kind": "tool",
+            "reason": null,
+            "receipts": [],
+            "result": "saved",
+            "result_chars": 5,
+            "result_state": "returned",
+            "started_at": 1792578018.6858406,
+            "status": "completed",
+            "step_id": 2,
+            "tool": "write_note",
+            "truncated": false
+          },
+          {
+            "kind": "model",
+            "started_at": 1792578018.6960018,
+            "status": "running",
+            "step_id": 3
+          }
+        ],
+        "updated_at": 1792578018.702958
+      }
+    ],
+    "terminal": {
+      "budget": {
+        "consumed": {
+          "requests": 2,
+          "seconds": 0.046,
+          "steps": 3,
+          "tool_calls": 1
+        },
+        "max_requests": 60,
+        "max_seconds": 1800,
+        "max_steps": 120,
+        "max_tool_calls": 100,
+        "request_timeout": 90
+      },
+      "content": "完成",
+      "conversation_id": "",
+      "created_at": 1792578018.662018,
+      "error": null,
+      "event_cursor": 10,
+      "intent": "write",
+      "model_snapshot": {
+        "model": null,
+        "provider": "cloud"
+      },
+      "reasoning": {
+        "applied": null,
+        "downgrade": "模型未确认原生推理参数，已使用普通生成",
+        "requested": "balanced"
+      },
+      "request_id": "p12_protocol_fixture",
+      "result": "完成",
+      "resume_from": null,
+      "run_id": "run_0952f6e160d64b98a78fda2dba8cbf65",
+      "src": "pc",
+      "stage": "completed",
+      "status": "succeeded",
+      "steps": [
+        {
+          "content": "",
+          "finished_at": 1792578018.6821961,
+          "kind": "model",
+          "reason": "tool_calls",
+          "started_at": 1792578018.6686149,
+          "status": "completed",
+          "step_id": 1,
+          "usage": null
+        },
+        {
+          "call_id": "xml_ddcb5f0e0b0440739402c955d3f64bea",
+          "finished_at": 1792578018.6891851,
+          "input": {
+            "text": "note"
+          },
+          "input_digest": "3e1567c617fdb67260a3732e88d70e1454e9885875802919f71514882cd03272",
+          "kind": "tool",
+          "reason": null,
+          "receipts": [],
+          "result": "saved",
+          "result_chars": 5,
+          "result_state": "returned",
+          "started_at": 1792578018.6858406,
+          "status": "completed",
+          "step_id": 2,
+          "tool": "write_note",
+          "truncated": false
+        },
+        {
+          "content": "完成",
+          "finished_at": 1792578018.7104878,
+          "kind": "model",
+          "reason": "normal",
+          "started_at": 1792578018.6960018,
+          "status": "completed",
+          "step_id": 3,
+          "usage": null
+        }
+      ],
+      "updated_at": 1792578018.7108812
+    },
+    "tool_count": 1
+  },
+  {
+    "case": "malformed",
+    "raw": [
+      {
+        "choices": [
+          {
+            "delta": {
+              "content": "<tool_call><function=write_note><parameter=text>note</parameter></function>"
+            }
+          }
+        ]
+      }
+    ],
+    "normalized": [
+      {
+        "type": "text_delta",
+        "text": "<tool_call><function=write_note><parameter=text>note</parameter></function>"
+      },
+      {
+        "type": "completion",
+        "result": {
+          "content": "",
+          "reasoning": "",
+          "tool_calls": [],
+          "usage": null,
+          "finish_reason": "stop",
+          "reason": "normal",
+          "complete": true
+        }
+      }
+    ],
+    "brain_events": {
+      "snapshot": {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.018,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.7254412,
+        "error": {
+          "message": "工具名称、参数或调用标识无效，未派发该批工具（detail 里是具体哪一步不合法）",
+          "reason": "invalid_tool"
+        },
+        "event_cursor": 4,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+        "src": "pc",
+        "stage": "stopped",
+        "status": "failed",
+        "steps": [
+          {
+            "content": "",
+            "finished_at": 1792578018.7457395,
+            "kind": "model",
+            "reason": "invalid_tool",
+            "started_at": 1792578018.7321503,
+            "status": "failed",
+            "step_id": 1,
+            "usage": null
+          }
+        ],
+        "updated_at": 1792578018.7461095
+      },
+      "events": [
+        {
+          "payload": {
+            "status": "queued"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+          "seq": 1,
+          "ts": 1792578018.725884,
+          "type": "run_created"
+        },
+        {
+          "payload": {
+            "kind": "model",
+            "stage": "generating",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+          "seq": 2,
+          "ts": 1792578018.732154,
+          "type": "step_started"
+        },
+        {
+          "payload": {
+            "reason": "invalid_tool",
+            "step_id": 1
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+          "seq": 3,
+          "ts": 1792578018.7457445,
+          "type": "step_finished"
+        },
+        {
+          "payload": {
+            "error": {
+              "message": "工具名称、参数或调用标识无效，未派发该批工具（detail 里是具体哪一步不合法）",
+              "reason": "invalid_tool"
+            },
+            "status": "failed"
+          },
+          "request_id": "p12_protocol_fixture",
+          "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+          "seq": 4,
+          "ts": 1792578018.7460904,
+          "type": "failed"
+        }
+      ],
+      "gap": false
+    },
+    "snapshots": [
+      {
+        "budget": {
+          "consumed": {
+            "requests": 1,
+            "seconds": 0.004,
+            "steps": 1,
+            "tool_calls": 0
+          },
+          "max_requests": 60,
+          "max_seconds": 1800,
+          "max_steps": 120,
+          "max_tool_calls": 100,
+          "request_timeout": 90
+        },
+        "content": "",
+        "conversation_id": "",
+        "created_at": 1792578018.7254412,
+        "error": null,
+        "event_cursor": 2,
+        "intent": "write",
+        "model_snapshot": {
+          "model": null,
+          "provider": "cloud"
+        },
+        "reasoning": {
+          "applied": null,
+          "downgrade": "模型未确认原生推理参数，已使用普通生成",
+          "requested": "balanced"
+        },
+        "request_id": "p12_protocol_fixture",
+        "result": null,
+        "resume_from": null,
+        "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+        "src": "pc",
+        "stage": "generating",
+        "status": "running",
+        "steps": [
+          {
+            "kind": "model",
+            "started_at": 1792578018.7321503,
+            "status": "running",
+            "step_id": 1
+          }
+        ],
+        "updated_at": 1792578018.7387228
+      }
+    ],
+    "terminal": {
+      "budget": {
+        "consumed": {
+          "requests": 1,
+          "seconds": 0.018,
+          "steps": 1,
+          "tool_calls": 0
+        },
+        "max_requests": 60,
+        "max_seconds": 1800,
+        "max_steps": 120,
+        "max_tool_calls": 100,
+        "request_timeout": 90
+      },
+      "content": "",
+      "conversation_id": "",
+      "created_at": 1792578018.7254412,
+      "error": {
+        "message": "工具名称、参数或调用标识无效，未派发该批工具（detail 里是具体哪一步不合法）",
+        "reason": "invalid_tool"
+      },
+      "event_cursor": 4,
+      "intent": "write",
+      "model_snapshot": {
+        "model": null,
+        "provider": "cloud"
+      },
+      "reasoning": {
+        "applied": null,
+        "downgrade": "模型未确认原生推理参数，已使用普通生成",
+        "requested": "balanced"
+      },
+      "request_id": "p12_protocol_fixture",
+      "result": null,
+      "resume_from": null,
+      "run_id": "run_ea7ef9b7eb534813a834e64cf46231a7",
+      "src": "pc",
+      "stage": "stopped",
+      "status": "failed",
+      "steps": [
+        {
+          "content": "",
+          "finished_at": 1792578018.7457395,
+          "kind": "model",
+          "reason": "invalid_tool",
+          "started_at": 1792578018.7321503,
+          "status": "failed",
+          "step_id": 1,
+          "usage": null
+        }
+      ],
+      "updated_at": 1792578018.7461095
+    },
+    "tool_count": 0
+  }
+]
