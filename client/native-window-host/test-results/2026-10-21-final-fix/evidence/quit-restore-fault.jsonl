@@ -1,0 +1,16 @@
+{"at":"2026-10-21T14:15:22.309Z","type":"ready","containerCreated":true,"containerHwnd":4590372,"dpiAwareness":"per-monitor-v2"}
+{"at":"2026-10-21T14:15:22.310Z","type":"lifecycle-step-start","index":0,"exePath":"C:\\WINDOWS\\System32\\charmap.exe"}
+{"at":"2026-10-21T14:15:22.465Z","type":"started","pid":23072,"jobTracking":true}
+{"at":"2026-10-21T14:15:22.465Z","type":"state","state":"starting","pid":23072,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:15:22.948Z","type":"set-parent-result","applied":true,"returnNull":false,"lastError":0,"parentHwnd":4590372,"expectedParentHwnd":4590372}
+{"at":"2026-10-21T14:15:22.953Z","type":"attached","pid":23072,"hwnd":3541954,"parentHwnd":4590372,"dpi":144,"screenRect":[1059,529,2059,1129]}
+{"at":"2026-10-21T14:15:22.953Z","type":"state","state":"attached","pid":23072,"windowPid":23072,"hwnd":3541954}
+{"at":"2026-10-21T14:15:23.120Z","type":"focus","pid":23072,"hwnd":3541954,"foregroundRequested":true,"targetInputAttached":true,"parentInputAttached":true,"focusSet":false}
+{"at":"2026-10-21T14:15:23.121Z","type":"test-fault-armed","stage":"set-parent"}
+{"at":"2026-10-21T14:15:23.282Z","type":"restore-failed","stage":"set-parent","code":5,"hwnd":3541954,"valid":true,"parentHwnd":4590372,"ownerHwnd":0,"style":1409941580,"exStyle":65536,"visible":true}
+{"at":"2026-10-21T14:15:23.283Z","type":"restore-pending","reason":"Application shutdown requested.","hwnd":3541954}
+{"at":"2026-10-21T14:15:23.283Z","type":"state","state":"restore-failed","pid":23072,"windowPid":23072,"hwnd":3541954}
+{"at":"2026-10-21T14:15:23.283Z","type":"shutdown-blocked","reason":"A live external window could not be restored; the host and Electron window must remain alive."}
+{"at":"2026-10-21T14:15:24.361Z","type":"restore-complete","stage":"complete","code":0,"hwnd":3541954,"valid":true,"parentHwnd":0,"ownerHwnd":0,"style":2496266316,"exStyle":65792,"visible":true}
+{"at":"2026-10-21T14:15:24.361Z","type":"shutdown-complete"}
+{"at":"2026-10-21T14:15:24.366Z","type":"helper-exit","code":0,"signal":null}

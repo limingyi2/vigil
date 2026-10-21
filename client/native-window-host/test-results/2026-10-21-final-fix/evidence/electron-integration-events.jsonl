@@ -1,0 +1,60 @@
+﻿{"at":"2026-10-21T14:25:37.301Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\charmap.exe","profileName":"Character Map"}
+{"at":"2026-10-21T14:25:37.320Z","type":"ready","containerCreated":true,"containerHwnd":1838066,"dpiAwareness":"per-monitor-v2"}
+{"at":"2026-10-21T14:25:37.405Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\charmap.exe","profileName":"Character Map"}
+{"at":"2026-10-21T14:25:37.474Z","type":"started","pid":3692,"jobTracking":true}
+{"at":"2026-10-21T14:25:37.476Z","type":"state","state":"starting","pid":3692,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:37.968Z","type":"set-parent-result","applied":true,"returnNull":false,"lastError":0,"parentHwnd":1838066,"expectedParentHwnd":1838066}
+{"at":"2026-10-21T14:25:37.974Z","type":"attached","pid":3692,"hwnd":4983534,"parentHwnd":1838066,"dpi":144,"screenRect":[1426,595,2852,1048]}
+{"at":"2026-10-21T14:25:37.975Z","type":"state","state":"attached","pid":3692,"windowPid":3692,"hwnd":4983534}
+{"at":"2026-10-21T14:25:38.015Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\charmap.exe","profileName":"Character Map"}
+{"at":"2026-10-21T14:25:38.125Z","type":"state","state":"attached","pid":3692,"windowPid":3692,"hwnd":4983534}
+{"at":"2026-10-21T14:25:38.136Z","type":"start-reused","pid":3692,"windowPid":3692,"hwnd":4983534}
+{"at":"2026-10-21T14:25:38.136Z","type":"state","state":"attached","pid":3692,"windowPid":3692,"hwnd":4983534}
+{"at":"2026-10-21T14:25:38.320Z","type":"restore-complete","stage":"complete","code":0,"hwnd":4983534,"valid":true,"parentHwnd":0,"ownerHwnd":0,"style":2496266316,"exStyle":65792,"visible":true}
+{"at":"2026-10-21T14:25:38.320Z","type":"detached","restored":true,"windowGone":false,"hwnd":4983534,"pid":3692,"valid":true,"visible":true,"parentHwnd":0,"style":2496266316,"originalStyle":2496266316}
+{"at":"2026-10-21T14:25:38.320Z","type":"state","state":"detached","pid":3692,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:38.326Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\charmap.exe","profileName":"Character Map"}
+{"at":"2026-10-21T14:25:38.476Z","type":"state","state":"attaching","pid":3692,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:38.499Z","type":"set-parent-result","applied":true,"returnNull":false,"lastError":0,"parentHwnd":1838066,"expectedParentHwnd":1838066}
+{"at":"2026-10-21T14:25:38.505Z","type":"attached","pid":3692,"hwnd":4983534,"parentHwnd":1838066,"dpi":144,"screenRect":[1426,595,2852,1048]}
+{"at":"2026-10-21T14:25:38.506Z","type":"state","state":"attached","pid":3692,"windowPid":3692,"hwnd":4983534}
+{"at":"2026-10-21T14:25:38.655Z","type":"close-requested","forced":false}
+{"at":"2026-10-21T14:25:38.818Z","type":"window-lost","reason":"hwnd-destroyed"}
+{"at":"2026-10-21T14:25:38.818Z","type":"state","state":"window-rebuilding","pid":3692,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:38.975Z","type":"state","state":"idle","pid":0,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:38.976Z","type":"exited","pid":3692,"reason":"all-target-processes-exited"}
+{"at":"2026-10-21T14:25:39.097Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\msinfo32.exe","profileName":"System Information"}
+{"at":"2026-10-21T14:25:39.125Z","type":"state","state":"attaching","pid":0,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:39.130Z","type":"started","pid":2376,"jobTracking":true}
+{"at":"2026-10-21T14:25:39.130Z","type":"state","state":"starting","pid":2376,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:39.302Z","type":"set-parent-result","applied":true,"returnNull":false,"lastError":0,"parentHwnd":1838066,"expectedParentHwnd":1838066}
+{"at":"2026-10-21T14:25:39.319Z","type":"attached","pid":2376,"hwnd":2493564,"parentHwnd":1838066,"dpi":144,"screenRect":[1426,595,2852,1048]}
+{"at":"2026-10-21T14:25:39.319Z","type":"state","state":"attached","pid":2376,"windowPid":2376,"hwnd":2493564}
+{"at":"2026-10-21T14:25:39.404Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\msinfo32.exe","profileName":"System Information"}
+{"at":"2026-10-21T14:25:39.469Z","type":"state","state":"attached","pid":2376,"windowPid":2376,"hwnd":2493564}
+{"at":"2026-10-21T14:25:39.479Z","type":"start-reused","pid":2376,"windowPid":2376,"hwnd":2493564}
+{"at":"2026-10-21T14:25:39.480Z","type":"state","state":"attached","pid":2376,"windowPid":2376,"hwnd":2493564}
+{"at":"2026-10-21T14:25:39.635Z","type":"close-requested","forced":false}
+{"at":"2026-10-21T14:25:39.641Z","type":"window-hidden","pid":2376,"hwnd":2493564}
+{"at":"2026-10-21T14:25:39.642Z","type":"state","state":"window-hidden","pid":2376,"windowPid":2376,"hwnd":2493564}
+{"at":"2026-10-21T14:25:39.952Z","type":"restore-window-gone","stage":"window-gone","code":1400,"hwnd":2493564,"valid":false,"parentHwnd":0,"ownerHwnd":0,"style":0,"exStyle":0,"visible":false}
+{"at":"2026-10-21T14:25:39.952Z","type":"state","state":"idle","pid":0,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:39.953Z","type":"exited","pid":2376,"reason":"all-target-processes-exited"}
+{"at":"2026-10-21T14:25:40.016Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\charmap.exe","profileName":"Character Map"}
+{"at":"2026-10-21T14:25:40.102Z","type":"state","state":"attaching","pid":0,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:40.104Z","type":"started","pid":18068,"jobTracking":true}
+{"at":"2026-10-21T14:25:40.106Z","type":"state","state":"starting","pid":18068,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:40.455Z","type":"set-parent-result","applied":true,"returnNull":false,"lastError":0,"parentHwnd":1838066,"expectedParentHwnd":1838066}
+{"at":"2026-10-21T14:25:40.457Z","type":"attached","pid":18068,"hwnd":2559100,"parentHwnd":1838066,"dpi":144,"screenRect":[1426,595,2852,1048]}
+{"at":"2026-10-21T14:25:40.458Z","type":"state","state":"attached","pid":18068,"windowPid":18068,"hwnd":2559100}
+{"at":"2026-10-21T14:25:40.474Z","type":"start-requested","exePath":"C:\\WINDOWS\\System32\\charmap.exe","profileName":"Character Map"}
+{"at":"2026-10-21T14:25:40.608Z","type":"state","state":"attached","pid":18068,"windowPid":18068,"hwnd":2559100}
+{"at":"2026-10-21T14:25:40.620Z","type":"start-reused","pid":18068,"windowPid":18068,"hwnd":2559100}
+{"at":"2026-10-21T14:25:40.620Z","type":"state","state":"attached","pid":18068,"windowPid":18068,"hwnd":2559100}
+{"at":"2026-10-21T14:25:40.775Z","type":"close-requested","forced":false}
+{"at":"2026-10-21T14:25:40.938Z","type":"window-lost","reason":"hwnd-destroyed"}
+{"at":"2026-10-21T14:25:40.938Z","type":"state","state":"window-rebuilding","pid":18068,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:41.095Z","type":"state","state":"idle","pid":0,"windowPid":0,"hwnd":0}
+{"at":"2026-10-21T14:25:41.095Z","type":"exited","pid":18068,"reason":"all-target-processes-exited"}
+{"at":"2026-10-21T14:26:17.200Z","type":"shutdown-complete"}
+{"at":"2026-10-21T14:26:17.207Z","type":"helper-exit","code":0,"signal":null}

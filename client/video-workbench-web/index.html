@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;">
+  <meta name="theme-color" content="#f8f8f6">
+  <title>Vigil · 视频工作台</title>
+  <style>
+    :root{color-scheme:light;--bg:#f6f6f3;--surface:#fff;--text:#191a1b;--muted:#777d83;--line:#e4e5e2;--accent:#1e2022;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0}
+    body{display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--bg);color:var(--text)}
+    .rail{display:flex;flex-direction:column;align-items:center;gap:12px;padding:14px 8px;border-right:1px solid var(--line);background:var(--surface)}
+    .brand{display:grid;place-items:center;width:36px;height:36px;margin-bottom:18px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:650;letter-spacing:-.04em}
+    .nav-item{display:grid;place-items:center;width:42px;height:42px;border:0;border-radius:11px;background:transparent;color:#7b8186}
+    .nav-item.active{background:#1d1f20;color:#fff}
+    .nav-item svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .rail-spacer{flex:1}
+    .shell{display:grid;grid-template-rows:64px minmax(0,1fr);min-width:0;min-height:0}
+    header{display:flex;align-items:center;gap:12px;padding:0 24px;border-bottom:1px solid var(--line);background:var(--surface)}
+    header h1{margin:0;font-size:15px;font-weight:620;letter-spacing:-.01em}
+    header p{margin:0;color:var(--muted);font-size:12px}
+    main{display:grid;grid-template-rows:minmax(210px,1.05fr) minmax(180px,.95fr);gap:12px;min-width:0;min-height:0;padding:16px 20px 20px}
+    .software-pane,.ai-pane{min-width:0;min-height:0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+    .software-pane{display:grid;grid-template-rows:48px minmax(0,1fr);overflow:hidden}
+    .pane-heading{display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line)}
+    .pane-heading h2{margin:0;font-size:13px;font-weight:600}
+    .pane-heading .subtle{margin-left:auto;color:var(--muted);font-size:11px}
+    .software-stage{display:grid;place-content:center;justify-items:center;gap:10px;padding:20px;text-align:center}
+    .software-icon{display:grid;place-items:center;width:42px;height:42px;border:1px solid var(--line);border-radius:12px;color:#747a7f}
+    .software-icon svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+    .software-stage strong{font-size:13px;font-weight:560}
+    .software-stage p{max-width:440px;margin:0;color:var(--muted);font-size:12px;line-height:1.65}
+    .ai-pane{display:grid;place-content:center;justify-items:center;gap:8px;border-style:dashed;background:rgba(255,255,255,.55);text-align:center}
+    .eyebrow{color:#858a8d;font-size:10px;font-weight:550;letter-spacing:.12em}
+    .ai-pane h2{margin:0;font-size:15px;font-weight:560;letter-spacing:-.01em}
+    .ai-pane p{margin:0;color:var(--muted);font-size:12px}
+    @media(max-width:760px){body{grid-template-columns:52px minmax(0,1fr)}.rail{padding-inline:5px}.nav-item{width:38px;height:38px}.shell{grid-template-rows:58px minmax(0,1fr)}header{padding:0 14px}header p{display:none}main{grid-template-rows:minmax(190px,1fr) minmax(140px,.85fr);gap:9px;padding:10px}.pane-heading{padding-inline:12px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+  </style>
+</head>
+<body>
+  <nav class="rail" aria-label="Vigil 主导航">
+    <div class="brand" aria-label="Vigil">V</div>
+    <div class="nav-item" aria-label="工作台"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v12H4zM8 21h8M12 17.5V21"/></svg></div>
+    <div class="nav-item active" aria-current="page" aria-label="视频工作台"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg></div>
+    <div class="rail-spacer"></div>
+    <div class="nav-item" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.7 2.94-.08-.02a1.7 1.7 0 0 0-1.72.42l-.06.06h-3.4l-.02-.08a1.7 1.7 0 0 0-1.2-1.3l-.08-.02-1.7-2.94.06-.06A1.7 1.7 0 0 0 10.2 14H10.1V10h.1a1.7 1.7 0 0 0 1.42-.83l.06-.07 1.7-2.94.08.02a1.7 1.7 0 0 0 1.72-.42l.06-.06h3.4l.02.08a1.7 1.7 0 0 0 1.2 1.3l.08.02 1.7 2.94-.06.06A1.7 1.7 0 0 0 21.2 12h.1v3h-1.9z"/></svg></div>
+  </nav>
+  <div class="shell">
+    <header><h1>视频工作台</h1><p>浏览器界面 · 软件独立运行</p></header>
+    <main>
+      <section class="software-pane" aria-labelledby="software-title">
+        <div class="pane-heading"><h2 id="software-title">Windows 软件</h2><span class="subtle">独立窗口</span></div>
+        <div class="software-stage">
+          <div class="software-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <strong>请从桌面单独启动要使用的软件</strong>
+          <p>浏览器页面不能启动或显示本机 EXE。软件会在自己的窗口中运行，本工作台页面可与它并排使用。</p>
+        </div>
+      </section>
+      <section class="ai-pane" aria-labelledby="ai-title">
+        <span class="eyebrow">后续接入</span>
+        <h2 id="ai-title">AI 剪视频工作区</h2>
+        <p>此区域预留给后续 AI 视频剪辑功能。</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -38,6 +38,9 @@ let win = null;
 let settingsWin = null;
 let settingsWinReady = false;
 let pendingSettingsTarget = null;
+let nativeWindowService = null;
+let nativeWindowQuitPending = false;
+let nativeWindowSafeToQuit = false;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
@@ -526,6 +529,8 @@ function createWindow() {
       }
       callback({});
     });
+  nativeWindowService = require('./native-window-service').createNativeWindowService({ ipcMain, getWindow: () => win });
+  win.on('hide', () => { if (nativeWindowService) nativeWindowService.hide(); });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
   // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。
@@ -576,12 +581,14 @@ function createWindow() {
   // 不拦的话 window-all-closed → app.quit()，微信渠道的本地工具
   // 轮询、转发通道全部跟着一起死。
   win.on('close', (e) => {
-    if (!quitting) {
+    if (!quitting || (nativeWindowService && !nativeWindowSafeToQuit)) {
       e.preventDefault();
       win.hide();
     }
   });
   win.on('closed', () => {
+    if (nativeWindowService) nativeWindowService.dispose();
+    nativeWindowService = null;
     win = null;
   });
 }
@@ -1317,7 +1324,42 @@ if (!app.requestSingleInstanceLock()) {
 
 // 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
 // 也会走 before-quit —— 那时必须放行 close，不然关不了机）
-app.on('before-quit', () => { quitting = true; pluginMedia.close(); });
+app.on('before-quit', (event) => {
+  pluginMedia.close();
+  if (nativeWindowService && !nativeWindowSafeToQuit) {
+    event.preventDefault();
+    if (nativeWindowQuitPending) return;
+    quitting = true;
+    nativeWindowQuitPending = true;
+    nativeWindowService.shutdown().then(safe => {
+      nativeWindowQuitPending = false;
+      if (safe) {
+        nativeWindowSafeToQuit = true;
+        app.quit();
+      } else {
+        quitting = false;
+        if (win && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+        }
+        dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+          type: 'warning',
+          title: '软件窗口尚未安全恢复',
+          message: 'Vigil 暂时保持运行，正在继续恢复外部软件窗口。恢复成功后可以再次退出。',
+        });
+      }
+    }, error => {
+      nativeWindowQuitPending = false;
+      quitting = false;
+      if (win && !win.isDestroyed()) { win.show(); win.focus(); }
+      dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+        type: 'warning', title: '无法确认软件窗口状态', message: String(error && error.message || error),
+      });
+    });
+    return;
+  }
+  quitting = true;
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

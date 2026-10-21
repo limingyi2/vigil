@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>P15 Native Window Host PoC</title>
+  <style>
+    :root { color-scheme: light; font: 14px/1.45 "Segoe UI", "Microsoft YaHei UI", sans-serif; color:#252932; background:#f5f4f0; }
+    * { box-sizing:border-box; } body { margin:0; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+    header { height:44px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 16px; background:#272a31; color:#f7f5f0; -webkit-app-region:drag; }
+    header .caption { font-weight:650; } header .close { -webkit-app-region:no-drag; color:#fff; border:0; background:transparent; cursor:pointer; font-size:18px; }
+    main { flex:1; min-height:0; display:flex; flex-direction:column; padding:18px 22px 16px; gap:12px; }
+    h1 { margin:0; font-size:20px; } .desc { color:#737985; margin-top:3px; }
+    .toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px; border:1px solid #dddcd7; border-radius:12px; background:#fff; }
+    .file { flex:1 1 280px; display:flex; gap:6px; min-width:260px; } input { min-width:0; flex:1; padding:8px 10px; border:1px solid #d7d9de; border-radius:8px; background:#fbfbfa; color:#29303b; }
+    button { cursor:pointer; border:1px solid #d3d5d9; border-radius:8px; background:#fff; color:#333944; padding:8px 11px; font:inherit; }
+    button:hover { background:#f1f2f4; } button.primary { background:#375a8c; border-color:#375a8c; color:#fff; } button.primary:hover { background:#2c4b78; }
+    button.warn { color:#814b26; } .status { min-height:22px; color:#5b6371; font-size:12px; }
+    .surface { position:relative; flex:1; min-height:140px; overflow:hidden; border:1px solid #d0d2d7; border-radius:12px; background:#e9eaed; box-shadow:inset 0 1px 5px #20242a12; }
+    .surface-note { position:absolute; inset:0; display:grid; place-items:center; color:#8a909a; text-align:center; padding:20px; pointer-events:none; }
+    .surface.hosted .surface-note { display:none; }
+    footer { display:flex; justify-content:space-between; color:#7b808a; font-size:11px; }
+    #events { position:absolute; right:10px; bottom:9px; max-width:48%; max-height:68px; overflow:auto; color:#686f7b; font:10px/1.35 Consolas,monospace; pointer-events:none; }
+  </style>
+</head>
+<body>
+  <header><span class="caption">Vigil · P15 Windows Native Host Compatibility PoC</span><button class="close" id="closeWindow" aria-label="关闭">×</button></header>
+  <main>
+    <div><h1>外部 Windows 软件托管验证</h1><div class="desc">选择一个本地 EXE。失败时软件会恢复为独立窗口。</div></div>
+    <div class="toolbar">
+      <label class="file"><input id="exePath" type="text" placeholder="选择 Windows EXE 文件" readonly><button id="choose">选择 EXE…</button></label>
+      <input id="arguments" type="text" placeholder="启动参数（可选）" aria-label="启动参数" style="flex:1 1 160px">
+      <button id="start" class="primary">启动并托管</button>
+      <button id="attach">重新嵌入</button>
+      <button id="detach">解除托管</button>
+      <button id="focus">聚焦软件</button>
+      <button id="closeApp" class="warn">请求关闭软件</button>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite">等待选择 EXE。</div>
+    <div class="surface" id="surface"><div class="surface-note">托管内容只会显示在此区域。<br>如果原生窗口无法嵌入，会自动恢复为独立窗口。</div><div id="events"></div></div>
+    <footer><span>Electron sandbox / contextIsolation 已启用 · GPU 设置保持默认</span><span id="dpr"></span></footer>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>

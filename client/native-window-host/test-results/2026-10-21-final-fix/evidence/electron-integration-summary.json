@@ -1,0 +1,35 @@
+{
+  "layout": {
+    "hostHeight": 319,
+    "agentHeight": 295,
+    "agentPresent": true
+  },
+  "launches": [
+    {
+      "name": "Character Map",
+      "pid": 3692,
+      "hwnd": 4983534,
+      "state": "软件窗口已托管。",
+      "launchCount": 1,
+      "reused": 1
+    },
+    {
+      "name": "System Information",
+      "pid": 2376,
+      "hwnd": 2493564,
+      "state": "软件窗口已托管。",
+      "launchCount": 1,
+      "reused": 1
+    },
+    {
+      "name": "Character Map",
+      "pid": 18068,
+      "hwnd": 2559100,
+      "state": "软件窗口已托管。",
+      "launchCount": 1,
+      "reused": 1
+    }
+  ],
+  "appExitCode": 0,
+  "helperEventsPath": "C:\\Users\\limingyi\\.codex\\worktrees\\p15-windows-window-host\\zhixia\\client\\native-window-host\\test-results\\2026-10-21-final-fix\\electron-integration-user-data\\native-window-host-events.jsonl"
+}
