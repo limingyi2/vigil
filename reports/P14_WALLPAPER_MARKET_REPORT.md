@@ -80,6 +80,6 @@ The same test command from repository root failed collection because the existin
 
 ## Git and delivery
 
-Commit SHA: `86f2c8f796af40d413f81c86e641bf4792d4eb4a` (report-only amend may change this hash).  
+Implementation commit SHA: `86f2c8f796af40d413f81c86e641bf4792d4eb4a`. The final report-only commit is the branch tip.
 Windows candidate package: none built.  
 This work is limited to `codex/p14-wallpaper-market`; no merge was performed.
