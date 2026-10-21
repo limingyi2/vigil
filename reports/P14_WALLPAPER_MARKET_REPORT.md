@@ -197,3 +197,15 @@ vigil-plugins：`market.json`、`plugins/wallpaper/README.md`、`__init__.py`、
 4. 在正式设置窗口及所有受支持 iframe 场景逐项探测 loopback 拦截；必要时继续加负向测试。
 
 因此结论维持 **PARTIAL**。尚有复杂真实 Scene、原生导入端到端、旧程序覆盖升级和少数 frame 安全实测未完成；本报告不将其写作 PASS。
+
+## 版本号一致性修复（2026-10-21）
+
+发现上一版插件制品的版本信息不一致：市场清单、Manifest 和 `version.json` 是 3.2.0，但安装后运行时 `plugins/wallpaper/__init__.py` 仍报告 3.1.0。为避免覆盖已提交的 3.2.0 ZIP，已生成并推送新的候选补丁版 3.2.1 至 Draft PR 分支，并统一运行时、`version.json`、Manifest 与市场索引版本。旧 3.2.0 和 3.0.1 制品均保留；PR #1 仍为 Draft/Open，未合并。
+
+- 插件源提交：`98d04455c148bbb50e9c14716bc72253f8476fa1`。
+- 3.2.1 制品提交：`95f96c6bfbbf55561b5e388d09ee89c8a102a0b1`；索引提交/分支 tip：`554e75ff59ccb4ceea13f7e2721a680f23860872`。
+- ZIP：`plugins/wallpaper/wallpaper-3.2.1.zip`；SHA-256：`169a75fe5515b0742b9266a9f9501f50ff1e407e90a0228d786d1952f5766c9b`。
+- 本机 Python 构建器重建、Manifest 文件摘要逐项验证及运行时/索引/归档版本一致性检查：PASS。
+- GitHub Actions `Validate market packages` run `39615776316`（Linux/Python 3.12）：PASS。
+- GitHub Draft PR #1 标题已改为 `Wallpaper 3.2.1: local media and playlists`；未合并。市场索引 URL 固定指向含 ZIP 的提交 `95f96c6...`。
+- Vigil P14 分支已快进纳入远端的媒体票据续签和内置插件版本修复：`f94fded189451663b58db1621c060432e02c3365`。该内置候选源码版本为 3.2.0；公开插件市场候选现为 3.2.1，后者是对其运行时元数据的补丁版本。
