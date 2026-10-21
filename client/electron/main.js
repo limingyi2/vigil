@@ -74,10 +74,10 @@ function createTray() {
     { label: '显示主界面', click: () => showMainWindow() },
     { type: 'separator' },
     { label: '退出', click: () => {
-        // 唯一的真退出入口：先放行 close，再走正常生命周期
+        // Start the normal quit lifecycle first. Calling win.close() here skips
+        // before-quit when close is intercepted, so native-window shutdown never runs.
         quitting = true;
-        if (win && !win.isDestroyed()) win.close();
-        else app.quit();
+        app.quit();
       } },
   ]));
   // 单击托盘图标 = 收起/唤回（Windows 习惯）
@@ -581,7 +581,7 @@ function createWindow() {
   // 不拦的话 window-all-closed → app.quit()，微信渠道的本地工具
   // 轮询、转发通道全部跟着一起死。
   win.on('close', (e) => {
-    if (!quitting || (nativeWindowService && !nativeWindowSafeToQuit)) {
+    if (!quitting) {
       e.preventDefault();
       win.hide();
     }

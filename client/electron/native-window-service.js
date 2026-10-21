@@ -166,15 +166,18 @@ function createNativeWindowService({ ipcMain, getWindow }) {
       const child = helper;
       return new Promise(resolve => {
         let settled = false;
+        let timeout = null;
         const finish = safe => {
           if (settled) return;
           settled = true;
+          if (timeout) clearTimeout(timeout);
           if (shutdownWaiter === finish) shutdownWaiter = null;
           resolve(!!safe);
         };
         shutdownWaiter = finish;
         child.once('exit', () => finish(helperExitSafe));
-        send('QUIT');
+        timeout = setTimeout(() => finish(false), 10000);
+        if (!send('QUIT')) finish(helperExitSafe);
       });
     },
     dispose: () => {
