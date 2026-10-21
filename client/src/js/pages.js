@@ -1410,6 +1410,8 @@
     let resumableRunId = null;
     let composerMode = 'send';
     let pendingResumeOf = null;
+    // 执行中插话：把目标 run 放在这里，send() 会带上 interject_of。
+    let pendingInterjectOf = null;
     let pausePending = false;
     let liveReconcile = null;
     let currentRequestId = null;
@@ -2051,7 +2053,9 @@
       if (composerMode === 'uncertain') {
         button.disabled = !global.vigil;
       } else if (composerMode === 'pause') {
-        button.disabled = !global.vigil || !activeRunId;
+        // 有字就是插话（发得出去），没字才是暂停。
+        button.disabled = !global.vigil || !activeRunId ||
+          !!(attachment && attachment.failed);
       } else if (composerMode === 'resume') {
         button.disabled = !global.vigil || !resumableRunId;
       } else {
@@ -2061,7 +2065,9 @@
       button.classList.toggle('is-sending', busy && composerMode === 'send');
       button.disabled = button.disabled || submitPending;
       button.setAttribute('aria-busy', String(busy || submitPending));
-      const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）' : composerMode === 'pause' ? '暂停任务'
+      const label = composerMode === 'uncertain' ? '确认任务状态（连接异常或状态待确认）'
+        : composerMode === 'pause' ? ((ta.value.trim() || imgB64)
+          ? '插话并重新规划（会停下当前任务，保留已完成的步骤）' : '暂停任务')
         : composerMode === 'resume' ? '继续上次任务（输入框有字则发送新消息）'
         : (busy ? '正在发送…' : '发送消息');
       button.setAttribute('aria-label', label);
@@ -2321,16 +2327,23 @@
       // 续跑也走这条主链路：resumeTurn 把 pendingResumeOf 置位后调进来，
       // 带上 resume_of 发给同一条聊天 SSE 通道。
       const resumeOf = pendingResumeOf; pendingResumeOf = null;
+      // 插话同样复用这条链路：带 interject_of 发给同一个 SSE 通道，
+      // 服务端把旧 run 停成 paused/interjected 并另起一个带检查点的新 run。
+      const interjectOf = pendingInterjectOf; pendingInterjectOf = null;
       const ta = view.querySelector('#ta');
       const text = (ta.value || '').trim();
-      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) return;
+      if (!global.vigil || (!text && !imgB64 && !attachment && !resumeOf) || busy || submitPending) {
+        if (!interjectOf) return;
+      }
+      if (interjectOf && !text && !imgB64) return;
       clearTokenRate();
       submitPending = true;
       updateComposer();
       let scopeReady;
       try { scopeReady = await loadRecordScope(); }
       finally { submitPending = false; updateComposer(); }
-      if (!scopeReady || busy) return;
+      // 插话时 busy 是真的（旧任务还在收尾），但它不是"不能发"的理由。
+      if (!scopeReady || (busy && !interjectOf)) return;
       if (attachment && attachment.failed) return;
       if (attachment && attachment.kind === 'image' && !imgB64) {
         attachment.status = '图片尚未读取完成';
@@ -2517,7 +2530,8 @@
             onEvent({type:'done',text:snap.content || snap.result || '',run_id:agentRunId});
           } else if (global.VigilAgentState.stopped.has(status)) {
             onEvent({type:'error',text:snap.content || '',run_id:agentRunId,status,
-              class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止'});
+              class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止',
+              detail:snap.error?.detail || ''});
           } else {
             if (needsSnapshotText) {
               textBuf = snap.content || textBuf;
@@ -2585,6 +2599,19 @@
         if (streamDone) return;
         if (evt.type === 'model_request_started') {
           startTokenRate();
+        } else if (evt.type === 'image') {
+          // 图片四段状态各有各的话：收到 / 分析中 / 看不了 / 已看到。
+          // 「看不了」必须说出来 —— 否则她答的是猜的，用户却以为她看过了。
+          if (evt.stage === 'describe') {
+            statusEl.textContent = evt.ok ? '图片已看懂，正在回复 '
+              : '视觉模型不可用（' + String(evt.msg || '没有返回描述') + '），她看不到这张图 ';
+            if (!evt.ok) toast('视觉模型不可用，她看不到这张图');
+          } else {
+            statusEl.textContent = evt.ok ? '图片已收到'
+              : '图片没收到：' + String(evt.msg || evt.status || '未知原因');
+            if (!evt.ok) toast(String(evt.msg || '图片没有送进模型'));
+          }
+          if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'token_rate') {
           finishTokenRate(evt);
         } else if (evt.type === 'agent_run') {
@@ -2601,15 +2628,19 @@
         } else if (evt.type === 'tool') {
           finishThinking();
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
-          const ok = evt.state === 'returned';
-          const failed = ['not_dispatched', 'unknown', 'failed'].includes(evt.state);
+          // 'denied' 是被明确拒绝，不算执行失败；'returned' 带 error
+          // （执行完但没有任何输出）也不能显示成完成。
+          const denied = evt.state === 'denied';
+          const ok = evt.state === 'returned' && !evt.error;
+          const failed = ['not_dispatched', 'unknown', 'failed', 'denied'].includes(evt.state)
+            || (evt.state === 'returned' && !!evt.error);
           if (textBuf.trim() && !evt.historical) {
             const steps=msgs.querySelector('#'+turnId+' #liveSteps');
             steps.insertAdjacentHTML('beforeend','<div class="agent-commentary">'+U.md(textBuf)+'</div>');
             textBuf='';textDirty=false;textEl.innerHTML='';
           }
-          addStep(evt.tool || 'tool', ok ? '完成' : failed ? '失败' : '执行中',
-            ok ? 'ok' : failed ? 'err' : 'neutral', {...evt,turn_id:turnId});
+          addStep(evt.tool || 'tool', ok ? '完成' : denied ? '已拒绝' : failed ? '失败' : '执行中',
+            ok ? 'ok' : denied ? 'warn' : failed ? 'err' : 'neutral', {...evt,turn_id:turnId});
           statusEl.textContent = (evt.state === 'started' ? '正在调用 ' : '调用 ') + (evt.tool || '工具') + ' ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool_reused') {
@@ -2663,17 +2694,22 @@
           activeRunId = null;
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
-            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'},can_resume:evt.can_resume !== false});
+            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成',
+                   detail:evt.detail || ''},can_resume:evt.can_resume !== false});
           // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
           uncertainRunId = null; liveReconcile = null;
           const resumable = evt.can_resume !== false && ['paused','paused_budget','interrupted'].includes(evt.status);
           if (resumable && agentRunId) resumableRunId = agentRunId;
           setComposerMode(resumable && resumableRunId ? 'resume' : 'send');
+          // detail 是"哪个工具、哪个参数、哪种错误"的唯一载体：非法工具
+          // 调用没进工具执行阶段，没有步骤行可看，只能在这里展开给用户。
+          const errDetail = evt.detail
+            ? '<br><span style="color:var(--mut);font-size:12px;white-space:pre-wrap">' + esc(evt.detail) + '</span>' : '';
           if (resumable) {
             textEl.innerHTML = (esc(textBuf || '') + '<br><span style="color:var(--mut)">'
               + esc(evt.msg || '已暂停') + ' —— 点发送键继续这个任务</span>');
           } else {
-            textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
+            textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>' + errDetail;
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
             interrupted:'执行中断'})[evt.status] || '失败';
@@ -2695,6 +2731,7 @@
       const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId,
         conversation_id: activeConversationId, session_id: activeConversationId };
       if (resumeOf) chatPayload.resume_of = resumeOf;
+        if (interjectOf) chatPayload.interject_of = interjectOf;
         if (sendingImg) chatPayload.img = sendingImg;
         if (sendingAttachments.length) chatPayload.attachments = sendingAttachments;
         // 附件走普通 JSON 元数据请求；二进制已经在此前分块上传，
@@ -2718,6 +2755,15 @@
           // IPC 会在 HTTP 超时/断连时返回 {ok:false}。不能只等 SSE 事件，
           // 否则历史会一直是 running；主进程也可能因进程退出而无法推送事件。
           if (!streamDone && r && r.ok === false) {
+            // 插话请求没落地就要把目标还回去：pendingInterjectOf 在发送前
+            // 已清空，不恢复的话用户重发只会变成新消息，旧任务还挂着。
+            if (interjectOf && !agentRunId) {
+              pendingInterjectOf = interjectOf;
+              if (!ta.value) ta.value = text;
+              // 旧 run 可能还在跑：重新拉一次会话状态，让发送键回到
+              // 暂停/插话态，别让 UI 和一个还在执行的任务脱节。
+              setTimeout(() => { void loadMsgs(true); }, 300);
+            }
             onEvent({type:'error',class:'connection_lost',status:'interrupted',
               msg:r.err || '连接中断，结果不完整'});
           }
@@ -2754,6 +2800,12 @@
           refreshConversations().catch(() => {});
         }
       } catch (e) {
+        // 插话在半路失败同样要还目标：见 apiStream 分支的同款处理。
+        if (interjectOf && !agentRunId && !streamDone) {
+          pendingInterjectOf = interjectOf;
+          if (!ta.value) ta.value = text;
+          setTimeout(() => { void loadMsgs(true); }, 300);
+        }
         remember({content:textBuf,status:'interrupted',error:{message:'连接中断，结果不完整；未自动重发'}});
         streamDone = true;
         stopListening();
@@ -2768,6 +2820,13 @@
     function composerAction() {
       const ta = view.querySelector('#ta');
       if (composerMode === 'uncertain' && !ta.value.trim()) { if (liveReconcile) void liveReconcile(); else void loadMsgs(true); return; }
+      // 执行中输入了内容 = 插话：停掉后续调度，带着进度重新规划。
+      // 输入框空着才是"暂停"。两者都落在同一个按钮上，靠有没有文字区分。
+      if (composerMode === 'pause' && activeRunId && (ta.value.trim() || imgB64)) {
+        pendingInterjectOf = activeRunId;
+        send();
+        return;
+      }
       if (composerMode === 'pause' && activeRunId) { firePause(); return; }
       if (composerMode === 'resume' && resumableRunId &&
           !ta.value.trim() && !imgB64 && !attachment) { resumeTurn(resumableRunId); return; }

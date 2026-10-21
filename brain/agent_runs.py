@@ -102,8 +102,9 @@ def _json(value):
 def _error(reason, detail=None):
     out = dict(reason=reason, message=MESSAGES.get(reason, MESSAGES['internal_error']))
     # detail 只放非敏感的"哪一步不合法"，用来区分同名失败的不同原因。
+    # 一律过脱敏：异常消息里可能带回显的参数值，而参数有时就是一把钥匙。
     if detail:
-        out['detail'] = str(detail)[:200]
+        out['detail'] = _redact_error_text(detail, 200)
     return out
 
 
@@ -335,6 +336,74 @@ def listing(owner):
             if not (item := json.loads(row[0])).get('hidden')]
 
 
+FAILURE_BRIEF_MAX = 2
+FAILURE_BRIEF_WINDOW = 24 * 3600
+
+
+def _failure_step_line(step):
+    info = step.get('error') or {}
+    state = step.get('result_state') or step.get('status') or '?'
+    hint = info.get('hint') or info.get('category') or ''
+    return '  工具 %s：%s%s' % (step.get('tool') or '?', state,
+                               ('（%s）' % hint) if hint else '')
+
+
+def _failure_line(item):
+    """One run, rendered from ledger fields only — nothing inferred."""
+    err = item.get('error') or {}
+    reason = err.get('reason') or item.get('status') or 'failure'
+    head = '- 任务 %s：「%s」→ 结束状态 %s（%s）' % (
+        str(item.get('run_id') or '')[:24], str(item.get('intent') or '')[:80],
+        item.get('status'), reason)
+    lines = [head]
+    detail = str(err.get('detail') or '')[:200]
+    if detail:
+        lines.append('  错误原因：%s' % detail)
+    tools = [s for s in (item.get('steps') or []) if s.get('kind') == 'tool']
+    for step in tools[:3]:
+        lines.append(_failure_step_line(step))
+    if not tools:
+        lines.append('  没有工具被派发')
+    return '\n'.join(lines)
+
+
+def failure_brief(owner, exclude=None, now=None):
+    """Summarise this session's recent failures as facts the model may rely on.
+
+    🔴 The failure mode this exists for: the previous run died on a tool error,
+    the user asks "刚才为什么失败", and the model — with no record in context —
+    invents an explanation ("你拒绝了审批"). Everything here comes from the
+    ledger: run id, tool name, step state, error class, receipt text. When the
+    ledger has nothing, this returns '' and the prompt rules make the model say
+    it cannot tell instead of guessing.
+
+    Scope is the owner, which already carries identity + src + conversation, so
+    another session's failures can never leak in here.
+    """
+    now = now or time.time()
+    blocks = []
+    for item in listing(owner):
+        if exclude and item.get('run_id') == exclude:
+            continue
+        if item.get('status') not in ('failed', 'paused'):
+            continue
+        try:
+            age = now - float(item.get('created_at') or 0)
+        except (TypeError, ValueError):
+            continue
+        if age > FAILURE_BRIEF_WINDOW:
+            continue
+        blocks.append(_failure_line(item))
+        if len(blocks) >= FAILURE_BRIEF_MAX:
+            break
+    if not blocks:
+        return ''
+    return ('（系统提示：以下是本会话里**真实发生过**的失败记录，来自任务台账，不是推测。'
+            '用户问起失败原因时按这些事实回答；台账里没有的就说无法确定，'
+            '不要编造执行过程，也不要自行重试这些工具 —— 失败记录不是重试许可。）\n\n'
+            + '\n'.join(blocks))
+
+
 def active(owner, conversation_id=None):
     """Return the newest queued/running run for an owner/session.
 
@@ -454,7 +523,8 @@ def _budget(body, cfg):
     return out
 
 
-def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=None):
+def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=None,
+           replan=False):
     request = str(body.get('request_id') or '')
     text = body.get('intent', body.get('text'))
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', request) or not isinstance(text, str) or not text.strip() or len(text) > 16000 or body.get('kind', 'chat') != 'chat':
@@ -473,11 +543,27 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
         item = dict(run_id='run_' + uuid.uuid4().hex, request_id=request, intent=text,
             src=src, status='queued', stage='queued', steps=[], content='', result=None,
             error=None, event_cursor=0, created_at=time.time(), budget=budget,
-            resume_from=resume_from,
+            resume_from=resume_from, replan=bool(replan),
             conversation_id=str(body.get('conversation_id') or body.get('session_id') or ''),
             model_snapshot={'provider': cfg.get('provider') or cfg.get('model_mode') or 'cloud',
                 'model': cfg.get('model') or (cfg.get('ollama') or {}).get('model')})
         db.execute('INSERT INTO runs VALUES (?,?,?,?,?)', (item['run_id'], owner, request, fingerprint, _json(item)))
+        if resume_from:
+            # 插话/续跑的新 run 继承父 run **已完成写操作**的派发键。摘要会
+            # 告诉模型"这步做过了"，但它仍可能原样再调一次；有副作用的操作
+            # 不因为换了个 run 就重新执行。只搬非只读工具的 completed 步骤
+            # （读类调用的派发键带 call_id，且跨 run 缓存旧读取结果会返回
+            # 过期数据，故意不搬）。
+            parent = _get(db, resume_from, owner)
+            if parent:
+                for st in parent.get('steps') or []:
+                    if (st.get('kind') == 'tool' and st.get('status') == 'completed'
+                            and st.get('result_state') == 'returned'
+                            and st.get('tool') not in READ_ONLY_TOOLS
+                            and st.get('input_digest')):
+                        db.execute('INSERT OR IGNORE INTO calls VALUES (?,?,?,?,?)',
+                                   (item['run_id'], st['input_digest'], 'completed',
+                                    st.get('result') or '', st.get('step_id')))
         _event(db, item, 'run_created', dict(status='queued'))
         _save(db, item)
     if start:
@@ -515,6 +601,83 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', str(derived.get('request_id') or '')):
         derived['request_id'] = 'res_' + uuid.uuid4().hex[:16]
     return create(derived, cfg, owner, brain=brain, start=start, resume_from=rid)
+
+
+def interject(rid, owner, cfg, body=None, brain=None, start=True):
+    """用户在执行途中插话：停掉后续调度，带着当前进度重新规划。
+
+    与另外三种动作的差别（界面和台账都要能分开）：
+      cancel      —— 放弃这个任务，旧 run 变 cancelled；
+      pause       —— 停一下，稍后原样继续；
+      interject   —— 要求变了：旧 run 停成 paused/interjected，另起一个
+                     run 接着干，种子是父 run 的检查点简报；
+      新消息      —— 全新任务，与旧 run 无关。
+
+    🔴 不重放已经生效的操作。新 run 只拿到摘要（"做过什么、结果如何"），
+    不会把父 run 的工具结果当成待执行队列。在途工具照常收尾 —— `_tool`
+    看到 status != running 就不再派发新的，已发出的调用不会被腰斩。
+    """
+    body = body if isinstance(body, dict) else {}
+    note = str(body.get('intent') or body.get('text') or '').strip()
+    if not note:
+        raise ValueError('插话内容不能为空')
+    if len(note) > 16000:
+        raise ValueError('插话内容过长')
+    # 直接端点（/api/agent/runs/<rid>/interject）可能不带 request_id：用
+    # 父 run 推导一个确定值，客户端重试同一请求只会拿回同一个 child，
+    # 不会重复建任务。SSE 链路自带 request_id，优先用它。
+    want_request = str(body.get('request_id') or '')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', want_request):
+        want_request = 'intj_' + rid
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+        if not item:
+            raise ValueError('任务不存在')
+        if item['status'] in TERMINAL:
+            raise ValueError('任务已结束，插话请直接作为新消息发送')
+        parent_intent, parent_status = item['intent'], item['status']
+        conversation = str(item.get('conversation_id') or '')
+        src = item['src']
+        merged = ('原任务：%s\n\n用户在执行途中插话，要求改成：%s' % (parent_intent, note))
+        if item.get('interjected'):
+            # 同一个父任务只重规划一次：快速连续插话（或客户端重试）若各建
+            # 一个 child，就会出现多个"当前任务"，旧任务的终态事件还会互相
+            # 覆盖。**同一插话内容的重试幂等返回原 child**（响应丢了不该
+            # 换来一句报错）；内容不同说明是新的决策，请走续跑或新消息。
+            child = _get(db, item.get('interject_child') or '', owner)
+            if child is None:
+                row = db.execute('SELECT data FROM runs WHERE owner=? AND request_id=?',
+                                 (owner, want_request)).fetchone()
+                child = json.loads(row[0]) if row else None
+            if child and child.get('intent') == merged:
+                return child
+            raise ValueError('该任务已停过并重规划，请续跑新任务或直接发送新消息')
+        _event(db, item, 'interjected', dict(intent=note[:200], status=parent_status))
+        item['interjected'] = True
+        if parent_status != 'paused':
+            _finish(db, item, 'paused', 'interjected')
+        _save(db, item)
+    derived = dict(body, intent=merged, src=src, conversation_id=conversation,
+                   request_id=want_request)
+    try:
+        child = create(derived, cfg, owner, brain=brain, start=start,
+                       resume_from=rid, replan=True)
+    except Exception:
+        # 建 child 失败（预算/参数）时回滚标记，否则这个父任务既没重规划
+        # 也不再接受插话，用户被卡住。
+        with LOCK, _db() as db:
+            item = _get(db, rid, owner)
+            if item and item.get('interjected') and item['status'] != 'running':
+                item['interjected'] = False
+                _save(db, item)
+        raise
+    # 记下 child：同一插话请求重试时靠它幂等返回，不重复建任务。
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+        if item:
+            item['interject_child'] = child['run_id']
+            _save(db, item)
+    return child
 
 
 def _check_budget(db, item, started, kind):
@@ -601,23 +764,183 @@ def _validate(value, schema, depth=0):
             raise ValueError('numeric range')
 
 
+def _call_id(cid, index, used):
+    """Normalise one provider call id; never reject a legal call over its shape.
+
+    Ids must round-trip into the tool message, so only characters that would
+    break the transcript are refused. Gateways variously send no id, send
+    repeated ids for distinct calls, or use punctuation outside the OpenAI
+    sample alphabet; all of those are recoverable without widening tool rights.
+    """
+    text = cid if isinstance(cid, str) else ''
+    text = ''.join(ch for ch in text if ' ' <= ch <= '~' and ch not in '"\'').strip()
+    if len(text) > 128:
+        text = text[:128]
+    if not text:
+        text = 'call_%d_%s' % (index, hashlib.sha256(_json([index]).encode()).hexdigest()[:8])
+    base, n = text, 1
+    while text in used:
+        text = '%s_%d' % (base[:120], n)
+        n += 1
+    return text
+
+
 def _calls(calls, specs):
+    """Validate one batch; a bad call rejects the batch, never silently drops it.
+
+    The batch stays atomic on purpose: partially dispatching a confused reply
+    executes side effects the model did not clearly ask for. What changed is the
+    diagnosis — each rejection names the call, its tool and the exact defect, so
+    the retry prompt can tell the model what to fix instead of echoing a JSON
+    parser error it cannot interpret.
+    """
     advertised = {s['function']['name']: s['function'].get('parameters', {}) for s in specs}
     out, ids = [], set()
-    for call in calls:
-        cid, fn = call.get('id'), call.get('function') or {}
+    for index, call in enumerate(calls):
+        label = '第 %d 个调用' % (index + 1)
+        if not isinstance(call, dict):
+            raise ValueError('%s不是对象' % label)
+        fn = call.get('function') or {}
+        if not isinstance(fn, dict):
+            raise ValueError('%s缺少 function 对象' % label)
         name = fn.get('name')
-        if call.get('type', 'function') != 'function' or not isinstance(cid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', cid) or cid in ids or name not in advertised:
-            raise ValueError('invalid tool')
+        if call.get('type', 'function') not in ('function', None):
+            raise ValueError('%s的 type 不是 function' % label)
+        if not isinstance(name, str) or name not in advertised:
+            raise ValueError('%s的工具名 %r 不在可用工具清单里（可用：%s）'
+                             % (label, name if isinstance(name, str) else type(name).__name__,
+                                '、'.join(sorted(advertised)) or '无'))
         args = fn.get('arguments', '{}')
-        args = json.loads(args) if isinstance(args, str) else args
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError as exc:
+                raise ValueError('%s（工具 %s）的 arguments 不是完整 JSON（%s），实际收到 %r'
+                                 % (label, name, exc, args[:160]))
         if not isinstance(args, dict):
-            raise ValueError('arguments must be object')
-        _validate(args, advertised[name])
+            raise ValueError('%s（工具 %s）的 arguments 必须是 JSON 对象，实际是 %s'
+                             % (label, name, type(args).__name__))
+        try:
+            _validate(args, advertised[name])
+        except ValueError as exc:
+            raise ValueError('%s（工具 %s）的参数不符合 schema（%s）：%s'
+                             % (label, name, exc, _json(args)[:200]))
+        cid = _call_id(call.get('id'), index, ids)
         signature = hashlib.sha256(_json([name, args]).encode()).hexdigest()
         out.append((cid, name, args, signature))
         ids.add(cid)
     return out
+
+
+class _ToolError(dict):
+    """Structured tool failure surfaced to the UI and to the next turn."""
+
+
+# Anything that looks like a credential rather than prose. Tool errors routinely
+# echo the offending argument, and the offending argument is sometimes a key.
+# A name-shaped secret (UPPER_CASE_WITH_UNDERSCORES) is hidden too: that is how
+# environment-variable secrets reach an exception message in practice.
+_SECRET_SHAPES = (
+    re.compile(r'\b(?:sk|rk|pk|gh[pousr]|xox[baprs]|AKIA|LTAI)[-_A-Za-z0-9]{8,}'),
+    re.compile(r'\bBearer\s+[A-Za-z0-9._~+/=-]{8,}', re.I),
+    re.compile(r'\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}\b'),
+    re.compile(r'\b[0-9a-fA-F]{32,}\b'),
+)
+
+
+def _redact_error_text(text, limit=400):
+    """Bound and scrub one free-form diagnostic string."""
+    text = _safe_event_value(text, limit * 3)
+    for shape in _SECRET_SHAPES:
+        text = shape.sub('[已隐藏]', text)
+    return text[:limit] + ('…[已截断]' if len(text) > limit else '')
+
+
+# Receipt reason -> (category, hint, was_dispatched).
+# `was_dispatched` cannot be inferred from the receipt state: both a policy
+# refusal and a user refusal report state='denied', but only the second one
+# actually reached the client and therefore really happened.
+# The category is what the UI colours and what the next-turn summary counts;
+# the hint must tell the user what to do, never restate the raw exception.
+_TOOL_ERROR_MAP = {
+    'client_offline': ('client_offline', '电脑上的 Vigil 客户端没连上，这个工具从未发出', False),
+    'client_busy': ('client_busy', '客户端正在执行上一件操作，这次没排上', False),
+    'permission_denied': ('permission_denied', '安全策略拦下了这个操作，客户端没有收到它', False),
+    'approval_denied': ('approval_denied', '用户在客户端上拒绝了这次操作', True),
+    'tool_failed': ('tool_failed', '工具在本机执行时报错', True),
+    'timeout_after_dispatch': ('unknown', '客户端已认领但没回结果，无法确认是否已生效', True),
+    'cancelled_in_flight': ('unknown', '执行期间被停止，无法确认是否已生效', True),
+    'cancelled': ('cancelled', '任务已停止，工具没有执行', False),
+    'unknown_tool': ('invalid_args', '调用了不存在的工具', False),
+    'empty_output': ('empty_output', '工具执行完成但没有任何输出', True),
+}
+
+
+def _tool_error(reason, receipts, result, exc=None):
+    """Build one structured failure record for a tool step.
+
+    Six categories are kept distinct on purpose: "never dispatched", "refused by
+    policy", "refused by the user", "ran and failed" and "ran, outcome unknown"
+    need different follow-up actions, and an outcome that is unknown must never
+    be presented as success.
+    """
+    category, hint, detail = 'unknown', '执行结果未知，请勿当作已完成', ''
+    dispatched = False
+    for receipt in receipts:
+        item = _TOOL_ERROR_MAP.get(receipt.get('reason') or '')
+        if item:
+            category, hint, dispatched = item
+            detail = receipt.get('detail') or ''
+            break
+    if exc is not None:
+        # The adapter raised before any receipt could describe the failure.
+        category = 'invalid_args' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'tool_failed'
+        hint = ('工具参数不合法，已拦下未执行' if category == 'invalid_args'
+                else '工具适配器执行时抛出异常')
+        detail = '%s: %s' % (type(exc).__name__, exc)
+        dispatched = any(r.get('state') in ('unknown', 'returned', 'failed') for r in receipts)
+    if not detail:
+        detail = (result or '')[:400] or {
+            'unknown': '没有拿到可用的执行凭据',
+            'empty_output': '工具返回了空字符串',
+        }.get(category, '没有更多诊断信息')
+    return _ToolError(
+        category=category,
+        reason=reason,
+        detail=_redact_error_text(detail),
+        hint=hint,
+        dispatched=bool(dispatched),
+        receipts=[dict(state=r.get('state'), reason=r.get('reason'),
+                       detail=_redact_error_text(r.get('detail') or '', 200))
+                  for r in receipts][:8])
+
+
+def _execution_state(reason, receipts, raised=False):
+    """执行状态只能凭**回执**推导，不能凭 reason 标签猜。
+
+    `tool_failed` 同一个标签下至少有四种真相：客户端没认领（从未发出）、
+    被策略拦下、他点了拒绝、命令跑了但退出码非零。把后两种记成
+    `not_dispatched`，续跑/重试时就会把已经生效的写操作再执行一遍。
+    适配器抛异常时无法证明副作用是否落地，只能给 `unknown`。
+    """
+    if raised:
+        return 'unknown'
+    if not reason:
+        return 'returned'
+    if reason == 'empty_output':
+        return 'returned'      # 执行了、也拿到了回执，只是没有输出
+    if reason == 'tool_unknown':
+        return 'unknown'
+    states = [r.get('state') for r in receipts if r.get('state')]
+    if 'unknown' in states:
+        return 'unknown'       # 认领过但结果不明
+    if 'failed' in states:
+        return 'failed'        # 确实执行了，且失败了
+    if 'denied' in states:
+        return 'denied'        # 明确被拒绝（策略或用户）
+    if 'returned' in states:
+        return 'failed'        # 有回执但仍被判失败
+    return 'not_dispatched'    # 没有任何派发证据
 
 
 def _tool(rid, owner, started, call, ctx):
@@ -659,6 +982,8 @@ def _tool(rid, owner, started, call, ctx):
     receipts = []
     clipped = False
     raw_chars = 0
+    error = None
+    raised = False
     try:
         import localtools
         with localtools.capture_receipts(stopped=lambda: snapshot(rid, owner)['status'] != 'running') as receipts:
@@ -667,30 +992,55 @@ def _tool(rid, owner, started, call, ctx):
             reason = 'tool_unknown'
         elif any(r['state'] != 'returned' for r in receipts):
             reason = 'tool_failed'
+        elif any(r.get('reason') == 'empty_output' for r in receipts):
+            # 收据已经说明"执行了、只是没有输出"—— 这比笼统的
+            # tool_unknown 更具体，别再把唯一可行动的诊断抹掉。
+            reason = 'empty_output'
         if not isinstance(result, str) or not result.strip():
-            reason = 'tool_unknown'
+            # A receipt that already explains the failure wins over the generic
+            # "no output" verdict: an offline client returns no text precisely
+            # because nothing ran, and overwriting that with `tool_unknown`
+            # erases the only actionable part of the diagnosis.
+            if not reason:
+                reason = 'tool_unknown'
         else:
             raw_chars = len(result)
             result, clipped = _clip(result, MAX_TEXT)
-    except Exception:
+        if reason:
+            error = _tool_error(reason, receipts, result)
+    except Exception as exc:
         reason = 'tool_unknown'
+        raised = True
+        # The adapter raised instead of returning text. Swallowing this into
+        # "unknown" is what made every distinct failure look identical; keep the
+        # exception type and message so the UI can say what actually broke.
+        error = _tool_error(reason, receipts, None, exc)
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         step = item['steps'][sid-1]
         step.update(status='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
                     reason=reason, finished_at=time.time(),
-                    result_state='unknown' if reason == 'tool_unknown' else 'not_dispatched' if reason == 'tool_failed' else 'returned',
+                    result_state=_execution_state(reason, receipts, raised),
                     result='' if reason else result[:MAX_TEXT],
                     result_chars=raw_chars, truncated=bool(clipped),
-                    receipts=receipts)
+                    # 收据进台账前统一脱敏：命令输出里带回显的密钥是现实场景
+                    receipts=[dict(state=r.get('state'), reason=r.get('reason'),
+                                   detail=_redact_error_text(r.get('detail') or '', 200),
+                                   call_id=r.get('call_id'))
+                              for r in receipts][:8])
+        if error:
+            step['error'] = error
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
         _event(db, item, 'tool_finished', dict(step_id=sid, call_id=cid, tool=name,
             result_state=step['result_state'], input=step.get('input'),
             output=_safe_event_value(step.get('result') or ''),
-            error=_safe_event_value(step.get('reason') or '') if reason else ''))
-        if reason:
+            error=_safe_event_value(step.get('error') or '') if reason else ''))
+        # 迟到的结果只能落 step，不能改 run 终态：插话/暂停/取消之后旧 run
+        # 已是 stopped，在途工具的回执晚到 —— 把它翻成 failed 会破坏"暂停
+        # 可续"的语义，前端也会看到旧任务失败而非暂停。
+        if reason and item['status'] == 'running':
             _finish(db, item, 'failed', reason)
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
     return (None if reason else result), False
@@ -710,12 +1060,23 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 parent = _get(db, item['resume_from'], owner)
                 brief = (parent.get('checkpoint') or _steps_digest(parent)) if parent else ''
                 if brief.strip():
+                    if item.get('replan'):
+                        # 插话重规划：要求变了，已完成的部分保留，不重放副作用。
+                        instruction = (
+                            '（系统提示：用户在上一轮执行途中插话，要求已经改变。'
+                            '以下是此前的进度摘要，原对话已归档、不在当前上下文中。'
+                            '已经完成的步骤和已经生效的文件改动都保留，不要去重做；'
+                            '写、删、执行这类有副作用的操作**不要自动重放** —— '
+                            '需要再做一次就先说清楚为什么。'
+                            '请按新的要求重新规划后续步骤，原任务里不再需要的部分直接跳过。）')
+                    else:
+                        instruction = (
+                            '（系统提示：这是一次断点续跑。以下是此前执行的进度摘要，'
+                            '原对话已归档、不在当前上下文中；需要细节请重新调用工具获取。'
+                            '请基于摘要继续完成任务。）')
                     seed = [dict(role='system', content=DEFAULT_SYSTEM),
                             dict(role='user', content=item['intent']),
-                            dict(role='user', content=(
-                                '（系统提示：这是一次断点续跑。以下是此前执行的进度摘要，'
-                                '原对话已归档、不在当前上下文中；需要细节请重新调用工具获取。'
-                                '请基于摘要继续完成任务。）\n\n' + brief))]
+                            dict(role='user', content=instruction + '\n\n' + brief)]
             item['status'] = 'running'
             _save(db, item)
         import localtools
@@ -987,13 +1348,32 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     # 而不是把整项任务判死。重试有上限，且照样吃预算。
                     raw = ''
                     try:
-                        raw = str((completion['tool_calls'][0].get('function') or {}).get('arguments'))[:120]
+                        raw = str((completion['tool_calls'][0].get('function') or {}).get('arguments'))[:400]
                     except Exception:
                         pass
                     with LOCK, _db() as db:
                         item = _get(db, rid, owner)
                         attempts = int(item.get('invalid_attempts') or 0) + 1
                         item['invalid_attempts'] = attempts
+                        # 留着模型实际发出来的残包：这是判断"供应商截断"还是
+                        # "模型真写错"的唯一证据，也是界面展示失败原因的原料。
+                        # detail/预览一律脱敏 —— 参数值里可能带钥匙。
+                        item['last_invalid'] = dict(
+                            step_id=sid, attempts=attempts, reason='invalid_tool',
+                            detail=_redact_error_text(str(exc), 300),
+                            arguments_preview=_redact_error_text(raw, 400),
+                            tool=_safe_event_value(
+                                (completion['tool_calls'][0].get('function') or {}).get('name'), 80),
+                            at=time.time())
+                        model_step = item['steps'][sid-1]
+                        model_step['error'] = dict(
+                            category='invalid_tool',
+                            reason='invalid_tool',
+                            detail=_redact_error_text(str(exc), 300),
+                            hint='模型返回的工具调用不合法，未派发任何工具，已要求其重发')
+                        model_step['invalid_calls'] = [
+                            _redact_error_text(_json(c.get('function') or {}), 300)
+                            for c in (completion['tool_calls'] or [])][:4]
                         _save(db, item)
                         give_up = attempts > INVALID_TOOL_RETRIES
                     if give_up:
@@ -1003,18 +1383,27 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                                     str(exc))
                         return
                     msgs.append(dict(role='user', content=(
-                        '（系统提示：你上一次的工具调用无法解析（%s）。'
-                        '请重新发起一次调用：工具名必须来自提供的清单，'
-                        '参数必须是合法 JSON 对象，不要用 XML 或自然语言代替。'
-                        '如果这个工具确实用不了，就换一个工具或直接说明做不到。）' % str(exc)[:120])))
+                        '（系统提示：你上一次的工具调用无法解析、未通过校验，一个工具都没有执行 —— '
+                        '%s。请重新发起调用：工具名必须来自提供的清单，arguments 必须是'
+                        '**完整**的合法 JSON 对象（别中途截断），不要用 XML 或自然语言代替。'
+                        '如果这个工具确实用不了，就换一个工具或直接说明做不到。）'
+                        % str(exc)[:300])))
                     continue
             if recovered_msg is not None:
                 msgs.append(recovered_msg)
             elif not xml_mode:
                 from model_providers.execution import assistant_history_message
+                # 回写模型上下文的 tool_calls 必须用**清洗后的最终标识**。
+                # _calls() 可能补过缺失的 id、给同批重复 id 加过后缀、截断过
+                # 超长 id；拿原始 completion['tool_calls'] 回写的话，下一步
+                # tool 消息的 tool_call_id 就与 assistant.tool_calls[].id 对不上，
+                # 严格网关（OpenAI 兼容）会直接拒掉整个请求 —— 多轮工具链断在这。
+                replay_calls = [dict(id=cid, type='function',
+                                     function=dict(name=name, arguments=_json(args)))
+                                for cid, name, args, _sig in calls]
                 msgs.append(assistant_history_message(provider, completion,
                     content_override=completion.get('content') or None,
-                    tool_calls=completion['tool_calls']))
+                    tool_calls=replay_calls))
             # Some reasoning providers require the previous reasoning in the live
             # tool transcript. It is never copied to the ledger or model history.
             if completion.get('reasoning') and msgs and msgs[-1].get('role') == 'assistant':
