@@ -5674,6 +5674,9 @@
           <button class="btn video-settings-link" id="videoSettings">软件设置</button>
           <span class="video-status" id="videoStatus" role="status">在“软件设置”中添加本机 Windows 软件。</span>
         </div>
+        <section class="video-ai-workspace" aria-label="AI 剪视频工作区预留区域">
+          <div><span class="video-ai-eyebrow">后续接入</span><h2>AI 剪视频工作区</h2><p>此区域预留给后续 AI 视频剪辑功能。</p></div>
+        </section>
       </section>`;
 
     const $ = id => ctx.view.querySelector('#' + id);

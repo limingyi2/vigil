@@ -28,8 +28,8 @@ Choose an EXE using the PoC picker. The PoC writes newline-delimited JSON events
 ## Preview artifact
 
 - Build: Windows x64 portable preview, Electron 28.3.3, using `electron-builder.p15.yml`.
-- Artifact: `Vigil P15 Preview 1.1.8-p9.3.20261021.1.exe` (70,092,537 bytes).
-- SHA-256: `04CF9C2CA19619A02418CCEBD8314B41E4738FBB39C6E517EF10EE15639A14DD`.
+- Artifact: `Vigil P15 Preview 1.1.8-p9.3.20261021.1.exe` (70,092,597 bytes; updated workbench layout with the hosted window in the upper area and a reserved lower AI workspace).
+- SHA-256: `431EEFD81EBD31E5C2769643272D168EE5EBBD8E8178DBCA1D0E5AA7B090355A`.
 - The preview packages `resources/native-window-host/native-window-host.exe`. It does not package the Vigil Brain sidecar because this checkout has no Brain release build input; this is a P15 client preview, not a complete Vigil release.
 
 ## Limits observed
