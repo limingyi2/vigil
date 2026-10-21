@@ -1697,7 +1697,7 @@ def start_remote_api(brain):
                 current = agent_runs.snapshot(rid, owner)
                 if current['status'] in agent_runs.STOPPED:
                     if current['status'] == 'succeeded':
-                        yield {'type': 'done', 'text': current['content'], 'run_id': rid,
+                        yield {'type': 'done', 'text': current['content'], 'result': current.get('result'), 'run_id': rid,
                                'seq': current['event_cursor']}
                     else:
                         err = current['error'] or {}

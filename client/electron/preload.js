@@ -24,7 +24,7 @@ function bindStream() {
 function dispatchStream(_e, evt) {
   for (const fn of Array.from(_streamHandlers)) {
     if (!_streamHandlers.has(fn)) continue;
-    try { fn(evt); } catch (_) { /* One subscriber cannot break other streams. */ }
+    try { fn(evt); } catch (error) { console.error('[stream subscriber failed]', error); }
   }
 }
 function subscribeStream(fn) {

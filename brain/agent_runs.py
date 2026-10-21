@@ -135,6 +135,12 @@ def _safe_event_value(value, limit=12000):
     if isinstance(value, list):
         return [_safe_event_value(v, limit) for v in value[:128]]
     text = str(value or '')
+    text = re.sub(r'((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)(?:Bearer\s+)?[^\s,;"\']+',
+                  r'\1[已隐藏]', text, flags=re.I)
+    text = re.sub(r'\bBearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [已隐藏]', text, flags=re.I)
+    for key, secret in os.environ.items():
+        if _SECRET_FIELD.search(key) and len(secret) >= 6:
+            text = text.replace(secret, '[已隐藏]')
     return text[:limit] + ('…[已截断]' if len(text) > limit else '')
 
 
@@ -382,7 +388,10 @@ def hide(owner):
 
 def display_records(owner):
     return [dict(request_id=i['request_id'], run_id=i['run_id'], input=i['intent'],
-        content=i['content'], status=i['status'], error=i['error'], created_at=i['created_at'])
+        content=i['content'], result=i.get('result'), steps=[dict(s,
+            input=_safe_event_value(s.get('input')),
+            result=_safe_event_value(s.get('result'))) if s['kind']=='tool' else s for s in i['steps']],
+        status=i['status'], error=i['error'], created_at=i['created_at'])
         for i in listing(owner)]
 
 
@@ -946,7 +955,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                         with LOCK, _db() as db:
                             item = _get(db, rid, owner)
                             _finish(db, item, 'failed', 'invalid_tool',
-                                    '%s | arguments=%s' % (exc, raw))
+                                    str(exc))
                         return
                     msgs.append(dict(role='user', content=(
                         '（系统提示：你上一次的工具调用无法解析（%s）。'

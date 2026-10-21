@@ -2,11 +2,13 @@
 const assert=require('assert/strict'),fs=require('fs'),path=require('path');
 let modelGate;
 exports.respond=async(req,res,call,wait)=>{
+  if(process.env.VIGIL_P12_REAL==='1')return require('./test-p12-real').respond(req,res,call);
   const task=call.messages.findLast(m=>m.role==='user' && String(m.content).includes('P12_'))?.content || '';
   const send=delta=>res.write('data: '+JSON.stringify({choices:[{delta}]})+'\n\n');
   res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache',connection:'close'});
   const finished=call.messages.some(m=>m.role==='tool' || String(m.content).startsWith('工具已执行'));
   const resumed=call.messages.some(m=>String(m.content).includes('断点续跑'));
+  send({reasoning_content:'检查工具返回值，不虚构执行结果。'});
   if(task.includes('P12_PAUSE') && !resumed) {
     if(!finished) send({tool_calls:[{index:0,id:'pause-tool',type:'function',function:{name:'smoke_ping',arguments:'{"mode":"ok"}'}}]});
     else {send({content:'正在检查文件。'});await new Promise(resolve=>{modelGate=resolve;});if(res.destroyed)return;}
@@ -17,7 +19,7 @@ exports.respond=async(req,res,call,wait)=>{
       send({content:fragment});await wait(35);
     }
   } else if(task.includes('P12_NATIVE')) {
-    send({tool_calls:[{index:0,id:'native-'+Date.now(),type:'function',function:{name:'smoke_ping',arguments:'{"mode":"ok"}'}}]});
+    send({tool_calls:[{index:0,id:'native-'+Date.now(),type:'function',function:{name:'smoke_ping',arguments:'{"mode":"crash"}'}}]});
   } else if(task.includes('P12_PAUSE') || task.includes('P12_RESTART')) {
     send({content:'正在检查文件。'});
     await new Promise(resolve=>{modelGate=resolve;});
@@ -30,13 +32,34 @@ exports.respond=async(req,res,call,wait)=>{
 exports.release=()=>{if(modelGate){modelGate();modelGate=null;}};
 
 exports.run=async h=>{
+  if(process.env.VIGIL_P12_REAL==='1')return require('./test-p12-real').run(h);
   const {base,port,pluginTrace}=await h.startBrain(h.modelBase,null,{agentEnabled:true});
+  const wsReply=await fetch(base+'/api/workspaces',{method:'POST',headers:{Authorization:'Bearer '+h.token,'Content-Type':'application/json'},
+    body:JSON.stringify({src:'pc',path:h.repo,name:'P12 验收工作区'})});
+  assert.ok(wsReply.ok);
   await h.startElectron(base);
   await h.waitFor('window.API?.state.conn.ok','Brain connection');
-  await h.wait(200);
+  await h.waitFor('document.querySelector(".session-workspaces .session-group-title")','workspace secondary heading');
+  await h.evaluate('document.querySelector("[data-ws-new]").click();true');
+  await h.waitFor('API.state.chatConversationId','workspace conversation');
   const results=[];
   for(const task of ['P12_XML','P12_NATIVE']){
     await h.submit(task);
+    if(task==='P12_NATIVE'){
+      await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="tool"&&e.state==="started")','real in-flight tool');
+      if(process.env.VIGIL_P12_ROUND==='3'){
+        await h.screenshot('running-light');
+        const cid=await h.evaluate('API.state.chatConversationId');
+        await h.evaluate('window.savedComposer=document.querySelector("#ta");document.querySelector("#gnav [data-page=market]").click();true');
+        await h.waitFor('document.querySelector("#pmGrid")','primary market');
+        await h.screenshot('market-light');
+        await h.evaluate('document.querySelector("#gnav [data-page=chat]").click();true');
+        assert.equal(await h.evaluate('document.querySelector("#ta")===window.savedComposer'),true);
+        assert.equal(await h.evaluate('API.state.chatConversationId'),cid);
+        assert.equal(await h.evaluate('document.querySelector("#gnav [data-page=market] .i").getBoundingClientRect().width'),20);
+      }
+      fs.writeFileSync(path.join(h.root,'release-blocked-plugin'),'release');
+    }
     await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="done")','stream completion');
     const events=await h.evaluate('window.__vigilE2EEvents');
     assert.equal(events.some(e=>['text','done','run_snapshot','error'].includes(e.type)&&/<(?:tool_call|function|parameter)/i.test(e.text||'')),false);
@@ -45,6 +68,22 @@ exports.run=async h=>{
     assert.equal(await h.evaluate('document.querySelector("#sendBtn").getAttribute("aria-busy")'),'false');
     assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("已完成任务")'));
     results.push({task,events});
+    if(task==='P12_NATIVE' && process.env.VIGIL_P12_ROUND==='3'){
+      assert.equal(await h.evaluate('document.querySelectorAll("[data-step-key]").length'),2,'one evidence row per tool, never duplicates on snapshots');
+      await h.screenshot('completed-light');
+      await h.evaluate('document.documentElement.dataset.theme="dark";true');
+      await h.screenshot('completed-dark');
+      await h.evaluate('document.querySelector("#modelBtn").click();true');
+      await h.waitFor('document.querySelector("#modelPop")?.hidden===false','model picker');
+      assert.equal(await h.evaluate('Boolean(document.querySelector("#mqContextNote"))'),false);
+      assert.equal(await h.evaluate('[...document.querySelectorAll(".mqrow .lb")].every(n=>n.children.length===1)'),true);
+      await h.screenshot('model-picker-dark');
+      await h.evaluate('document.documentElement.dataset.theme="light";true');
+      await h.screenshot('model-picker-light');
+      await h.evaluate('document.querySelector("#mqClose").click();document.querySelector("#clipBtn").click();true');
+      await h.screenshot('add-model-menu-light');
+      await h.evaluate('document.querySelector("#plusClose").click();true');
+    }
     await h.evaluate('window.__vigilE2EEvents=[];true');
     console.log('PASS real Electron + Brain '+task+' streaming, tool execution and final answer');
   }

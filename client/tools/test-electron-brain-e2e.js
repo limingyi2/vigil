@@ -267,6 +267,17 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
   };
   if (process.env.VIGIL_E2E_SCENARIO === 'p12') Object.assign(brainConfig,
     {provider:'xiaomi',model:'mimo-fixture',agent_execution:{enabled:true,checkpoint_every:0}});
+  if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
+    const marketRepo=path.join(home,'market');fs.mkdirSync(marketRepo,{recursive:true});
+    fs.copyFileSync(path.join(repo,'market.json'),path.join(marketRepo,'market.json'));
+    brainConfig.market_repo=marketRepo;
+    fs.copyFileSync(path.join(brainDir,'plugins/plugin_market.py'),path.join(home,'plugins/plugin_market.py'));
+    if(process.env.VIGIL_P12_REAL==='1'){
+      const actual=JSON.parse(fs.readFileSync(path.join(process.env.APPDATA,'vigil-client/brain/config/config.json'),'utf8'));
+      Object.assign(brainConfig,{model:actual.model,provider:actual.provider || 'custom',
+        agent_execution:{enabled:true,checkpoint_every:0,max_steps:8,max_requests:4,max_tool_calls:4,max_seconds:120,request_timeout:60,reasoning_strategy:'fast'}});
+    }
+  }
   fs.writeFileSync(path.join(home, 'config', 'config.json'), JSON.stringify(brainConfig), 'utf8');
   const pluginDir = path.join(home, 'plugins', 'vigil_smoke');
   fs.mkdirSync(pluginDir, { recursive: true });
@@ -299,6 +310,19 @@ function writeFixtures(modelBase, brainPort, agentEnabled = false) {
     'TOOL_SPECS = {"smoke_ping": {"desc":"E2E plugin call", "params":[("mode","test mode",True,"string")], "arg_param":"mode"}}',
     '',
   ].join('\n'), 'utf8');
+  if(process.env.VIGIL_P12_REAL==='1')fs.appendFileSync(path.join(pluginDir,'__init__.py'),[
+    'ROOT=Path('+JSON.stringify(repo)+').resolve()',
+    'def p12_file_find(pattern):',
+    '    return json.dumps([str(p.relative_to(ROOT)) for p in ROOT.glob(pattern) if p.is_file()][:8])',
+    'def p12_file_read(path):',
+    '    target=(ROOT/path).resolve()',
+    '    if not target.is_relative_to(ROOT) or not target.is_file(): return "拒绝访问"',
+    '    with open(os.environ["VIGIL_E2E_PLUGIN_TRACE"],"a",encoding="utf-8") as f: f.write(json.dumps({"tool":"p12_file_read","path":path})+"\\n")',
+    '    return target.read_text(encoding="utf-8")[:4096]',
+    'TOOLS.update(p12_file_find=p12_file_find,p12_file_read=p12_file_read)',
+    'TOOL_SPECS.update(p12_file_find={"desc":"Find actual project files by a root-relative glob","params":[("pattern","Use README*",True,"string")],"arg_param":"pattern"},p12_file_read={"desc":"Read a project file, bounded to 4096 characters","params":[("path","Relative project file path",True,"string")],"arg_param":"path"})',
+    ''
+  ].join('\n'),'utf8');
   fs.writeFileSync(path.join(pluginDir, 'frontend.js'), [
     'window.VigilPlugin.registerPage({',
     '  id: "e2e-plugin-page", name: "E2E Plugin", icon: "plug",',
@@ -424,7 +448,7 @@ async function evaluate(expression) {
 }
 async function screenshot(name) {
   const result = await cdpSend('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
-  const dir = path.join(repo, 'reports', 'p6.1-evidence');
+  const dir = path.join(repo, 'reports', process.env.VIGIL_E2E_SCENARIO==='p12'?'p12-evidence':'p6.1-evidence');
   fs.mkdirSync(dir, {recursive:true});
   fs.writeFileSync(path.join(dir, name + '.png'), Buffer.from(result.data, 'base64'));
 }

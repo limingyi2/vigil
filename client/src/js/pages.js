@@ -94,10 +94,11 @@
     } catch (_) { toast('当前记录未能保存到本机，请先复制内容'); }
   }
   function streamBodyHtml(thinkId, textId) {
-    return '<div class="think-block streaming"><button class="think-toggle" type="button">' +
+    return '<div class="agent-progress"><div class="agent-elapsed" role="status"></div><div class="live-steps" id="liveSteps" hidden></div></div>' +
+      '<div class="think-block streaming" hidden><button class="think-toggle" type="button">' +
       icon('brain', 'sm') + '<span class="think-label">思考中</span> <span class="think-caret">▴</span></button>' +
       '<div class="think-content" id="' + thinkId + '"><div class="think-text" id="' + thinkId + '_inner"></div>' +
-      '<div class="live-steps" id="liveSteps" hidden></div></div></div>' +
+      '</div></div>' +
       '<div class="txt md streaming-text" id="' + textId + '" style="min-height:24px"></div>' +
       '<div class="foot"><span class="stream-status">正在生成…</span></div>';
   }
@@ -498,9 +499,7 @@
       const note = view.querySelector('#mqContextNote');
       if (value) value.textContent = policy ? policy.label : '读取中…';
       if (contextToggle) contextToggle.disabled = !policy || switching;
-      if (note) note.textContent = !policy ? '当前无法读取上下文窗口设置' : policy.limited
-        ? '已按模型容量调整为 ' + policy.label + '。'
-        : 'Vigil 按此目标管理当前请求；服务商可能另有限制。';
+      if (note) note.textContent = '';
       contextMenu.querySelectorAll('[data-context-tier]').forEach((button) => {
         const checked = !!policy && Number(button.dataset.contextTier) === policy.selected;
         button.setAttribute('aria-checked', String(checked));
@@ -553,7 +552,7 @@
         || (nameOf(m) + ' ' + provOf(m) + ' ' + m.model).toLowerCase().indexOf(q) >= 0);
       if (!rows.length) {
         listEl.innerHTML = '<div class="muted" style="padding:12px 0;font-size:12px">'
-          + (all.length ? '没有匹配的模型' : '还没有保存过模型：在设置里选一次，这里就有了') + '</div>';
+          + (all.length ? '没有匹配的模型' : '暂无模型') + '</div>';
         return;
       }
       listEl.innerHTML = rows.map((m) => {
@@ -566,9 +565,8 @@
           '" aria-pressed="' + String(!!m.active) + '">' +
           '<span class="mq-check" aria-hidden="true">' + (m.active ? icon('check', 'sm') : '') + '</span>' +
           '<span class="lb">' +
-          '<b>' + esc(nameOf(m)) + (m.unsaved ? ' <span class="muted">(未保存)</span>' : '') + '</b>' +
-          '<span class="muted">' + esc(provOf(m)) + ' · ' + esc(m.model) + '</span>' +
-          '</span>' + status +
+          '<b>' + esc(nameOf(m)) + '</b>' +
+          '</span>' +
           '</button>' + (m.unsaved ? '' : '<button class="mq-x" type="button" data-x="' + i +
             '" title="从清单里移除（不影响当前设置）" aria-label="从清单里移除 ' + esc(nameOf(m)) + '">×</button>') + '</div>';
       }).join('');
@@ -1207,7 +1205,7 @@
       '              <span>上下文窗口</span><b id="mqContextValue">读取中…</b><span aria-hidden="true">›</span></button>' +
       '            <div id="mqContextMenu" class="mq-context-menu" role="menu" aria-label="云端上下文窗口" hidden>' +
                      [96000,128000,300000].map((tier) => '<button type="button" role="menuitemradio" aria-checked="false" data-context-tier="' + tier + '"><span class="mq-check" aria-hidden="true"></span>' + (tier / 1000) + 'K</button>').join('') +
-      '            </div><p id="mqContextNote" class="mq-detail-note" role="status"></p>' +
+      '            </div>' +
       '          </div>' +
       '        </div>' +
       '        <div class="lpadd mqfoot">' +
@@ -1613,8 +1611,8 @@
       const installed = local.installed || [];
       const modeRow = (mode, name, model, note) =>
         '<button class="plus-row' + (mode === cur ? ' on' : '') + '" type="button" data-mode="' + mode + '">' +
-        '<span class="plus-lb"><b>' + esc(name) + '</b><span>' + esc(model || '未配置') + '</span></span>' +
-        '<span class="plus-note">' + esc(note) + '</span>' +
+        '<span class="plus-lb"><b>' + esc(name) + '</b></span>' +
+        (mode === 'local' && local.reachable === false ? '<span class="plus-note">未启动</span>' : '') +
         (mode === cur ? '<span class="plus-check">' + icon('check', 'sm') + '</span>' : '') +
         '</button>';
       const localNote = local.reachable === false
@@ -1628,7 +1626,7 @@
           '<div class="plus-row muted-row">' +
           '<span class="plus-lb"><b>默认模型</b><span>' + esc((st.cloud || {}).model || '由 Brain 配置决定') + '</span></span>' +
           '<span class="plus-note">Brain 版本较旧</span></div>'
-        : '<div class="plus-sec">模型<span class="plus-hint">这一轮由哪个模型回答</span></div>' +
+        : '<div class="plus-sec">模型</div>' +
           modeRow('cloud', '默认模型', (st.cloud || {}).model,
             (st.cloud || {}).ready ? '随时可用' : '缺密钥或模型') +
           modeRow('local', '本地模型', local.model, localNote) +
@@ -1646,11 +1644,11 @@
         '<div class="plus-sec">添加</div>' +
         '<button class="plus-row" type="button" data-plus="file">' +
         '<span class="plus-rail plus-ic">' + icon('clip', 'sm') + '</span>' +
-        '<span class="plus-lb"><b>图片、视频或文件</b><span>单个不超过 256MB</span></span>' +
+        '<span class="plus-lb"><b>图片、视频或文件</b></span>' +
         '<span class="plus-note">' + (attachment ? '已附加 1 个' : '') + '</span>' +
         '</button>' +
         modeSection +
-        '<div class="plus-sec">创作模式<span class="plus-hint">与模型选择互不影响</span></div>' +
+        '<div class="plus-sec">创作模式</div>' +
         '<div class="plus-seg">' +
         ['off', 'plugin', 'skill'].map((k) =>
           '<button type="button" data-cr="' + k + '"' + (creatorMode === k ? ' class="on"' : '') + '>' +
@@ -2090,24 +2088,16 @@
      * 没有这个你只能对着一个转圈的省略号猜它在干嘛。
      */
     function addStep(name, text, kind, meta = {}) {
-      const box = msgs.querySelector('#liveSteps');
+      const turns = msgs.querySelectorAll('.turn');
+      const target = meta.turn_id ? msgs.querySelector('#'+meta.turn_id) : turns[turns.length-1];
+      const box = target && target.querySelector('#liveSteps');
       if (!box) return;
       box.hidden = false;
-      const cls = kind === 'danger' ? 'warn' : kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : 'neutral';
-      const key = String(meta.call_id || meta.step_id || name || 'tool').replace(/[^A-Za-z0-9_-]/g, '_');
-      let row = box.querySelector('[data-step-key="' + key + '"]');
-      const detail = (meta.input !== undefined || meta.output !== undefined || meta.error) ?
-        '<details class="step-detail"><summary>详情</summary><pre>' +
-        esc(JSON.stringify({参数:meta.input,输出:meta.output,错误:meta.error}, null, 2)) +
-        '</pre></details>' : '';
-      const html =
-        '<div data-step-key="' + esc(key) + '">' +
-        '<span class="sname">' + esc(name.replace(/^local_/, '')) + '</span>' +
-        '<span class="stext">' + esc(String(text || '').slice(0, 90)) + '</span>' +
-        '<span class="tag ' + cls + '">' + esc(kind === 'danger' ? '提醒' : kind === 'err' ? '失败' : kind === 'ok' ? '完成' : '执行中') + '</span>' +
-        detail + '</div>';
-      if (row) row.outerHTML = html;
-      else box.insertAdjacentHTML('beforeend', html);
+      const event = {...meta,tool:name,state:meta.state || (kind==='ok'?'returned':kind==='err'?'failed':'started')};
+      const key=encodeURIComponent(String(event.run_id || '')+':'+String(event.call_id || event.step_id || name));
+      const row=[...box.querySelectorAll('[data-step-key]')].find(n=>n.dataset.stepKey===key);
+      const html=global.VigilAgentView.step(event,!!row?.open);
+      if(row)row.outerHTML=html;else box.insertAdjacentHTML('beforeend',html);
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
@@ -2198,7 +2188,7 @@
         }
         const message = (item.error ? creatorErrorText(item.error) : '') || ({pending:'排队中…',running:'执行中…',
           failed:'请求失败',cancelled:'已取消',interrupted:'已中断',succeeded:'任务完成'})[status] || status;
-        items.push({role:'assistant',text:item.content || '',statusNote:status === 'succeeded' ? '' : message,t,
+        items.push({role:'assistant',text:item.status==='succeeded' ? (item.result ?? item.content ?? '') : (item.content || ''),statusNote:status === 'succeeded' ? '' : message,t,
           request_id:item.request_id,partial:status!=='succeeded',
           run:item.run_id ? item : null});
       }
@@ -2267,11 +2257,12 @@
         const runable = m.run && ['queued','running'].includes(m.run.status);
         const note = (m.statusNote ? '<div class="run-note"><span>' + esc(m.statusNote) + '</span>' +
           (runable ? '<button class="agent-cancel" data-run="' + esc(m.run.run_id) + '">取消</button>' : '') + '</div>' : '');
+        const evidence = (m.run?.steps || []).map((step,index,steps)=>step.kind==='tool' ? global.VigilAgentView.step({...step,run_id:m.run.run_id,state:step.result_state || step.status,output:step.result}) : (index < steps.length-1 && step.content ? '<div class="agent-commentary">'+U.md(step.content)+'</div>' : '')).join('');
         const body = m.text
           ? '<div class="txt md">' + t + '</div>' + note
           : (note || '<div class="txt md"></div>');
         return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
-          body +
+          (evidence ? '<div class="agent-progress live-steps">'+evidence+'</div>' : '') + body +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span>' +
           '</div></div></div>';
       }).join('');
@@ -2429,6 +2420,10 @@
       const thinkLabel = msgs.querySelector('#' + turnId + ' .think-label');
       const thinkContent = document.getElementById(thinkId);
       const turnStart = Date.now();
+      const elapsedEl = msgs.querySelector('#'+turnId+' .agent-elapsed');
+      const updateElapsed=()=>{elapsedEl.textContent=global.VigilAgentView.elapsed(Date.now()-turnStart);};
+      updateElapsed();
+      const elapsedTimer=setInterval(()=>{if(!elapsedEl.isConnected || streamDone)clearInterval(elapsedTimer);else updateElapsed();},1000);
       thinkToggle && thinkToggle.addEventListener('click', () => {
         thinkContent.hidden = !thinkContent.hidden;
         thinkToggle.querySelector('.think-caret').textContent = thinkContent.hidden ? '▾' : '▴';
@@ -2563,8 +2558,13 @@
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
           const ok = evt.state === 'returned';
           const failed = ['not_dispatched', 'unknown', 'failed'].includes(evt.state);
+          if (textBuf.trim() && !evt.historical) {
+            const steps=msgs.querySelector('#'+turnId+' #liveSteps');
+            steps.insertAdjacentHTML('beforeend','<div class="agent-commentary">'+U.md(textBuf)+'</div>');
+            textBuf='';textDirty=false;textEl.innerHTML='';
+          }
           addStep(evt.tool || 'tool', ok ? '完成' : failed ? '失败' : '执行中',
-            ok ? 'ok' : failed ? 'err' : 'neutral', evt);
+            ok ? 'ok' : failed ? 'err' : 'neutral', {...evt,turn_id:turnId});
           statusEl.textContent = (evt.state === 'started' ? '正在调用 ' : '调用 ') + (evt.tool || '工具') + ' ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool_reused') {
@@ -2576,6 +2576,7 @@
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'think' && evt.text) {
+          thinkToggle.parentElement.hidden = false;
           thinkBuf += evt.text;
           thinkLabel.textContent = '思考中';
           thinkDirty = true;
@@ -2593,7 +2594,7 @@
           activeRunId = null;
           resumableRunId = null;
           setComposerMode('send');
-          textBuf = evt.text || textBuf;
+          textBuf = evt.result ?? evt.text ?? textBuf;
           remember({content:textBuf,status:'succeeded',error:null});
           // 强制刷新最后一帧
           if (thinkDirty) { thinkInner.textContent = thinkBuf; thinkDirty = false; }
@@ -5002,7 +5003,6 @@
       ctx.navigate('chat');
     });
     const cards = [
-      {title:'插件市场', desc:'从可信来源安装和管理 Brain 插件', icon:'puzzle', page:'market'},
       {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'auto', group:'life'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
