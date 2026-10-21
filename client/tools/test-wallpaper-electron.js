@@ -197,7 +197,17 @@ async function main() {
   console.log('fixture: local selected');
   await until(`document.querySelector('.wallpaper-bg img')?.naturalWidth===1`);
   console.log('fixture: local image decoded');
-  await until(`!!document.querySelector('#wp-playlist li')`);
+  await until(`document.querySelectorAll('#wp-playlist li').length>=6`);
+  const firstPlaylistTitle = await ev(`document.querySelector('#wp-playlist li').firstChild.textContent`);
+  const secondPlaylistTitle = await ev(`document.querySelector('#wp-playlist li:nth-child(2)').firstChild.textContent`);
+  await ev(`document.querySelector('#wp-playlist li:first-child button:nth-of-type(2)').click()`);
+  assert.equal(await ev(`document.querySelector('#wp-playlist li').firstChild.textContent`), secondPlaylistTitle,
+    'Playlist order controls must persist the reordered first item');
+  await ev(`document.querySelector('#wp-next').click()`);
+  await until(`document.querySelector('.wallpaper-bg video')?.readyState>=2`);
+  await ev(`document.querySelector('#wp-prev').click()`);
+  await until(`document.querySelector('.wallpaper-bg img')?.naturalWidth===1`);
+  assert.notEqual(firstPlaylistTitle, secondPlaylistTitle);
   await ev(`document.querySelector('#wp-search').value='does not match';document.querySelector('#wp-search').dispatchEvent(new Event('input',{bubbles:true}))`);
   assert.equal(await ev(`Array.from(document.querySelectorAll('.wp-card')).filter(x=>!x.hidden).length`), 0, 'Name search should filter wallpaper cards');
   await ev(`document.querySelector('#wp-search').value='';document.querySelector('#wp-search').dispatchEvent(new Event('input',{bubbles:true}));window.confirm=()=>true;document.querySelector('.wp-delete').click()`);
@@ -210,6 +220,10 @@ async function main() {
   await win.webContents.executeJavaScript(fs.readFileSync(path.join(plugin, 'frontend.js'), 'utf8'));
   await until(`!!document.getElementById('wallpaper-bg-layer')`);
   assert.equal(await ev(`document.querySelectorAll('#wallpaper-bg-layer').length`), 1, 'Repeated plugin activation must not duplicate the background layer');
+  await ev(`fixturePage.render({view:document.getElementById('view')})`);
+  await until(`document.querySelectorAll('#wp-playlist li').length===5`);
+  assert.equal(await ev(`document.querySelector('#wp-playlist li').firstChild.textContent`), secondPlaylistTitle,
+    'Playlist order must survive renderer/plugin reinitialization');
   await ev(`window.fixtureDispose()`);
   assert.equal(await ev(`!!document.getElementById('wallpaper-bg-layer')`), false, 'Repeated unload must remove the second instance');
   assert(issuedMediaUrls.length > 0);
