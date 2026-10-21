@@ -194,7 +194,7 @@ _STATIC_SPECS = {
         "arg_param": "keyword",
     },
     "project_review_start": {
-        "desc": "对用户明确提供的本地项目绝对路径建立可暂停的源码审查计划；只读，不修改项目文件。",
+        "desc": "对用户明确提供的本地项目绝对路径建立可暂停审查。依次执行静态 step、semantic_batch；沿调用线索提出带准确行号和原文引用的 candidate，再运行验证计划。静态 TODO 不是缺陷。",
         "params": [("path", "项目根目录绝对路径", True)],
         "multi_args": True,
     },
@@ -204,8 +204,35 @@ _STATIC_SPECS = {
         "multi_args": True,
     },
     "project_review_report": {
-        "desc": "读取项目审查计划的覆盖范围、已验证发现和剩余未审查范围。",
+        "desc": "读取项目审查计划的静态/语义覆盖范围、候选假设、已确认缺陷和未审查范围。",
         "params": [("review_id", "审查任务 ID", True)],
+        "multi_args": True,
+    },
+    "project_review_export": {
+        "desc": "导出带准确文件路径和行号、证据、验证计划、状态及覆盖缺口的 Markdown 审查报告。",
+        "params": [("review_id", "审查任务 ID", True)],
+        "multi_args": True,
+    },
+    "project_review_semantic_batch": {
+        "desc": "从可恢复游标读取有界、带行号的源码批次及函数定义/调用线索，供模型制定语义审查计划。",
+        "params": [("review_id", "审查任务 ID", True), ("budget_files", "本批文件数上限", False, "integer"),
+                   ("budget_chars", "本批源码字符数上限", False, "integer")],
+        "multi_args": True,
+    },
+    "project_review_submit_finding": {
+        "desc": "提交待验证的语义缺陷假设；证据必须逐字对应审查项目中准确的代码位置，TODO 不能直接确认缺陷。",
+        "params": [("review_id", "审查任务 ID", True), ("path", "项目内相对文件路径", True),
+                   ("line", "证据起始行号", True, "integer"), ("title", "简短问题标题", True),
+                   ("hypothesis", "疑似缺陷与影响", True), ("evidence", "源码中的逐字证据", True),
+                   ("validation_plan", "可执行的复现/验证计划", True)],
+        "multi_args": True,
+    },
+    "project_review_confirm_finding": {
+        "desc": "仅依据台账中真实 local_exec 测试失败记录和匹配的预期错误文本确认缺陷。",
+        "params": [("review_id", "审查任务 ID", True), ("issue_id", "候选问题 ID", True),
+                   ("run_id", "执行验证命令的 Agent run ID", True),
+                   ("step_id", "local_exec 步骤编号", True, "integer"),
+                   ("expected_failure_text", "失败输出中应出现的精确文本", True)],
         "multi_args": True,
     },
     "project_repair_plan": {

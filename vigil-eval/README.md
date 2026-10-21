@@ -31,3 +31,9 @@ python vigil-eval/report.py --latest
 生产入口 `brain/server.py` 的 `/api/chat` 会使用生产 Brain、历史与记忆，因此评测 Adapter 不调用它。Adapter 在隔离 worker 中直接构造 Brain，并通过内存 `session_src` 保持单个 task-run 会话；`log=False` 且隔离 Brain 不提供记忆存储。Planner 执行工具时传递渠道、task allow-list，并与该渠道当前启用的工具规格取交集；没有 allow-list 时拒绝执行。
 
 小型真实实验的任务选择、组别、模型和调用预算见 [08-phase2-experiment-plan.md](08-phase2-experiment-plan.md)。它只是待确认方案，不代表已经请求 API。
+
+## P13 before/after 指标
+
+`p13_metrics.py` 汇总隔离模型运行的 JSONL 记录，按精确 `model_id` 与 `before`/`after` 分组计算完成率、缺陷准确率、修复验证成功率、工具异常、上下文超限、续跑成功率、输出 Token 与耗时。每行记录包含 `task_id, model_id, variant, success, confirmed_defects, false_positive_defects, repair_attempted, repair_verified, tool_errors, context_overflow, resume_expected, resume_succeeded, output_tokens, elapsed_seconds, provider_protocol`。缺失 Token/耗时保留为未知值。报告不会读取生产配置或自行请求模型；没有 P13 隔离模型记录时会写 `NOT RUN`。
+
+至少两种 Provider 协议的本地适配契约通过后，只能说明协议映射受测；模型效果对比仍需固定任务集、同模型、隔离配置和独立数据目录后执行。
