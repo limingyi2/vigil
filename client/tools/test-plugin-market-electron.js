@@ -7,6 +7,7 @@ const tmp=require('fs').mkdtempSync(path.join(os.tmpdir(),'vigil-plugin-market-'
 app.setPath('userData',path.join(tmp,'userdata'));
 let win,installed=false,installCalls=0,resolveInstall;
 let streamRequest,resolveStream,conversationCreated=false;
+let wallpaperState={installed:false,enabled:false};
 const alerts=[];
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const ev=source=>win.webContents.executeJavaScript(source,true);
@@ -21,10 +22,15 @@ function response(method,raw){
   }
   if(p==='/api/conversations')return{ok:true,status:200,json:{ok:true,items:conversationCreated?[{id:'00000000-0000-4000-8000-000000000011',title:'P11 stream',has_content:true}]:[]}};
   if(p==='/api/stats')return{ok:true,status:200,json:{model:'fixture'}};
-  if(p==='/api/plugins/frontend')return{ok:true,status:200,json:{version:1,plugins:[]}};
-  if(p==='/api/plugin/wallpaper/config')return{ok:true,status:200,json:{ok:true,config:{enabled:false,we_path:'',opacity:0.5,scrim:0.4,blur:0}}};
-  if(p==='/api/plugin/wallpaper/we/library')return{ok:true,status:200,json:{ok:true,wallpapers:[],we_path:''}};
-  if(p==='/api/market/list')return{ok:true,status:200,json:{state:'ready',state_message:'插件市场已就绪',plugins:[{name:'fixture_plugin',version:'1.0',author:'fixture',desc:'isolated',tags:[],installed},{name:'wallpaper',version:'3.0.1',author:'Vigil',desc:'Wallpaper Engine fixture',tags:['Wallpaper Engine'],installed:false}],installed_count:installed?1:0}};
+  if(p==='/api/plugins/frontend'){
+    if(!wallpaperState.installed)return{ok:true,status:200,json:{version:1,plugins:[]}};
+    const dir=path.resolve(client,'../market/plugins/wallpaper');
+    return{ok:true,status:200,json:{version:wallpaperState.enabled?2:3,plugins:[{name:'wallpaper',enabled:wallpaperState.enabled,
+      js:require('fs').readFileSync(path.join(dir,'frontend.js'),'utf8'),css:require('fs').readFileSync(path.join(dir,'frontend.css'),'utf8')}]}};
+  }
+  if(p==='/api/plugin/wallpaper/config')return{ok:true,status:200,json:{ok:true,config:{enabled:false,opacity:.7,scrim:.4,blur:0,muted:true}}};
+  if(p==='/api/plugin/wallpaper/we/library')return{ok:true,status:200,json:{ok:true,wallpapers:[],we_path:null}};
+  if(p==='/api/market/list')return{ok:true,status:200,json:{state:'ready',state_message:'插件市场已就绪',plugins:[{name:'fixture_plugin',version:'1.0',author:'fixture',desc:'isolated',tags:[],installed},{name:'wallpaper',version:'3.2.1',author:'Vigil',desc:'Wallpaper Engine fixture',tags:['Wallpaper Engine'],installed:false}],installed_count:installed?1:0}};
   if(p==='/api/market/refresh')return{ok:true,status:200,json:{ok:true,state:'ready',state_message:'插件市场已就绪'}};
   if(p==='/api/market/install'){
     installCalls++;
@@ -34,7 +40,18 @@ function response(method,raw){
 }
 async function run(){
   ipcMain.handle('api',(_,req)=>response(req.method,req.path));
-  for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','plugins:load':{ok:true},'auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}}))ipcMain.handle(name,()=>value);
+  for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}}))ipcMain.handle(name,()=>value);
+  ipcMain.handle('plugins:release-resources',()=>({ok:true}));
+  ipcMain.handle('wallpaper-import:list',()=>({ok:true,items:[]}));
+  ipcMain.handle('wallpaper-import:add',()=>({ok:true,canceled:true}));
+  ipcMain.handle('wallpaper-import:url',()=>({ok:false,err:'not found'}));
+  ipcMain.handle('wallpaper-import:delete',()=>({ok:false,err:'not found'}));
+  ipcMain.handle('plugins:load',async()=>{
+    if(!wallpaperState.installed||!wallpaperState.enabled)return{ok:true,loaded:0,errors:[]};
+    const js=require('fs').readFileSync(path.resolve(client,'../market/plugins/wallpaper/frontend.js'),'utf8');
+    await win.webContents.executeJavaScript('(function(){const vp=window.VigilPlugin;const prev=vp._currentOwner;vp._currentOwner="wallpaper";try{'+js+'}finally{vp._currentOwner=prev;}})();');
+    return{ok:true,loaded:1,errors:[]};
+  });
   ipcMain.handle('api:stream',(_,req)=>{streamRequest=req;return new Promise(resolve=>{resolveStream=resolve;});});
   ipcMain.handle('cfg:set',()=>({wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}));
   win=new BrowserWindow({show:false,width:1200,height:800,webPreferences:{preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
@@ -133,6 +150,37 @@ async function run(){
     assert.equal(BrowserWindow.getAllWindows().length,1);
     console.log('PASS real downloaded Wallpaper frontend registers and opens its plugin page');
   }
+  await ev(`localStorage.setItem('vigil.primary-nav.order.v1',JSON.stringify(['wallpaper','chat']))`);
+  assert.equal(await ev('!!document.querySelector("#gnav [data-page=wallpaper]")'),false);
+  wallpaperState={installed:true,enabled:true};
+  await ev('window.VigilPlugin.refresh()');
+  await until('!!document.querySelector("#gnav [data-page=wallpaper]")');
+  assert.equal(await ev('!!document.getElementById("plugin-css-wallpaper")'),true);
+  assert.equal(await ev('PAGES.find(p=>p.id==="wallpaper").__pluginOwner'),'wallpaper');
+  console.log('PASS plugin installation and enable register the wallpaper page and stylesheet');
+
+  wallpaperState.enabled=false;
+  await ev('window.VigilPlugin.refresh()');
+  await until('!document.querySelector("#gnav [data-page=wallpaper]")');
+  assert.equal(await ev('PAGES.some(p=>p.id==="wallpaper")'),false);
+  assert.equal(await ev('!!document.getElementById("plugin-css-wallpaper")'),false);
+  assert.equal(await ev('!!document.getElementById("wallpaper-bg-layer")'),false);
+  console.log('PASS disable unregisters page, CSS and Wallpaper DOM without clearing navigation storage');
+
+  wallpaperState={installed:false,enabled:false};
+  await ev('window.VigilPlugin.refresh()');
+  assert.equal(await ev('PAGES.some(p=>p.id==="wallpaper")'),false);
+  await win.webContents.executeJavaScript('location.reload()');
+  await until('!!document.querySelector("#gnav [data-page=market]")');
+  assert.equal(await ev('!!document.querySelector("#gnav [data-page=wallpaper]")'),false);
+  assert.ok(await ev('localStorage.getItem("vigil.primary-nav.order.v1").includes("wallpaper")'));
+  wallpaperState={installed:true,enabled:true};
+  await win.webContents.executeJavaScript('location.reload()');
+  await until('!!document.querySelector("#gnav [data-page=wallpaper]")');
+  console.log('PASS uninstall and renderer restart do not resurrect stale navigation; enabled install restores on restart');
+  wallpaperState={installed:false,enabled:false};
+  await ev('window.VigilPlugin.refresh()');
+  await until('!document.querySelector("#gnav [data-page=wallpaper]")');
   win.destroy();app.exit(0);
 }
 app.whenReady().then(run).catch(error=>{console.error(error.stack||error);if(win)win.destroy();app.exit(1);});

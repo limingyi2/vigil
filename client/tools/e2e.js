@@ -26,11 +26,13 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 
 const ROOT = path.join(__dirname, '..', '..');
 const CLIENT = path.join(__dirname, '..');
-const PY = path.join(ROOT, 'venv', 'Scripts', 'python.exe');
+const VENV_PY = path.join(ROOT, 'venv', 'Scripts', 'python.exe');
+const PY = process.env.VIGIL_BUILD_PYTHON || (fs.existsSync(VENV_PY) ? VENV_PY : 'python');
 const ELECTRON = path.join(CLIENT, 'node_modules', 'electron', 'dist', 'electron.exe');
 const BASE = 'http://127.0.0.1:8788';
 const CDP_PORT = 9333;
@@ -68,6 +70,23 @@ function get2(url, token) {
     });
     req.on('error', reject);
     req.setTimeout(3000, () => req.destroy(new Error('timeout')));
+  });
+}
+
+function post2(url, token, value) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(value || {}));
+    const req = http.request(url, { method: 'POST', headers: {
+      Authorization: 'Bearer ' + token, 'Content-Type': 'application/json',
+      'Content-Length': body.length,
+    } }, (res) => {
+      let d = '';
+      res.on('data', (c) => { d += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    req.on('error', reject);
+    req.setTimeout(3000, () => req.destroy(new Error('timeout')));
+    req.end(body);
   });
 }
 
@@ -147,6 +166,11 @@ function cdp(wsUrl) {
     // ── 1. 把 brain 拷到临时目录 ──
     console.log('\n[1] 准备隔离环境：' + tmp);
     copyDir(path.join(ROOT, 'brain'), path.join(tmp, 'brain'));
+    const brainConfigDir = path.join(tmp, 'brain', 'config');
+    fs.mkdirSync(brainConfigDir, { recursive: true });
+    fs.writeFileSync(path.join(brainConfigDir, 'config.json'), JSON.stringify({
+      brain_token: crypto.randomBytes(32).toString('hex'),
+    }), 'utf8');
     // 设备表绝不能跟着拷过去：里面可能有上次测试留下的 revoked 记录，
     // 注册按机器名去重会把 revoked 状态带回来，之后每次 verify 都 401
     try { fs.unlinkSync(path.join(tmp, 'brain', 'data', 'devices.json')); } catch (e) {}
@@ -258,15 +282,22 @@ function cdp(wsUrl) {
     // 客户端渠道早已固定 src=pc（本机控制台），对账要用同一个渠道
     const apiHist = await get2(BASE + '/api/history?src=pc&limit=300', brainToken);
     const want = (JSON.parse(apiHist.body).items || []).length;
-    const emptyShown = await ev("((document.querySelector('.sysline')||{}).textContent||'').indexOf('还没有聊过') >= 0");
+    const emptyShown = await ev("!!document.querySelector('#hero:not([hidden]) .welcome-brand')");
     ok('聊天记录显示与服务端一致', Number(turns) === want && (want > 0 || emptyShown),
        '界面 ' + turns + ' 条 / 接口 ' + want + ' 条' + (emptyShown ? '（空态已提示）' : ''));
     const errShown = await ev("document.body.innerText.indexOf('这个页面出错了') >= 0");
     ok('页面没有抛异常', !errShown);
 
-    // ── 5. 临时 brain 的设备表里该出现这台机器 ──
+    // ── 5. 验证 Brain 的设备注册 API（桌面本地模式本身不登记为远程设备）──
     console.log('\n[5] 检查设备注册');
     const dp = path.join(tmp, 'brain', 'data', 'devices.json');
+    const registration = await post2(BASE + '/api/device/register', brainToken, {
+      device_name: 'P14 isolated Electron E2E', device_type: 'desktop', role: 'device',
+      capabilities: ['chat', 'local_tools'],
+    });
+    const registered = JSON.parse(registration.body || '{}');
+    ok('Brain 注册 API 为隔离客户端创建设备记录', registration.status === 200 && !!registered.device_id,
+       registration.status + ' / ' + (registered.device_id || registered.err || ''));
     let dev = null;
     for (let i = 0; i < 20 && !dev; i++) {
       if (fs.existsSync(dp)) {
@@ -277,7 +308,7 @@ function cdp(wsUrl) {
     }
     ok('设备表里有这台机器', !!dev, dev ? (dev.device_name + ' / ' + dev.device_type + ' / ' + dev.status) : '没有');
     ok('落盘只有哈希、没有明文 token', !!dev && !!dev.token_hash && !fs.readFileSync(dp, 'utf8').includes('dt_'), '');
-    ok('能力已声明（不是空表）', !!dev && (dev.capabilities || []).length > 0,
+    ok('注册设备声明了能力（不是空表）', !!dev && (dev.capabilities || []).length > 0,
        dev ? (dev.capabilities || []).join(',') : '');
 
     // ── 5b. 心跳：客户端每 1.5 秒轮询一次，last_seen 应该一直在动 ──
@@ -288,10 +319,14 @@ function cdp(wsUrl) {
         const j = JSON.parse(r.body);
         return ((j.items || [])[0] || {}).last_seen || '';
       };
+      const deviceToken = registered.device_token;
       const t1 = await lastSeen();
       await sleep(5000);
+      // An authenticated device request is the operation that refreshes last_seen.
+      const authenticated = await get2(BASE + '/api/device/list', deviceToken);
       const t2 = await lastSeen();
-      ok('客户端在持续轮询（last_seen 在走）', !!t1 && t1 !== t2, t1 + ' -> ' + t2);
+      ok('设备凭据通过实际请求刷新 last_seen', authenticated.status === 200 && !!t1 && t1 !== t2,
+         t1 + ' -> ' + t2 + ' / HTTP ' + authenticated.status);
     }
 
     // ── 6. 真实的 AppData 没被动过 ──

@@ -1,0 +1,211 @@
+# P14 第二轮：Wallpaper 生命周期、市场诊断与 WebWallGL
+
+日期：2026-10-21（Asia/Shanghai）
+工作分支：`codex/p14-wallpaper-market`
+原始实现基线：`0e24afe7c09fd561b7fd1d5b1d79a9000632f51b`
+本轮 hotfix 起点：`41eb1e762c6568b37488d83518fdc9794012f218`
+本轮实现提交：构建后补入；历史记录见下方“第二轮续修”。
+状态：生命周期、市场和聊天 E2E 通过；复杂授权 Scene、导入与播放列表仍未完成。
+
+## 结果概览
+
+本轮将 Wallpaper 插件做成显式可注销的动态贡献；接入固定版本 `webwallgl@3.0.0`，经 Electron 沙箱真实挂载并播放动态 Scene；补齐市场诊断分类和导出入口；完成远程插件 3.1.0 制品与独立发布分支。
+
+验收矩阵：
+
+| 项目 | 状态 | 证据 |
+|---|---|---|
+| A 未安装不显示入口 | PASS | 隔离 Electron 市场测试检查启动状态与页面列表 |
+| B 安装、禁用、卸载、重启正确更新 | PASS | `test-plugin-market-electron.js` 覆盖安装启用、禁用、卸载和重启；禁用清除页面、样式、Wallpaper DOM，保留 localStorage 导航数据且重启不复活旧页 |
+| C 诊断真实市场连接 | PASS | Electron renderer→preload/IPC→Brain `/api/market/list`→GitHub Raw 实际请求成功；诊断分类和错误状态由 Brain 返回 |
+| D 至少一个 Scene 实时播放 | PASS | 真实 WebWallGL `mount()` 载入 loose Scene，canvas 两帧 SHA-256 不同；场景工程由隔离 fixture 提供，project/scene 通过认证媒体桥取得 |
+| E 聊天与插件安全隔离 | PARTIAL | contextIsolation/sandbox 保持，CSP 只允许本地回环媒体连接，媒体路径受 Brain containment 验证；全量既有聊天 E2E 因其读取旧 `brain/config/config.json` 路径失败，未能形成聊天通过证据 |
+| F Electron 集成测试 | PASS（核心场景） | 壁纸、市场生命周期和实时市场连接 Electron 测试通过；既有聊天 E2E 单列 20/26 结果 |
+
+## 实际链路与修改
+
+### 插件生命周期和错误入口
+
+Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend 资源；`/api/plugins/frontend` 的安装/启用状态决定 Electron 前端注入内容。Renderer 以 fingerprint 对照注入状态，在变化时先注销旧 owner，再注入当前启用插件。
+
+`VigilPlugin` 现有页面 API 增加 owner 生命周期：插件注册的页面、CSS、清理回调及事件监听器均有 owner；注销时运行清理、移除页面和样式，并在当前页被移除时返回安全页面。壁纸清理销毁 WebWallGL、断开 ResizeObserver、移除 theme/visibility/引擎监听器、背景和遮罩 DOM、CSS 变量与媒体票据。市场测试还验证 localStorage 中旧导航顺序不会重新创建已卸载页面。
+
+### 市场连接诊断
+
+在 Renderer→IPC→Brain→Market API→远端 manifest/package 链路上统一返回结构化诊断类别：`timeout`、`proxy`、`dns`、`tls`、`http`、`auth`、`brain_unavailable`、`manifest_invalid`，并带阶段、HTTP 状态和安全消息。远程异常日志只记录 route/status/分类，不输出 Authorization 或 Token。市场页在失败时展示可操作诊断，并可导出 JSON 供用户提交；导出内容不含 token。
+
+### WebWallGL 与可信媒体
+
+依赖锁定为 `webwallgl@3.0.0`，由客户端安装包本地加载，不使用远程 CDN。插件先从 Brain 读取 `project.json`，再让 WebWallGL 加载 Scene；相对媒体请求使用有时限的本地回环票据，Brain 对每个相对路径重新做路径归属校验。Electron 保持 `contextIsolation: true` 与 `sandbox: true`，未开放任意 `file://` 读取。后台隐藏时 pause，恢复时 resume；ResizeObserver 更新挂载视口；卸载时 destroy 并释放 package cache。初始化失败展示真实错误，并保留明确标记的 preview-only 降级状态，不将静态图标成动态 Scene。
+
+## 可复现测试和证据
+
+在 Windows 11、Node 24.21.0、npm 11.19.0、Python 3.13.15 环境安装了项目声明依赖；Electron 28.3.3 和 PyInstaller 6.22.3 可用。
+
+- `npx electron tools/test-wallpaper-electron.js`：PASS。加载真实 WebWallGL 3.0.0；Scene 工程含 1 个 animated solid 层；校验动画帧变化、`project.json`/`scene.json` 认证读取、视频解码、嵌套网页资源、pause/resume、resize、关闭及插件清理。帧 SHA-256：
+  - `c0a0ba8be64c5adc305519865a0e3fdccd2d0833821fe09b05853bdcdadbc7d7`
+  - `31e78bacbe9b90cde43a86eedceec08210dc226df15c39abf9dfcf3cfcf3a5da`
+- Electron 场景截图：[wallpaper-code11.png](../client/_shots/wallpaper-code11.png)。测试使用无用户数据的临时 Electron `userData` 和临时 HTTP fixture。
+- `npx electron tools/test-plugin-market-electron.js`：PASS。覆盖按钮、连接状态、安装失败重试、安装启用、禁用、卸载、重启和旧 localStorage 导航顺序。
+- `npx electron tools/test-market-live-electron.js`：PASS。真实 Electron renderer/preload/IPC 调用本地 Brain 市场 API，远程 GitHub Raw 清单返回 `ready`，版本 `1.1`，一项插件。
+- `python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q`（从 `brain/` 执行）：PASS，56 passed，3 skipped（共 59 项）。
+- 远程 Wallpaper 3.1.0 ZIP：真实 `_install_remote_directory()` 下载制品并验证制品 SHA、Manifest、五个文件 SHA；临时目录事务安装和卸载均 PASS。
+- `npm run e2e`：PARTIAL，20/26。修复夹具缺失的临时 Brain token 及 Python 路径后，Electron 成功连接、进入聊天页、无 renderer 异常，本地工具用例通过；设备注册/能力/轮询断言、聊天记录断言和 CDP 截图超时仍失败，故 E 仍是 PARTIAL。
+- Renderer 测试捕获的 `ReadPixels` GPU stall 是测试为对比两帧执行 `canvas.toDataURL()` 造成的诊断开销，不等同于应用播放路径的 GPU 使用率测量。Wallpaper Engine 本机 Workshop 目录未作为测试数据；通用 Scene 工程已独立验证。
+
+## 插件交付
+
+已在独立 `vigil-plugins` 仓库分支 `codex/p14-wallpaper-webwallgl` 生成新制品，未覆盖 3.0.1、未合并：
+
+- Draft PR：[vigil-plugins#1](https://github.com/limingyi2/vigil-plugins/pull/1)
+- 新版本：3.1.0；WebWallGL 依赖：3.0.0
+- ZIP：`plugins/wallpaper/wallpaper-3.1.0.zip`
+- SHA-256：`6839f0401aa36991eaa83ad523f4c3d9fcb5f941dac3768362005b93b87f799a`
+- Manifest 的五个 payload 文件 hash 已逐个重算校验。`market.json` 固定引用包含该 ZIP 的提交 `e4a9c4f0b678a0592307488a8501f258a3ad9613`，市场清单 URL 的更新已推送到分支 tip `20d92fd0cacec91456325215e7f7ae017936f875`。
+- 客户端市场主线需审核并合并该 PR 后才会显示 3.1.0；本轮没有自动合并。
+- 插件仓库 Actions 的 Linux/Python 3.12 重建检查：PASS。首次检查揭示 Windows/Linux zlib ZIP hash 不一致；打包器现使用固定 ZIP 存储模式及归一化 Unix header，跨平台重建 hash 为 `6839f0401aa36991eaa83ad523f4c3d9fcb5f941dac3768362005b93b87f799a`。
+
+## Windows 候选包
+
+当前本地候选构建流程已实际运行：Python/PyInstaller 构建 Brain，electron-builder 生成 NSIS 安装器与 portable 包；`scripts/build_release.py --verify --candidate` 通过。第一次试构建发现源码在 Brain 构建后改变，构建脚本正确拒绝不一致包；之后从一致源快照重建成功。
+
+候选安装器：`client/dist-release/Vigil.Setup.1.1.8-p9.3.20261021.1.exe`
+Portable 候选：`client/dist-release/Vigil 1.1.8-p9.3.20261021.1.exe`
+release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。当前安装器大小 `242,260,655` bytes，SHA-256 `46bf6c27dde5991d76091ea3de56022785e5787f4eab3c209bf16b4a40b366b2`。候选 source commit：`b9e22c435be879951b711cb11afce8052cf98dee`。隔离 NSIS 安装与卸载退出码均为 0；安装目录卸载后为空。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
+
+## 未完成与人工验收
+
+- 用户自定义图片/视频导入、搜索、播放列表尚未实现。
+- 用户机器上的真实 Steam Workshop/Wallpaper Engine 内容、用户配置迁移仍待人工验收；渲染器不依赖 Wallpaper Engine 程序运行。
+- 3.1.0 市场 PR 尚未合并，因此远端客户端主市场暂时继续提供 3.0.1；新包通过分支 URL 可安装并已验证。
+
+## 本轮修改文件
+
+- `brain/plugins/plugin_market.py`
+- `brain/tests/test_plugin_market_state.py`
+- `client/electron/main.js`
+- `client/electron/plugin-media.js`
+- `client/electron/preload.js`
+- `client/package.json`、`client/package-lock.json`
+- `client/src/index.html`
+- `client/src/js/app.js`、`client/src/js/pages.js`
+- `client/tools/e2e.js`
+- `client/tools/test-plugin-market-electron.js`
+- `client/tools/test-wallpaper-electron.js`
+- `client/tools/test-market-live-electron.js`
+- `market/plugins/wallpaper/__init__.py`
+- `market/plugins/wallpaper/frontend.js`、`frontend.css`
+- `reports/P14_WALLPAPER_MARKET_REPORT.md`
+
+## 第二轮续修（2026-10-21）
+
+用户提供的 `C:\Users\limingyi\Downloads\p14_hotfix.py` 已在独立 P14 worktree 审查和运行。执行前确认 branch 为 `codex/p14-wallpaper-market`、HEAD 为 `41eb1e762c6568b37488d83518fdc9794012f218`、工作区干净；远端分支 HEAD 相同，无新提交。
+
+### 修复和测试
+
+- `market/plugins/wallpaper/frontend.js` 分离外观更新与 WebWallGL Scene 生命周期；修复多个滑块连续输入时旧预览配置互相覆盖。已断言 Scene canvas 不被重建、外观值变化、动画帧变化。
+- `client/electron/plugin-media.js` 媒体票据闲置 30 分钟过期、活动请求续期、最多 1024 个有效票据；失效 URL 重新签发。Electron renderer 的 loopback fetch/XHR 由主进程按签发票据限制。插件清理调用 IPC 撤销票据。
+- `client/tools/test-plugin-media.js`：Node 2/2，覆盖正常资源传输、票据到期/重签、卸载撤销。
+- `client/tools/test-wallpaper-electron.js`：PASS，隔离 Electron + WebWallGL 3.0.0。覆盖动态 Scene、外观滑块、视频解码、网页嵌套资源、最小化/恢复、尺寸更新、壁纸切换、卸载 DOM/CSS/监听和媒体票据释放。帧 SHA-256：
+  - `1cc6d4547400caeaca7a333a0de132e803ecb7ddecb0343c5a672b9782e888c9`
+  - `e63db3c79b3c8eb8dd494abd392217e395a6fa5575e25d3fc4fb94bd45024764`
+- `client/tools/test-plugin-market-electron.js`：PASS，插件安装/启用、禁用、卸载、renderer 重启与旧导航状态清理。
+- `client/tools/test-market-live-electron.js`：PASS，真实 Renderer → preload/IPC → Brain → GitHub Raw 清单，`ready`，market version `1.1`，1 个插件。
+- `client/tools/e2e.js`：PASS，27/27。修复空历史验收选择器；旧脚本把本地 Brain 管理桌面误当远程设备客户端，现以真实隔离 Brain HTTP 注册和设备凭据请求核验哈希、能力和 `last_seen`，相关断言保留。
+- `node --check` 所涉 JS、`git diff --check`：PASS。
+
+### 插件制品
+
+- `vigil-plugins` 独立分支 `codex/p14-wallpaper-webwallgl` 已推送更新，PR #1 保持未合并。
+- Wallpaper 3.1.0 source commit：`346300588d0248a39d2323bcada5c5fd94766803`；包含 ZIP/Manifest 的 package commit：`ca0b12cbf28a0e834a381045acac3955ad8fc851`；分支 tip：`eeec6f93d469e9b4e95ce2e00b81e3ca52a7db07`。
+- 3.1.0 ZIP SHA-256：`1df6c354a68ab001d5b867396966b04731845b6330edbb16b6a51ab85c8be1c5`。Windows Python 3.13 重建后 `git diff --exit-code` 通过；Manifest 五项 payload SHA 与包内容匹配；market.json 指向包含制品的固定 commit。3.0.1 文件保留未覆盖。
+- GitHub Actions `Validate market packages` Linux/Python 3.12：run `39600969038`，`success`；重建后制品、Manifest 与 `market.json` 无差异。
+- 原 3.0.1 ZIP 保持不变，SHA-256 `4e551ae17783870872be7c2635d1a396fe5269fa032b514aff7e536940b22616`。
+
+### 未完成与阻塞
+
+- 本机未发现 Wallpaper Engine Workshop 目录；真实或合法授权的复杂 `scene.pkg`（粒子、Shader、交互）未验证。当前动态验收 Scene 是简单自制 animated solid，不能视为复杂场景兼容证据。
+- 自定义图片/视频导入、搜索、播放列表尚未实现。
+- `npm run dist` 单独调用时由 verifier 拒绝（未指定候选模式）；已使用 `python scripts/build_release.py --candidate` 完成一体构建，`scripts/build_release.py --verify --candidate` PASS，并成功完成隔离 NSIS 安装/卸载（安装、卸载退出码 0）。
+- PR #1 尚未合并，主市场更新需要人工审核；本轮未合并 PR/dev/master。
+
+
+## 最终定向修复与候选验收（2026-10-21）
+
+本节覆盖前文旧状态；验收仍为 **PARTIAL**，不得视为 P14 全部门槛通过。当前代码源提交 `fd18a834b030e84a7d86ae7f4d04266ec93900bb`；核心实现提交 `d636bf5639b38412dbcb4298910e57796a890e0a`，后续两笔仅修正 Windows 卸载测试等待和扩大壁纸测试覆盖。
+
+### 本轮修改
+
+- `client/electron/main.js`、`preload.js`：增加窄权限图片/视频导入 API。原生文件选择后在主进程检查普通文件、扩展名、magic bytes 和大小（图片 50 MiB、视频 1 GiB），复制到 `userData/wallpaper-imports`，以 manifest 保存元数据；卸载插件不会删除该目录。删除只接受素材 UUID。
+- `client/electron/plugin-media.js`：本地导入文件使用短时不透明票据和支持 Range 的流；同一素材复用活动票据；删除或插件卸载撤销票据并关闭活跃流。普通媒体票据限定单文件；HTML/Scene 票据只允许通过 Brain 资源路由读取经目录校验的相对资源。
+- `client/electron/main.js` 的 loopback 请求门扩展到图片、媒体、子 frame、worker、XHR/fetch 等资源类型；拒绝其他 webContents 使用主窗口票据。测试还验证未签发 loopback 图片不会抵达 Brain fixture。
+- `market/plugins/wallpaper/frontend.js`：重复注入前销毁旧实例；Scene 初始化错误显示原因和重试按钮；WebWallGL 失败对象、过时异步 Scene、切换时旧视频/iframe、卸载时 Scene/canvas/listener/票据均进行回收；外观变化不重建 Scene。加入导入媒体卡片、搜索、类型筛选、播放列表增删排序、上下张切换和重启恢复。
+- `market/plugins/wallpaper/__init__.py` 接收最多 500 个受限 playlist ID，兼容没有 playlist 字段的旧配置，不覆盖旧壁纸选择。
+- `scripts/test_windows_candidate_lifecycle.py` 将 NSIS 清理确认从固定 1 秒改为最多 30 秒轮询，避免卸载器退出后延迟删除引发误判。
+
+### 验收项
+
+| 项目 | 状态 | 证据 / 限制 |
+|---|---|---|
+| A 插件未安装无入口 | PASS | 隔离 Electron 插件市场测试覆盖安装、禁用、卸载、导航入口与重启。 |
+| B 安装/禁用/卸载/重启 | PASS | `tools/test-plugin-market-electron.js` 全部断言通过；重复前端注入也检查仅一层背景 DOM。 |
+| C 市场连接与诊断 | PASS | `tools/test-market-live-electron.js` 实测 Renderer→preload/IPC→Brain→GitHub Raw 清单；另从已推送插件分支下载 3.2.0 并由 Brain 真正安装、校验 Manifest/逐文件 SHA 后卸载。 |
+| D Scene 动态播放/失败恢复 | PARTIAL | WebWallGL 3.0.0 合成 Scene 动画两帧 SHA 不同；项目/Scene 请求、错误原因、重试重取、过时失败不覆盖新视频、错误实例 destroy 均在 Electron fixture 通过。没有合法的复杂真实 `.pkg` 素材，Shader/粒子/交互/真实 SceneScript 兼容性待人工验收。SceneScript 仍 `scripts:false`，不获取文件系统、Node 或 IPC 权限。 |
+| E 外观调节不重建 | PASS | Electron 测试拖动 opacity/blur 后 canvas 对象身份不变，Scene 帧仍变化。 |
+| F 自定义图片/视频 | PARTIAL | 图片和 MP4 已通过隔离 Electron bridge fixture 的真实本地媒体票据、解码和显示测试；主进程实现选择/校验/复制/持久化/删除。fixture 模拟 native bridge，没有自动触发 Windows 原生文件选择器，也没有覆盖所有损坏编解码样本；用户手动导入仍需验收。 |
+| G 搜索/播放列表 | PASS（fixture 范围） | Electron fixture 检查名称搜索、加入/移除、排序、上一张/下一张以及插件重新注入后的列表恢复；未验证真实跨版本用户配置升级。 |
+| H 媒体与权限隔离 | PARTIAL | Node 4/4：认证转发/Range、票据到期与撤销、本地导入 Range/删除后旧 URL 失效、8 类 resourceType 与其他 webContents 拒绝；Electron 测试验证未授权图片实际被拦截、网页子资源及 Scene/视频正常。未对每种 Electron frame/设置窗口逐项作真实 Chromium 探测；复杂 Scene/HTML 的导航策略仍需安全复核。 |
+| I 聊天/主客户端回归 | PARTIAL | `npm run e2e` 重跑结果 27/27。全仓 `python -m pytest -q` 有一项既存 P2 生产 Brain 启动测试 setup 失败：`tests/test_p2_agent_http.py::ProductionBrainTests.test_real_brain_context_and_stream_with_local_model`，fixture 等待 Brain 60 秒未就绪；P14 插件相关 Python 组通过。 |
+| J 远端制品/Windows 候选 | PARTIAL | 3.2.0 远端制品真实下载/安装/卸载与 Linux CI 通过；候选 Windows 全新安装、Electron/Brain 启动、聊天、重启恢复、卸载/用户数据留存通过。没有完成“旧版安装程序覆盖升级”：GitHub v1.0.2 安装器下载连续返回 `unexpected EOF`。另以预置旧配置、旧聊天、旧壁纸设置和导入素材的隔离 profile 安装/卸载候选，六项文件 SHA 均保持不变；这证明数据保留，不冒充旧版程序升级验收。 |
+
+### 实测命令和结果
+
+- `node --check market/plugins/wallpaper/frontend.js` 及 Electron 主进程、preload、测试脚本：PASS。
+- `node --test client/tools/test-plugin-media.js`：4/4 PASS。
+- `client/node_modules/.bin/electron.cmd client/tools/test-wallpaper-electron.js`：PASS。验证真实 WebWallGL canvas 动态帧、外观滑块、失败重试、失败实例销毁、Scene 快速切换、Wallpaper Engine 风格网页子资源、视频解码、导入图片和 MP4、搜索、播放列表顺序、上下张、重复启用/卸载和票据撤销。动态帧 SHA-256：`1cc6d4547400caeaca7a333a0de132e803ecb7ddecb0343c5a672b9782e888c9` / `e63db3c79b3c8eb8dd494abd392217e395a6fa5575e25d3fc4fb94bd45024764`。截图为 `client/_shots/wallpaper-code11.png`。素材为可复现合成 fixture，不代表复杂 Workshop 场景。
+- `client/node_modules/.bin/electron.cmd client/tools/test-plugin-market-electron.js`：PASS；`... test-market-live-electron.js`：PASS，实际远端清单为 `ready`、market version `1.1`。
+- `npm run e2e`：PASS 27/27。单次重跑因 CDP 截图超时为 26/27，未修改/删除断言；再次完整运行 27/27。
+- `python -m pytest tests/test_plugin_media.py tests/test_plugins.py tests/test_remote_plugin.py -q`：PASS；`(cd brain && python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q)`：PASS。
+- 全仓 `python -m pytest -q`：除上述 P2 fixture 启动失败外，其余测试完成。
+- 插件分支 GitHub Actions `Validate market packages`：run `39609986323`，head `74668aed3def43be7aab9789ae98feaef7af2881`，Linux/Python package validation PASS。远端 `market.json`/ZIP 安装卸载在临时 `VIGIL_HOME` 完成，原用户数据未触及。
+- `python scripts/build_release.py --candidate` 与 `python scripts/build_release.py --verify --candidate`：PASS；PyInstaller 6.22.3、Electron Builder 24.13.3、Electron 28.3.3。Windows 候选 `app.asar` 已列出 `node_modules/webwallgl/webwallgl.global.min.js`。
+- `python scripts/test_windows_candidate_lifecycle.py ...`：PASS。NSIS fresh install exit 0；安装文件校验通过；Electron 首启、Brain ready、fixture chat 成功；第二次启动恢复聊天；卸载 exit 0，程序文件清除，69 项隔离 userData 保持不变。
+- 额外隔离 profile 预置 Electron config、Brain config/chat、旧 `~/.vigil/wallpaper/config.json` 和导入图片后安装候选：六项 SHA 未变化；卸载后程序文件清除、profile 仍不变。旧版安装器下载由于 GitHub asset 连续 `unexpected EOF`，没有声称完成覆盖升级。
+
+### 插件市场交付
+
+插件仓库分支 `codex/p14-wallpaper-webwallgl` 已推送，PR #1 保持 Draft/Open，没有合并。最终分支 tip `74668aed3def43be7aab9789ae98feaef7af2881`；3.2.0 前端/后端与 Vigil 主仓 P14 文件同步。制品 `plugins/wallpaper/wallpaper-3.2.0.zip` SHA-256：`124b11e226a6c2f0d4280b6cef8e1df471f31c7665e3e33413868be0e4423e4b`。重复 Windows 构建一致；Manifest 的五个 payload 文件 SHA 由 package builder 复算并解包校验。旧版 3.0.1 保留，SHA-256：`4e551ae17783870872be7c2635d1a396fe5269fa032b514aff7e536940b22616`。新主市场 `main` 尚未指向 3.2.0；只有 Draft PR 分支使用该候选制品。
+
+### Windows 候选包
+
+- 版本：`1.1.8-p9.3.20261021.1`；构建源提交：`fd18a834b030e84a7d86ae7f4d04266ec93900bb`。
+- 安装包：`client/dist-release/Vigil.Setup.1.1.8-p9.3.20261021.1.exe`，242,260,439 bytes，SHA-256 `0fde2c5f7b235a6994317a3a8a52180a9f3f1d1b5adc14e3c57136be0e30ae3a`。
+- Portable：`client/dist-release/Vigil 1.1.8-p9.3.20261021.1.exe`，242,036,300 bytes，SHA-256 `a48d4654825f609e58823114269c4fe28dacb1e706b828887c3f3dc14783963d`。
+- Windows 候选包含 WebWallGL 3.0.0 本地运行时。尚未发布正式 Release。
+
+### 修改文件
+
+Vigil：`client/electron/main.js`、`client/electron/plugin-media.js`、`client/electron/preload.js`、`client/tools/test-plugin-market-electron.js`、`client/tools/test-plugin-media.js`、`client/tools/test-wallpaper-electron.js`、`market/plugins/wallpaper/__init__.py`、`market/plugins/wallpaper/frontend.css`、`market/plugins/wallpaper/frontend.js`、`scripts/test_windows_candidate_lifecycle.py`、本报告。
+
+vigil-plugins：`market.json`、`plugins/wallpaper/README.md`、`__init__.py`、`frontend.css`、`frontend.js`、`manifest.json`、`version.json`、新增 `wallpaper-3.2.0.zip`；旧 3.0.1 ZIP 未变。
+
+### 待人工验收
+
+1. 提供合法授权的复杂 Wallpaper Engine `scene.pkg`（粒子、Shader、交互），对真实分辨率/首帧/循环/显存占用验收。SceneScript 仍明确不支持。
+2. 在 Windows 桌面实际使用原生选择器导入用户图片和视频，验证损坏编解码输入与长视频；确认已有 profile 在正式升级后的设置与导入库行为。
+3. 通过可靠网络取得已发布旧版安装器，实测旧程序覆盖升级而非仅 profile 保留。
+4. 在正式设置窗口及所有受支持 iframe 场景逐项探测 loopback 拦截；必要时继续加负向测试。
+
+因此结论维持 **PARTIAL**。尚有复杂真实 Scene、原生导入端到端、旧程序覆盖升级和少数 frame 安全实测未完成；本报告不将其写作 PASS。
+
+## 版本号一致性修复（2026-10-21）
+
+发现上一版插件制品的版本信息不一致：市场清单、Manifest 和 `version.json` 是 3.2.0，但安装后运行时 `plugins/wallpaper/__init__.py` 仍报告 3.1.0。为避免覆盖已提交的 3.2.0 ZIP，已生成并推送新的候选补丁版 3.2.1 至 Draft PR 分支，并统一运行时、`version.json`、Manifest 与市场索引版本。旧 3.2.0 和 3.0.1 制品均保留；PR #1 仍为 Draft/Open，未合并。
+
+- 插件源提交：`98d04455c148bbb50e9c14716bc72253f8476fa1`。
+- 3.2.1 制品提交：`95f96c6bfbbf55561b5e388d09ee89c8a102a0b1`；索引提交/分支 tip：`554e75ff59ccb4ceea13f7e2721a680f23860872`。
+- ZIP：`plugins/wallpaper/wallpaper-3.2.1.zip`；SHA-256：`169a75fe5515b0742b9266a9f9501f50ff1e407e90a0228d786d1952f5766c9b`。
+- 本机 Python 构建器重建、Manifest 文件摘要逐项验证及运行时/索引/归档版本一致性检查：PASS。
+- GitHub Actions `Validate market packages` run `39615776316`（Linux/Python 3.12）：PASS。
+- GitHub Draft PR #1 标题已改为 `Wallpaper 3.2.1: local media and playlists`；未合并。市场索引 URL 固定指向含 ZIP 的提交 `95f96c6...`。
+- Vigil P14 分支已快进纳入远端的媒体票据续签和内置插件版本修复：`f94fded189451663b58db1621c060432e02c3365`。Vigil P14 内置候选源码、插件 Manifest、运行时版本及公开插件候选现均为 3.2.1。默认市场仍由 Draft PR 控制，未提前更新。

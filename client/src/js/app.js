@@ -287,6 +287,7 @@
   }
 
   let pluginLoadInFlight = null;
+  let loadedPluginNames = new Set();
   function loadPluginFrontends() {
     if (pluginLoadInFlight) return pluginLoadInFlight;
     pluginLoadInFlight = (async () => { try {
@@ -295,9 +296,22 @@
       const { plugins } = r.json;
       if (!Array.isArray(plugins)) return;
 
+      const enabled = plugins.filter(p => p && p.enabled && (p.js || p.css));
+      const fingerprint = pluginFingerprint(plugins);
+      if (lastPluginVersion && fingerprint === lastPluginVersion) return;
+
+      // Plugin contributions belong to their package. Remove old registrations and
+      // run their disposers before the main process injects the new enabled set.
+      for (const name of loadedPluginNames) {
+        if (window.VigilPlugin && window.VigilPlugin.unregisterPlugin) {
+          window.VigilPlugin.unregisterPlugin(name);
+        }
+      }
+      document.querySelectorAll('style[id^="plugin-css-"],style[id^="plugin-dyn-css-"]').forEach(el => el.remove());
+      loadedPluginNames.clear();
+
       // 注入 CSS
-      for (const p of plugins) {
-        if (!p.enabled) continue;
+      for (const p of enabled) {
         if (p.css) {
           const style = document.getElementById('plugin-css-' + p.name) || document.createElement('style');
           style.id = 'plugin-css-' + p.name;
@@ -320,7 +334,8 @@
         }
       }
 
-      lastPluginVersion = pluginFingerprint(plugins);
+      loadedPluginNames = new Set(enabled.map(p => p.name));
+      lastPluginVersion = fingerprint;
     } catch (e) {
       console.warn('插件前端加载失败:', e);
     } finally {
@@ -348,15 +363,48 @@
     window.VigilAPI = API;
     window.VigilUI = U;
     window.VigilPlugin = {
+      refresh: loadPluginFrontends,
       // 注册新页面：进 PAGES 并重建导航。page.after 指定插在哪个页面后面
       // （导航栏按钮多、高度有限，插件页一律 push 到末尾会被滚动区吞掉看不见）
       registerPage(page) {
         if (!page || !page.id || !page.render) return;
-        if (PAGES.find(p => p.id === page.id)) return;
+        if (PAGES.find(p => p.id === page.id)) {
+          const existing = PAGES.find(p => p.id === page.id);
+          if (existing.__pluginOwner === page.__pluginOwner) return;
+          return;
+        }
+        page.__pluginOwner = page.__pluginOwner || this._currentOwner || 'legacy';
         const at = page.after ? PAGES.findIndex(p => p.id === page.after) : -1;
         if (at >= 0) PAGES.splice(at + 1, 0, page);
         else PAGES.push(page);
         buildNav();
+      },
+      registerCleanup(owner, cleanup) {
+        if (!owner || typeof cleanup !== 'function') return () => {};
+        const entry = { owner: String(owner), cleanup };
+        this._cleanups.push(entry);
+        return () => { this._cleanups = this._cleanups.filter(x => x !== entry); };
+      },
+      unregisterPlugin(owner) {
+        owner = String(owner || '');
+        if (!owner) return;
+        for (const entry of this._cleanups.filter(x => x.owner === owner)) {
+          try { entry.cleanup(); } catch (e) { console.warn('[plugin dispose]', owner, e); }
+        }
+        this._cleanups = this._cleanups.filter(x => x.owner !== owner);
+        const removed = PAGES.filter(p => p.__pluginOwner === owner);
+        for (const page of removed) {
+          try { if (typeof page.dispose === 'function') page.dispose(); } catch (e) { console.warn('[plugin page dispose]', owner, e); }
+          PAGES.splice(PAGES.indexOf(page), 1);
+        }
+        (this._listeners[owner] || []).forEach(({ event, fn }) => {
+          this._listeners[event] = (this._listeners[event] || []).filter(x => x.fn !== fn);
+        });
+        delete this._listeners[owner];
+        document.getElementById('plugin-css-' + owner)?.remove();
+        document.getElementById('plugin-dyn-css-' + owner)?.remove();
+        buildNav();
+        if (removed.some(p => p.id === state.page)) go('chat');
       },
       // 动态注入 CSS
       injectCSS(name, css) {
@@ -371,12 +419,15 @@
       },
       // 简单事件总线
       _listeners: {},
+      _cleanups: [],
       on(event, fn) {
-        (this._listeners[event] = this._listeners[event] || []).push(fn);
+        const owner = this._currentOwner || 'legacy';
+        (this._listeners[event] = this._listeners[event] || []).push({ owner, fn });
+        (this._listeners[owner] = this._listeners[owner] || []).push({ event, fn });
       },
       emit(event, data) {
-        (this._listeners[event] || []).forEach(fn => {
-          try { fn(data); } catch (e) { console.error('[插件事件]', e); }
+        (this._listeners[event] || []).forEach(entry => {
+          try { entry.fn(data); } catch (e) { console.error('[插件事件]', e); }
         });
       },
     };
@@ -467,7 +518,7 @@
         const r = await get('/api/plugins/frontend');
         if (r && r.ok && r.json && r.json.version) {
           if (!settingsWindow && lastPluginVersion === 0) await loadPluginFrontends();
-          else if (!settingsWindow && Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) location.reload();
+          else if (!settingsWindow && Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) await loadPluginFrontends();
         }
       } catch (_) { /* 静默 */ }
     }, 10000);

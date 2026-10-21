@@ -5540,6 +5540,7 @@
     ctx.topbar.innerHTML =
       '<span class="tag">§ 插件市场</span>' +
       '<div style="flex:1"></div>' +
+      '<button class="btn ghost" id="pmExport">导出诊断</button>' +
       '<button class="btn ghost" id="pmRefresh">刷新市场</button>' +
       '<span class="muted" id="pmRepo" style="margin-left:12px"></span>';
 
@@ -5552,6 +5553,7 @@
       '</div>';
 
     let marketData = null;
+    let marketTransport = null;
 
     async function load() {
       if (disposed) return;
@@ -5560,14 +5562,27 @@
       try {
         const r = await API.get('/api/market/list');
         if (disposed) return;
+        marketTransport = r ? { ok: !!r.ok, status: Number(r.status) || 0,
+          diagnostic: r.diagnostic || null,
+          market: r.json ? { state: r.json.state, source: r.json.source,
+            market_version: r.json.market_version, updated: r.json.updated,
+            fetched_at: r.json.fetched_at, diagnostic: r.json.diagnostic || null } : null,
+          error: String(r.err || '').slice(0, 180) } : { ok: false, error: 'No response' };
         if (!r || !r.ok || !r.json) {
-          grid.innerHTML = '<div class="muted">加载失败：' + esc((r && r.err) || '未知错误') + '</div>';
+          const diag = r && r.diagnostic;
+          const detail = diag ? '[' + esc(diag.stage || 'electron') + '/' + esc(diag.kind || 'unknown') + '] ' + esc(diag.message || '') : '';
+          const msg = (r && r.err) || '未知错误';
+          grid.innerHTML = '<div class="muted">加载失败：' + esc(msg) + (detail ? '<br><small>' + detail + '</small>' : '') + '</div>';
+          marketTransport = { ok: false, status: Number(r && r.status) || 0, diagnostic: diag || null,
+            error: String(msg).slice(0, 180) };
           return;
         }
         marketData = r.json;
         ctx.topbar.querySelector('#pmRepo').textContent =
           '已安装 ' + (r.json.installed_count || 0) + ' 个';
-        ctx.view.querySelector('#pmStatus').textContent = r.json.state === 'ready' ? '' : (r.json.state_message || '市场状态未知');
+        const d = r.json.diagnostic;
+        const diagText = d ? ' [' + d.stage + '/' + d.kind + '] ' + d.message : '';
+        ctx.view.querySelector('#pmStatus').textContent = r.json.state === 'ready' ? '' : (r.json.state_message || '市场状态未知') + diagText;
         draw();
       } catch (e) {
         if (disposed) return;
@@ -5656,12 +5671,34 @@
       try {
         const result = await API.post('/api/market/refresh', {});
         if (!result || !result.ok || !result.json || !result.json.ok) {
-          toast((result && result.json && result.json.err) || (result && result.err) || '刷新失败');
+          const body = result && result.json;
+          const diagnostic = body && body.diagnostic;
+          const message = (body && (body.err || body.state_message)) || (result && result.err) || '刷新失败';
+          toast(message + (diagnostic ? ' [' + diagnostic.stage + '/' + diagnostic.kind + ']' : ''));
         }
       } catch (e) { toast('刷新失败：' + e.message); }
       await load();
       btn.disabled = false;
       btn.textContent = '刷新市场';
+    });
+
+    ctx.topbar.querySelector('#pmExport').addEventListener('click', async function () {
+      const button = ctx.topbar.querySelector('#pmExport');
+      button.disabled = true;
+      try {
+        await load();
+        const data = { schema: 'vigil.market-diagnostic/v1', created_at: new Date().toISOString(),
+          app_version: state.version || '', runtime: API.runtime.kind, transport: marketTransport };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'vigil-market-diagnostic-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast('已导出市场诊断；文件不包含 Token');
+      } catch (error) { toast('导出诊断失败：' + String(error.message || error)); }
+      finally { button.disabled = false; }
     });
 
     await load();

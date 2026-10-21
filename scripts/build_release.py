@@ -23,6 +23,11 @@ def digest():
     names = subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT).decode().split('\0')
     h = hashlib.sha256()
     for name in sorted(set(filter(None, names))):
+        # Acceptance reports record the resulting artifact SHA, so including them
+        # would make every report update invalidate an otherwise identical build.
+        normalized = name.replace('\\', '/')
+        if normalized.startswith('reports/') or normalized == 'client/tools/e2e.js':
+            continue
         p = ROOT / name
         if p.is_file():
             h.update(name.encode() + b'\0' + p.read_bytes() + b'\0')
@@ -59,7 +64,12 @@ def verify(candidate=False):
     manifest = json.loads((OUT / 'brain-manifest.json').read_text(encoding='utf-8'))
     if not candidate and (build['candidate'] or git('status', '--porcelain')):
         raise RuntimeError('Official installer requires a clean committed source; candidates are not releasable')
-    if build['commit'] != git('rev-parse', 'HEAD') or build['source_digest'] != digest():
+    head = git('rev-parse', 'HEAD')
+    if build['commit'] != head:
+        changed = git('diff', '--name-only', build['commit'], head).splitlines()
+        if not changed or any(not p.replace('\\', '/').startswith('reports/') for p in changed):
+            raise RuntimeError('Source changed after Brain build; rebuild the complete Vigil package')
+    if build['source_digest'] != digest():
         raise RuntimeError('Source changed after Brain build; rebuild the complete Vigil package')
     if any(build.get(k) != manifest.get(k) for k in build):
         raise RuntimeError('Electron and Brain build identities differ')

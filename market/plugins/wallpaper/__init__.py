@@ -25,8 +25,8 @@ from pathlib import Path
 
 # ── 插件元信息 ──────────────────────────────────────────────
 NAME = "wallpaper"
-VERSION = "3.0.0"
-DESC = "Wallpaper Engine 壁纸接入：扫描 Steam 创意工坊，把视频/网页/场景壁纸渲染到客户端背景"
+VERSION = "3.2.1"
+DESC = "Wallpaper Engine 壁纸接入：视频/网页播放与 WebWallGL 实时 Scene 渲染"
 FEATURE = "wallpaper"
 
 # ── 配置持久化 ──────────────────────────────────────────────
@@ -341,6 +341,10 @@ def api_config_post(body, query):
                   "opacity", "scrim", "blur", "muted", "we_path"]:
             if k in body:
                 cfg[k] = body[k]
+        if "playlist" in body and isinstance(body["playlist"], list):
+            # IDs are plain identifiers, never paths or executable resource URLs.
+            cfg["playlist"] = [str(item)[:80] for item in body["playlist"][:500]
+                                if isinstance(item, (str, int))]
     _save_config(cfg)
     return {"ok": True, "config": cfg}
 

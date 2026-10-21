@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
-const { createPluginMedia } = require('../electron/plugin-media');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+const { createPluginMedia, shouldCancelLoopbackRequest } = require('../electron/plugin-media');
 
 test('opaque media URL attaches auth, streams ranges and serves web children', async () => {
   const seen = [];
@@ -45,4 +49,74 @@ test('opaque media URL attaches auth, streams ranges and serves web children', a
     media.close();
     await new Promise(r => upstream.close(r));
   }
+});
+
+
+test('media tickets expire when idle and revoke on unload', async () => {
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'image/png' }); res.end('ok');
+  });
+  await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+  const media = createPluginMedia({
+    getBase: () => 'http://127.0.0.1:' + upstream.address().port,
+    getToken: async () => 'test-secret', ticketIdleMs: 120,
+  });
+  try {
+    const resource = '/api/plugin/wallpaper/we/media?id=123&file=scene.json';
+    const first = await media.url(resource);
+    assert.equal(media.isApprovedUrl(first), true);
+    assert.equal(media.isApprovedUrl('http://127.0.0.1:43210/'), false);
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(media.isApprovedUrl(first), false);
+    assert.equal((await fetch(first)).status, 410);
+    const second = await media.url(resource);
+    assert.notEqual(first, second);
+    assert.equal((await fetch(second)).status, 200);
+    media.releaseResources();
+    assert.equal(media.isApprovedUrl(second), false);
+    assert.equal((await fetch(second)).status, 404);
+  } finally {
+    media.close();
+    await new Promise(r => upstream.close(r));
+  }
+});
+
+test('trusted local import serves byte ranges and revoked IDs cannot mint new URLs', async () => {
+  const upstream = http.createServer((_req, res) => { res.writeHead(404); res.end(); });
+  await new Promise(r => upstream.listen(0, '127.0.0.1', r));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-local-wallpaper-'));
+  const file = path.join(dir, 'clip.mp4'); fs.writeFileSync(file, '0123456789');
+  const media = createPluginMedia({ getBase: () => 'http://127.0.0.1:' + upstream.address().port,
+    getToken: async () => 'test-secret' });
+  const id = crypto.randomUUID();
+  try {
+    media.registerLocal(id, file, 'video/mp4');
+    const url = await media.localUrl(id);
+    assert.equal(await media.localUrl(id), url, 'Repeated renders should reuse the same active local ticket');
+    const response = await fetch(url, { headers: { Range: 'bytes=3-6' } });
+    assert.equal(response.status, 206);
+    assert.equal(await response.text(), '3456');
+    media.unregisterLocal(id);
+    assert.equal((await fetch(url)).status, 404, 'Deleting an import revokes already issued URLs');
+    await assert.rejects(media.localUrl(id), /不存在/);
+    media.releaseResources();
+    assert.equal((await fetch(url)).status, 404);
+  } finally {
+    media.close(); fs.rmSync(dir, { recursive: true, force: true });
+    await new Promise(r => upstream.close(r));
+  }
+});
+
+test('loopback policy covers frames, images, media, workers and other webContents', () => {
+  const approved = url => url.includes('/r/') && url.includes('a'.repeat(48));
+  for (const resourceType of ['xhr','fetch','image','media','subFrame','script','worker','stylesheet']) {
+    assert.equal(shouldCancelLoopbackRequest({ url: 'http://127.0.0.1:4321/r/' + 'a'.repeat(48) + '/scene.json',
+      webContentsId: 7, resourceType }, 7, approved), false, resourceType + ' approved media capability');
+    assert.equal(shouldCancelLoopbackRequest({ url: 'http://127.0.0.1:4321/private', webContentsId: 7, resourceType },
+      7, approved), true, resourceType + ' arbitrary loopback denied');
+  }
+  assert.equal(shouldCancelLoopbackRequest({url:'http://127.0.0.1:4321/r/'+'a'.repeat(48)+'/scene.json',webContentsId:8,resourceType:'image'},7,approved),true,
+    'settings and other windows cannot reuse the main window ticket');
+  assert.equal(shouldCancelLoopbackRequest({url:'https://example.com',webContentsId:7,resourceType:'image'},7,approved),false,
+    'remote non-loopback requests are unaffected');
 });

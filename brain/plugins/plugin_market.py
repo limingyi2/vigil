@@ -14,6 +14,9 @@ import tempfile
 import zipfile
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+import socket
+import ssl
 
 NAME = "plugin_market"
 DESC = "插件市场：浏览/安装/卸载插件"
@@ -64,6 +67,80 @@ def _plugins_dir():
         return str(PLUGIN_INSTALL_DIR)
     except Exception:
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "installed_plugins"))
+
+
+def _market_cache_path():
+    """Validated remote listing cache. Its timestamp is kept separate from source metadata."""
+    try:
+        from paths import CONFIG_DIR
+        return os.path.join(str(CONFIG_DIR), "plugin_market_cache.json")
+    except Exception:
+        return os.path.join(os.path.expanduser("~"), ".vigil", "plugin_market_cache.json")
+
+
+def _read_cached_market():
+    try:
+        with open(_market_cache_path(), "r", encoding="utf-8") as stream:
+            cache = json.load(stream)
+        market = cache.get("market")
+        fetched_at = cache.get("fetched_at")
+        if not isinstance(fetched_at, str) or not isinstance(market, dict):
+            return None
+        checked = _validate_market(market, "github-cache")
+        if checked.get("state") not in ("ready", "empty"):
+            return None
+        checked["state"] = "cached_stale"
+        checked["fetched_at"] = fetched_at
+        return checked
+    except Exception:
+        return None
+
+
+def _remote_diagnostic(exc):
+    """Return safe, structured network/read diagnostics without request headers."""
+    reason = getattr(exc, "reason", exc)
+    message = str(reason)[:180]
+    if isinstance(exc, HTTPError):
+        return {"stage": "remote_market", "kind": "http_error", "status": int(exc.code), "message": "远程市场返回 HTTP %s" % exc.code}
+    if isinstance(reason, socket.timeout) or "timed out" in message.lower() or "timeout" in message.lower():
+        kind = "timeout"
+    elif isinstance(reason, ssl.SSLError) or "certificate" in message.lower() or "ssl" in message.lower() or "tls" in message.lower():
+        kind = "tls"
+    elif isinstance(reason, socket.gaierror) or "name resolution" in message.lower() or "getaddrinfo" in message.lower():
+        kind = "dns"
+    elif "proxy" in message.lower() or "tunnel" in message.lower():
+        kind = "proxy"
+    elif isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        kind = "invalid_manifest"
+    elif isinstance(exc, ValueError) and ("超过大小限制" in message or "格式无效" in message or "SHA-256" in message):
+        kind = "invalid_market_content"
+    elif isinstance(exc, ValueError):
+        kind = "remote_source_error"
+    elif isinstance(exc, URLError):
+        kind = "network"
+    else:
+        kind = "remote_error"
+    return {"stage": "remote_market", "kind": kind, "message": message}
+
+
+def _write_market_cache(market):
+    """Persist only a freshly downloaded and fully validated listing."""
+    try:
+        from datetime import datetime, timezone
+        path = _market_cache_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = json.dumps({
+            "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "market": {k: v for k, v in market.items() if k not in ("state", "source_kind")},
+        }, ensure_ascii=False, indent=2)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    except Exception as exc:
+        print("[插件市场] 已验证市场缓存写入失败：%s" % str(exc)[:80], flush=True)
 
 
 def _list_local():
@@ -161,10 +238,24 @@ def _read_remote_market():
     """默认公开目录；安装版不需要配置开发机上的本地 clone。"""
     try:
         market = json.loads(_fetch_bytes(REMOTE_MARKET_URL, 512 * 1024).decode("utf-8-sig"))
-        return _validate_market(market, "github")
+        market = _validate_market(market, "github")
+        if market.get("state") == "read_failed":
+            market["diagnostic"] = {"stage": "remote_market", "kind": "invalid_manifest",
+                                    "message": str(market.get("err") or "market.json validation failed")[:180]}
+        if market.get("state") in ("ready", "empty"):
+            _write_market_cache(market)
+        return market
     except Exception as exc:
+        diagnostic = _remote_diagnostic(exc)
+        cached = _read_cached_market()
+        if cached:
+            cached["err"] = "在线读取失败，显示于 %s 验证的缓存：%s" % (
+                cached["fetched_at"], str(exc)[:100])
+            cached["diagnostic"] = diagnostic
+            return cached
         return {"state": "read_failed", "plugins": [], "source_kind": "github",
-                "err": "GitHub 插件市场读取失败：%s" % str(exc)[:100]}
+                "err": "GitHub 插件市场读取失败：%s" % str(exc)[:100],
+                "diagnostic": diagnostic}
 
 
 def _install_remote_directory(meta, name):
@@ -248,7 +339,9 @@ def _install_remote_directory(meta, name):
                 result.update(stage=stage, err=stage + "失败：" + result.get("err", "未知错误"))
             return ok, result
     except Exception as exc:
-        return False, {"stage": stage, "err": "%s失败：%s" % (stage, str(exc)[:300])}
+        return False, {"err": "远程插件下载或校验失败：%s" % str(exc)[:120],
+                       "stage": stage,
+                       "diagnostic": dict(_remote_diagnostic(exc), stage="remote_artifact")}
 
 
 def _read_market():
@@ -284,6 +377,7 @@ def api_list(body, query):
         "state_message": {
             "not_configured": "尚未配置本地插件市场仓库",
             "read_failed": market.get("err") or "市场仓库读取失败",
+            "cached_stale": market.get("err") or "当前显示离线缓存，尚未验证在线市场状态",
             "empty": "市场仓库可用，但没有已发布插件",
             "ready": "插件市场已就绪",
         }.get(market.get("state"), "市场仓库读取失败"),
@@ -291,6 +385,8 @@ def api_list(body, query):
         "source": market.get("source_kind", "local"),
         "market_version": market.get("version", ""),
         "updated": market.get("updated", ""),
+        "fetched_at": market.get("fetched_at", ""),
+        "diagnostic": market.get("diagnostic"),
         "plugins": plugins,
         "installed_count": len(installed),
     }
@@ -309,6 +405,9 @@ def api_install(body, query):
 
     # 在市场清单里找
     market = _read_market()
+    if market.get("state") not in ("ready", "cached_stale"):
+        return {"ok": False, "err": market.get("err") or "插件市场当前不可用",
+                "state": market.get("state"), "diagnostic": market.get("diagnostic")}
     meta = None
     for p in market.get("plugins", []):
         if p.get("name") == name:
@@ -373,7 +472,8 @@ def api_refresh(body, query):
             "市场可用，但没有已发布插件" if state == "empty" else
             "GitHub 插件市场读取失败")
         return {"ok": state in ("ready", "empty"), "state": state,
-                "state_message": message, "source": "github"}
+                "state_message": message, "source": "github",
+                "diagnostic": market.get("diagnostic")}
     if not os.path.isdir(repo):
         return {"ok": False, "state": "read_failed", "err": "配置的市场仓库目录不存在"}
     try:
