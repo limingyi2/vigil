@@ -21,6 +21,8 @@ from .base import (
 )
 from .cloud import CloudProvider
 from .ollama import OllamaProvider, OllamaUnavailable
+from .execution import (capabilities, strategy_info, apply_reasoning_strategy,
+                        REASONING_STRATEGIES)
 
 MODES = ("cloud", "local", "hybrid")
 
@@ -52,4 +54,6 @@ __all__ = [
     "ProviderUnavailable", "ProviderHTTPError", "ProviderResponseError",
     "CloudProvider", "OllamaProvider", "OllamaUnavailable",
     "MODES", "normalize_mode", "get_provider",
+    "capabilities", "strategy_info", "apply_reasoning_strategy",
+    "REASONING_STRATEGIES",
 ]

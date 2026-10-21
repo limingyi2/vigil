@@ -61,6 +61,14 @@ class CloudProvider(ModelProvider):
             and self.model.lower().startswith("mimo-")
             and cfg.get("allow_xml_tool_fallback", True) is not False
         )
+        # MiMo documents the OpenAI-compatible reasoning_effort field.  Keep
+        # this knowledge inside the adapter; arbitrary custom gateways do not
+        # inherit it from a model name.
+        if (self.provider == 'xiaomi' and self.model.lower().startswith('mimo-')
+                and not isinstance(cfg.get('model_capabilities'), dict)):
+            self._cap_cfg = dict(cfg)
+            self._cap_cfg['model_capabilities'] = {
+                'reasoning': True, 'reasoning_parameter': 'reasoning_effort'}
 
     def _url(self):
         return self.api_base + "/chat/completions"

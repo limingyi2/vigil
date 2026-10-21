@@ -124,6 +124,20 @@ def _clip(text, limit):
     return text[:head] + note + (text[-tail:] if tail > 0 else ''), True
 
 
+_SECRET_FIELD = re.compile(r'(?:^|_)(?:api[_-]?key|token|password|secret|credential)(?:$|_)', re.I)
+
+
+def _safe_event_value(value, limit=12000):
+    """Bound and redact tool details before they enter the durable event log."""
+    if isinstance(value, dict):
+        return {str(k): ('[已隐藏]' if _SECRET_FIELD.search(str(k)) else
+                         _safe_event_value(v, limit)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_safe_event_value(v, limit) for v in value[:128]]
+    text = str(value or '')
+    return text[:limit] + ('…[已截断]' if len(text) > limit else '')
+
+
 def _compact(messages, budget=CONTEXT_CHARS, keep_recent=CONTEXT_KEEP_RECENT,
              stub=CONTEXT_STUB):
     """按体积整理 agent 自己的对话记录，返回 (messages, 省下的字符数)。
@@ -339,6 +353,25 @@ def listing(owner):
             if not (item := json.loads(row[0])).get('hidden')]
 
 
+def active(owner, conversation_id=None):
+    """Return the newest queued/running run for an owner/session.
+
+    This is intentionally read-only.  The renderer uses it after a refresh or
+    session switch to decide whether the composer should show Pause.  A
+    connection lifecycle event is not evidence that a run stopped, so this
+    lookup is the source of truth for recovery.
+    """
+    rows = listing(owner)
+    wanted = str(conversation_id or '')
+    for item in rows:
+        if item.get('status') not in ('queued', 'running'):
+            continue
+        if wanted and str(item.get('conversation_id') or '') != wanted:
+            continue
+        return item
+    return None
+
+
 def hide(owner):
     with LOCK, _db() as db:
         for blob, in db.execute('SELECT data FROM runs WHERE owner=?', (owner,)).fetchall():
@@ -456,6 +489,7 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
             src=src, status='queued', stage='queued', steps=[], content='', result=None,
             error=None, event_cursor=0, created_at=time.time(), budget=budget,
             resume_from=resume_from,
+            conversation_id=str(body.get('conversation_id') or body.get('session_id') or ''),
             model_snapshot={'provider': cfg.get('provider') or cfg.get('model_mode') or 'cloud',
                 'model': cfg.get('model') or (cfg.get('ollama') or {}).get('model')})
         db.execute('INSERT INTO runs VALUES (?,?,?,?,?)', (item['run_id'], owner, request, fingerprint, _json(item)))
@@ -511,7 +545,11 @@ def _step(db, item, kind, **fields):
     used = item['budget']['consumed']
     used['steps'] += 1
     used['requests' if kind == 'model' else 'tool_calls'] += 1
-    _event(db, item, 'step_started', dict(step_id=step['step_id'], kind=kind, stage=item['stage']))
+    event = dict(step_id=step['step_id'], kind=kind, stage=item['stage'])
+    for key in ('call_id', 'tool', 'input'):
+        if key in step:
+            event[key] = _safe_event_value(step[key])
+    _event(db, item, 'step_started', event)
     _save(db, item)
     return step['step_id']
 
@@ -622,7 +660,8 @@ def _tool(rid, owner, started, call, ctx):
             return None, False
         if not _check_budget(db, item, started, 'tool'):
             return None, False
-        sid = _step(db, item, 'tool', call_id=cid, tool=name, input_digest=signature,
+        sid = _step(db, item, 'tool', call_id=cid, tool=name,
+                    input=_safe_event_value(args), input_digest=signature,
                     result=None, result_state='in_flight')
         # Durable intent is committed before invoke_spec. This is the dispatch
         # boundary; cancel after this point reports an already in-flight tool.
@@ -649,7 +688,8 @@ def _tool(rid, owner, started, call, ctx):
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         step = item['steps'][sid-1]
-        step.update(status='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed', finished_at=time.time(),
+        step.update(status='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
+                    reason=reason, finished_at=time.time(),
                     result_state='unknown' if reason == 'tool_unknown' else 'not_dispatched' if reason == 'tool_failed' else 'returned',
                     result='' if reason else result[:MAX_TEXT],
                     result_chars=raw_chars, truncated=bool(clipped),
@@ -657,7 +697,10 @@ def _tool(rid, owner, started, call, ctx):
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
-        _event(db, item, 'tool_finished', dict(step_id=sid, call_id=cid, tool=name, result_state=step['result_state']))
+        _event(db, item, 'tool_finished', dict(step_id=sid, call_id=cid, tool=name,
+            result_state=step['result_state'], input=step.get('input'),
+            output=_safe_event_value(step.get('result') or ''),
+            error=_safe_event_value(step.get('reason') or '') if reason else ''))
         if reason:
             _finish(db, item, 'failed', reason)
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
@@ -692,6 +735,9 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
         localtools.set_context(item['src'], sender_id)
         features.set_current_src(item['src'])
         ctx = plugin_host.Turn(text=item['intent'], src=item['src'], brain=brain, api_config=cfg)
+        # Tool adapters use this opaque owner only for review checkpoint
+        # isolation; it never enters the model payload or event text.
+        ctx.owner = owner
         provider = get_provider(cfg)
         from conversation_context import output_reserve
         # 未配置模型输出上限就不发 max_tokens：由供应商默认值决定，不发明限制。
@@ -737,6 +783,19 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             payload = dict(model=getattr(provider, 'model', None) or cfg.get('model'), messages=msgs)
             if specs:
                 payload.update(tools=specs, tool_choice='auto')
+            from model_providers.execution import apply_reasoning_strategy
+            strategy = (cfg.get('agent_execution') or {}).get('reasoning_strategy', 'balanced')
+            payload, strategy_state = apply_reasoning_strategy(payload, cfg, provider, strategy)
+            # Keep capability truth visible to reconnecting clients without
+            # persisting model reasoning content or provider credentials.
+            if strategy_state.get('downgraded'):
+                with LOCK, _db() as db:
+                    item = _get(db, rid, owner)
+                    if item:
+                        item['reasoning'] = {'requested': strategy_state.get('requested'),
+                                             'applied': None,
+                                             'downgrade': strategy_state.get('downgrade')}
+                        _save(db, item)
             completion = None
             for event in completion_events(provider, prepare(payload, cfg, step_tokens=reserve_out), timeout=max(0.001, timeout)):
                 with LOCK, _db() as db:

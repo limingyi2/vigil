@@ -2083,17 +2083,25 @@
      * 多步任务（"整理下载目录"）一跑就是十几步、每步都可能等你点确认，
      * 没有这个你只能对着一个转圈的省略号猜它在干嘛。
      */
-    function addStep(name, text, kind) {
+    function addStep(name, text, kind, meta = {}) {
       const box = msgs.querySelector('#liveSteps');
       if (!box) return;
       box.hidden = false;
       const cls = kind === 'danger' ? 'warn' : kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : 'neutral';
-      box.insertAdjacentHTML('beforeend',
-        '<div>' +
+      const key = String(meta.call_id || meta.step_id || name || 'tool').replace(/[^A-Za-z0-9_-]/g, '_');
+      let row = box.querySelector('[data-step-key="' + key + '"]');
+      const detail = (meta.input !== undefined || meta.output !== undefined || meta.error) ?
+        '<details class="step-detail"><summary>详情</summary><pre>' +
+        esc(JSON.stringify({参数:meta.input,输出:meta.output,错误:meta.error}, null, 2)) +
+        '</pre></details>' : '';
+      const html =
+        '<div data-step-key="' + esc(key) + '">' +
         '<span class="sname">' + esc(name.replace(/^local_/, '')) + '</span>' +
         '<span class="stext">' + esc(String(text || '').slice(0, 90)) + '</span>' +
-        '<span class="tag ' + cls + '">' + esc(kind === 'danger' ? '提醒' : kind === 'err' ? '失败' : '完成') + '</span>' +
-        '</div>');
+        '<span class="tag ' + cls + '">' + esc(kind === 'danger' ? '提醒' : kind === 'err' ? '失败' : kind === 'ok' ? '完成' : '执行中') + '</span>' +
+        detail + '</div>';
+      if (row) row.outerHTML = html;
+      else box.insertAdjacentHTML('beforeend', html);
       msgs.scrollTop = msgs.scrollHeight;
     }
     async function loadMsgs(force) {
@@ -2136,12 +2144,14 @@
       const jobsToWatch = [];
       // 断点续跑恢复：最近一条 chat 记录若停在可续跑状态，发送键恢复成"继续"。
       let lastResumable = null;
+      let lastActive = null;
       let newestChatTs = 0;
       for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
         const input = item.input || item.requirement || '';
         const status = item.status || 'pending';
         if (item.kind === 'chat' && item.run_id) {
           if ((item.created_at || 0) > newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; }
+          if (['queued', 'running'].includes(status)) lastActive = item;
           if (['paused','paused_budget','interrupted','failed'].includes(status)) lastResumable = item;
         }
         // Successful legacy chat already has its own durable pair. Reuse it.
@@ -2168,10 +2178,18 @@
       items.sort((a,b)=>toMs(a.t)-toMs(b.t));
       // 恢复判断放渲染后：只信"最近一条"chat 记录，旧的可续跑任务不抢按钮。
       if (!busy) {
-        if (lastResumable && lastResumable.run_id) {
+        if (lastActive && lastActive.run_id) {
+          // 页面刷新/切换会丢掉 renderer 内存，但不会停止 Brain 的任务。
+          // 先恢复实际运行中的 run，避免把发送键误画成继续或发送。
+          activeRunId = lastActive.run_id;
+          resumableRunId = null;
+          setComposerMode('pause');
+        } else if (lastResumable && lastResumable.run_id) {
+          activeRunId = null;
           resumableRunId = lastResumable.run_id;
           setComposerMode('resume');
-        } else if (composerMode === 'resume') {
+        } else {
+          activeRunId = null;
           resumableRunId = null;
           setComposerMode('send');
         }
@@ -2214,7 +2232,7 @@
         if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + atts + '</div></div></div>';
         // 状态说明（执行中/已取消…）不再塞进正文气泡：小字一行跟在下面，
         // 取消也只是一条文字链，不是按钮气泡。
-        const runable = m.run && ['queued','running','paused_budget'].includes(m.run.status);
+        const runable = m.run && ['queued','running'].includes(m.run.status);
         const note = (m.statusNote ? '<div class="run-note"><span>' + esc(m.statusNote) + '</span>' +
           (runable ? '<button class="agent-cancel" data-run="' + esc(m.run.run_id) + '">取消</button>' : '') + '</div>' : '');
         const body = m.text
@@ -2391,6 +2409,8 @@
       let textDirty = false;
       let rafPending = false;
       let agentRunId = null;
+      let lastAgentSeq = 0;
+      let reconcileTimer = null;
       const agentCancel = document.createElement('button');
       agentCancel.className = 'agent-cancel';
       agentCancel.textContent = '取消';
@@ -2429,16 +2449,59 @@
         });
       }
 
+      // A closed SSE socket says nothing about the durable run.  Ask Brain for
+      // the run snapshot and keep polling while it is still queued/running;
+      // only a terminal snapshot is allowed to release the composer.
+      async function reconcileRun() {
+        if (streamDone || !agentRunId || activeConversationId !== sendConversationId ||
+            turnScope !== recordKey()) return;
+        try {
+          const snap = pick(await get('/api/agent/runs/' + encodeURIComponent(agentRunId) +
+            '?src=pc&conversation_id=' + encodeURIComponent(sendConversationId || '')));
+          const status = snap && snap.status;
+          if (['succeeded'].includes(status)) {
+            onEvent({type:'done', text:snap.content || snap.result || '', run_id:agentRunId,
+              seq:snap.event_cursor});
+          } else if (['paused','paused_budget','interrupted','failed','cancelled'].includes(status)) {
+            const error = snap.error || {};
+            onEvent({type:'error', text:snap.content || '', run_id:agentRunId, seq:snap.event_cursor,
+              status, class:error.reason || error.class || 'service_error',
+              msg:error.message || '任务已停止'});
+          } else {
+            statusEl.textContent = '连接已恢复，任务仍在执行 ';
+            statusEl.appendChild(agentCancel);
+            setComposerMode('pause');
+            reconcileTimer = setTimeout(reconcileRun, 2000);
+          }
+        } catch (_) {
+          // A transient health failure must not turn a running task into a
+          // false interruption.  Retry the state lookup while keeping Pause.
+          reconcileTimer = setTimeout(reconcileRun, 2000);
+        }
+      }
+
       // 监听流式事件
       const onEvent = (evt) => {
         if (activeConversationId !== sendConversationId) return;
         if (evt.job_id) return;
         if (evt.request_id && evt.request_id !== requestId) return;
+        // Agent events without an id are legacy chat events.  Once an Agent
+        // run is bound, accepting such an event would let a late stream from a
+        // previous turn overwrite this turn's text or terminal state.
         if (evt.run_id && agentRunId && evt.run_id !== agentRunId) return;
+        if (agentRunId && !evt.run_id &&
+            ['stage','tool','tool_reused','run_snapshot','think','text','done','error'].includes(evt.type)) return;
+        if (evt.type === 'agent_run') {
+          if (agentRunId && evt.run_id !== agentRunId) return;
+          if (!agentRunId) agentRunId = evt.run_id;
+        }
+        if (Number.isSafeInteger(evt.seq)) {
+          if (evt.seq <= lastAgentSeq) return;
+          lastAgentSeq = evt.seq;
+        }
         if (turnScope !== recordKey()) return;
         if (streamDone) return;
         if (evt.type === 'agent_run') {
-          agentRunId = evt.run_id;
           activeRunId = evt.run_id;
           remember({run_id:agentRunId,status:'running'});
           statusEl.textContent = '执行中 ';
@@ -2451,8 +2514,10 @@
         } else if (evt.type === 'tool') {
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
           const ok = evt.state === 'returned';
-          addStep(evt.tool || 'tool', ok ? '完成' : evt.state === 'not_dispatched' ? '失败' : '状态未知', ok ? 'ok' : 'err');
-          statusEl.textContent = '调用 ' + (evt.tool || '工具') + ' ';
+          const failed = ['not_dispatched', 'unknown', 'failed'].includes(evt.state);
+          addStep(evt.tool || 'tool', ok ? '完成' : failed ? '失败' : '执行中',
+            ok ? 'ok' : failed ? 'err' : 'neutral', evt);
+          statusEl.textContent = (evt.state === 'started' ? '正在调用 ' : '调用 ') + (evt.tool || '工具') + ' ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool_reused') {
           // 看门狗发现她在原地打转（同样的调用拿到同样的结果）。
@@ -2475,7 +2540,9 @@
           scheduleRender();
         } else if (evt.type === 'done') {
           streamDone = true;
+          if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
           stopListening();
+          activeRunId = null;
           resumableRunId = null;
           setComposerMode('send');
           textBuf = evt.text || textBuf;
@@ -2502,8 +2569,14 @@
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         } else if (evt.type === 'error') {
+          if (evt.class === 'connection_lost' && agentRunId) {
+            reconcileRun();
+            return;
+          }
           streamDone = true;
+          if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
           stopListening();
+          activeRunId = null;
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
             error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'}});
@@ -2565,8 +2638,10 @@
               msg:r.err || '连接中断，结果不完整'});
           }
           if (!streamDone) {
-            // 如果请求返回了但还没收到 done 事件，等一下
-            setTimeout(() => {
+            // If this is a durable Agent run, reconcile its real status.  Do
+            // not release the input box merely because the socket was quiet.
+            if (agentRunId) reconcileTimer = setTimeout(reconcileRun, 2000);
+            else setTimeout(() => {
               if (!streamDone) {
                 console.warn('[stream] no done event received, textBuf length:', textBuf.length);
                 remember({content:textBuf,status:'interrupted',

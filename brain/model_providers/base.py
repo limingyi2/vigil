@@ -84,6 +84,9 @@ class ModelProvider(object):
             "stream": self.supports_stream,
             "vision": self.supports_vision,
         }
-        from .execution import capabilities
+        from .execution import capabilities, strategy_info
         out['model'] = capabilities(getattr(self, '_cap_cfg', {}))
+        out['reasoning'] = strategy_info(getattr(self, '_cap_cfg', {}), self)
+        out['usage'] = True
+        out['protocol'] = 'openai-chat'
         return out
