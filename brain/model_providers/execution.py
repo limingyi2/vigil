@@ -200,7 +200,20 @@ def normalize(data):
             return result
         usage = data.get('usage')
         safe_usage = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
-            if k in ('prompt_tokens', 'completion_tokens', 'total_tokens') and isinstance(v, int) and not isinstance(v, bool) and v >= 0}
+            if k in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+            and isinstance(v, int) and not isinstance(v, bool) and v >= 0}
+        # Keep only the small, common detail fields needed for shared accounting.
+        # Provider-specific signed reasoning blocks remain provider-owned.
+        if isinstance(usage, dict):
+            for group in ('prompt_tokens_details', 'completion_tokens_details'):
+                details = usage.get(group)
+                if isinstance(details, dict):
+                    allowed = ('cached_tokens',) if group == 'prompt_tokens_details' else ('reasoning_tokens',)
+                    clean = {k: details[k] for k in allowed
+                             if isinstance(details.get(k), int) and not isinstance(details.get(k), bool)
+                             and details[k] >= 0}
+                    if clean:
+                        safe_usage[group] = clean
         result.update(content=content, reasoning=reasoning, tool_calls=calls,
                       usage=safe_usage or None)
         finish = choice.get('finish_reason')

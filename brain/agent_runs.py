@@ -146,59 +146,15 @@ def _safe_event_value(value, limit=12000):
 
 def _compact(messages, budget=CONTEXT_CHARS, keep_recent=CONTEXT_KEEP_RECENT,
              stub=CONTEXT_STUB):
-    """按体积整理 agent 自己的对话记录，返回 (messages, 省下的字符数)。
-
-    三条不能破的约束：
-      1. **不删消息，只缩内容**。OpenAI 形状里 assistant.tool_calls 后面必须
-         跟着对应 tool_call_id 的结果，删一半请求就非法。
-      2. 系统提示和**最初那条任务原文**不动 —— 缩掉目标，她会跑偏。
-      3. 最近的 keep_recent 条保持原样：当前这一步要用。
-    老的工具结果缩成开头一小段 + 明确标注，她自己知道该回头再查。
-    """
-    sizes = [len(str(m.get('content') or '')) for m in messages]
-    total = sum(sizes)
-    if total <= budget or len(messages) <= keep_recent + 2:
-        return messages, 0
-    cut = len(messages) - keep_recent
-    protected = {0}
-    for index, message in enumerate(messages):
-        if message.get('role') == 'user':
-            protected.add(index)
-            break
-    def shrink(index, cap):
-        content = messages[index].get('content')
-        if not isinstance(content, str) or len(content) <= cap:
-            return 0
-        note = '\n…[早期内容已省略 %d 字符]' % (len(content) - cap)
-        messages[index]['content'] = content[:max(0, cap - len(note))] + note
-        return len(content) - len(messages[index]['content'])
-    saved = 0
-    # 第一轮：只动"旧"的工具结果（体积的大头都在这儿）。
-    for index in range(len(messages)):
-        if index >= cut or index in protected:
-            continue
-        if messages[index].get('role') == 'tool':
-            saved += shrink(index, stub)
-            if total - saved <= budget:
-                return messages, saved
-    # 第二轮：还不够就缩旧助手正文。
-    for index in range(len(messages)):
-        if index >= cut or index in protected:
-            continue
-        if messages[index].get('role') == 'assistant':
-            saved += shrink(index, stub // 2)
-            if total - saved <= budget:
-                return messages, saved
-    # 第三轮：把最近这批工具结果也压到 stub 的一半（仍保留 tool_call 配对）。
-    for index in range(len(messages)):
-        if index in protected:
-            continue
-        if messages[index].get('role') == 'tool':
-            saved += shrink(index, max(200, stub // 2))
-            if total - saved <= budget:
-                return messages, saved
-    return messages, saved
-
+    """Apply the shared token budget policy to a model-visible copy."""
+    from agent_context import compact_messages, estimate_tokens
+    # Keep the legacy context_chars setting compatible while making all
+    # estimates and decisions operate in tokens.
+    budget_tokens = estimate_tokens('x' * max(1, int(budget)))
+    compacted, stats = compact_messages(messages, budget_tokens,
+                                        keep_recent=keep_recent,
+                                        stub_chars=stub)
+    return compacted, stats
 
 def _conversation_digest(msgs, per_message=1200):
     """把对话压成喂给摘要模型的一段文本。系统提示不进摘要（简报接收方自带）。"""
@@ -793,6 +749,15 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             # 每次请求前先按体积整理：工具结果一路追加到 messages 里，
             # 不裁的话请求体只会越来越大，最后被模型侧按上下文超限拒掉。
             msgs, saved = _compact(msgs, context_budget)
+            if saved.get('saved_tokens', 0):
+                with LOCK, _db() as db:
+                    item = _get(db, rid, owner)
+                    if item and item['status'] == 'running':
+                        summary = dict(saved, at=time.time(), step_id=sid)
+                        item.setdefault('context_compressions', []).append(summary)
+                        item['context_compressions'] = item['context_compressions'][-32:]
+                        _event(db, item, 'context_compacted', summary)
+                        _save(db, item)
             payload = dict(model=getattr(provider, 'model', None) or cfg.get('model'), messages=msgs)
             if specs:
                 payload.update(tools=specs, tool_choice='auto')
@@ -812,6 +777,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             from model_providers.tool_protocol import ToolTextBoundary
             boundary = ToolTextBoundary()
             completion = None
+            request_started = time.monotonic()
             for event in completion_events(provider, prepare(payload, cfg, step_tokens=reserve_out), timeout=max(0.001, timeout)):
                 with LOCK, _db() as db:
                     item = _get(db, rid, owner)
@@ -846,6 +812,26 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     return
                 since += 1  # 本轮模型请求已完整收尾（含 length 续写路径），计入检查点节奏
                 completion = completion or dict(reason='connection_lost')
+                request_elapsed = max(0.001, time.monotonic() - request_started)
+                from agent_context import usage_record
+                usage_data = usage_record(completion.get('usage'),
+                    input_text=_json(payload),
+                    output_text=str(completion.get('content') or '') + str(completion.get('reasoning') or ''))
+                throughput = usage_data['output_tokens'] / request_elapsed
+                usage_data.update(request_elapsed_seconds=round(request_elapsed, 3),
+                                  output_tokens_per_second=round(throughput, 2))
+                model_step = item['steps'][sid-1]
+                model_step['token_usage'] = usage_data
+                totals = item.setdefault('token_usage_totals', dict(input_tokens=0, output_tokens=0,
+                    cached_tokens=0, reasoning_tokens=0, estimated=False,
+                    model_request_seconds=0.0, requests=0))
+                for key in ('input_tokens', 'output_tokens', 'cached_tokens', 'reasoning_tokens'):
+                    if usage_data.get(key) is not None:
+                        totals[key] = int(totals.get(key) or 0) + int(usage_data[key])
+                totals['estimated'] = bool(totals.get('estimated') or usage_data['estimated'])
+                totals['model_request_seconds'] = round(float(totals.get('model_request_seconds') or 0)
+                                                        + request_elapsed, 3)
+                totals['requests'] = int(totals.get('requests') or 0) + 1
                 tail = boundary.feed('', final=True)
                 if tail:
                     item['content'] += tail
@@ -875,7 +861,9 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     step = item['steps'][sid-1]
                     step.update(status='interrupted', reason='length',
                         content=completion.get('content', '')[:MAX_TEXT],
-                        usage=completion.get('usage'), finished_at=time.time())
+                        usage=completion.get('usage'), token_usage=usage_data,
+                        request_elapsed_seconds=round(request_elapsed, 3),
+                        finished_at=time.time())
                     _event(db, item, 'step_finished', dict(step_id=sid, reason='length'))
                     _save(db, item)
                     if (completion.get('content') or '').strip():
@@ -888,7 +876,9 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 step = item['steps'][sid-1]
                 step.update(status='completed' if reason in ('normal', 'tool_calls') else 'failed',
                     reason=reason, content=completion.get('content', '')[:MAX_TEXT],
-                    usage=completion.get('usage'), finished_at=time.time())
+                    usage=completion.get('usage'), token_usage=usage_data,
+                    request_elapsed_seconds=round(request_elapsed, 3),
+                    finished_at=time.time())
                 item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
                 _event(db, item, 'step_finished', dict(step_id=sid, reason=reason))
                 if reason not in ('normal', 'tool_calls'):

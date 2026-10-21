@@ -23,6 +23,7 @@ import time
 import copy
 import re
 import threading
+from agent_context import estimate_tokens, estimate_messages
 
 _LOCK = threading.RLock()
 
@@ -58,22 +59,7 @@ def summary_max_chars(cfg=None):
 
 # --- Token 估算（启发式，与真实 usage 严格分开）---
 
-def estimate_tokens(text):
-    """粗估 token：CJK 约 0.9 token/字、其它约 0.3 token/字符（约 3.3 字符/token）。
-
-    取偏高档：提前压缩的代价远小于超预算被端点 400。真实用量来自模型
-    返回的 usage（见 maybe_summarize），只进统计、不参与这里的决策。
-    """
-    if not text:
-        return 0
-    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-    other = len(text) - cjk
-    return int(cjk * 0.9 + other * 0.3) + 1
-
-
-def estimate_messages(msgs):
-    return sum(estimate_tokens(m.get("content") or "") + MSG_OVERHEAD
-               for m in msgs if isinstance(m, dict))
+# The shared estimator is re-exported here for backwards compatibility.
 
 
 # --- 容量与预留 ---
