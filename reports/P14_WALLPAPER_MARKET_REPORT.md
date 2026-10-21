@@ -70,7 +70,7 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 
 候选安装器：`client/dist-release/Vigil.Setup.1.1.8-p9.3.20261021.1.exe`
 Portable 候选：`client/dist-release/Vigil 1.1.8-p9.3.20261021.1.exe`
-release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。安装器大小 `242,259,123` bytes，SHA-256 `8236fd7018608de3235f68f3440f57b0b71f63d54d2663e0f7320a147c060ed6`。候选 source commit：`d65ce345c2bf21a865e208275061660c1d4bacb6`。构建源码摘要排除报告文件，便于在报告中回填制品 SHA 后仍通过一致性校验。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
+release manifest 校验及 `scripts/build_release.py --verify --candidate`：PASS。安装器大小 `242,259,732` bytes，SHA-256 `82196cecfc2fbee20416c67c6bcd380fc436a8642ad46032d5be726a986dda59`。候选 source commit：`bdf5cb65acfc60ae894973722420dcdeac51ea7a`。构建源码摘要排除报告文件，且验证器允许其后只有 `reports/` 变更，报告回填制品 SHA 后仍可复核。已核对 `app.asar` 内包含本地 `webwallgl.global.min.js`。候选用于验收，不代表正式发布。
 
 ## 未完成与人工验收
 
