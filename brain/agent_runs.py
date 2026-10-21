@@ -156,6 +156,26 @@ def _compact(messages, budget=CONTEXT_CHARS, keep_recent=CONTEXT_KEEP_RECENT,
                                         stub_chars=stub)
     return compacted, stats
 
+
+def _recover_context(rid, owner, sid, messages, context_budget, error):
+    retry_budget = max(4000, int(context_budget) * 3 // 4)
+    compacted, summary = _compact(messages, retry_budget)
+    if not summary.get('saved_tokens', 0):
+        return None
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+        if not item or item['status'] != 'running':
+            return None
+        item['steps'][sid-1].update(status='failed', reason='context_overflow', finished_at=time.time())
+        item['context_recovery_attempts'] = int(item.get('context_recovery_attempts') or 0) + 1
+        summary.update(at=time.time(), step_id=sid, reason='context_overflow',
+                       provider_error=str(error)[:180])
+        item.setdefault('context_compressions', []).append(summary)
+        item['context_compressions'] = item['context_compressions'][-32:]
+        _event(db, item, 'context_recovery', summary)
+        _save(db, item)
+    return compacted
+
 def _conversation_digest(msgs, per_message=1200):
     """把对话压成喂给摘要模型的一段文本。系统提示不进摘要（简报接收方自带）。"""
     parts = []
@@ -727,6 +747,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             ck_every = 0
         since = 0
         stall = 0  # 连续命中"同参工具去重复用"的次数（看门狗的进展信号）
+        context_recovery_used = False
         while True:
             if ck_every > 0 and since >= ck_every:
                 _brief, replacement = _checkpoint(rid, owner, started, cfg, provider,
@@ -777,36 +798,59 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             from model_providers.tool_protocol import ToolTextBoundary
             boundary = ToolTextBoundary()
             completion = None
-            prepared_payload = prepare(payload, cfg, step_tokens=reserve_out)
+            try:
+                prepared_payload = prepare(payload, cfg, step_tokens=reserve_out)
+            except Exception as exc:
+                from model_providers.execution import is_context_limit_error
+                if not context_recovery_used and is_context_limit_error(exc):
+                    recovered = _recover_context(rid, owner, sid, msgs, context_budget, exc)
+                    if recovered is not None:
+                        context_recovery_used = True
+                        msgs = recovered
+                        continue
+                raise
             request_started = time.monotonic()
-            for event in completion_events(provider, prepared_payload, timeout=max(0.001, timeout)):
-                with LOCK, _db() as db:
-                    item = _get(db, rid, owner)
-                    if item['status'] != 'running':
-                        return
-                    if time.monotonic()-started >= item['budget']['max_seconds']:
-                        item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
-                        item['steps'][sid-1].update(status='interrupted', reason='budget_exhausted')
-                        _finish(db, item, 'paused_budget', 'budget_exhausted')
-                        return
-                    if event['type'] == 'completion':
-                        completion = event['result']
-                    elif event['type'] == 'text_delta':
-                        event = dict(event, text=boundary.feed(event['text']))
-                        # 展示用正文到顶就停止累积，任务继续跑：模型一次写太长不该
-                        # 让整项任务死掉。最终 result 另按 MAX_TEXT 截断并留标记。
-                        room = MAX_TEXT - len(item['content'])
-                        piece = event['text'][:room] if room > 0 else ''
-                        if piece:
-                            item['content'] += piece
-                            _event(db, item, 'text_delta', dict(text=piece, step_id=sid))
-                        if len(piece) < len(event['text']) and not item.get('content_truncated'):
-                            item['content_truncated'] = True
-                            _event(db, item, 'text_truncated', dict(step_id=sid))
-                    elif event['type'] == 'think_delta':
-                        _event(db, item, 'think_delta', dict(text=event['text'], step_id=sid))
-                    # Thinking stays outside persistent snapshots and event ledger.
-                    _save(db, item)
+            request_output_started = False
+            try:
+                for event in completion_events(provider, prepared_payload, timeout=max(0.001, timeout)):
+                    with LOCK, _db() as db:
+                        item = _get(db, rid, owner)
+                        if item['status'] != 'running':
+                            return
+                        if time.monotonic()-started >= item['budget']['max_seconds']:
+                            item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
+                            item['steps'][sid-1].update(status='interrupted', reason='budget_exhausted')
+                            _finish(db, item, 'paused_budget', 'budget_exhausted')
+                            return
+                        if event['type'] == 'completion':
+                            completion = event['result']
+                        elif event['type'] == 'text_delta':
+                            request_output_started = True
+                            event = dict(event, text=boundary.feed(event['text']))
+                            # 展示用正文到顶就停止累积，任务继续跑：模型一次写太长不该
+                            # 让整项任务死掉。最终 result 另按 MAX_TEXT 截断并留标记。
+                            room = MAX_TEXT - len(item['content'])
+                            piece = event['text'][:room] if room > 0 else ''
+                            if piece:
+                                item['content'] += piece
+                                _event(db, item, 'text_delta', dict(text=piece, step_id=sid))
+                            if len(piece) < len(event['text']) and not item.get('content_truncated'):
+                                item['content_truncated'] = True
+                                _event(db, item, 'text_truncated', dict(step_id=sid))
+                        elif event['type'] == 'think_delta':
+                            request_output_started = True
+                            _event(db, item, 'think_delta', dict(text=event['text'], step_id=sid))
+                        # Thinking stays outside persistent snapshots and event ledger.
+                        _save(db, item)
+            except Exception as exc:
+                from model_providers.execution import is_context_limit_error
+                if not request_output_started and not context_recovery_used and is_context_limit_error(exc):
+                    recovered = _recover_context(rid, owner, sid, msgs, context_budget, exc)
+                    if recovered is not None:
+                        context_recovery_used = True
+                        msgs = recovered
+                        continue
+                raise
             with LOCK, _db() as db:
                 item = _get(db, rid, owner)
                 if item['status'] != 'running':
@@ -825,11 +869,13 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 model_step['token_usage'] = usage_data
                 totals = item.setdefault('token_usage_totals', dict(input_tokens=0, output_tokens=0,
                     cached_tokens=0, reasoning_tokens=0, estimated=False,
+                    estimated_output=False,
                     model_request_seconds=0.0, requests=0))
                 for key in ('input_tokens', 'output_tokens', 'cached_tokens', 'reasoning_tokens'):
                     if usage_data.get(key) is not None:
                         totals[key] = int(totals.get(key) or 0) + int(usage_data[key])
                 totals['estimated'] = bool(totals.get('estimated') or usage_data['estimated'])
+                totals['estimated_output'] = bool(totals.get('estimated_output') or usage_data['estimated_output'])
                 totals['model_request_seconds'] = round(float(totals.get('model_request_seconds') or 0)
                                                         + request_elapsed, 3)
                 totals['requests'] = int(totals.get('requests') or 0) + 1
@@ -869,7 +915,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                         token_usage=usage_data, aggregate=item.get('token_usage_totals')))
                     _save(db, item)
                     if (completion.get('content') or '').strip():
-                        msgs.append(provider.assistant_history_message(completion,
+                        from model_providers.execution import assistant_history_message
+                        msgs.append(assistant_history_message(provider, completion,
                             content_override=completion['content']))
                     msgs.append(dict(role='user', content=(
                         '（系统提示：你上一条回复因达到单次最大输出长度被截断。'
@@ -922,7 +969,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     # 救回来的调用要重新装成**原生** tool_calls 写进记录，让循环按原
                     # 生协议继续。绝不能落进下面 xml_mode 的单批次兼容分支 —— 那条
                     # 路只允许一轮工具就强制总结，长任务会在第一轮末尾被腰斩。
-                    recovered_msg = provider.assistant_history_message(completion,
+                    from model_providers.execution import assistant_history_message
+                    recovered_msg = assistant_history_message(provider, completion,
                         content_override=completion.get('content') or None,
                         tool_calls=[dict(id=cid, type='function',
                                          function=dict(name=name, arguments=_json(args)))
@@ -963,7 +1011,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             if recovered_msg is not None:
                 msgs.append(recovered_msg)
             elif not xml_mode:
-                msgs.append(provider.assistant_history_message(completion,
+                from model_providers.execution import assistant_history_message
+                msgs.append(assistant_history_message(provider, completion,
                     content_override=completion.get('content') or None,
                     tool_calls=completion['tool_calls']))
             # Some reasoning providers require the previous reasoning in the live

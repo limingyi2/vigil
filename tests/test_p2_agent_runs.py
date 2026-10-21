@@ -486,7 +486,9 @@ class LongTaskTests(unittest.TestCase):
         out, saved = runs._compact(messages, 30000)
         after = sum(len(m.get('content') or '') for m in out)
         self.assertLessEqual(after, 30000)
-        self.assertEqual(saved, before - after)
+        self.assertGreater(saved['saved_tokens'], 0)
+        self.assertGreater(saved['before_tokens'], saved['after_tokens'])
+        self.assertEqual(sum(len(m.get('content') or '') for m in messages), before)
         # 结构不能破坏：assistant.tool_calls 后面的 tool_call_id 必须还在
         self.assertEqual(len(out), len(messages))
         self.assertEqual(out[0]['content'], 'S' * 100)

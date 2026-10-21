@@ -12,7 +12,8 @@ def test_shared_usage_prefers_provider_and_marks_estimates():
                            'prompt_tokens_details': {'cached_tokens': 40},
                            'completion_tokens_details': {'reasoning_tokens': 8}}, 'x', 'y')
     assert actual == {'input_tokens': 120, 'output_tokens': 30, 'cached_tokens': 40,
-                      'reasoning_tokens': 8, 'estimated': False, 'source': 'provider'}
+                      'reasoning_tokens': 8, 'estimated_input': False,
+                      'estimated_output': False, 'estimated': False, 'source': 'provider'}
     estimate = usage_record({'prompt_tokens': 120}, 'some input', '输出')
     assert estimate['estimated'] is True
     assert estimate['source'] == 'estimate'
