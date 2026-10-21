@@ -16,6 +16,8 @@ function createNativeWindowService({ ipcMain, getWindow }) {
   let helperReady = false;
   let pending = [];
   let nativeState = 'idle';
+  let shutdownWaiter = null;
+  let helperExitSafe = true;
   const profileFile = path.join(app.getPath('userData'), 'p15-video-apps.json');
 
   function profiles() {
@@ -63,10 +65,21 @@ function createNativeWindowService({ ipcMain, getWindow }) {
         const event = JSON.parse(line);
         if (event.type === 'state') {
           nativeState = event.state || nativeState;
+          helperExitSafe = ['idle', 'detached', 'fallback', 'resident'].includes(event.state) || !event.state;
         } else if (event.type === 'exited' || event.type === 'window-closed-resident' || event.type === 'session-released') {
           nativeState = 'idle';
+          helperExitSafe = true;
         } else if (event.type === 'started') {
           nativeState = 'starting';
+          helperExitSafe = false;
+        } else if (event.type === 'restore-failed' || event.type === 'shutdown-blocked') {
+          nativeState = 'restore-failed';
+        } else if (event.type === 'shutdown-complete') {
+          nativeState = 'idle';
+          helperExitSafe = true;
+          if (shutdownWaiter) shutdownWaiter(true);
+        } else if (event.type === 'start-reused' && nativeState === 'starting') {
+          // The following native `state` event is authoritative; do not synthesize a state here.
         }
         if (event.type === 'ready') {
           helperReady = true;
@@ -80,7 +93,9 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     helper.on('error', error => emit({ type: 'helper-error', message: error.message }));
     helper.on('exit', (code, signal) => {
       emit({ type: 'helper-exit', code, signal });
-      helper = null; helperReady = false; pending = []; nativeState = 'idle';
+      if (shutdownWaiter) shutdownWaiter(helperExitSafe);
+      const unsafeExit = !helperExitSafe;
+      helper = null; helperReady = false; pending = []; nativeState = unsafeExit ? 'helper-lost' : 'idle';
     });
   }
   function encode(value) { return Buffer.from(String(value || ''), 'utf8').toString('base64'); }
@@ -147,12 +162,19 @@ function createNativeWindowService({ ipcMain, getWindow }) {
   return {
     hide: () => send('HIDE'),
     shutdown: () => {
-      if (!helper) return Promise.resolve();
+      if (!helper) return Promise.resolve(helperExitSafe);
       const child = helper;
-      send('QUIT');
       return new Promise(resolve => {
-        const timer = setTimeout(resolve, 2500);
-        child.once('exit', () => { clearTimeout(timer); resolve(); });
+        let settled = false;
+        const finish = safe => {
+          if (settled) return;
+          settled = true;
+          if (shutdownWaiter === finish) shutdownWaiter = null;
+          resolve(!!safe);
+        };
+        shutdownWaiter = finish;
+        child.once('exit', () => finish(helperExitSafe));
+        send('QUIT');
       });
     },
     dispose: () => {

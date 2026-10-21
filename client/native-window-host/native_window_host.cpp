@@ -36,10 +36,20 @@ struct WindowState {
   bool originalVisible = false;
 };
 
+struct RestoreResult {
+  bool restored = false;
+  bool windowGone = false;
+  const wchar_t* stage = L"unknown";
+  DWORD error = ERROR_SUCCESS;
+};
+
+enum class RestoreIntent { none, detach, fallback, clearSession, quit };
+
 std::mutex g_outputMutex;
 std::mutex g_commandsMutex;
 std::vector<std::wstring> g_commands;
 std::atomic<bool> g_done{ false };
+std::atomic<bool> g_inputClosed{ false };
 
 std::wstring Base64ToWide(const std::wstring& encoded) {
   static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -127,32 +137,62 @@ WindowState SaveWindow(HWND hwnd, bool popup) {
   return state;
 }
 
-bool RestoreWindow(const WindowState& state) {
-  if (!IsWindow(state.hwnd)) return false;
+RestoreResult RestoreWindow(const WindowState& state, const std::wstring& injectedFailure = {}) {
+  if (!IsWindow(state.hwnd)) return { false, true, L"window-gone", ERROR_INVALID_WINDOW_HANDLE };
   const HWND parent = state.originalChild && IsWindow(state.originalParent) ? state.originalParent : nullptr;
-  SetLastError(ERROR_SUCCESS);
-  const HWND previousParent = SetParent(state.hwnd, parent);
-  const DWORD parentError = GetLastError();
-  if (!previousParent && parentError != ERROR_SUCCESS) return false;
-  try {
-    SetWindowLongPtrChecked(state.hwnd, GWL_STYLE, state.style);
-    SetWindowLongPtrChecked(state.hwnd, GWL_EXSTYLE, state.exStyle);
-  } catch (...) { return false; }
-  if (!state.originalChild) {
+  if (!state.originalChild && injectedFailure == L"set-parent") return { false, false, L"set-parent", ERROR_ACCESS_DENIED };
+  if (state.originalChild && !IsWindow(state.originalParent)) return { false, false, L"original-parent", ERROR_INVALID_WINDOW_HANDLE };
+  DWORD error = ERROR_SUCCESS;
+  if (GetWindowLongPtrW(state.hwnd, GWL_STYLE) != state.style) {
     SetLastError(ERROR_SUCCESS);
-    SetWindowLongPtrW(state.hwnd, GWLP_HWNDPARENT, IsWindow(state.originalOwner) ? reinterpret_cast<LONG_PTR>(state.originalOwner) : 0);
+    SetWindowLongPtrW(state.hwnd, GWL_STYLE, state.style);
+    error = GetLastError();
+    if (error != ERROR_SUCCESS) return { false, false, L"style", error };
   }
+  if (GetWindowLongPtrW(state.hwnd, GWL_EXSTYLE) != state.exStyle) {
+    SetLastError(ERROR_SUCCESS);
+    SetWindowLongPtrW(state.hwnd, GWL_EXSTYLE, state.exStyle);
+    error = GetLastError();
+    if (error != ERROR_SUCCESS) return { false, false, L"extended-style", error };
+  }
+  if (!state.originalChild) {
+    const HWND expectedOwner = IsWindow(state.originalOwner) ? state.originalOwner : nullptr;
+    if (GetWindow(state.hwnd, GW_OWNER) != expectedOwner) {
+      SetLastError(ERROR_SUCCESS);
+      SetWindowLongPtrW(state.hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(expectedOwner));
+      error = GetLastError();
+      if (error != ERROR_SUCCESS) return { false, false, L"owner", error };
+    }
+  }
+  if (injectedFailure == L"set-parent") return { false, false, L"set-parent", ERROR_ACCESS_DENIED };
+  SetLastError(ERROR_SUCCESS);
+  SetParent(state.hwnd, parent);
+  error = GetLastError();
+  if (error != ERROR_SUCCESS && GetParent(state.hwnd) != parent) return { false, false, L"set-parent", error };
   const bool parentRestored = state.originalChild
     ? GetParent(state.hwnd) == parent
     : ((GetWindowLongPtrW(state.hwnd, GWL_STYLE) & WS_CHILD) == 0 && GetWindow(state.hwnd, GW_OWNER) == (IsWindow(state.originalOwner) ? state.originalOwner : nullptr));
-  if (!parentRestored) return false;
+  if (!parentRestored) return { false, false, L"verify-parent", ERROR_INVALID_STATE };
+  if (injectedFailure == L"set-position") return { false, false, L"set-position", ERROR_ACCESS_DENIED };
   if (!SetWindowPos(state.hwnd, nullptr, state.rect.left, state.rect.top,
     state.rect.right - state.rect.left, state.rect.bottom - state.rect.top,
-    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)) return false;
-  if (!SetWindowPlacement(state.hwnd, &state.placement)) return false;
+    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)) return { false, false, L"set-position", GetLastError() };
+  if (!SetWindowPlacement(state.hwnd, &state.placement)) return { false, false, L"set-placement", GetLastError() };
   if (state.originalVisible && !IsWindowVisible(state.hwnd)) ShowWindow(state.hwnd, SW_SHOWNOACTIVATE);
-  if (state.originalVisible != (IsWindowVisible(state.hwnd) != FALSE)) return false;
-  return true;
+  if (GetWindowLongPtrW(state.hwnd, GWL_STYLE) != state.style) return { false, false, L"verify-style", ERROR_INVALID_STATE };
+  if (GetWindowLongPtrW(state.hwnd, GWL_EXSTYLE) != state.exStyle) return { false, false, L"verify-extended-style", ERROR_INVALID_STATE };
+  RECT restoredRect{};
+  if (!GetWindowRect(state.hwnd, &restoredRect)) return { false, false, L"verify-position", GetLastError() };
+  if (restoredRect.left != state.rect.left || restoredRect.top != state.rect.top ||
+      restoredRect.right != state.rect.right || restoredRect.bottom != state.rect.bottom) {
+    return { false, false, L"verify-position", ERROR_INVALID_STATE };
+  }
+  WINDOWPLACEMENT restoredPlacement{};
+  restoredPlacement.length = sizeof(restoredPlacement);
+  if (!GetWindowPlacement(state.hwnd, &restoredPlacement)) return { false, false, L"verify-placement", GetLastError() };
+  if (restoredPlacement.showCmd != state.placement.showCmd) return { false, false, L"verify-placement", ERROR_INVALID_STATE };
+  if (state.originalVisible != (IsWindowVisible(state.hwnd) != FALSE)) return { false, false, L"verify-visibility", ERROR_INVALID_STATE };
+  return { true, false, L"complete", ERROR_SUCCESS };
 }
 
 struct Candidate { HWND hwnd = nullptr; DWORD pid = 0; long long area = 0; std::wstring title; bool owned = false; };
@@ -222,6 +262,14 @@ struct Host {
   bool targetWindowHidden = false;
   std::wstring exePath;
   std::wstring state = L"idle";
+  RestoreIntent restoreIntent = RestoreIntent::none;
+  ULONGLONG nextRestoreAttempt = 0;
+  std::wstring failNextRestoreStage;
+  HWND lastRestoredWindow = nullptr;
+  DWORD lastRestoredPid = 0;
+  LONG_PTR lastRestoredStyle = 0;
+  std::wstring restoreFailureReason;
+  bool lastRestoreWindowGone = false;
 };
 
 bool RestoreAll(Host& host);
@@ -296,8 +344,7 @@ std::set<DWORD> RefreshProcesses(Host& host) {
   return live;
 }
 
-void ClearSession(Host& host) {
-  RestoreAll(host);
+void ClearSessionState(Host& host) {
   for (const auto& item : host.trackedProcesses) if (item.second) CloseHandle(item.second);
   host.trackedProcesses.clear();
   host.processIds.clear();
@@ -307,6 +354,9 @@ void ClearSession(Host& host) {
   host.process = {};
   host.launchPid = 0;
   host.mainPid = 0;
+  host.mainWindow = nullptr;
+  host.mainState = {};
+  host.attached = false;
   host.windowLostAt = 0;
   host.launched = false;
   host.fallback = false;
@@ -315,6 +365,20 @@ void ClearSession(Host& host) {
   host.exePath.clear();
   host.reportedPopups.clear();
   host.discoveryStartedAt = 0;
+  host.restoreIntent = RestoreIntent::none;
+  host.nextRestoreAttempt = 0;
+}
+
+void EmitRestoreResult(const wchar_t* type, const RestoreResult& result, HWND hwnd) {
+  Emit(L"{\"type\":\"" + std::wstring(type) + L"\",\"stage\":\"" + result.stage +
+    L"\",\"code\":" + std::to_wstring(result.error) + L",\"hwnd\":" +
+    std::to_wstring(reinterpret_cast<uintptr_t>(hwnd)) + L",\"valid\":" +
+    (IsWindow(hwnd) ? L"true" : L"false") + L",\"parentHwnd\":" +
+    std::to_wstring(reinterpret_cast<uintptr_t>(IsWindow(hwnd) ? GetParent(hwnd) : nullptr)) +
+    L",\"ownerHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(IsWindow(hwnd) ? GetWindow(hwnd, GW_OWNER) : nullptr)) +
+    L",\"style\":" + std::to_wstring(IsWindow(hwnd) ? GetWindowLongPtrW(hwnd, GWL_STYLE) : 0) +
+    L",\"exStyle\":" + std::to_wstring(IsWindow(hwnd) ? GetWindowLongPtrW(hwnd, GWL_EXSTYLE) : 0) +
+    L",\"visible\":" + (IsWindow(hwnd) && IsWindowVisible(hwnd) ? L"true" : L"false") + L"}");
 }
 
 void HideContainer(Host& host) {
@@ -333,6 +397,13 @@ void UpdateBounds(Host& host, int x, int y, int width, int height) {
 bool EmbedWindow(Host& host, HWND target, bool popup) {
   if (!IsWindow(target) || !IsWindow(host.container)) return false;
   WindowState state = SaveWindow(target, popup);
+  if (!popup) {
+    host.mainWindow = target;
+    host.mainState = state;
+    host.mainPid = 0;
+    GetWindowThreadProcessId(target, &host.mainPid);
+    host.attached = true;
+  }
   try {
     const LONG_PTR style = (state.style & ~static_cast<LONG_PTR>(WS_POPUP | WS_CAPTION | WS_THICKFRAME)) | WS_CHILD;
     SetWindowLongPtrChecked(target, GWL_STYLE, style);
@@ -346,7 +417,6 @@ bool EmbedWindow(Host& host, HWND target, bool popup) {
       L",\"parentHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(actualParent)) + L",\"expectedParentHwnd\":" +
       std::to_wstring(reinterpret_cast<uintptr_t>(host.container)) + L"}");
     if (actualParent != host.container) {
-      RestoreWindow(state);
       EmitError(L"set-parent", error ? error : ERROR_ACCESS_DENIED, L"Windows rejected SetParent; target remains an independent window.");
       return false;
     }
@@ -360,36 +430,135 @@ bool EmbedWindow(Host& host, HWND target, bool popup) {
     }
     if (!SetWindowPos(target, popup ? HWND_TOP : nullptr, x, y, w, h, SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW)) {
       const DWORD positionError = GetLastError();
-      RestoreWindow(state);
       EmitError(L"set-position", positionError, L"Windows rejected the hosted window resize; the original window was restored.");
       return false;
     }
     if (popup) return false;
-    host.mainWindow = target; host.mainState = state; host.mainPid = 0;
-    GetWindowThreadProcessId(target, &host.mainPid);
-    host.attached = true;
     return true;
   } catch (DWORD error) {
-    RestoreWindow(state);
     EmitError(L"set-style", error, L"Could not change the external window style; it remains standalone.");
     return false;
   }
 }
 
 bool RestoreAll(Host& host) {
-  bool ok = !host.attached || RestoreWindow(host.mainState);
-  host.attached = false;
+  if (!host.mainWindow) {
+    host.attached = false;
+    HideContainer(host);
+    return true;
+  }
+  const HWND hwnd = host.mainWindow;
+  if (!IsWindow(hwnd)) {
+    const RestoreResult gone{ false, true, L"window-gone", ERROR_INVALID_WINDOW_HANDLE };
+    EmitRestoreResult(L"restore-window-gone", gone, hwnd);
+    host.lastRestoreWindowGone = true;
+    host.mainWindow = nullptr;
+    host.mainPid = 0;
+    host.mainState = {};
+    host.attached = false;
+    HideContainer(host);
+    return true;
+  }
+  const std::wstring injectedFailure = host.failNextRestoreStage;
+  host.failNextRestoreStage.clear();
+  const RestoreResult result = RestoreWindow(host.mainState, injectedFailure);
+  EmitRestoreResult(result.restored ? L"restore-complete" : L"restore-failed", result, hwnd);
+  if (result.windowGone) {
+    host.lastRestoreWindowGone = true;
+    host.mainWindow = nullptr;
+    host.mainPid = 0;
+    host.mainState = {};
+    host.attached = false;
+    HideContainer(host);
+    return true;
+  }
+  if (!result.restored) return false;
+  host.lastRestoreWindowGone = false;
   host.mainWindow = nullptr;
   host.mainPid = 0;
+  host.mainState = {};
+  host.attached = false;
   HideContainer(host);
-  return ok;
+  return true;
+}
+
+void CompleteRestoreIntent(Host& host, RestoreIntent intent) {
+  host.restoreIntent = RestoreIntent::none;
+  host.nextRestoreAttempt = 0;
+  switch (intent) {
+    case RestoreIntent::detach:
+      host.detachedByUser = true;
+      host.fallback = false;
+      Emit(L"{\"type\":\"detached\",\"restored\":" + std::wstring(host.lastRestoreWindowGone ? L"false" : L"true") +
+        L",\"windowGone\":" + (host.lastRestoreWindowGone ? L"true" : L"false") + L",\"hwnd\":" +
+        std::to_wstring(reinterpret_cast<uintptr_t>(host.lastRestoredWindow)) + L",\"pid\":" + std::to_wstring(host.lastRestoredPid) +
+        L",\"valid\":" + (IsWindow(host.lastRestoredWindow) ? L"true" : L"false") + L",\"visible\":" +
+        (IsWindow(host.lastRestoredWindow) && IsWindowVisible(host.lastRestoredWindow) ? L"true" : L"false") + L",\"parentHwnd\":" +
+        std::to_wstring(reinterpret_cast<uintptr_t>(IsWindow(host.lastRestoredWindow) ? GetParent(host.lastRestoredWindow) : nullptr)) + L",\"style\":" +
+        std::to_wstring(IsWindow(host.lastRestoredWindow) ? GetWindowLongPtrW(host.lastRestoredWindow, GWL_STYLE) : 0) +
+        L",\"originalStyle\":" + std::to_wstring(host.lastRestoredStyle) + L"}");
+      EmitState(host, L"detached");
+      break;
+    case RestoreIntent::fallback:
+      host.fallback = true;
+      host.detachedByUser = false;
+      Emit(L"{\"type\":\"fallback\",\"reason\":\"" + JsonEscape(host.restoreFailureReason.empty() ? L"The target window was restored as a standalone window." : host.restoreFailureReason) + L"\"}");
+      host.restoreFailureReason.clear();
+      EmitState(host, L"fallback");
+      break;
+    case RestoreIntent::clearSession:
+      ClearSessionState(host);
+      EmitState(host, L"idle");
+      break;
+    case RestoreIntent::quit:
+      ClearSessionState(host);
+      Emit(L"{\"type\":\"shutdown-complete\"}");
+      g_done = true;
+      break;
+    case RestoreIntent::none:
+      break;
+  }
+}
+
+bool RequestRestore(Host& host, RestoreIntent intent, const std::wstring& failureReason = {}) {
+  host.lastRestoredWindow = host.mainWindow;
+  host.lastRestoredPid = host.mainPid;
+  host.lastRestoredStyle = host.mainState.style;
+  host.lastRestoreWindowGone = false;
+  host.restoreFailureReason = failureReason;
+  if (RestoreAll(host)) {
+    CompleteRestoreIntent(host, intent);
+    return true;
+  }
+  host.restoreIntent = intent;
+  host.nextRestoreAttempt = GetTickCount64() + 1000;
+  Emit(L"{\"type\":\"restore-pending\",\"reason\":\"" + JsonEscape(failureReason) +
+    L"\",\"hwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(host.mainWindow)) + L"}");
+  EmitState(host, L"restore-failed", host.mainPid, host.mainWindow);
+  if (intent == RestoreIntent::quit) Emit(L"{\"type\":\"shutdown-blocked\",\"reason\":\"A live external window could not be restored; the host and Electron window must remain alive.\"}");
+  return false;
+}
+
+bool ClearSession(Host& host) {
+  if (!RequestRestore(host, RestoreIntent::clearSession, L"Session cleanup could not restore its external window.")) return false;
+  return true;
 }
 
 void Fallback(Host& host, const std::wstring& reason) {
-  RestoreAll(host);
-  host.fallback = true;
-  EmitState(host, L"fallback");
-  Emit(L"{\"type\":\"fallback\",\"reason\":\"" + JsonEscape(reason) + L"\"}");
+  if (RequestRestore(host, RestoreIntent::fallback, reason)) {
+    Emit(L"{\"type\":\"fallback-reason\",\"reason\":\"" + JsonEscape(reason) + L"\"}");
+  }
+}
+
+void RetryRestore(Host& host) {
+  if (host.restoreIntent == RestoreIntent::none || GetTickCount64() < host.nextRestoreAttempt) return;
+  const RestoreIntent intent = host.restoreIntent;
+  if (RestoreAll(host)) CompleteRestoreIntent(host, intent);
+  else {
+    host.nextRestoreAttempt = GetTickCount64() + 1000;
+    EmitState(host, L"restore-failed", host.mainPid, host.mainWindow);
+    if (intent == RestoreIntent::quit) Emit(L"{\"type\":\"shutdown-blocked\",\"reason\":\"External window restoration is still failing; retrying safely.\"}");
+  }
 }
 
 void ProcessCommand(Host& host, const std::wstring& line) {
@@ -400,20 +569,73 @@ void ProcessCommand(Host& host, const std::wstring& line) {
   if (fields.empty()) return;
   const auto number = [&](size_t index, int fallback) { try { return index < fields.size() ? std::stoi(fields[index]) : fallback; } catch (...) { return fallback; } };
   const std::wstring& command = fields[0];
+  if (command == L"TEST_FAIL_RESTORE_ONCE" && fields.size() >= 2) {
+    wchar_t enabled[8]{};
+    if (GetEnvironmentVariableW(L"VIGIL_P15_TEST_FAULT_INJECTION", enabled, static_cast<DWORD>(std::size(enabled))) && std::wstring(enabled) == L"1") {
+      host.failNextRestoreStage = fields[1];
+      Emit(L"{\"type\":\"test-fault-armed\",\"stage\":\"" + JsonEscape(fields[1]) + L"\"}");
+    } else EmitError(L"test-fault", ERROR_ACCESS_DENIED, L"Fault injection is disabled unless VIGIL_P15_TEST_FAULT_INJECTION=1.");
+    return;
+  }
   if (command == L"START" && fields.size() >= 7) {
     const std::wstring exe = Base64ToWide(fields[1]);
     const std::wstring args = Base64ToWide(fields[2]);
     if (exe.empty()) { EmitError(L"start", ERROR_INVALID_PARAMETER, L"The EXE path is empty or invalid UTF-8."); return; }
     if (host.launched && RefreshProcesses(host).empty()) {
       Emit(L"{\"type\":\"exited\",\"reason\":\"all-target-processes-exited\"}");
-      ClearSession(host);
+      if (!ClearSession(host)) return;
+    }
+    if (host.restoreIntent != RestoreIntent::none) {
+      EmitError(L"start", ERROR_BUSY, L"The previous window has not been safely restored. Keep Vigil open and retry after recovery completes.");
+      EmitState(host, L"restore-failed", host.mainPid, host.mainWindow);
+      return;
+    }
+    if (host.launched && _wcsicmp(host.exePath.c_str(), exe.c_str()) == 0) {
+      const auto activePids = RefreshProcesses(host);
+      if (activePids.empty()) {
+        Emit(L"{\"type\":\"exited\",\"reason\":\"all-target-processes-exited\"}");
+        if (!ClearSession(host)) return;
+      } else {
+        if (host.attached && !IsWindow(host.mainWindow)) {
+          const HWND lost = host.mainWindow;
+          host.mainWindow = nullptr; host.mainState = {}; host.mainPid = 0; host.attached = false;
+          host.discoveryStartedAt = GetTickCount64(); host.windowLostAt = host.discoveryStartedAt;
+          Emit(L"{\"type\":\"window-lost\",\"reason\":\"hwnd-destroyed\",\"hwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(lost)) + L"}");
+          EmitState(host, L"window-rebuilding");
+        }
+        UpdateBounds(host, number(3, 0), number(4, 0), number(5, 1), number(6, 1));
+        host.visible = true;
+        if (IsWindow(host.container)) ShowWindow(host.container, SW_SHOWNA);
+        if (host.detachedByUser) {
+          host.detachedByUser = false; host.fallback = false;
+          host.discoveryStartedAt = GetTickCount64(); host.windowLostAt = 0;
+          EmitState(host, L"attaching");
+        } else if (host.attached && IsWindow(host.mainWindow) && GetParent(host.mainWindow) == host.container) {
+          Emit(L"{\"type\":\"start-reused\",\"pid\":" + std::to_wstring(host.launchPid) + L",\"windowPid\":" +
+            std::to_wstring(host.mainPid) + L",\"hwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(host.mainWindow)) + L"}");
+          Emit(StateJson(host.targetWindowHidden ? L"window-hidden" : L"attached", host.launchPid, host.mainPid, host.mainWindow));
+        } else if (host.fallback) {
+          Emit(L"{\"type\":\"start-reused\",\"pid\":" + std::to_wstring(host.launchPid) + L",\"windowPid\":0,\"hwnd\":0}");
+          Emit(StateJson(L"fallback", host.launchPid));
+        } else if (host.windowLostAt) {
+          EmitState(host, L"window-rebuilding");
+        } else if (host.state == L"attaching") {
+          EmitState(host, L"attaching");
+        } else {
+          EmitState(host, L"starting");
+        }
+        return;
+      }
     }
     if (host.launched && _wcsicmp(host.exePath.c_str(), exe.c_str()) != 0) {
       const auto activePids = RefreshProcesses(host);
       const auto remainingWindows = FindWindows(activePids, host.container);
       if (host.detachedByUser || (host.fallback && remainingWindows.empty())) {
         const DWORD releasedPid = host.launchPid;
-        ClearSession(host);
+        if (!ClearSession(host)) {
+          EmitError(L"start", ERROR_BUSY, L"The previous window could not be safely restored; the new profile was not started.");
+          return;
+        }
         Emit(L"{\"type\":\"session-released\",\"pid\":" + std::to_wstring(releasedPid) + L",\"processEnded\":false,\"reason\":\"switch-to-another-profile\"}");
       } else {
         EmitError(L"start", ERROR_BUSY, L"Another configured application still has an active window. Close it or detach it before switching profiles.");
@@ -478,20 +700,43 @@ void ProcessCommand(Host& host, const std::wstring& line) {
     }
     return;
   }
-  if (command == L"ATTACH") { host.fallback = false; host.detachedByUser = false; host.discoveryStartedAt = GetTickCount64(); return; }
+  if (command == L"ATTACH") {
+    if (host.restoreIntent != RestoreIntent::none) {
+      EmitError(L"attach", ERROR_BUSY, L"The previous window is still being safely restored.");
+      return;
+    }
+    if (host.attached && IsWindow(host.mainWindow) && GetParent(host.mainWindow) == host.container) {
+      EmitState(host, L"attached", host.mainPid, host.mainWindow);
+      return;
+    }
+    if (host.launched && !host.attached && !host.detachedByUser && !host.fallback &&
+        (host.state == L"starting" || host.state == L"window-rebuilding")) {
+      EmitState(host, host.state);
+      return;
+    }
+    host.fallback = false; host.detachedByUser = false; host.discoveryStartedAt = GetTickCount64();
+    EmitState(host, L"attaching");
+    return;
+  }
   if (command == L"DETACH") {
-    const HWND detachedHwnd = host.mainWindow;
-    const LONG_PTR originalStyle = host.mainState.style;
-    const bool restored = RestoreAll(host);
-    host.detachedByUser = true;
-    const bool valid = IsWindow(detachedHwnd) != FALSE;
-    const bool visible = valid && IsWindowVisible(detachedHwnd);
-    const LONG_PTR style = valid ? GetWindowLongPtrW(detachedHwnd, GWL_STYLE) : 0;
-    Emit(L"{\"type\":\"detached\",\"restored\":" + std::wstring(restored ? L"true" : L"false") + L",\"hwnd\":" +
-      std::to_wstring(reinterpret_cast<uintptr_t>(detachedHwnd)) + L",\"valid\":" + (valid ? L"true" : L"false") +
-      L",\"visible\":" + (visible ? L"true" : L"false") + L",\"parentHwnd\":" + std::to_wstring(reinterpret_cast<uintptr_t>(valid ? GetParent(detachedHwnd) : nullptr)) +
-      L",\"style\":" + std::to_wstring(style) + L",\"originalStyle\":" + std::to_wstring(originalStyle) + L"}");
-    EmitState(host, L"detached");
+    if (!host.mainWindow) {
+      DWORD currentPid = 0;
+      const bool priorWindowAlive = IsWindow(host.lastRestoredWindow) &&
+        GetWindowThreadProcessId(host.lastRestoredWindow, &currentPid) && currentPid == host.lastRestoredPid;
+      host.detachedByUser = host.launched;
+      host.fallback = false;
+      Emit(L"{\"type\":\"detached\",\"restored\":" + std::wstring(priorWindowAlive ? L"true" : L"false") +
+        L",\"windowGone\":" + (priorWindowAlive ? L"false" : L"true") + L",\"alreadyDetached\":" +
+        (priorWindowAlive ? L"true" : L"false") + L",\"hwnd\":" +
+        std::to_wstring(reinterpret_cast<uintptr_t>(priorWindowAlive ? host.lastRestoredWindow : nullptr)) + L"}");
+      EmitState(host, L"detached");
+      return;
+    }
+    if (host.restoreIntent != RestoreIntent::none) {
+      EmitError(L"detach", ERROR_BUSY, L"A window restore is already pending; the helper will continue retrying it.");
+      return;
+    }
+    RequestRestore(host, RestoreIntent::detach, L"User requested detach.");
     return;
   }
   if (command == L"CLOSE_APP") {
@@ -505,7 +750,15 @@ void ProcessCommand(Host& host, const std::wstring& line) {
     return;
   }
   if (command == L"STATUS") { Emit(StateJson(host.state, host.launchPid, host.mainPid, host.mainWindow)); return; }
-  if (command == L"QUIT") { ClearSession(host); g_done = true; return; }
+  if (command == L"QUIT") {
+    if (host.restoreIntent != RestoreIntent::none) {
+      if (host.restoreIntent != RestoreIntent::quit) host.restoreIntent = RestoreIntent::quit;
+      Emit(L"{\"type\":\"shutdown-blocked\",\"reason\":\"Waiting for the outstanding window restoration to succeed.\"}");
+      return;
+    }
+    RequestRestore(host, RestoreIntent::quit, L"Application shutdown requested.");
+    return;
+  }
 }
 
 void ReaderThread() {
@@ -518,7 +771,7 @@ void ReaderThread() {
     std::lock_guard<std::mutex> lock(g_commandsMutex);
     g_commands.push_back(line);
   }
-  g_done = true;
+  g_inputClosed = true;
 }
 }  // namespace
 
@@ -550,18 +803,19 @@ int wmain(int argc, wchar_t** argv) {
       commands.swap(g_commands);
     }
     for (const auto& command : commands) ProcessCommand(host, command);
+    if (g_inputClosed && host.restoreIntent == RestoreIntent::none) RequestRestore(host, RestoreIntent::quit, L"Electron control channel closed.");
+    RetryRestore(host);
+    if (g_done) break;
 
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
 
-    if (!IsWindow(parent)) { ClearSession(host); g_done = true; break; }
-    if (host.launched) {
+    if (!g_done && !IsWindow(parent) && host.restoreIntent == RestoreIntent::none) RequestRestore(host, RestoreIntent::quit, L"Electron parent window was destroyed.");
+    if (IsWindow(parent) && host.launched && host.restoreIntent == RestoreIntent::none) {
       const auto pids = RefreshProcesses(host);
       if (pids.empty()) {
         const DWORD oldPid = host.launchPid;
-        ClearSession(host);
-        Emit(L"{\"type\":\"exited\",\"pid\":" + std::to_wstring(oldPid) + L",\"reason\":\"all-target-processes-exited\"}");
-        EmitState(host, L"idle");
+        if (ClearSession(host)) Emit(L"{\"type\":\"exited\",\"pid\":" + std::to_wstring(oldPid) + L",\"reason\":\"all-target-processes-exited\"}");
       } else {
         if (host.attached && !IsWindow(host.mainWindow)) {
           host.mainWindow = nullptr; host.mainPid = 0; host.attached = false;
@@ -608,7 +862,6 @@ int wmain(int argc, wchar_t** argv) {
             Emit(L"{\"type\":\"window-closed-resident\",\"pid\":" + std::to_wstring(oldPid) + L",\"liveProcessCount\":" + std::to_wstring(liveCount) + L",\"processEnded\":false}");
             EmitState(host, L"resident", 0, nullptr);
             ClearSession(host);
-            EmitState(host, L"idle");
           } else if (!host.windowLostAt && GetTickCount64() - host.discoveryStartedAt > 30000) {
             Fallback(host, L"No visible top-level window was found in the launched process family within 30 seconds; the process remains running independently.");
           }
@@ -617,8 +870,8 @@ int wmain(int argc, wchar_t** argv) {
     }
     Sleep(kPollMs);
   }
-  ClearSession(host);
-  if (IsWindow(container)) DestroyWindow(container);
+  if (!host.mainWindow && IsWindow(container)) DestroyWindow(container);
+  else if (host.mainWindow && IsWindow(host.mainWindow)) Emit(L"{\"type\":\"container-preserved\",\"reason\":\"A valid external HWND is still associated with this container.\"}");
   if (reader.joinable()) { if (g_done) reader.detach(); else reader.join(); }
   return 0;
 }

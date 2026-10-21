@@ -5705,6 +5705,13 @@
         attached: `已托管窗口（PID ${event.pid}，DPI ${event.dpi}）。`,
         detached: event.restored ? '已解除托管，软件窗口已恢复。' : '解除托管时未能完整恢复窗口。',
         fallback: '无法托管此窗口，软件已恢复为独立窗口。',
+        'start-reused': '软件已在运行，复用现有进程与窗口。',
+        'restore-complete': '软件窗口恢复检查通过。',
+        'restore-pending': '软件窗口恢复未完成，Vigil 将保留窗口引用并重试。',
+        'restore-failed': `软件窗口恢复失败（${event.stage || '未知阶段'}，Win32 ${event.code ?? '未知'}）；窗口仍由宿主保留并重试。`,
+        'restore-window-gone': '目标窗口已不存在，已按窗口销毁状态清理托管引用。',
+        'shutdown-blocked': '软件窗口尚未安全恢复，Vigil 保持运行并继续重试。',
+        'shutdown-complete': '外部软件窗口已安全恢复，Vigil 可以退出。',
         'popup-standalone': '软件弹窗保持独立显示。',
         'window-hidden': '软件窗口暂时隐藏，进程仍在运行。',
         'window-visible': '软件窗口已恢复显示。',
@@ -5716,7 +5723,7 @@
         'tracking-fallback': 'Windows 作业跟踪不可用，正在跟踪已发现的进程。',
         recreated: '检测到软件重建窗口，正在重新托管…',
         exited: '软件已退出，可以启动其他配置。',
-        state: ({ idle: '请选择并启动软件。', starting: '软件正在启动或等待窗口。', attached: '软件窗口已托管。', 'window-hidden': '软件窗口暂时隐藏。', 'window-rebuilding': '软件正在重建主窗口。', detached: '软件仍在运行，窗口已解除托管。', resident: '软件进程仍驻留，可以启动其他配置。', fallback: '软件正在独立窗口运行。', busy: '另一个配置仍在运行。' })[event.state] || `软件状态：${event.state || '未知'}`,
+        state: ({ idle: '请选择并启动软件。', starting: '软件正在启动或等待窗口。', attaching: '正在重新托管已运行的软件窗口。', attached: '软件窗口已托管。', 'window-hidden': '软件窗口暂时隐藏。', 'window-rebuilding': '软件正在重建主窗口。', detached: '软件仍在运行，窗口已解除托管。', resident: '软件进程仍驻留，可以启动其他配置。', fallback: '软件正在独立窗口运行。', busy: '另一个配置仍在运行。', 'restore-failed': '窗口恢复失败，保留 HWND 并自动重试。' })[event.state] || `软件状态：${event.state || '未知'}`,
       };
       if (labels[event.type]) setStatus(labels[event.type]);
       else if (event.type === 'error') setStatus(`窗口托管错误（${event.stage}，${event.code}）：${event.message}`);

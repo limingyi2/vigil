@@ -40,6 +40,7 @@ let settingsWinReady = false;
 let pendingSettingsTarget = null;
 let nativeWindowService = null;
 let nativeWindowQuitPending = false;
+let nativeWindowSafeToQuit = false;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
@@ -547,7 +548,7 @@ function createWindow() {
   // 不拦的话 window-all-closed → app.quit()，微信渠道的本地工具
   // 轮询、转发通道全部跟着一起死。
   win.on('close', (e) => {
-    if (!quitting) {
+    if (!quitting || (nativeWindowService && !nativeWindowSafeToQuit)) {
       e.preventDefault();
       win.hide();
     }
@@ -1207,13 +1208,40 @@ if (!app.requestSingleInstanceLock()) {
 // 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
 // 也会走 before-quit —— 那时必须放行 close，不然关不了机）
 app.on('before-quit', (event) => {
-  quitting = true;
   pluginMedia.close();
-  if (nativeWindowService && !nativeWindowQuitPending) {
-    nativeWindowQuitPending = true;
+  if (nativeWindowService && !nativeWindowSafeToQuit) {
     event.preventDefault();
-    nativeWindowService.shutdown().finally(() => app.quit());
+    if (nativeWindowQuitPending) return;
+    quitting = true;
+    nativeWindowQuitPending = true;
+    nativeWindowService.shutdown().then(safe => {
+      nativeWindowQuitPending = false;
+      if (safe) {
+        nativeWindowSafeToQuit = true;
+        app.quit();
+      } else {
+        quitting = false;
+        if (win && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+        }
+        dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+          type: 'warning',
+          title: '软件窗口尚未安全恢复',
+          message: 'Vigil 暂时保持运行，正在继续恢复外部软件窗口。恢复成功后可以再次退出。',
+        });
+      }
+    }, error => {
+      nativeWindowQuitPending = false;
+      quitting = false;
+      if (win && !win.isDestroyed()) { win.show(); win.focus(); }
+      dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+        type: 'warning', title: '无法确认软件窗口状态', message: String(error && error.message || error),
+      });
+    });
+    return;
   }
+  quitting = true;
 });
 
 app.on('window-all-closed', () => {

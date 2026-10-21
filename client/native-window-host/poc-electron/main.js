@@ -19,7 +19,10 @@ let lifecycleIndex = 0;
 let lifecycleCloseTimer = null;
 let lifecycleTimeoutTimer = null;
 let lifecyclePhase = 'initial';
-const helperPath = path.resolve(__dirname, '..', 'build', 'Release', 'native-window-host.exe');
+const duplicateStartingSteps = new Set();
+const duplicateAttachedSteps = new Set();
+const repeatedDetachSteps = new Set();
+const helperPath = path.resolve(process.env.P15_TEST_HELPER_PATH || path.join(__dirname, '..', 'build', 'Release', 'native-window-host.exe'));
 
 function emit(event) {
   if (win && !win.isDestroyed()) win.webContents.send('poc:event', event);
@@ -29,12 +32,31 @@ function emit(event) {
   }
   if (!event || !event.type || !lifecycleSequence.length) return;
   if (event.type === 'ready') startLifecycleStep();
+  if (event.type === 'started' && process.env.P15_TEST_DUPLICATE_STARTS === '1' && !duplicateStartingSteps.has(lifecycleIndex)) {
+    duplicateStartingSteps.add(lifecycleIndex);
+    for (let i = 0; i < 3; i++) send(startCommand(lifecycleSequence[lifecycleIndex]));
+    emit({ type: 'test-duplicate-starts-issued', phase: 'starting', index: lifecycleIndex, count: 3 });
+  }
   if (event.type === 'attached' && lifecycleCloseTimer === null) {
     if (lifecyclePhase === 'initial') {
       lifecyclePhase = 'detaching';
       send('FOCUS');
-      const detachDelay = Math.max(500, Math.min(30000, Number(process.env.P15_TEST_DETACH_DELAY_MS) || 1200));
-      lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('DETACH'); }, detachDelay);
+      if (process.env.P15_TEST_DUPLICATE_STARTS === '1' && !duplicateAttachedSteps.has(lifecycleIndex)) {
+        duplicateAttachedSteps.add(lifecycleIndex);
+        for (let i = 0; i < 3; i++) send(startCommand(lifecycleSequence[lifecycleIndex]));
+        emit({ type: 'test-duplicate-starts-issued', phase: 'attached', index: lifecycleIndex, count: 3 });
+      }
+      if (process.env.P15_TEST_QUIT_WITH_FAULT === '1') {
+        lifecyclePhase = 'quit-fault-arming';
+        send('TEST_FAIL_RESTORE_ONCE\tset-parent');
+      } else if (process.env.P15_TEST_FAULT_STAGE &&
+          (process.env.P15_TEST_FAULT_INDEX === undefined || Number(process.env.P15_TEST_FAULT_INDEX) === lifecycleIndex)) {
+        lifecyclePhase = 'fault-arming';
+        send(`TEST_FAIL_RESTORE_ONCE\t${process.env.P15_TEST_FAULT_STAGE}`);
+      } else {
+        const detachDelay = Math.max(500, Math.min(30000, Number(process.env.P15_TEST_DETACH_DELAY_MS) || 1200));
+        lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('DETACH'); }, detachDelay);
+      }
     } else if (lifecyclePhase === 'reattaching') {
       lifecyclePhase = 'closing';
       lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('CLOSE_APP'); }, 1500);
@@ -45,10 +67,28 @@ function emit(event) {
       lifecycleSequence = [];
     }, 20000);
   }
+  if (event.type === 'test-fault-armed') {
+    if (lifecyclePhase === 'fault-arming') {
+      lifecyclePhase = 'detaching';
+      lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('DETACH'); }, 100);
+    } else if (lifecyclePhase === 'quit-fault-arming') {
+      lifecyclePhase = 'quit-fault-pending';
+      setTimeout(() => app.quit(), 100);
+    }
+  }
+  if (event.type === 'start-reused') emit({ type: 'test-start-reused', phase: lifecyclePhase, index: lifecycleIndex, pid: event.pid, hwnd: event.hwnd });
   if (event.type === 'detached' && lifecyclePhase === 'detaching') {
     lifecyclePhase = 'reattaching';
+    if (process.env.P15_TEST_REPEAT_DETACH === '1' && !repeatedDetachSteps.has(lifecycleIndex)) {
+      repeatedDetachSteps.add(lifecycleIndex);
+      send('DETACH');
+      emit({ type: 'test-repeat-detach-issued', index: lifecycleIndex });
+    }
     clearTimeout(lifecycleCloseTimer);
-    lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('ATTACH'); send('SHOW'); }, 700);
+    lifecycleCloseTimer = setTimeout(() => {
+      lifecycleCloseTimer = null;
+      send(startCommand(lifecycleSequence[lifecycleIndex])); send('SHOW');
+    }, 700);
   }
   if (event.type === 'exited' || event.type === 'window-closed-resident') {
     clearTimeout(lifecycleCloseTimer); lifecycleCloseTimer = null;
@@ -66,13 +106,17 @@ function startLifecycleStep() {
     clearTimeout(lifecycleTimeoutTimer); lifecycleTimeoutTimer = null;
     emit({ type: 'lifecycle-sequence-complete', steps: lifecycleSequence.length });
     lifecycleSequence = [];
+    if (process.env.P15_TEST_CLOSE_ON_COMPLETE === '1') setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 300);
     return;
   }
   const exePath = path.resolve(lifecycleSequence[lifecycleIndex]);
   lifecyclePhase = 'initial';
-  const command = `START\t${encode(exePath)}\t\t24\t100\t1000\t600`;
   emit({ type: 'lifecycle-step-start', index: lifecycleIndex, exePath });
-  send(command); send('SHOW');
+  send(startCommand(exePath)); send('SHOW');
+}
+
+function startCommand(exePath) {
+  return `START\t${encode(path.resolve(exePath))}\t\t24\t100\t1000\t600`;
 }
 
 function send(command) {
@@ -148,6 +192,10 @@ ipcMain.on('poc:action', (event, action) => {
   if (!helper) return;
   if (['ATTACH', 'DETACH', 'FOCUS', 'CLOSE_APP', 'QUIT'].includes(action)) send(action);
 });
+ipcMain.on('poc:test-fault', (event, stage) => {
+  if (!win || event.sender !== win.webContents || process.env.VIGIL_P15_TEST_FAULT_INJECTION !== '1' || !helper) return;
+  send(`TEST_FAIL_RESTORE_ONCE\t${String(stage || '').slice(0, 32)}`);
+});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -175,7 +223,7 @@ function createWindow() {
 app.whenReady().then(createWindow);
 try {
   const sequence = JSON.parse(process.env.P15_TEST_SEQUENCE || '[]');
-  if (Array.isArray(sequence) && sequence.length >= 2 && sequence.every(value => typeof value === 'string')) lifecycleSequence = sequence;
+  if (Array.isArray(sequence) && sequence.length >= 1 && sequence.every(value => typeof value === 'string')) lifecycleSequence = sequence;
 } catch (_) { /* A malformed optional smoke-test sequence must not affect normal PoC use. */ }
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {
@@ -186,5 +234,4 @@ app.on('before-quit', event => {
   send('QUIT');
   const done = () => app.quit();
   child.once('exit', done);
-  setTimeout(done, 2500).unref();
 });
