@@ -15,7 +15,7 @@ function createNativeWindowService({ ipcMain, getWindow }) {
   let helper = null;
   let helperReady = false;
   let pending = [];
-  let currentExe = '';
+  let nativeState = 'idle';
   const profileFile = path.join(app.getPath('userData'), 'p15-video-apps.json');
 
   function profiles() {
@@ -61,6 +61,13 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     readline.createInterface({ input: helper.stdout }).on('line', line => {
       try {
         const event = JSON.parse(line);
+        if (event.type === 'state') {
+          nativeState = event.state || nativeState;
+        } else if (event.type === 'exited' || event.type === 'window-closed-resident' || event.type === 'session-released') {
+          nativeState = 'idle';
+        } else if (event.type === 'started') {
+          nativeState = 'starting';
+        }
         if (event.type === 'ready') {
           helperReady = true;
           const queue = pending; pending = [];
@@ -73,7 +80,7 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     helper.on('error', error => emit({ type: 'helper-error', message: error.message }));
     helper.on('exit', (code, signal) => {
       emit({ type: 'helper-exit', code, signal });
-      helper = null; helperReady = false; pending = []; currentExe = '';
+      helper = null; helperReady = false; pending = []; nativeState = 'idle';
     });
   }
   function encode(value) { return Buffer.from(String(value || ''), 'utf8').toString('base64'); }
@@ -119,21 +126,19 @@ function createNativeWindowService({ ipcMain, getWindow }) {
   handle('video-window:start', (profile, bounds) => {
     if (process.platform !== 'win32') throw new Error('原生窗口托管目前仅支持 Windows。');
     const exePath = selectedExe(profile && profile.exePath);
-    if (helper && currentExe && currentExe.toLowerCase() !== exePath.toLowerCase()) {
-      throw new Error('当前软件仍在运行。先正常关闭或退出托管，再启动另一个配置。');
-    }
     const target = getWindow();
     startHelper(target);
-    currentExe = exePath;
+    emit({ type: 'start-requested', exePath, profileName: String(profile && profile.name || '') });
+    if (target && !target.isDestroyed()) target.focus();
     send(`START\t${encode(exePath)}\t${encode(profile && profile.args)}\t${boundsCommand(bounds).split('\t').slice(1).join('\t')}`);
     send('SHOW');
-    return { ok: true, exePath };
+    return { ok: true, exePath, state: nativeState };
   });
   const onBounds = (event, bounds) => { if (trusted(event) && helper) send(boundsCommand(bounds)); };
   const onVisible = (event, visible) => { if (trusted(event) && helper) send(visible ? 'SHOW' : 'HIDE'); };
   const onAction = (event, action) => {
     if (!trusted(event) || !helper) return;
-    if (['ATTACH', 'DETACH', 'FOCUS', 'CLOSE_APP'].includes(action)) send(action);
+    if (['ATTACH', 'DETACH', 'FOCUS', 'CLOSE_APP', 'STATUS'].includes(action)) send(action);
   };
   ipcMain.on('video-window:bounds', onBounds);
   ipcMain.on('video-window:visible', onVisible);

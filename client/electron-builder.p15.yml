@@ -20,3 +20,7 @@ win:
   icon: assets/icon.ico
   target:
     - portable
+portable:
+  # Use a unique NSIS plugin temp directory per launch. A fixed temp folder is
+  # locked while Vigil runs and can make a second portable launch fail.
+  unpackDirName: true

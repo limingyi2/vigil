@@ -14,6 +14,11 @@ let helper = null;
 let helperReady = false;
 let pendingCommands = [];
 let quitStarted = false;
+let lifecycleSequence = [];
+let lifecycleIndex = 0;
+let lifecycleCloseTimer = null;
+let lifecycleTimeoutTimer = null;
+let lifecyclePhase = 'initial';
 const helperPath = path.resolve(__dirname, '..', 'build', 'Release', 'native-window-host.exe');
 
 function emit(event) {
@@ -22,6 +27,52 @@ function emit(event) {
     fs.mkdirSync(testRoot, { recursive: true });
     fs.appendFileSync(path.join(testRoot, 'native-window-host-events.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n');
   }
+  if (!event || !event.type || !lifecycleSequence.length) return;
+  if (event.type === 'ready') startLifecycleStep();
+  if (event.type === 'attached' && lifecycleCloseTimer === null) {
+    if (lifecyclePhase === 'initial') {
+      lifecyclePhase = 'detaching';
+      send('FOCUS');
+      const detachDelay = Math.max(500, Math.min(30000, Number(process.env.P15_TEST_DETACH_DELAY_MS) || 1200));
+      lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('DETACH'); }, detachDelay);
+    } else if (lifecyclePhase === 'reattaching') {
+      lifecyclePhase = 'closing';
+      lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('CLOSE_APP'); }, 1500);
+    }
+    clearTimeout(lifecycleTimeoutTimer);
+    lifecycleTimeoutTimer = setTimeout(() => {
+      emit({ type: 'lifecycle-step-timeout', index: lifecycleIndex, exePath: lifecycleSequence[lifecycleIndex], phase: lifecyclePhase });
+      lifecycleSequence = [];
+    }, 20000);
+  }
+  if (event.type === 'detached' && lifecyclePhase === 'detaching') {
+    lifecyclePhase = 'reattaching';
+    clearTimeout(lifecycleCloseTimer);
+    lifecycleCloseTimer = setTimeout(() => { lifecycleCloseTimer = null; send('ATTACH'); send('SHOW'); }, 700);
+  }
+  if (event.type === 'exited' || event.type === 'window-closed-resident') {
+    clearTimeout(lifecycleCloseTimer); lifecycleCloseTimer = null;
+    clearTimeout(lifecycleTimeoutTimer); lifecycleTimeoutTimer = null;
+    lifecycleIndex += 1;
+    lifecyclePhase = 'initial';
+    setTimeout(startLifecycleStep, 700);
+  }
+}
+
+function startLifecycleStep() {
+  if (!lifecycleSequence.length || !helperReady || !win || win.isDestroyed()) return;
+  if (lifecycleIndex >= lifecycleSequence.length) {
+    clearTimeout(lifecycleCloseTimer); lifecycleCloseTimer = null;
+    clearTimeout(lifecycleTimeoutTimer); lifecycleTimeoutTimer = null;
+    emit({ type: 'lifecycle-sequence-complete', steps: lifecycleSequence.length });
+    lifecycleSequence = [];
+    return;
+  }
+  const exePath = path.resolve(lifecycleSequence[lifecycleIndex]);
+  lifecyclePhase = 'initial';
+  const command = `START\t${encode(exePath)}\t\t24\t100\t1000\t600`;
+  emit({ type: 'lifecycle-step-start', index: lifecycleIndex, exePath });
+  send(command); send('SHOW');
 }
 
 function send(command) {
@@ -102,6 +153,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1180, height: 820, minWidth: 920, minHeight: 620,
     frame: false, backgroundColor: '#f5f4f0', show: false,
+    alwaysOnTop: process.env.P15_TEST_ALWAYS_ON_TOP === '1',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -114,12 +166,17 @@ function createWindow() {
   win.webContents.on('console-message', (_event, details) => emit({ type: 'renderer-console', level: details.level, message: details.message, line: details.lineNumber }));
   win.webContents.once('did-finish-load', () => {
     if (process.env.P15_TEST_EXE) win.webContents.send('poc:auto-start', { exePath: process.env.P15_TEST_EXE, arguments: process.env.P15_TEST_ARGS || '' });
+    if (lifecycleSequence.length) startHelper();
   });
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => { win = null; });
 }
 
 app.whenReady().then(createWindow);
+try {
+  const sequence = JSON.parse(process.env.P15_TEST_SEQUENCE || '[]');
+  if (Array.isArray(sequence) && sequence.length >= 2 && sequence.every(value => typeof value === 'string')) lifecycleSequence = sequence;
+} catch (_) { /* A malformed optional smoke-test sequence must not affect normal PoC use. */ }
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {
   if (quitStarted || !helper) return;

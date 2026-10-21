@@ -5705,8 +5705,18 @@
         attached: `已托管窗口（PID ${event.pid}，DPI ${event.dpi}）。`,
         detached: event.restored ? '已解除托管，软件窗口已恢复。' : '解除托管时未能完整恢复窗口。',
         fallback: '无法托管此窗口，软件已恢复为独立窗口。',
-        popup: '检测到软件弹窗并放入工作区。',
+        'popup-standalone': '软件弹窗保持独立显示。',
+        'window-hidden': '软件窗口暂时隐藏，进程仍在运行。',
+        'window-visible': '软件窗口已恢复显示。',
+        'window-lost': '软件窗口正在重建或关闭，正在检查进程状态…',
+        'window-closed-resident': '软件窗口已关闭，但后台进程仍驻留；可以启动其他配置。',
+        'session-released': '已释放旧软件的托管会话，软件进程未被结束。',
+        focus: event.focusSet ? '已向软件窗口切换焦点。' : '已请求软件窗口获取焦点；Windows 未确认焦点切换。',
+        'close-requested': '已请求软件正常关闭。',
+        'tracking-fallback': 'Windows 作业跟踪不可用，正在跟踪已发现的进程。',
         recreated: '检测到软件重建窗口，正在重新托管…',
+        exited: '软件已退出，可以启动其他配置。',
+        state: ({ idle: '请选择并启动软件。', starting: '软件正在启动或等待窗口。', attached: '软件窗口已托管。', 'window-hidden': '软件窗口暂时隐藏。', 'window-rebuilding': '软件正在重建主窗口。', detached: '软件仍在运行，窗口已解除托管。', resident: '软件进程仍驻留，可以启动其他配置。', fallback: '软件正在独立窗口运行。', busy: '另一个配置仍在运行。' })[event.state] || `软件状态：${event.state || '未知'}`,
       };
       if (labels[event.type]) setStatus(labels[event.type]);
       else if (event.type === 'error') setStatus(`窗口托管错误（${event.stage}，${event.code}）：${event.message}`);
@@ -5732,6 +5742,7 @@
     $('videoDetach').onclick = () => api.action('DETACH');
     $('videoSettings').onclick = () => { state.settingsDetail = true; state.settingsSub = 'video-apps'; ctx.navigate('system'); };
     await refreshProfiles();
+    api.action('STATUS');
     updateBounds();
     visibility();
     ctx.onDispose(() => {
