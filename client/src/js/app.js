@@ -19,16 +19,19 @@
   if (settingsWindow) document.body.classList.add('settings-window');
 
   const gnavEl = document.getElementById('gnav');
-  const panelEl = document.getElementById('panel');
-  const viewEl = document.getElementById('view');
-  const topbarEl = document.getElementById('topbar');
+  let panelEl = document.getElementById('panel');
+  let viewEl = document.getElementById('view');
+  let topbarEl = document.getElementById('topbar');
   const statusEl = document.getElementById('status');
 
   // ── 左侧主导航：图标栏，页名由原生 tooltip 和 aria-label 提供 ──
   function buildNav() {
     if (!gnavEl) return;
+    const navPages = PAGES.filter(p => p.id !== 'system' && p.id !== 'settings' && p.id !== 'market');
+    const marketPage = PAGES.find(p => p.id === 'market');
+    if (marketPage) navPages.splice(navPages.findIndex(p => p.id === 'chat') + 1, 0, marketPage);
     gnavEl.innerHTML = '<div class="gnav-brand" aria-label="Vigil">Vigil</div>' +
-      PAGES.filter((p) => p.id !== 'system').map((p) => {
+      navPages.map((p) => {
       // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，别让按钮变成空白图标
       const ic = String(p.icon === 'image' ? 'img' : p.icon || '').replace(/^i-/, '') || 'puzzle';
       return '<button class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
@@ -78,12 +81,61 @@
 
   // ── 路由 ──────────────────────────────────────────────────
   let disposePage = () => {};
+  let navigationId = 0;
+  let settingsBackObserver = null;
+  let parkedChat = null;
+  const parking = document.createElement('div');
+  parking.hidden = true;
+  parking.id = 'parkedChat';
+  document.body.appendChild(parking);
   async function go(id) {
+    const navigation = ++navigationId;
+    // Keep the live chat connected while the market is open: stream listeners,
+    // input draft, conversation and workspace selection belong to this view.
+    if (state.page === 'chat' && id === 'market' && !parkedChat) {
+      parkedChat = { dispose: disposePage, areas: [],
+        classes: [...document.body.classList].filter(c => c.startsWith('welcome-') || c === 'chat-sessions-collapsed') };
+      for (const el of [viewEl, panelEl, topbarEl]) {
+        const replacement = el.cloneNode(false);
+        const id = el.id;
+        parkedChat.areas.push({el, id, scroll: el.scrollTop});
+        el.replaceWith(replacement);
+        el.id = 'parked-' + id;
+        parking.appendChild(el);
+        if (el === viewEl) viewEl = replacement;
+        else if (el === panelEl) panelEl = replacement;
+        else topbarEl = replacement;
+      }
+      disposePage = () => {};
+      watchSettingsBack();
+    }
     disposePage();
+    if (id === 'chat' && parkedChat) {
+      const saved = parkedChat;
+      parkedChat = null;
+      state.page = 'chat';
+      state.settingsDetail = false;
+      document.body.dataset.vigilPage = 'chat';
+      document.body.classList.remove('settings-detail');
+      document.body.classList.add(...saved.classes);
+      for (const {el, id, scroll} of saved.areas) {
+        document.getElementById(id).replaceWith(el);
+        el.id = id;
+        el.scrollTop = scroll;
+      }
+      viewEl = document.getElementById('view');
+      panelEl = document.getElementById('panel');
+      topbarEl = document.getElementById('topbar');
+      watchSettingsBack();
+      disposePage = saved.dispose;
+      gnavEl.querySelectorAll('.gbtn').forEach(b => b.classList.toggle('on', b.dataset.page === 'chat'));
+      return;
+    }
     const cleanups = [];
     disposePage = () => cleanups.splice(0).forEach(fn => fn());
     const page = PAGES.find((p) => p.id === id) || PAGES[0];
     state.page = page.id;
+    if (page.id === 'market') state.settingsDetail = false;
     document.body.dataset.vigilPage = page.id;
     document.body.classList.toggle('settings-detail', !!state.settingsDetail && page.id !== 'chat' && page.id !== 'settings');
     if (page.id !== 'chat') document.body.classList.remove('welcome-home', 'welcome-has-sessions');
@@ -109,10 +161,12 @@
     try {
       await page.render(ctx);
     } catch (e) {
+      if (navigation !== navigationId) return;
       console.error('渲染失败:', e);
       if (viewEl) viewEl.innerHTML = '<div class="wrap"><div class="card err"><b>这一页画不出来</b>' +
         '<div class="mono" style="font-size:11.5px;color:var(--err);margin-top:6px">' + esc(e.message) + '</div></div></div>';
     }
+    if (navigation !== navigationId) return;
     if (state.settingsDetail && page.id !== 'chat' && page.id !== 'settings' && topbarEl) {
       ensureSettingsBack();
     }
@@ -146,7 +200,8 @@
   }
   function watchSettingsBack() {
     if (!topbarEl || typeof MutationObserver !== 'function') return;
-    new MutationObserver(() => {
+    if (settingsBackObserver) settingsBackObserver.disconnect();
+    settingsBackObserver = new MutationObserver(() => {
       if (backGuardBusy) return;
       backGuardBusy = true;
       // 让当前这次重写先完成，再决定要不要补按钮
@@ -154,7 +209,8 @@
         backGuardBusy = false;
         ensureSettingsBack();
       });
-    }).observe(topbarEl, { childList: true });
+    });
+    settingsBackObserver.observe(topbarEl, { childList: true });
   }
 
   // ── 主题 ──────────────────────────────────────────────────

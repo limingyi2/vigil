@@ -1,11 +1,11 @@
 {
   "version": "1.1",
-  "updated": "2026-10-20",
+  "updated": "2026-10-21",
   "plugins": [
     {
       "name": "wallpaper",
       "desc": "恢复原版 Wallpaper Engine 插件：Workshop 自动探测、壁纸库、视频/网页壁纸、设置、透明背景、遮罩与毛玻璃。",
-      "version": "3.0.0",
+      "version": "3.0.1",
       "author": "limingyi2",
       "tags": [
         "Wallpaper Engine",
@@ -24,9 +24,10 @@
         "wallpaper.media.read"
       ],
       "artifact": {
-        "url": "https://raw.githubusercontent.com/limingyi2/vigil-plugins/main/plugins/wallpaper/wallpaper-3.0.0.zip",
-        "sha256": "59c24a6f7e20af404d4d8e5c0bc2c2ddd3557b07ac2ff612dd2df05c8d038e0f"
-      }
+        "url": "https://raw.githubusercontent.com/limingyi2/vigil-plugins/c1c9b63703c6d733688640784a0be55421c67909/plugins/wallpaper/wallpaper-3.0.1.zip",
+        "sha256": "4e551ae17783870872be7c2635d1a396fe5269fa032b514aff7e536940b22616"
+      },
+      "updated": "2026-10-21"
     }
   ]
 }

@@ -102,19 +102,23 @@ def _candidate_urls(url):
                     + ["https://%s/gh/%s/%s@%s/%s" % (m, user, repo, ref, path)
                        for m in MIRROR_HOSTS[:3]]
                     + [url])
-    if _preferred_host["host"]:
+    # A reachable artifact CDN may still cache an old mutable market index.
+    if _preferred_host["host"] and not parsed.path.endswith('/market.json'):
         urls.sort(key=lambda u: 0 if urlparse(u).hostname == _preferred_host["host"] else 1)
     return urls
 
 
-def _fetch_bytes(url, limit):
+def _fetch_bytes(url, limit, expected_sha=None):
     """按候选源依次尝试下载，任一源成功即返回并记位。限制下载体积。"""
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
         raise ValueError("插件市场只允许从 HTTPS GitHub Raw 或其镜像下载")
     errors = []
     for candidate in _candidate_urls(url):
-        request = Request(candidate, headers={"User-Agent": "Vigil-Plugin-Market/1.0"})
+        headers = {"User-Agent": "Vigil-Plugin-Market/1.0"}
+        if parsed.path.endswith('/market.json'):
+            headers['Cache-Control'] = 'no-cache'
+        request = Request(candidate, headers=headers)
         try:
             with urlopen(request, timeout=FETCH_TIMEOUT) as response:
                 data = response.read(limit + 1)
@@ -123,9 +127,12 @@ def _fetch_bytes(url, limit):
             continue
         if len(data) > limit:
             raise ValueError("远程文件超过大小限制")
+        if expected_sha and hashlib.sha256(data).hexdigest().lower() != expected_sha.lower():
+            errors.append("%s：制品 SHA-256 校验失败（可能为旧缓存）" % urlparse(candidate).hostname)
+            continue
         _preferred_host["host"] = urlparse(candidate).hostname
         return data
-    raise ValueError("全部下载源不可达（%s）" % "; ".join(errors[:3]))
+    raise ValueError("全部下载源下载或校验失败（%s）" % "; ".join(errors[:3]))
 
 
 def _validate_market(market, source_kind):
@@ -168,15 +175,18 @@ def _install_remote_directory(meta, name):
     url, expected_sha = artifact.get("url"), artifact.get("sha256")
     if (not isinstance(url, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", str(expected_sha or ""))):
         return False, {"err": "市场制品 URL 或 SHA-256 无效"}
+    stage = "下载制品"
     try:
         import plugin_ops
         with tempfile.TemporaryDirectory(prefix="vigil-market-source-") as temp_root:
-            package = _fetch_bytes(url, REMOTE_PACKAGE_LIMIT)
+            package = _fetch_bytes(url, REMOTE_PACKAGE_LIMIT, expected_sha=expected_sha)
+            stage = "制品 SHA-256 校验"
             if hashlib.sha256(package).hexdigest().lower() != expected_sha.lower():
                 raise ValueError("插件制品 SHA-256 校验失败")
             archive_path = os.path.join(temp_root, name + ".zip")
             with open(archive_path, "wb") as stream:
                 stream.write(package)
+            stage = "ZIP 路径与大小校验"
             with zipfile.ZipFile(io.BytesIO(package)) as archive:
                 infos = archive.infolist()
                 if not infos or len(infos) > REMOTE_PACKAGE_FILES_LIMIT:
@@ -199,6 +209,7 @@ def _install_remote_directory(meta, name):
                     if unpacked_size > 16 * 1024 * 1024:
                         raise ValueError("插件制品解压后超过大小限制")
                     files[path] = archive.read(info)
+            stage = "Manifest 元数据校验"
             manifest = json.loads(files.pop("manifest.json").decode("utf-8"))
             if (manifest.get("schema") != "vigil.brain-plugin/v1" or manifest.get("name") != name
                     or manifest.get("version") != meta.get("version") or manifest.get("protocol") != PLUGIN_PROTOCOL
@@ -207,10 +218,21 @@ def _install_remote_directory(meta, name):
                 raise ValueError("Manifest 名称、版本、协议或权限与市场清单不一致")
             entry = manifest.get("entry")
             if entry != "__init__.py" or manifest.get("frontend") != {"script": "frontend.js", "style": "frontend.css"}:
-                raise ValueError("Wallpaper Manifest 入口或前端资源不受支持")
+                raise ValueError("Manifest 入口或前端资源不受支持")
+            stage = "Manifest 文件清单校验"
             expected_files = manifest.get("files")
-            if not isinstance(expected_files, list) or {x.get("path") for x in expected_files if isinstance(x, dict)} != set(files):
-                raise ValueError("Manifest 文件清单与制品内容不一致")
+            if (not isinstance(expected_files, list) or any(
+                    not isinstance(x, dict) or not isinstance(x.get("path"), str)
+                    for x in expected_files)):
+                raise ValueError("Manifest files 必须是文件记录列表")
+            declared = [x['path'] for x in expected_files]
+            if len(set(declared)) != len(declared):
+                raise ValueError("Manifest 文件清单存在重复路径")
+            if set(declared) != set(files):
+                raise ValueError("Manifest 文件清单与制品内容不一致；未声明：%s；缺失：%s" % (
+                    ", ".join(sorted(set(files) - set(declared))) or "无",
+                    ", ".join(sorted(set(declared) - set(files))) or "无"))
+            stage = "Manifest 文件 SHA-256 校验"
             for item in expected_files:
                 if not isinstance(item, dict) or not re.fullmatch(r"[a-fA-F0-9]{64}", str(item.get("sha256") or "")):
                     raise ValueError("Manifest 文件 SHA-256 无效")
@@ -218,12 +240,15 @@ def _install_remote_directory(meta, name):
                 if hashlib.sha256(payload).hexdigest().lower() != item["sha256"].lower():
                     raise ValueError("Manifest 文件 SHA-256 校验失败：" + item["path"])
             # The generic installer performs static plugin structure checks and the normal atomic commit.
+            stage = "静态校验与事务安装"
             ok, result = plugin_ops.install(archive_path, note="market:%s@%s" % (name, meta["version"]))
             if ok:
                 result["manifest"] = manifest
+            else:
+                result.update(stage=stage, err=stage + "失败：" + result.get("err", "未知错误"))
             return ok, result
     except Exception as exc:
-        return False, {"err": "远程插件下载或校验失败：%s" % str(exc)[:120]}
+        return False, {"stage": stage, "err": "%s失败：%s" % (stage, str(exc)[:300])}
 
 
 def _read_market():

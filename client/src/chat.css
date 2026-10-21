@@ -17,16 +17,13 @@ body[data-vigil-page="chat"] {
   --chat-selected:#303b4b; --chat-hover:#2a303a; --chat-send:#b5cbe7; --chat-on-send:#1c2938;
 }
 body[data-vigil-page="chat"] .main { background:var(--chat-bg); background-image:none; }
-body[data-vigil-page="chat"] .app,
 body[data-vigil-page="settings"] .app,
 body.settings-detail .app { grid-template-columns:minmax(0,1fr); grid-template-rows:var(--title) minmax(0,1fr) 0; }
-body[data-vigil-page="chat"] .body,
 body[data-vigil-page="settings"] .body,
 body.settings-detail .body { grid-column:1; }
 body[data-vigil-page="settings"] .body { grid-template-columns:minmax(0,1fr); }
 body[data-vigil-page="settings"] .panel { display:none; }
 body[data-vigil-page="settings"] #gPanel { display:none; }
-body[data-vigil-page="chat"] .gnav,
 body[data-vigil-page="settings"] .gnav,
 body.settings-detail .gnav { display:none; }
 body[data-vigil-page="chat"] .statusbar,
@@ -436,7 +433,7 @@ body.welcome-home .gnav .gbtn {
   display:grid; flex:none; place-items:center;
   width:48px; height:48px; padding:0; border-radius:10px; color:var(--chat-muted);
 }
-body.welcome-home .gnav .gbtn .i { width:17px; height:17px; }
+body.welcome-home .gnav .gbtn .i { width:24px; height:24px; }
 body.welcome-home .gnav .gnav-label { display:none; }
 body.welcome-home .gnav .gbtn.on { color:var(--chat-accent); background:var(--chat-selected); box-shadow:inset 3px 0 var(--chat-accent); }
 body.welcome-home .gnav .gbtn:hover { color:var(--chat-text); background:var(--chat-hover); }

@@ -113,6 +113,18 @@ input, select, textarea { font: inherit; color: inherit; }
 .gbtn:hover { color: var(--text); background: var(--bg-hover); }
 .gbtn.on { background: var(--fill); color: var(--on-fill); }
 .gbtn:focus-visible { outline-offset: 2px; }
+.gnav .gbtn .i { width:24px; height:24px; }
+body[data-vigil-page="market"] .body { grid-template-columns:minmax(0,1fr); }
+body[data-vigil-page="market"] .panel,
+body[data-vigil-page="market"] #gPanel { display:none; }
+.market-wrap { width:100%; max-width:1200px; margin:0 auto; padding:28px; box-sizing:border-box; }
+.market-wrap h1 { margin:0 0 8px; font-size:24px; }
+.market-intro { margin:0 0 24px; }
+.market-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:16px; }
+.market-grid .card { min-width:0; overflow-wrap:anywhere; }
+.market-icon { display:grid; place-items:center; width:40px; height:40px; flex:none; border-radius:10px; background:var(--bg-hover); color:var(--text-2); }
+.market-icon svg.i { width:24px; height:24px; }
+@media (max-width:700px) { .market-wrap { padding:16px; } }
 .nav-spacer { flex: 1; min-height: 12px; }
 .nav-settings { border-top: 1px solid var(--line-soft); border-radius: 0 0 10px 10px; }
 .settings-window .app { grid-template-columns: minmax(0, 1fr); }
