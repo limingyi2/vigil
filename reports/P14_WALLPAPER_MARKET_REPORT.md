@@ -119,11 +119,12 @@ release manifest 校验及 `scripts/build_release.py --verify --candidate`：PAS
 - `vigil-plugins` 独立分支 `codex/p14-wallpaper-webwallgl` 已推送更新，PR #1 保持未合并。
 - Wallpaper 3.1.0 source commit：`346300588d0248a39d2323bcada5c5fd94766803`；包含 ZIP/Manifest 的 package commit：`ca0b12cbf28a0e834a381045acac3955ad8fc851`；分支 tip：`eeec6f93d469e9b4e95ce2e00b81e3ca52a7db07`。
 - 3.1.0 ZIP SHA-256：`1df6c354a68ab001d5b867396966b04731845b6330edbb16b6a51ab85c8be1c5`。Windows Python 3.13 重建后 `git diff --exit-code` 通过；Manifest 五项 payload SHA 与包内容匹配；market.json 指向包含制品的固定 commit。3.0.1 文件保留未覆盖。
-- GitHub Actions Linux/Python 3.12 检查由推送触发，结果待 CI 回报。
+- GitHub Actions `Validate market packages` Linux/Python 3.12：run `39600969038`，`success`；重建后制品、Manifest 与 `market.json` 无差异。
+- 原 3.0.1 ZIP 保持不变，SHA-256 `4e551ae17783870872be7c2635d1a396fe5269fa032b514aff7e536940b22616`。
 
 ### 未完成与阻塞
 
 - 本机未发现 Wallpaper Engine Workshop 目录；真实或合法授权的复杂 `scene.pkg`（粒子、Shader、交互）未验证。当前动态验收 Scene 是简单自制 animated solid，不能视为复杂场景兼容证据。
 - 自定义图片/视频导入、搜索、播放列表尚未实现。
-- `npm run dist` 单独调用时由 verifier 拒绝（未指定候选模式）；已使用 `python scripts/build_release.py --candidate` 完成一体构建，并成功完成隔离 NSIS 安装/卸载。
+- `npm run dist` 单独调用时由 verifier 拒绝（未指定候选模式）；已使用 `python scripts/build_release.py --candidate` 完成一体构建，`scripts/build_release.py --verify --candidate` PASS，并成功完成隔离 NSIS 安装/卸载（安装、卸载退出码 0）。
 - PR #1 尚未合并，主市场更新需要人工审核；本轮未合并 PR/dev/master。
