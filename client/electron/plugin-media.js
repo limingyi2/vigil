@@ -6,6 +6,25 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// WebWallGL 场景渲染页的静态产物（打进了 asar：electron/webwallgl/**）。
+// 由本进程供出，而不是让渲染层直接读文件 —— 渲染页要从票据地址取 scene.pkg，
+// 只有和票据服务同源时这条 fetch 才不需要跨源放行。
+const SCENE_LIVE_ROOT = path.join(__dirname, 'webwallgl');
+const SCENE_LIVE_PREFIX = '/scene-live/';
+const STATIC_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+};
+// 渲染页要跑 ES module、fetch 同源票据、给 WebGL 纹理用 blob/data。
+const SCENE_LIVE_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+  + "style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; "
+  + "media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'self'";
+
 function createPluginMedia({ getBase, getToken, ticketIdleMs = 30 * 60 * 1000 }) {
   // An active stream renews its ticket; abandoned tickets expire when idle.
   const idleMs = Number.isFinite(ticketIdleMs) && ticketIdleMs > 0 ? ticketIdleMs : 30 * 60 * 1000;
@@ -35,6 +54,33 @@ function createPluginMedia({ getBase, getToken, ticketIdleMs = 30 * 60 * 1000 })
     return { kind, id, file };
   }
 
+  // 场景渲染页：只读 asar 内的固定产物，不接受任何外部路径。
+  function serveSceneLive(req, res, pathname) {
+    let rel;
+    try { rel = decodeURIComponent(pathname.slice(SCENE_LIVE_PREFIX.length)); }
+    catch (_) { return false; }
+    if (!rel) rel = 'index.html';
+    if (/[\\\x00]/.test(rel)) return false;
+    const root = path.resolve(SCENE_LIVE_ROOT);
+    const target = path.resolve(root, rel);
+    if (target !== root && !target.startsWith(root + path.sep)) return false;
+    let body;
+    try { body = fs.readFileSync(target); } catch (_) { return false; }
+    const type = STATIC_MIME[path.extname(target).toLowerCase()] || 'application/octet-stream';
+    const headers = {
+      'Content-Type': type,
+      'Content-Length': String(body.length),
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    };
+    if (type.startsWith('text/html')) headers['Content-Security-Policy'] = SCENE_LIVE_CSP;
+    res.writeHead(200, headers);
+    if (req.method === 'HEAD') { res.end(); return true; }
+    res.end(body);
+    return true;
+  }
+
   async function handle(req, res) {
     const fail = (code, message) => {
       if (!res.headersSent) res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -43,6 +89,10 @@ function createPluginMedia({ getBase, getToken, ticketIdleMs = 30 * 60 * 1000 })
     if (!['GET', 'HEAD'].includes(req.method)) return fail(405, 'Method not allowed');
     try {
       const local = new URL(req.url, 'http://127.0.0.1');
+      if (local.pathname === '/scene-live' || local.pathname.startsWith(SCENE_LIVE_PREFIX)) {
+        if (serveSceneLive(req, res, local.pathname === '/scene-live' ? SCENE_LIVE_PREFIX : local.pathname)) return;
+        return fail(404, 'Unknown scene asset');
+      }
       const match = /^\/r\/([a-f0-9]{48})\/(.+)$/.exec(local.pathname);
       const ticket = match && tickets.get(match[1]);
       if (!ticket) return fail(404, 'Unknown resource');
@@ -188,11 +238,20 @@ function createPluginMedia({ getBase, getToken, ticketIdleMs = 30 * 60 * 1000 })
       if (!server || !server.listening) return false;
       try {
         const u = new URL(raw);
-        if (u.origin !== 'http://127.0.0.1:' + server.address().port || u.search || u.hash) return false;
+        if (u.origin !== 'http://127.0.0.1:' + server.address().port || u.hash) return false;
+        // 场景渲染页自身（响应上的查询参数就是要传进渲染器的壁纸配置）。
+        // 只读 asar 里的固定产物，不涉及用户数据。
+        if (u.pathname.startsWith(SCENE_LIVE_PREFIX)) return true;
+        if (u.search) return false;
         const match = /^\/r\/([a-f0-9]{48})\/(.+)$/.exec(u.pathname);
         const ticket = match && tickets.get(match[1]);
         return !!(ticket && ticket.expiresAt > Date.now());
       } catch (_) { return false; }
+    },
+    // 渲染页地址：iframe 的入口。端口是动态的，所以前端每次现取。
+    async sceneLiveUrl() {
+      const port = await ensureServer();
+      return 'http://127.0.0.1:' + port + SCENE_LIVE_PREFIX + 'index.html';
     },
     releaseResources() {
       tickets.clear();
@@ -209,6 +268,9 @@ function shouldCancelLoopbackRequest(details, rendererId, isApprovedUrl) {
   let url;
   try { url = new URL(details.url); } catch (_) { return false; }
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return false;
-  return details.webContentsId !== rendererId || !isApprovedUrl(details.url);
+  // 白名单命中就放行，不再要求发起方是主渲染层：场景渲染页跑在跨源子框架里，
+  // 它有自己的 webContents，而它要拿的只有不透明票据地址与本地只读渲染产物。
+  // 端口仅监听回环，票据是 48 位随机串且过期即失效。
+  return !isApprovedUrl(details.url);
 }
 module.exports = { createPluginMedia, shouldCancelLoopbackRequest };
