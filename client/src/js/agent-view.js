@@ -33,13 +33,17 @@
     const name=meta.tool || '工具', input=redact(meta.input || {}), state=meta.state || 'started';
     const info=errorInfo(meta);
     const running=['started','running','in_flight'].includes(state);
-    const failed=['failed','unknown','not_dispatched','not_returned','interrupted'].includes(state);
+    // 'denied' 是被明确拒绝（策略或他点了不允许），不是"执行失败"；
+    // 'returned' 但带了 error（如执行完没有任何输出）同样不能显示成完成。
+    const failed=['failed','unknown','not_dispatched','not_returned','interrupted','denied'].includes(state)
+      || (state==='returned' && !!info);
     const command=/exec|command/.test(name), read=/read/.test(name), edit=/write|edit|patch/.test(name), find=/find|grep|search|list/.test(name);
-    const label=command?(running?'正在运行命令':failed?'命令执行失败':'运行了命令')
-      :read?(running?'正在读取文件':failed?'文件读取失败':'读取了文件')
-      :edit?(running?'正在编辑文件':failed?'文件编辑失败':'编辑了文件')
-      :find?(running?'正在搜索文件':failed?'文件搜索失败':'搜索了文件')
-      :(running?'正在执行 '+name:failed?name+' 执行失败':'已完成 '+name);
+    const failWord=state==='denied' ? '被拒绝' : '失败';
+    const label=command?(running?'正在运行命令':failed?'命令执行'+failWord:'运行了命令')
+      :read?(running?'正在读取文件':failed?'文件读取'+failWord:'读取了文件')
+      :edit?(running?'正在编辑文件':failed?'文件编辑'+failWord:'编辑了文件')
+      :find?(running?'正在搜索文件':failed?'文件搜索'+failWord:'搜索了文件')
+      :(running?'正在执行 '+name:failed?name+' 执行'+failWord:'已完成 '+name);
     const preview=command?(input.cmd || input.command || ''):(input.path || input.pattern || '');
     const key=encodeURIComponent(String(meta.run_id || '')+':'+String(meta.call_id || meta.step_id || name));
     // The short reason stays in the always-visible summary; the raw diagnostic

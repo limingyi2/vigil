@@ -195,14 +195,41 @@ def _decode_turn_image(img_b64):
     return blob, None
 
 
-def _describe_turn_image(blob):
+# 魔数 → 扩展名。落盘的扩展名必须和内容一致：PNG/WebP 盖上 .jpg 之后，
+# 任何按扩展名判断格式的工具（资源管理器、后续处理脚本）都会认错。
+_IMAGE_MAGIC = (
+    (b'\x89PNG\r\n\x1a\n', 'png'),
+    (b'GIF87a', 'gif'), (b'GIF89a', 'gif'),
+    (b'BM', 'bmp'),
+    (b'RIFF', 'webp'),          # RIFF....WEBP 下面再核验
+    (b'\xff\xd8\xff', 'jpg'),
+)
+
+
+def _image_ext(blob):
+    """按内容判断图片扩展名（不含点）。认不出来给 jpg —— 视觉链路会把
+    它重编码成真 JPEG，存档用 jpg 不会更错。"""
+    if not blob:
+        return 'jpg'
+    for magic, ext in _IMAGE_MAGIC:
+        if blob.startswith(magic):
+            if ext == 'webp' and blob[8:12] != b'WEBP':
+                continue
+            return ext
+    return 'jpg'
+
+
+def _describe_turn_image(blob, scope=''):
     """视觉分析，按内容哈希缓存，返回 (描述, 错误原因)。
 
     同一张图在一小时内只烧一次视觉调用：客户端重连、同图重发、以及
     "先问一句再追问一句"都会重复贴同一张图，重复调用纯属浪费。
+    🔴 缓存键带 scope（身份/渠道/人设）：描述文本本身不跨权限边界泄露，
+    但"这张图被分析过"这个事实不该跨边界可见 —— 宁可多烧一次调用。
     """
     import hashlib
-    key = hashlib.sha256(blob).hexdigest()
+    key = hashlib.sha256((str(scope or '') + '\x00').encode('utf-8', 'replace')
+                         + blob).hexdigest()
     hit = _IMAGE_DESC_CACHE.get(key)
     if hit and time.time() - hit[1] < IMAGE_DESC_TTL:
         print("[视觉] 命中缓存，未重复调用视觉模型", flush=True)
@@ -241,8 +268,9 @@ def _save_turn_image(blob, src=None, desc=''):
         from paths import UPLOAD_DIR
         d = str(UPLOAD_DIR)
         os.makedirs(d, exist_ok=True)
-        img_path = os.path.join(d, "u_%s_%06d.jpg" % (
-            time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000000) % 1000000))
+        img_path = os.path.join(d, "u_%s_%06d.%s" % (
+            time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000000) % 1000000,
+            _image_ext(blob)))
         with open(img_path, "wb") as f:
             f.write(blob)
         try:
@@ -904,7 +932,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                     d = str(UPLOAD_DIR)
                     os.makedirs(d, exist_ok=True)
                     img_path = os.path.join(
-                        d, "u_" + time.strftime("%Y%m%d_%H%M%S") + ".jpg")
+                        d, "u_" + time.strftime("%Y%m%d_%H%M%S")
+                        + "." + _image_ext(base64.b64decode(img_b64)))
                     with open(img_path, "wb") as f:
                         f.write(base64.b64decode(img_b64))
                     # 收藏群聊表情包：入站图片顺手入库（仅微信群渠道）。
@@ -1830,8 +1859,13 @@ def start_remote_api(brain):
                                'seq': current['event_cursor']}
                     else:
                         err = current['error'] or {}
+                        # detail 是"哪个工具、哪个参数、哪种错误"的唯一载体：
+                        # 非法工具调用（invalid_tool）根本没进工具执行阶段，
+                        # 没有工具步骤行可看，run 级错误再不带 detail，
+                        # 用户就只看到一句"工具名称、参数或调用标识无效"。
                         yield {'type': 'error', 'text': current['content'], 'class': err.get('reason'),
                                'msg': err.get('message'), 'status': current['status'], 'run_id': rid,
+                               'detail': agent_runs._redact_error_text(err.get('detail') or '', 400),
                                'seq': current['event_cursor']}
                     return
 
@@ -2895,7 +2929,8 @@ def start_remote_api(brain):
                         else:
                             _img_state = dict(stage='receive', ok=True,
                                               status='received', bytes=len(_blob))
-                            _desc, _vis_err = _describe_turn_image(_blob)
+                            _desc, _vis_err = _describe_turn_image(
+                                _blob, scope=self._display_owner(body))
                             _img_state['describe'] = dict(
                                 ok=bool(_desc),
                                 status='described' if _desc else 'unavailable',

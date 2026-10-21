@@ -2530,7 +2530,8 @@
             onEvent({type:'done',text:snap.content || snap.result || '',run_id:agentRunId});
           } else if (global.VigilAgentState.stopped.has(status)) {
             onEvent({type:'error',text:snap.content || '',run_id:agentRunId,status,
-              class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止'});
+              class:snap.error?.reason || 'service_error',msg:snap.error?.message || '任务已停止',
+              detail:snap.error?.detail || ''});
           } else {
             if (needsSnapshotText) {
               textBuf = snap.content || textBuf;
@@ -2627,15 +2628,19 @@
         } else if (evt.type === 'tool') {
           finishThinking();
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
-          const ok = evt.state === 'returned';
-          const failed = ['not_dispatched', 'unknown', 'failed'].includes(evt.state);
+          // 'denied' 是被明确拒绝，不算执行失败；'returned' 带 error
+          // （执行完但没有任何输出）也不能显示成完成。
+          const denied = evt.state === 'denied';
+          const ok = evt.state === 'returned' && !evt.error;
+          const failed = ['not_dispatched', 'unknown', 'failed', 'denied'].includes(evt.state)
+            || (evt.state === 'returned' && !!evt.error);
           if (textBuf.trim() && !evt.historical) {
             const steps=msgs.querySelector('#'+turnId+' #liveSteps');
             steps.insertAdjacentHTML('beforeend','<div class="agent-commentary">'+U.md(textBuf)+'</div>');
             textBuf='';textDirty=false;textEl.innerHTML='';
           }
-          addStep(evt.tool || 'tool', ok ? '完成' : failed ? '失败' : '执行中',
-            ok ? 'ok' : failed ? 'err' : 'neutral', {...evt,turn_id:turnId});
+          addStep(evt.tool || 'tool', ok ? '完成' : denied ? '已拒绝' : failed ? '失败' : '执行中',
+            ok ? 'ok' : denied ? 'warn' : failed ? 'err' : 'neutral', {...evt,turn_id:turnId});
           statusEl.textContent = (evt.state === 'started' ? '正在调用 ' : '调用 ') + (evt.tool || '工具') + ' ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool_reused') {
@@ -2689,17 +2694,22 @@
           activeRunId = null;
           textBuf = evt.text || textBuf;
           remember({content:textBuf,status:evt.status || 'failed',
-            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成'},can_resume:evt.can_resume !== false});
+            error:{class:evt.class || 'service_error',message:evt.msg || '请求未完成',
+                   detail:evt.detail || ''},can_resume:evt.can_resume !== false});
           // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
           uncertainRunId = null; liveReconcile = null;
           const resumable = evt.can_resume !== false && ['paused','paused_budget','interrupted'].includes(evt.status);
           if (resumable && agentRunId) resumableRunId = agentRunId;
           setComposerMode(resumable && resumableRunId ? 'resume' : 'send');
+          // detail 是"哪个工具、哪个参数、哪种错误"的唯一载体：非法工具
+          // 调用没进工具执行阶段，没有步骤行可看，只能在这里展开给用户。
+          const errDetail = evt.detail
+            ? '<br><span style="color:var(--mut);font-size:12px;white-space:pre-wrap">' + esc(evt.detail) + '</span>' : '';
           if (resumable) {
             textEl.innerHTML = (esc(textBuf || '') + '<br><span style="color:var(--mut)">'
               + esc(evt.msg || '已暂停') + ' —— 点发送键继续这个任务</span>');
           } else {
-            textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>';
+            textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>' + errDetail;
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
             interrupted:'执行中断'})[evt.status] || '失败';
@@ -2745,6 +2755,15 @@
           // IPC 会在 HTTP 超时/断连时返回 {ok:false}。不能只等 SSE 事件，
           // 否则历史会一直是 running；主进程也可能因进程退出而无法推送事件。
           if (!streamDone && r && r.ok === false) {
+            // 插话请求没落地就要把目标还回去：pendingInterjectOf 在发送前
+            // 已清空，不恢复的话用户重发只会变成新消息，旧任务还挂着。
+            if (interjectOf && !agentRunId) {
+              pendingInterjectOf = interjectOf;
+              if (!ta.value) ta.value = text;
+              // 旧 run 可能还在跑：重新拉一次会话状态，让发送键回到
+              // 暂停/插话态，别让 UI 和一个还在执行的任务脱节。
+              setTimeout(() => { void loadMsgs(true); }, 300);
+            }
             onEvent({type:'error',class:'connection_lost',status:'interrupted',
               msg:r.err || '连接中断，结果不完整'});
           }
@@ -2781,6 +2800,12 @@
           refreshConversations().catch(() => {});
         }
       } catch (e) {
+        // 插话在半路失败同样要还目标：见 apiStream 分支的同款处理。
+        if (interjectOf && !agentRunId && !streamDone) {
+          pendingInterjectOf = interjectOf;
+          if (!ta.value) ta.value = text;
+          setTimeout(() => { void loadMsgs(true); }, 300);
+        }
         remember({content:textBuf,status:'interrupted',error:{message:'连接中断，结果不完整；未自动重发'}});
         streamDone = true;
         stopListening();
