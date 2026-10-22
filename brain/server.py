@@ -2485,6 +2485,49 @@ def start_remote_api(brain):
                     import localtools as _lt
                     self._json(200, {"ok": True, "items": _lt.audit()})
                     return
+                if path == "/api/retrieval/settings":
+                    # Desktop retrieval preference. This is independent of
+                    # retrieval.unified: switching off semantic keeps BM25.
+                    if not self._is_admin():
+                        self._json(403, {"ok": False, "err": "检索设置只允许管理员修改"})
+                        return
+                    val = body.get("semantic_enabled") if isinstance(body, dict) else None
+                    if not isinstance(val, bool):
+                        self._json(400, {"ok": False, "err": "semantic_enabled 必须是布尔值"})
+                        return
+                    import tempfile
+                    with _chat_lock():
+                        cfg_path = config_path()
+                        try:
+                            with open(cfg_path, encoding="utf-8") as fh:
+                                disk_cfg = json.load(fh)
+                            if not isinstance(disk_cfg, dict):
+                                disk_cfg = {}
+                        except (FileNotFoundError, json.JSONDecodeError):
+                            disk_cfg = dict(api_config)
+                        section = disk_cfg.get("retrieval")
+                        section = dict(section) if isinstance(section, dict) else {}
+                        section["semantic_enabled"] = val
+                        disk_cfg["retrieval"] = section
+                        os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+                        fd, tmp_path = tempfile.mkstemp(prefix=".retrieval-", suffix=".tmp",
+                                                         dir=os.path.dirname(cfg_path))
+                        try:
+                            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                                json.dump(disk_cfg, fh, ensure_ascii=False, indent=2)
+                                fh.flush()
+                                os.fsync(fh.fileno())
+                            os.replace(tmp_path, cfg_path)
+                        finally:
+                            if os.path.exists(tmp_path):
+                                os.unlink(tmp_path)
+                        api_config["retrieval"] = section
+                    from storage import unified as _retrieval
+                    self._json(200, {"ok": True,
+                                     "semantic_enabled": _retrieval.semantic_enabled(),
+                                     "unified": _retrieval.unified_enabled(),
+                                     "restart_required": False})
+                    return
                 if path == "/api/search":
                     # P17 统一检索：聊天历史 / 长期记忆 / 知识库 / 已授权工作区
                     # 走同一个入口（FTS5 BM25 + Embedding 向量 + RRF）。
@@ -4328,6 +4371,11 @@ def start_remote_api(brain):
                                       for k, v in model_hub.PROVIDERS.items()],
                         "groups": dict(model_hub.FALLBACK),
                         "source": "fallback", "count": 0})
+            elif path == "/api/retrieval/settings":
+                from storage import unified as _retrieval
+                self._json(200, {"ok": True,
+                                 "semantic_enabled": _retrieval.semantic_enabled(),
+                                 "unified": _retrieval.unified_enabled()})
             elif path == "/api/models/saved":
                 # 主页聊天框旁的快速切换下拉：已保存的模型 + 当前生效的是哪条。
                 # 只读、不发网络请求（不像 /api/models 要在线拉清单），
