@@ -413,10 +413,12 @@ def completion_events(provider, payload, timeout=180, stop=None):
     if not provider.supports_stream:
         result = normalize(provider.chat(payload, timeout=timeout))
         _check()
+        # t：收到这段增量的单调时刻。只用来量"从收到到送出去"的延迟，
+        # 不进库、不上线（见 agent_runs._delta）。
         if result['reasoning']:
-            yield dict(type='think_delta', text=result['reasoning'])
+            yield dict(type='think_delta', text=result['reasoning'], t=time.monotonic())
         if result['content']:
-            yield dict(type='text_delta', text=result['content'])
+            yield dict(type='text_delta', text=result['content'], t=time.monotonic())
         yield dict(type='completion', result=result)
         return
     content, reasoning, finish, usage = [], [], None, None
@@ -477,7 +479,7 @@ def completion_events(provider, payload, timeout=180, stop=None):
                             if not isinstance(value, str):
                                 raise ValueError('invalid delta')
                             buffer.append(value)
-                            yield dict(type=kind, text=value)
+                            yield dict(type=kind, text=value, t=time.monotonic())
                 except (ValueError, TypeError, KeyError, IndexError, AttributeError):
                     raise ProviderResponseError('流式响应结构错误')
         finally:

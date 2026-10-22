@@ -75,7 +75,13 @@ class ModelTests(unittest.TestCase):
             def chat(self, payload, timeout):
                 return {'choices': [{'message': {'content': 'ok'}, 'finish_reason': 'stop'}]}
         events = list(completion_events(Fake(), {}))
-        self.assertEqual(events[0], {'type': 'text_delta', 'text': 'ok'})
+        # 增量事件带 t = provider 收到该段的单调时刻（延迟计时用，消费方
+        # 负责剥离，不进库不上线）；其余字段不变。
+        first = events[0]
+        self.assertEqual(first['type'], 'text_delta')
+        self.assertEqual(first['text'], 'ok')
+        self.assertEqual(set(first) - {'type', 'text'}, {'t'})
+        self.assertIsInstance(first['t'], float)
         self.assertTrue(events[-1]['result']['complete'])
 
 
