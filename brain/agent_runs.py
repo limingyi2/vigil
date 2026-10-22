@@ -1129,6 +1129,19 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
                 coding['phase'] = payload.get('phase') or coding.get('phase')
                 if kind in ('coding_plan', 'coding_plan_updated'):
                     coding['plan'] = payload
+                elif kind == 'coding_step':
+                    # Keep the latest step status in the durable checkpoint so
+                    # a paused/restarted Coding run can skip edits that already
+                    # landed in the workspace.
+                    plan = coding.setdefault('plan', {'steps': []})
+                    steps = plan.setdefault('steps', [])
+                    step = dict(payload)
+                    for index, previous in enumerate(steps):
+                        if previous.get('id') == step.get('id'):
+                            steps[index] = step
+                            break
+                    else:
+                        steps.append(step)
                 elif kind == 'coding_test':
                     coding.setdefault('tests', []).append(copy.deepcopy(payload))
                 elif kind == 'coding_file':
@@ -1211,7 +1224,8 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
             diagnostician=diagnostician, repairer=repairer, replanner=replanner,
             stop_check=lambda: (agent_runs_snapshot := snapshot(rid, owner)) is None
             or agent_runs_snapshot.get('status') != 'running',
-            event_sink=persist)
+            event_sink=persist,
+            resume_state=(coding_cfg if item.get('resume_from') else None))
         result = harness.run(item['intent'])
         with LOCK, _db() as db:
             current = _get(db, rid, owner)

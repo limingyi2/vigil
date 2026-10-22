@@ -2604,9 +2604,11 @@
           // 图片四段状态各有各的话：收到 / 分析中 / 看不了 / 已看到。
           // 「看不了」必须说出来 —— 否则她答的是猜的，用户却以为她看过了。
           if (evt.stage === 'describe') {
-            statusEl.textContent = evt.ok ? '图片已看懂，正在回复 '
-              : '视觉模型不可用（' + String(evt.msg || '没有返回描述') + '），她看不到这张图 ';
-            if (!evt.ok) toast('视觉模型不可用，她看不到这张图');
+            // Kept only for old bridge events.  Native chat requests do not
+            // emit this stage; a provider refusal is shown as its real error.
+            statusEl.textContent = evt.ok ? '图片已收到，正在回复 '
+              : '图片没有送进当前对话模型（' + String(evt.msg || '未知错误') + '）';
+            if (!evt.ok) toast(String(evt.msg || '图片没有送进当前对话模型'));
           } else {
             statusEl.textContent = evt.ok ? '图片已收到'
               : '图片没收到：' + String(evt.msg || evt.status || '未知原因');
@@ -4590,8 +4592,7 @@
         '</div>' +
         '<div class="sec">模型分配（下拉选或直接输入；本地部署的 Qwen 填它的模型名）</div>' +
         '<div class="grid g3">' +
-        '<div class="card"><b style="font-size:13px">对话</b><div style="margin-top:10px">' + combo('mChat', groups.chat, cur.chat, '必填') + '</div></div>' +
-        '<div class="card"><b style="font-size:13px">看图</b><div style="margin-top:10px">' + combo('mVision', groups.vision, cur.vision) + '</div></div>' +
+        '<div class="card"><b style="font-size:13px">对话（含原生图片输入）</b><div style="margin-top:10px">' + combo('mChat', groups.chat, cur.chat, '必填') + '</div></div>' +
         '<div class="card"><b style="font-size:13px">生图</b><div style="margin-top:10px">' + combo('mImage', groups.image, cur.image) + '</div></div>' +
         '<div class="card"><b style="font-size:13px">语音识别</b><div style="margin-top:10px">' + combo('mAudio', groups.audio, cur.audio) + '</div></div>' +
         '</div>' +
@@ -4677,7 +4678,7 @@
       // 清单就地换血：只刷四个下拉的候选和来源行，不整页重画 —— 整页重画
       // 会把用户刚输到一半的密钥洗掉。
       const applyList = (rr) => {
-        const K = { mChat: 'chat', mVision: 'vision', mImage: 'image', mAudio: 'audio' };
+        const K = { mChat: 'chat', mImage: 'image', mAudio: 'audio' };
         Object.keys(K).forEach((id) => {
           const dl = v.querySelector('#' + id + '_dl');
           if (dl) dl.innerHTML = ((rr.groups || {})[K[id]] || []).map((m) => {
@@ -4868,7 +4869,6 @@
           provider: pk,
           api_base: baseInp.value.trim(),
           chat: v.querySelector('#mChat').value,
-          vision: v.querySelector('#mVision').value,
           image: v.querySelector('#mImage').value,
           audio: v.querySelector('#mAudio').value,
         };
@@ -5889,6 +5889,25 @@
     intersection.observe(slot);
     const offEvents = api.onEvent(event => {
       if (!active || !event) return;
+      // Native window events are the source of truth for the shared capability
+      // registry.  The Agent can therefore answer from the same state shown
+      // in this workbench instead of maintaining a second local status cache.
+      if (global.vigil && typeof global.vigil.api === 'function') {
+        const terminal = ['exited', 'detached', 'fallback', 'window-closed-resident',
+          'helper-exit', 'session-released'].includes(event.type);
+        const live = !terminal && (['starting', 'attaching', 'attached', 'resident',
+          'window-hidden', 'window-rebuilding', 'busy'].includes(event.state) ||
+          ['attached', 'start-reused', 'recreated'].includes(event.type));
+        global.vigil.api('POST', '/api/capabilities/events', {
+          capability: 'video_workbench', type: 'state',
+          status: {
+            connected: live,
+            state: event.state || event.type || 'unknown',
+            hosted_software: event.profileName || event.exePath || null,
+            pid: event.pid || null,
+          },
+        }).catch(() => {});
+      }
       // 托管成功后占位文字必须让位；否则容器被藏起来时页面看起来像是“没启动”。
       if (event.type === 'attached' || event.type === 'start-reused' || event.type === 'recreated') {
         slot.classList.add('is-hosted');

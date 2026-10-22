@@ -14,6 +14,7 @@
 - 动态技能：`包名__工具名`，运行时从 Node 技能宿主拉取（skill 模块）
 """
 import re
+import json
 
 # 兜底清扫用的宽口径：只要看着像 [tool:...] 就扫掉，名字不限字符集。
 # 原生 FC 模型偶尔会在正文里写出这种格式（训练数据残留），输出前清掉。
@@ -164,6 +165,11 @@ _STATIC_SPECS = {
         "desc": "查某个快递单号的实时物流状态与最新轨迹。",
         "params": [("tracking_number", "快递单号", True)],
         "arg_param": "tracking_number",
+    },
+    "capability_status": {
+        "desc": "查询 Vigil 已注册能力的真实连接状态、支持操作和权限要求。未知/离线状态必须照实告诉用户。",
+        "params": [("capability", "能力名称；留空返回全部能力", False)],
+        "arg_param": "capability",
     },
     # --- 静态插件（执行路由到 plugin_host）---
     "calc": {
@@ -530,6 +536,16 @@ def invoke_spec(name, args, ctx=None):
     if not n:
         return None
     args = args if isinstance(args, dict) else {}
+
+    if n == "capability_status":
+        try:
+            import capability_registry as _caps
+            snap = _caps.bootstrap()
+            target = str(args.get("capability") or "").strip()
+            return json.dumps(snap.get(target) if target else snap.snapshot(),
+                              ensure_ascii=False, sort_keys=True)
+        except Exception as exc:
+            return "能力状态读取失败：%s" % str(exc)[:160]
 
     # 混合模式委派工具：不走静态/插件表，直接进 delegation 桥（内部再做门控、
     # 合同校验与有界子循环）。永远返回字符串、不抛，避免主循环被打断。

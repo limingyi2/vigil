@@ -7,7 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "brain"))
 
-from coding_harness import CodingHarness, PatchEngine, WorkspaceError, WorkspaceGuard, should_plan
+from coding_harness import (CodingHarness, CodingHarnessError, PatchEngine, TestRunner,
+                            WorkspaceError, WorkspaceGuard, looks_like_coding_request,
+                            should_plan)
 
 
 def test_workspace_guard_rejects_escape(tmp_path):
@@ -44,6 +46,68 @@ def test_unified_patch_is_atomic_and_records_diff(tmp_path):
     restored = engine.restore("note.txt")
     assert "two changed" not in (tmp_path / "note.txt").read_text(encoding="utf-8")
     assert restored["kind"] == "write"
+
+
+def test_multi_file_patch_rolls_back_earlier_files_when_a_later_hunk_fails(tmp_path):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("one\ntwo\n", encoding="utf-8")
+    second.write_text("alpha\nbeta\n", encoding="utf-8")
+    patch = ("--- a/first.txt\n+++ b/first.txt\n@@ -1,2 +1,2 @@\n"
+             " one\n-two\n+changed\n"
+             "--- a/second.txt\n+++ b/second.txt\n@@ -1,2 +1,2 @@\n"
+             " alpha\n-NOT THE FILE\n+changed\n")
+    with WorkspaceGuard(str(tmp_path), "rollback-test") as guard:
+        engine = PatchEngine(guard)
+        try:
+            engine.apply_unified_diff(patch)
+        except CodingHarnessError:
+            pass
+        else:
+            raise AssertionError("a late hunk mismatch must fail the whole patch")
+    assert first.read_text(encoding="utf-8") == "one\ntwo\n"
+    assert second.read_text(encoding="utf-8") == "alpha\nbeta\n"
+    assert engine.changed == []
+
+
+def test_test_runner_only_accepts_bounded_development_commands(tmp_path):
+    with WorkspaceGuard(str(tmp_path), "command-test") as guard:
+        runner = TestRunner(guard)
+        assert runner.run("python -m pytest -q").command == "python -m pytest -q"
+        for command in ("powershell -Command Get-ChildItem", "python -c 'print(1)'",
+                        "pytest -q & echo escaped"):
+            try:
+                runner.run(command)
+            except CodingHarnessError:
+                pass
+            else:
+                raise AssertionError("unsafe/non-test command accepted: %s" % command)
+
+
+def test_coding_route_hint_distinguishes_read_only_workspace_questions():
+    assert not looks_like_coding_request("列出这个工作区里的文件")
+    assert looks_like_coding_request("修复这个 Python 项目的 bug 并运行 pytest")
+
+
+def test_resume_reuses_completed_plan_steps_without_replaying_edits(tmp_path):
+    (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    calls = []
+    saved = {"version": 3, "complexity": "complex", "rationale": "checkpoint",
+             "steps": [
+                 {"id": "analyze", "title": "分析", "status": "completed",
+                  "attempts": 1, "evidence": [{"kind": "index"}]},
+                 {"id": "implement", "title": "实现", "dependencies": ["analyze"],
+                  "status": "completed", "attempts": 1,
+                  "evidence": [{"path": "already.py"}]},
+                 {"id": "verify", "title": "验证", "dependencies": ["implement"],
+                  "status": "pending", "verification": ["python -m pytest -q"]},
+             ]}
+    result = CodingHarness(str(tmp_path), resume_state={"phase": "VERIFY", "plan": saved},
+                           verify_commands=[], implementer=lambda *args: calls.append(args)).run("继续验证")
+    assert result["status"] == "succeeded"
+    assert not calls
+    assert result["plan"]["version"] == 3
+    assert all(step["status"] == "completed" for step in result["plan"]["steps"])
 
 
 def test_end_to_end_multi_file_failure_repair_and_real_verify(tmp_path):

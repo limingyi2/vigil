@@ -11,6 +11,7 @@ and the provider backed adapter in :mod:`agent_runs`.
 from __future__ import annotations
 
 import dataclasses
+import copy
 import difflib
 import hashlib
 import json
@@ -38,9 +39,62 @@ _COMMAND_DENY = (
     re.compile(r"\b(?:format|diskpart|mkfs|shutdown|bcdedit)\b", re.I),
     re.compile(r"(?:^|[|;&])\s*(?:curl|wget)\b[^\n]*\|\s*(?:sh|bash|powershell)", re.I),
 )
-_COMMAND_ALLOW = re.compile(
-    r"^(?:(?:python(?:\.exe)?(?:\s+-m)?|py(?:\.exe)?|pytest|node(?:\.exe)?|npm|npx|pnpm|yarn|"
-    r"ruff|mypy|pyright|tsc|cargo|go|git)\b|(?:\.\\|/)?[A-Za-z0-9_.-]+(?:\.cmd|\.bat|\.ps1)?\b)", re.I)
+# TestRunner is an execution boundary, not a general purpose shell.  Keep the
+# allow list explicit.  The previous expression had a catch-all alternative
+# that made `powershell`, arbitrary .bat files and any executable name look like
+# a valid verification command.
+_COMMAND_ALLOW = frozenset((
+    "python", "python.exe", "py", "py.exe", "pytest",
+    "node", "node.exe", "npm", "npm.cmd", "npx", "npx.cmd",
+    "pnpm", "pnpm.cmd", "yarn", "yarn.cmd", "ruff", "mypy", "pyright",
+    "tsc", "tsc.cmd", "cargo", "go", "git",
+))
+_SHELL_META = re.compile(r"[|;&<>]|[`$()]", re.I)
+
+
+def _command_tokens(command: str) -> list[str]:
+    """Parse the small cross-platform command grammar used by TestRunner."""
+    try:
+        tokens = shlex.split(command, posix=False)
+    except ValueError as exc:
+        raise CodingHarnessError("验证命令引号不匹配") from exc
+    return [str(token).strip().strip('"') for token in tokens if str(token).strip()]
+
+
+def _allowed_test_command(command: str) -> bool:
+    if not command or _SHELL_META.search(command):
+        return False
+    tokens = _command_tokens(command)
+    if not tokens:
+        return False
+    executable = re.split(r"[\\/]", tokens[0])[-1].lower()
+    if executable not in _COMMAND_ALLOW:
+        return False
+    args = [str(value).strip('"') for value in tokens[1:]]
+    if executable in {"python", "python.exe", "py", "py.exe"}:
+        # Only test/type-check modules may be launched through Python.  This
+        # blocks `python -c`, arbitrary scripts and shell escape helpers.
+        return len(args) >= 2 and args[0] in {"-m", "-B", "-u"} and (
+            (args[0] != "-m" and len(args) >= 3 and args[1] == "-m"
+             and args[2].lower() in {"pytest", "unittest", "compileall"})
+            or (args[0] == "-m" and args[1].lower() in {"pytest", "unittest", "compileall"})
+        )
+    if executable in {"pytest", "ruff", "mypy", "pyright", "tsc"}:
+        return True
+    if executable in {"node", "node.exe"}:
+        return "--test" in args
+    if executable in {"npm", "npm.cmd", "npx", "npx.cmd", "pnpm", "pnpm.cmd", "yarn", "yarn.cmd"}:
+        if not args:
+            return False
+        if args[0].lower() == "test":
+            return True
+        return (args[0].lower() == "run" and len(args) > 1 and
+                args[1].lower() in {"test", "lint", "typecheck", "check", "build"})
+    if executable in {"cargo", "go"}:
+        return bool(args) and args[0].lower() == "test"
+    if executable == "git":
+        return bool(args) and args[0].lower() in {"status", "diff", "log", "grep"}
+    return False
 
 
 class CodingHarnessError(RuntimeError):
@@ -366,6 +420,46 @@ class PatchEngine:
         text = str(patch or "")
         if not text.strip():
             raise CodingHarnessError("补丁为空")
+        # A multi-file patch is one operation from the model's point of view.
+        # Keep the pre-image for every target and restore all of it when any
+        # hunk fails.  The old implementation applied earlier blocks before a
+        # later mismatch was discovered, leaving a half-applied patch behind.
+        changed_before = len(self.changed)
+        originals: dict[str, tuple[bool, str]] = {}
+
+        def remember(rel: str) -> None:
+            if rel in originals:
+                return
+            target = self.guard.resolve(rel, allow_missing=True)
+            if os.path.isdir(target):
+                raise WorkspaceError("补丁目标不能是目录：%s" % rel)
+            if os.path.exists(target):
+                try:
+                    originals[rel] = (True, Path(target).read_text(encoding="utf-8"))
+                except UnicodeDecodeError as exc:
+                    raise WorkspaceError("只支持 UTF-8 文本文件：%s" % rel) from exc
+            else:
+                originals[rel] = (False, "")
+
+        def rollback() -> None:
+            for rel, (exists, content) in originals.items():
+                target = self.guard.resolve(rel, allow_missing=True)
+                if exists:
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    fd, tmp = tempfile.mkstemp(prefix=".vigil-rollback-", dir=self.guard.root)
+                    try:
+                        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+                            stream.write(content)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        os.replace(tmp, target)
+                    finally:
+                        if os.path.exists(tmp):
+                            os.unlink(tmp)
+                elif os.path.exists(target):
+                    os.unlink(target)
+            del self.changed[changed_before:]
+
         lines = text.splitlines(True)
         blocks: list[list[str]] = []
         current: list[str] = []
@@ -377,59 +471,71 @@ class PatchEngine:
         if current:
             blocks.append(current)
         receipts: list[dict[str, Any]] = []
-        for block in blocks:
-            if not block or not block[0].startswith("--- ") or len(block) < 2 or not block[1].startswith("+++ "):
-                raise CodingHarnessError("补丁格式无效")
-            old_name = block[0].split("\t", 1)[0][4:].strip()
-            new_name = block[1].split("\t", 1)[0][4:].strip()
-            old_name = old_name[2:] if old_name.startswith("a/") else old_name
-            new_name = new_name[2:] if new_name.startswith("b/") else new_name
-            if new_name == "/dev/null":
-                receipts.append(self.delete(old_name))
-                continue
-            target_name = new_name if new_name != "/dev/null" else old_name
-            old = ""
-            target = self.guard.resolve(target_name, allow_missing=True)
-            if os.path.exists(target):
-                old = Path(target).read_text(encoding="utf-8")
-            source = old.splitlines(True)
-            out: list[str] = []
-            cursor = 0
-            index = 2
-            while index < len(block):
-                header = block[index]
-                if not header.startswith("@@"):
-                    index += 1
+        try:
+            for block in blocks:
+                if not block or not block[0].startswith("--- ") or len(block) < 2 or not block[1].startswith("+++ "):
+                    raise CodingHarnessError("补丁格式无效")
+                old_name = block[0].split("\t", 1)[0][4:].strip()
+                new_name = block[1].split("\t", 1)[0][4:].strip()
+                old_name = old_name[2:] if old_name.startswith("a/") else old_name
+                new_name = new_name[2:] if new_name.startswith("b/") else new_name
+                if old_name != "/dev/null":
+                    remember(old_name)
+                if new_name != "/dev/null":
+                    remember(new_name)
+                if new_name == "/dev/null":
+                    receipts.append(self.delete(old_name))
                     continue
-                match = re.search(r"\-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?", header)
-                if not match:
-                    raise CodingHarnessError("补丁 hunk 位置无效")
-                start = int(match.group(1)) - 1
-                out.extend(source[cursor:start])
-                cursor = start
-                index += 1
-                while index < len(block) and not block[index].startswith("@@"):
-                    line = block[index]
-                    if line.startswith("\\ No newline"):
+                target_name = new_name if new_name != "/dev/null" else old_name
+                old = ""
+                target = self.guard.resolve(target_name, allow_missing=True)
+                if os.path.exists(target):
+                    old = Path(target).read_text(encoding="utf-8")
+                source = old.splitlines(True)
+                out: list[str] = []
+                cursor = 0
+                index = 2
+                while index < len(block):
+                    header = block[index]
+                    if not header.startswith("@@"):
                         index += 1
                         continue
-                    marker, payload = line[:1], line[1:]
-                    if marker == " ":
-                        if cursor >= len(source) or source[cursor] != payload:
-                            raise CodingHarnessError("补丁上下文与当前文件不匹配：%s" % target_name)
-                        out.append(source[cursor]); cursor += 1
-                    elif marker == "-":
-                        if cursor >= len(source) or source[cursor] != payload:
-                            raise CodingHarnessError("补丁删除行与当前文件不匹配：%s" % target_name)
-                        cursor += 1
-                    elif marker == "+":
-                        out.append(payload)
-                    else:
-                        raise CodingHarnessError("补丁行无效：%s" % line[:80])
+                    match = re.search(r"\-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?", header)
+                    if not match:
+                        raise CodingHarnessError("补丁 hunk 位置无效")
+                    old_start = int(match.group(1))
+                    # Unified diffs use line 0 for a /dev/null pre-image.
+                    start = 0 if old_start == 0 else old_start - 1
+                    if start < cursor or start > len(source):
+                        raise CodingHarnessError("补丁 hunk 超出当前文件：%s" % target_name)
+                    out.extend(source[cursor:start])
+                    cursor = start
                     index += 1
-            out.extend(source[cursor:])
-            receipts.append(self.write(target_name, "".join(out)))
-        return receipts
+                    while index < len(block) and not block[index].startswith("@@"):
+                        line = block[index]
+                        if line.startswith("\\ No newline"):
+                            index += 1
+                            continue
+                        marker, payload = line[:1], line[1:]
+                        if marker == " ":
+                            if cursor >= len(source) or source[cursor] != payload:
+                                raise CodingHarnessError("补丁上下文与当前文件不匹配：%s" % target_name)
+                            out.append(source[cursor]); cursor += 1
+                        elif marker == "-":
+                            if cursor >= len(source) or source[cursor] != payload:
+                                raise CodingHarnessError("补丁删除行与当前文件不匹配：%s" % target_name)
+                            cursor += 1
+                        elif marker == "+":
+                            out.append(payload)
+                        else:
+                            raise CodingHarnessError("补丁行无效：%s" % line[:80])
+                        index += 1
+                out.extend(source[cursor:])
+                receipts.append(self.write(target_name, "".join(out)))
+            return receipts
+        except Exception:
+            rollback()
+            raise
 
 
 class TestRunner:
@@ -443,7 +549,7 @@ class TestRunner:
             raise CodingHarnessError("验证命令不能为空")
         if any(pattern.search(command) for pattern in _COMMAND_DENY):
             raise CodingHarnessError("命令包含被禁止的危险操作")
-        if not _COMMAND_ALLOW.search(command):
+        if not _allowed_test_command(command):
             raise CodingHarnessError("命令不在 Coding Agent 开发命令范围内：%s" % command[:120])
         started = time.monotonic()
         try:
@@ -474,6 +580,24 @@ def should_plan(request: str) -> bool:
     return _complexity(request)[0] != "simple"
 
 
+_CODING_REQUEST_HINTS = (
+    "代码", "源码", "实现", "修改", "编辑", "修复", "重构", "创建", "写入",
+    "删除", "构建", "运行测试", "bug", "bugfix", "refactor", "implement",
+    "modify", "edit", "fix", "build", "compile", "pytest", "unittest", "npm",
+    "typescript", "javascript", "python", "rust", "golang",
+)
+
+
+def looks_like_coding_request(request: str) -> bool:
+    """Detect a development request when a conversation has a workspace.
+
+    This is deliberately a small routing hint, never an authorization check.
+    The workspace record and the normal admin/agent gates remain authoritative.
+    """
+    text = str(request or "").strip().lower()
+    return bool(text) and any(marker in text for marker in _CODING_REQUEST_HINTS)
+
+
 class CodingHarness:
     """PLAN → IMPLEMENT → VERIFY → DIAGNOSE → REPAIR → VERIFY → COMPLETE."""
 
@@ -485,7 +609,8 @@ class CodingHarness:
                  repairer: Callable[..., Any] | None = None,
                  replanner: Callable[..., Any] | None = None,
                  stop_check: Callable[[], bool] | None = None,
-                 event_sink: Callable[[str, Mapping[str, Any]], None] | None = None):
+                 event_sink: Callable[[str, Mapping[str, Any]], None] | None = None,
+                 resume_state: Mapping[str, Any] | None = None):
         self.guard = WorkspaceGuard(workspace_root, run_id)
         self.indexer = ProjectIndexer(self.guard)
         self.patches = PatchEngine(self.guard)
@@ -500,6 +625,7 @@ class CodingHarness:
         self.replanner = replanner
         self.stop_check = stop_check
         self.event_sink = event_sink
+        self.resume_state = dict(resume_state or {})
         self.phase = "PLAN"
         self.events: list[dict[str, Any]] = []
         self.plan: Plan | None = None
@@ -574,12 +700,28 @@ class CodingHarness:
             if not isinstance(item, dict):
                 continue
             sid = str(item.get("id") or "step_%d" % idx)
+            status = str(item.get("status") or "pending")
+            if status not in {"pending", "running", "completed", "failed"}:
+                status = "pending"
+            try:
+                attempts = max(0, int(item.get("attempts") or 0))
+            except (TypeError, ValueError):
+                attempts = 0
+            evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
             steps.append(PlanStep(sid, str(item.get("title") or item.get("name") or sid),
                                   str(item.get("description") or ""),
                                   [str(v) for v in item.get("depends_on", item.get("dependencies", [])) or []],
                                   [str(v) for v in item.get("acceptance", item.get("acceptance_criteria", [])) or []],
-                                  [str(v) for v in item.get("verification", item.get("verify", [])) or []]))
-        return Plan(1, complexity, rationale, steps or self._default_plan(request, self.snapshot, complexity, rationale).steps)
+                                  [str(v) for v in item.get("verification", item.get("verify", [])) or []],
+                                  status=status if status != "running" else "pending",
+                                  attempts=attempts, evidence=copy.deepcopy(evidence)))
+        version = 1
+        if isinstance(raw, dict):
+            try:
+                version = max(1, int(raw.get("version") or 1))
+            except (TypeError, ValueError):
+                version = 1
+        return Plan(version, complexity, rationale, steps or self._default_plan(request, self.snapshot, complexity, rationale).steps)
 
     def _call(self, callback: Callable[..., Any] | None, *args: Any) -> Any:
         if callback is None:
@@ -659,15 +801,29 @@ class CodingHarness:
                                                "symbols": self.snapshot.symbols})
                 complexity, rationale = _complexity(request)
                 self.transition("PLAN")
-                plan_value = (self._call(self.planner, request, self.snapshot.as_dict())
-                              if complexity != "simple" else None)
-                self.plan = (self._simple_plan(request, self.snapshot)
-                             if complexity == "simple" else
-                             self._normalize_plan(plan_value, request, complexity, rationale))
+                saved_plan = self.resume_state.get("plan")
+                if saved_plan:
+                    # A resumed run reuses the durable plan and only reopens
+                    # steps that were not recorded as completed.  This keeps a
+                    # pause/restart from asking the model to repeat already
+                    # applied multi-file edits.
+                    self.plan = self._normalize_plan(saved_plan, request, complexity,
+                                                     "从已保存的 Coding 检查点恢复")
+                    self.emit("coding_resume", {"phase": self.resume_state.get("phase"),
+                                                 "completed_steps": [s.id for s in self.plan.steps
+                                                                      if s.status == "completed"]})
+                else:
+                    plan_value = (self._call(self.planner, request, self.snapshot.as_dict())
+                                  if complexity != "simple" else None)
+                    self.plan = (self._simple_plan(request, self.snapshot)
+                                 if complexity == "simple" else
+                                 self._normalize_plan(plan_value, request, complexity, rationale))
                 self.emit("coding_plan", self.plan.as_dict())
                 self.transition("IMPLEMENT")
                 for step in self.plan.steps:
                     self._budget()
+                    if step.status == "completed":
+                        continue
                     if any(next((s.status for s in self.plan.steps if s.id == dep), "pending") != "completed"
                            for dep in step.depends_on):
                         raise CodingHarnessError("计划依赖尚未完成：%s" % step.id)
@@ -677,11 +833,13 @@ class CodingHarness:
                     if step.id == "analyze":
                         step.status = "completed"
                         step.evidence.append({"kind": "index", "files": len(self.snapshot.files)})
+                        self.emit("coding_step", step.as_dict())
                         continue
                     if step.id == "verify":
                         # Verification is driven by the real command runner below;
                         # never let a model claim a test step completed.
                         step.status = "completed"
+                        self.emit("coding_step", step.as_dict())
                         continue
                     operations = self._call(self.implementer, request, step.as_dict(), self.snapshot.as_dict())
                     if operations is None:
@@ -689,6 +847,7 @@ class CodingHarness:
                     receipts = self._apply_operations(operations)
                     step.evidence.extend(receipts)
                     step.status = "completed"
+                    self.emit("coding_step", step.as_dict())
                 self.transition("VERIFY")
                 commands: list[str] = []
                 for step in self.plan.steps:
@@ -745,4 +904,4 @@ class CodingHarness:
 
 __all__ = ["CodingHarness", "CodingHarnessError", "WorkspaceError", "BudgetExceeded", "WorkspaceGuard",
            "ProjectIndexer", "PatchEngine", "TestRunner", "Plan", "PlanStep", "ProjectSnapshot",
-           "CommandResult", "PHASES", "should_plan"]
+           "CommandResult", "PHASES", "should_plan", "looks_like_coding_request"]
