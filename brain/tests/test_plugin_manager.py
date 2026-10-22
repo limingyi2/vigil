@@ -1,6 +1,7 @@
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import plugin_manager
@@ -257,3 +258,64 @@ def test_uninstall_reloads_remaining_plugins_without_missing_target_warning():
         ok, result = plugin_manager.uninstall("demo")
     assert ok
     assert "runtime_warning" not in result
+
+
+def test_targeted_lifecycle_keeps_real_background_plugins_running(tmp_path):
+    """reminder/kb/skill have no stop hook; ordinary plugin operations must not block."""
+    source_plugins = Path(__file__).resolve().parents[1] / "plugins"
+    actual = {}
+    for name in ("reminder", "kb", "skill"):
+        actual[name] = plugin_host._load_one(str(source_plugins / (name + ".py")))
+        assert actual[name] is not None
+
+    class NoopThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    target = tmp_path / "installed"
+    target.mkdir()
+    registry = target / "_registry.json"
+    old_registry = plugin_host._registry
+    old_started = plugin_host._started
+    old_brain = plugin_host._runtime_brain
+    old_dir = plugin_host._DIR
+    old_installed = plugin_host._INSTALLED_DIR
+    try:
+        plugin_host._registry = actual
+        plugin_host._started = set()
+        plugin_host._runtime_brain = None
+        plugin_host._DIR = str(source_plugins)
+        plugin_host._INSTALLED_DIR = str(target)
+        brain = object()
+        with patch.object(plugin_host, "_enabled", return_value=True), \
+             patch.object(actual["reminder"].mod, "threading", SimpleNamespace(Thread=NoopThread)), \
+             patch.object(actual["skill"].mod, "host_alive", return_value=False):
+            assert plugin_host.start_all(brain, names=["reminder", "kb", "skill"]) == 3
+            identities = {name: plugin_host.get(name) for name in actual}
+            assert plugin_host.runtime_brain() is brain
+
+            first = tmp_path / "one.zip"
+            second = tmp_path / "two.zip"
+            _archive(first, "1.0.0")
+            _archive(second, "2.0.0", b"NAME='demo'\nDESC='updated'\n")
+            with patch.object(plugin_ops, "_PLUG_DIR", str(target)), \
+                 patch.object(plugin_ops, "REGISTRY", str(registry)):
+                ok, result = plugin_manager.install_archive(str(first), reload=True)
+                assert ok, result
+                ok, result = plugin_manager.update("demo", str(second), reload=True)
+                assert ok, result
+                ok, result = plugin_manager.uninstall("demo")
+                assert ok, result
+
+            assert plugin_host.runtime_brain() is brain
+            assert plugin_host.started_names() == set(actual)
+            assert all(plugin_host.get(name) is identities[name] for name in actual)
+    finally:
+        plugin_host._registry = old_registry
+        plugin_host._started = old_started
+        plugin_host._runtime_brain = old_brain
+        plugin_host._DIR = old_dir
+        plugin_host._INSTALLED_DIR = old_installed

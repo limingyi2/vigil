@@ -84,8 +84,39 @@ def _stop(name):
     return True, ""
 
 
-def _reload(name=None, brain=None):
+def _reload(name=None, brain=None, allow_missing=False):
     import plugin_host
+    if name:
+        # A targeted reload must leave unrelated workers and their module
+        # instances alone. Only the target may be stopped/recreated here.
+        active = plugin_host.started_names()
+        if name in active:
+            plugin = plugin_host.get(name)
+            if (plugin is not None and callable(plugin.hook("start"))
+                    and not any(callable(plugin.hook(h)) for h in ("stop", "shutdown", "close"))):
+                return False
+            stopped, _errors = plugin_host.stop(name)
+            if not stopped:
+                return False
+        loaded = plugin_host.load(force=True, only=name)
+        if name not in loaded:
+            if allow_missing:
+                return True
+            raise RuntimeError("插件 %s 未能加载；请查看插件错误诊断" % name)
+        running_brain = brain if brain is not None else plugin_host.runtime_brain()
+        target = [name]
+        needs_brain = (callable(loaded[name].hook("start"))
+                       and plugin_host.is_enabled(name))
+        if needs_brain and running_brain is None:
+            return False
+        if running_brain is not None:
+            details = plugin_host.start_all(running_brain, names=target, detailed=True)
+            if details["failed"]:
+                raise RuntimeError("插件 start(brain) 启动失败：%s" % ", ".join(details["failed"]))
+            if needs_brain and not plugin_host.is_started(name):
+                raise RuntimeError("插件 start(brain) 未完成：%s" % name)
+        return True
+
     # A forced load recreates module objects. Stop every previously started
     # hook first so a full reload cannot leave old worker threads running while
     # the new module is started. The Brain object itself remains registered in
@@ -100,15 +131,11 @@ def _reload(name=None, brain=None):
     if not stopped:
         return False
     loaded = plugin_host.load(force=True)
-    if name and name not in loaded:
-        raise RuntimeError("插件 %s 未能加载；请查看插件错误诊断" % name)
     running_brain = brain if brain is not None else plugin_host.runtime_brain()
-    target = [name] if name else None
-    # Targeted reloads still stopped all running hooks above so the recreated
-    # modules are safe to start. Restart the previously running set plus the
-    # target; a full reload starts every enabled start hook.
-    restart_names = None if not name else [n for n in sorted(active | {name}) if n in loaded]
-    candidate_names = list(loaded) if restart_names is None else restart_names
+    # A full reload restarts every enabled start hook after all old modules
+    # have been stopped and recreated.
+    restart_names = None
+    candidate_names = list(loaded)
     needs_brain = any(
         callable(loaded[n].hook("start")) and plugin_host.is_enabled(n)
         for n in candidate_names
@@ -408,10 +435,10 @@ def uninstall(name, *, purge_data=False):
         _set_state(name, state="error", last_error=result.get("err", "卸载失败"))
         return False, result
     try:
-        # The target no longer exists. Reload the remaining registry instead of
-        # asking for the removed name and reporting an expected absence as a
-        # runtime failure.
-        if not _reload():
+        # The target no longer exists. Refresh only its registry slot instead
+        # of stopping unrelated background plugins or reporting an expected
+        # absence as a runtime failure.
+        if not _reload(name, allow_missing=True):
             result["runtime_warning"] = "插件已卸载，但其他插件运行态未完成重载；请重启 Brain"
     except Exception as exc:
         result["runtime_warning"] = str(exc)[:120]

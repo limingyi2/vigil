@@ -283,7 +283,22 @@ def _scan_plugin_directory(directory):
     return found
 
 
-def load(force=False):
+def _plugin_entry_path(name):
+    """Find one plugin entry without importing unrelated plugin modules."""
+    name = str(name or "").strip()
+    for directory in (_INSTALLED_DIR, _DIR):
+        if not directory:
+            continue
+        package_init = os.path.join(directory, name, "__init__.py")
+        if os.path.isfile(package_init):
+            return package_init
+        module_file = os.path.join(directory, name + ".py")
+        if os.path.isfile(module_file):
+            return module_file
+    return ""
+
+
+def load(force=False, only=None):
     """Load core plugins first, then runtime-installed plugins as overrides.
 
     Market installs live under data/installed_plugins, never in the tracked source
@@ -291,6 +306,21 @@ def load(force=False):
     """
     global _loaded
     with _lock:
+        if only:
+            name = str(only).strip()
+            _started.discard(name)
+            _registry.pop(name, None)
+            entry = _plugin_entry_path(name)
+            if entry:
+                plugin = _load_one(entry)
+                if plugin and plugin.name == name:
+                    _registry[name] = plugin
+                elif plugin:
+                    _log(name, "插件 NAME 与目标名称不一致，已拒绝定向重载")
+            _reindex_tools()
+            _loaded = True
+            _sync_features()
+            return dict(_registry)
         found = _scan_plugin_directory(_DIR)
         if os.path.abspath(_INSTALLED_DIR) != os.path.abspath(_DIR):
             # Installed plugins override a same-named core plugin intentionally.
