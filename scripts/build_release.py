@@ -134,7 +134,19 @@ def build(candidate=False, brain_only=False):
         subprocess.run(['cmd', '/c', *command] if os.name == 'nt' else command,
             cwd=ROOT / 'client', env=env, check=True)
         verify(candidate)
-        installer = CLIENT_DIST / ('Vigil.Setup.' + info['version'] + '.exe')
+        # 安装包名从 package.json 的 productName 读取，不硬编码。
+        # electron-builder 会按 productName 生成 Setup EXE，这里必须与之一致。
+        product_name = package.get('productName') or package.get('name') or 'Vigil'
+        installer = CLIENT_DIST / (product_name + '.Setup.' + info['version'] + '.exe')
+        if not installer.is_file():
+            # 兜底：在 dist 目录里找唯一的 *.Setup.*.exe，避免改名后找不到
+            candidates = list(CLIENT_DIST.glob('*.Setup.' + info['version'] + '.exe'))
+            if len(candidates) == 1:
+                installer = candidates[0]
+            elif len(candidates) > 1:
+                raise RuntimeError('Ambiguous installer artifacts: ' + ', '.join(c.name for c in candidates))
+            else:
+                raise RuntimeError('Installer not found: ' + installer.name)
         release = dict(code=info['code'], ver=info['version'], source_commit=info['commit'], candidate=candidate,
             sha256=filehash(installer), size=installer.stat().st_size,
             setup_file=installer.name, notes='Unified Electron and Brain update')

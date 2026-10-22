@@ -106,6 +106,41 @@ def validate_vectors(vectors, count, dim=None):
 
 DEFAULT_LOCAL_MODEL = "BAAI/bge-small-zh-v1.5"
 
+# 后台空闲卸载：真正的后台线程定期检查，而不是等下次查询才懒卸载。
+# 懒卸载（_check_idle_unload）作为兜底保留。
+_BACKENDS = []           # 所有 EmbeddingBackend 实例（弱引用更优，但简单起见用强引用）
+_BACKENDS_LOCK = threading.Lock()
+_IDLE_WATCHER = None     # 后台线程实例
+_IDLE_WATCHER_INTERVAL = 30  # 每30秒检查一次
+
+
+def _idle_watcher_loop():
+    """后台线程：定期检查所有后端的空闲时间，超时就卸载。"""
+    while True:
+        time.sleep(_IDLE_WATCHER_INTERVAL)
+        try:
+            with _BACKENDS_LOCK:
+                backends = list(_BACKENDS)
+            for backend in backends:
+                try:
+                    backend._check_idle_unload()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def _ensure_idle_watcher():
+    """确保后台空闲卸载线程已启动。只启动一次。"""
+    global _IDLE_WATCHER
+    if _IDLE_WATCHER is not None:
+        return
+    with _BACKENDS_LOCK:
+        if _IDLE_WATCHER is None:
+            t = threading.Thread(target=_idle_watcher_loop, daemon=True, name="embedding-idle-watcher")
+            t.start()
+            _IDLE_WATCHER = t
+
 
 class EmbeddingBackend:
     """统一的向量化入口。
@@ -143,6 +178,10 @@ class EmbeddingBackend:
         self._checked = False
         self._last_used = 0.0
         self._idle_unload = int(idle_unload_seconds or self.IDLE_UNLOAD_SECONDS)
+        # 注册到后台空闲卸载线程
+        with _BACKENDS_LOCK:
+            _BACKENDS.append(self)
+        _ensure_idle_watcher()
 
     def unload(self):
         """卸载本地模型，释放内存。下次 embed 时自动重新加载。"""
@@ -381,6 +420,10 @@ class ANNIndex:
                 return False
             import faiss
             self._index = faiss.read_index(self._index_path)
+            # 度量类型必须是内积：旧版索引用 L2，排序方向相反，必须重建
+            if getattr(self._index, "metric_type", -1) != faiss.METRIC_INNER_PRODUCT:
+                self._index = None
+                return False
             self._index.hnsw.efSearch = self.EF_SEARCH
             self._id_to_doc = {int(k): str(v) for k, v in (meta.get("id_to_doc") or {}).items()}
             self._doc_to_id = {str(v): int(k) for k, v in self._id_to_doc.items()}
@@ -393,14 +436,18 @@ class ANNIndex:
             return False
 
     def _rebuild_internal(self, all_docs):
-        """全量重建索引。all_docs = [(doc_id, vector_list), ...]"""
+        """全量重建索引。all_docs = [(doc_id, vector_list), ...]
+
+        使用内积度量（METRIC_INNER_PRODUCT）：向量已归一化，内积=余弦相似度，
+        分数越大越相似，与暴力扫描的 cosine 排序方向一致。
+        """
         import faiss
         import numpy as np
         # 过滤掉墓碑
         valid = [(did, vec) for did, vec in all_docs if did not in self._tombstones and vec and len(vec) == self.dim]
         if not valid:
             # 空索引
-            self._index = faiss.IndexHNSWFlat(self.dim, self.HNSW_M)
+            self._index = faiss.IndexHNSWFlat(self.dim, self.HNSW_M, faiss.METRIC_INNER_PRODUCT)
             self._index.hnsw.efSearch = self.EF_SEARCH
             self._id_to_doc = {}
             self._doc_to_id = {}
@@ -412,7 +459,7 @@ class ANNIndex:
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         vectors = vectors / norms
-        self._index = faiss.IndexHNSWFlat(self.dim, self.HNSW_M)
+        self._index = faiss.IndexHNSWFlat(self.dim, self.HNSW_M, faiss.METRIC_INNER_PRODUCT)
         self._index.hnsw.efSearch = self.EF_SEARCH
         self._index.add(vectors)
         self._id_to_doc = {i: str(did) for i, (did, _) in enumerate(valid)}
@@ -423,7 +470,11 @@ class ANNIndex:
 
     # -- 增删 --
     def add(self, doc_ids, vectors):
-        """增量添加向量。doc_ids 和 vectors 一一对应。"""
+        """增量添加向量。doc_ids 和 vectors 一一对应。
+
+        同 doc_id 已存在时：先标记旧的为墓碑，再添加新的（HNSW 不支持原地更新）。
+        使用内积度量，向量归一化后内积=余弦相似度。
+        """
         if self._index is None:
             return False
         ok, _ = self.available()
@@ -437,7 +488,8 @@ class ANNIndex:
             if not vec or len(vec) != self.dim:
                 continue
             if did in self._doc_to_id:
-                continue  # 已存在，跳过（调用方应先删再加）
+                # 同 doc_id 内容变化：旧的标记墓碑，新的用新 faiss_id 添加
+                self._tombstones.add(did)
             faiss_id = self._next_id
             self._next_id += 1
             self._doc_to_id[did] = faiss_id
@@ -539,8 +591,12 @@ _ANN_LOCK = threading.RLock()
 
 
 def get_ann_index(data_dir, dim, model_tag):
-    """获取或创建 ANN 索引实例。线程安全。"""
-    key = "%s:%d" % (model_tag, dim)
+    """获取或创建 ANN 索引实例。线程安全。
+
+    缓存 key 必须包含 data_dir：不同数据库实例（不同 data_dir）
+    即使模型和维度相同，也绝不能共享同一个 ANN 索引，否则会跨库串用数据。
+    """
+    key = "%s:%d:%s" % (model_tag, dim, os.path.abspath(data_dir))
     with _ANN_LOCK:
         if key not in _ANN_INDEXES:
             _ANN_INDEXES[key] = ANNIndex(data_dir, dim, model_tag)
