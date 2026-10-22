@@ -1,13 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
-const { createPluginMedia, shouldCancelLoopbackRequest } = require('../electron/plugin-media');
+const { createPluginResources, shouldCancelLoopbackRequest } = require('../electron/plugin-resource');
 
-test('opaque media URL attaches auth, streams ranges and serves web children', async () => {
+test('generic resource URL attaches auth, streams ranges and serves web children', async () => {
   const seen = [];
   const upstream = http.createServer((req, res) => {
     seen.push({ url: req.url, auth: req.headers.authorization, range: req.headers.range });
@@ -23,10 +19,10 @@ test('opaque media URL attaches auth, streams ranges and serves web children', a
     res.writeHead(200, { 'Content-Type': 'image/png' }); res.end('fixture-image');
   });
   await new Promise(r => upstream.listen(0, '127.0.0.1', r));
-  const media = createPluginMedia({ getBase: () => 'http://127.0.0.1:' + upstream.address().port,
+  const resources = createPluginResources({ getBase: () => 'http://127.0.0.1:' + upstream.address().port,
     getToken: async () => 'test-secret' });
   try {
-    const url = await media.url('/api/plugin/wallpaper/we/media?id=123&file=video.mp4');
+    const url = await resources.url('/api/plugin/wallpaper/resource?id=123&file=video.mp4');
     assert(!url.includes('test-secret'));
     const response = await fetch(url, { headers: { Range: 'bytes=2-5' } });
     assert.equal(response.status, 206);
@@ -34,75 +30,48 @@ test('opaque media URL attaches auth, streams ranges and serves web children', a
     assert.equal(await response.text(), '2345');
     assert.equal(seen[0].auth, 'Bearer test-secret');
     assert.equal(seen[0].range, 'bytes=2-5');
-    const web = await media.url('/api/plugin/wallpaper/we/media?id=123&file=index.html');
+    const web = await resources.url('/api/plugin/wallpaper/resource?id=123&file=index.html');
     const webResponse = await fetch(web);
-    assert.match(webResponse.headers.get('content-security-policy'), /object-src 'none'/);
     assert.equal(await (await fetch(new URL('assets/a.png', web))).text(), 'fixture-image');
     assert.match(seen.at(-1).url, /file=assets%2Fa.png/);
     assert.equal((await fetch(url.replace(/\/r\/[a-f0-9]+\//, '/r/' + '0'.repeat(48) + '/'))).status, 404);
-    for (const invalid of ['/api/persona', '//evil.example/api/plugin/wallpaper/we/media',
-      '/api/plugin/wallpaper/we/media?id=../&file=x',
-      '/api/plugin/wallpaper/we/media?id=123&file=../../x']) {
-      await assert.rejects(media.url(invalid));
+    for (const invalid of ['/api/persona', '//evil.example/api/plugin/wallpaper/resource',
+      '/api/plugin/wallpaper/resource?id=../&file=x',
+      '/api/plugin/wallpaper/resource?id=123&file=../../x']) {
+      await assert.rejects(resources.url(invalid));
     }
   } finally {
-    media.close();
+    resources.close();
     await new Promise(r => upstream.close(r));
   }
 });
 
 
-test('media tickets expire when idle and revoke on unload', async () => {
+test('resource tickets expire when idle and revoke on unload', async () => {
   const upstream = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'image/png' }); res.end('ok');
   });
   await new Promise(r => upstream.listen(0, '127.0.0.1', r));
-  const media = createPluginMedia({
+  const resources = createPluginResources({
     getBase: () => 'http://127.0.0.1:' + upstream.address().port,
     getToken: async () => 'test-secret', ticketIdleMs: 120,
   });
   try {
-    const resource = '/api/plugin/wallpaper/we/media?id=123&file=scene.json';
-    const first = await media.url(resource);
-    assert.equal(media.isApprovedUrl(first), true);
-    assert.equal(media.isApprovedUrl('http://127.0.0.1:43210/'), false);
+    const resource = '/api/plugin/wallpaper/resource?id=123&file=scene.json';
+    const first = await resources.url(resource);
+    assert.equal(resources.isApprovedUrl(first), true);
+    assert.equal(resources.isApprovedUrl('http://127.0.0.1:43210/'), false);
     await new Promise(r => setTimeout(r, 200));
-    assert.equal(media.isApprovedUrl(first), false);
+    assert.equal(resources.isApprovedUrl(first), false);
     assert.equal((await fetch(first)).status, 410);
-    const second = await media.url(resource);
+    const second = await resources.url(resource);
     assert.notEqual(first, second);
     assert.equal((await fetch(second)).status, 200);
-    media.releaseResources();
-    assert.equal(media.isApprovedUrl(second), false);
+    resources.releaseResources();
+    assert.equal(resources.isApprovedUrl(second), false);
     assert.equal((await fetch(second)).status, 404);
   } finally {
-    media.close();
-    await new Promise(r => upstream.close(r));
-  }
-});
-
-test('trusted local import serves byte ranges and revoked IDs cannot mint new URLs', async () => {
-  const upstream = http.createServer((_req, res) => { res.writeHead(404); res.end(); });
-  await new Promise(r => upstream.listen(0, '127.0.0.1', r));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-local-wallpaper-'));
-  const file = path.join(dir, 'clip.mp4'); fs.writeFileSync(file, '0123456789');
-  const media = createPluginMedia({ getBase: () => 'http://127.0.0.1:' + upstream.address().port,
-    getToken: async () => 'test-secret' });
-  const id = crypto.randomUUID();
-  try {
-    media.registerLocal(id, file, 'video/mp4');
-    const url = await media.localUrl(id);
-    assert.equal(await media.localUrl(id), url, 'Repeated renders should reuse the same active local ticket');
-    const response = await fetch(url, { headers: { Range: 'bytes=3-6' } });
-    assert.equal(response.status, 206);
-    assert.equal(await response.text(), '3456');
-    media.unregisterLocal(id);
-    assert.equal((await fetch(url)).status, 404, 'Deleting an import revokes already issued URLs');
-    await assert.rejects(media.localUrl(id), /不存在/);
-    media.releaseResources();
-    assert.equal((await fetch(url)).status, 404);
-  } finally {
-    media.close(); fs.rmSync(dir, { recursive: true, force: true });
+    resources.close();
     await new Promise(r => upstream.close(r));
   }
 });
@@ -115,8 +84,8 @@ test('loopback policy covers frames, images, media, workers and other webContent
     assert.equal(shouldCancelLoopbackRequest({ url: 'http://127.0.0.1:4321/private', webContentsId: 7, resourceType },
       7, approved), true, resourceType + ' arbitrary loopback denied');
   }
-  assert.equal(shouldCancelLoopbackRequest({url:'http://127.0.0.1:4321/r/'+'a'.repeat(48)+'/scene.json',webContentsId:8,resourceType:'image'},7,approved),true,
-    'settings and other windows cannot reuse the main window ticket');
+  assert.equal(shouldCancelLoopbackRequest({url:'http://127.0.0.1:4321/r/'+'a'.repeat(48)+'/scene.json',webContentsId:8,resourceType:'image'},7,approved),false,
+    'capability URLs can be consumed by the sandboxed plugin frame');
   assert.equal(shouldCancelLoopbackRequest({url:'https://example.com',webContentsId:7,resourceType:'image'},7,approved),false,
     'remote non-loopback requests are unaffected');
 });

@@ -25,7 +25,7 @@ class Handler:
     def _cors(self): pass
 
 
-class TestPluginMedia(unittest.TestCase):
+class TestPluginResource(unittest.TestCase):
     def test_full_and_seek_ranges(self):
         with tempfile.TemporaryDirectory() as tmp:
             file = Path(tmp) / 'video.mp4'
@@ -45,16 +45,16 @@ class TestPluginMedia(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('wallpaper_test', BRAIN.parent / 'market/plugins/wallpaper/__init__.py')
         wallpaper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(wallpaper)
-        with tempfile.TemporaryDirectory() as tmp, patch.object(wallpaper, '_find_we_workshop', return_value=tmp):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(wallpaper, '_find_workshop', return_value=tmp):
             asset = Path(tmp) / '123/assets/main.css'
             asset.parent.mkdir(parents=True)
             asset.write_text('body {}')
-            result = wallpaper.api_we_media({}, {'id': '123', 'file': 'assets/main.css'})
+            result = wallpaper.api_resource({}, {'id': '123', 'file': 'assets/main.css'})
             self.assertEqual(Path(result['__file__']), asset.resolve())
             for query in [{'id': '../', 'file': 'x'}, {'id': '123', 'file': '../../x'},
                           {'id': '123', 'file': str(Path(tmp).parent / 'outside')}]:
-                self.assertEqual(wallpaper.api_we_media({}, query)['_code'], 400)
-            self.assertEqual(wallpaper.api_we_preview({}, {'id': '../'})['_code'], 400)
+                self.assertEqual(wallpaper.api_resource({}, query)['_code'], 404)
+            self.assertEqual(wallpaper.api_resource({}, {'id': '../', 'file': 'preview.jpg'})['_code'], 404)
 
     def test_frontend_version_is_stable_and_changes_with_content_or_enable(self):
         plugin = type('Plugin', (), {'name': 'x', 'feature': '', 'frontend_js': 'abc', 'frontend_css': ''})()
