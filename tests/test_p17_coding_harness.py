@@ -1,5 +1,6 @@
 """P17 Coding Harness: real multi-file edit, failing test, diagnosis and repair."""
 
+import os
 import sys
 import json
 from unittest.mock import patch
@@ -70,6 +71,46 @@ def test_multi_file_patch_rolls_back_earlier_files_when_a_later_hunk_fails(tmp_p
     assert engine.changed == []
 
 
+def test_same_size_repair_is_not_masked_by_a_stale_bytecode_cache(tmp_path):
+    """A repair that keeps the file size must still reach the verifier.
+
+    CPython validates a timestamp based ``.pyc`` with the pair
+    ``(source mtime truncated to whole seconds, source size)``.  A repair that
+    keeps the same byte size and lands in the same second therefore leaves the
+    previous bytecode valid, so the test run keeps executing the pre-repair
+    code.  The agent then sees its own fix as "still broken" and reports
+    failure although the file on disk is correct.
+    """
+    import py_compile
+
+    module = tmp_path / "calculator.py"
+    module.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (tmp_path / "test_calculator.py").write_text(
+        "from calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+
+    # The cache a previous test run would have left behind.
+    py_compile.compile(str(module), doraise=True)
+    cache_dir = tmp_path / "__pycache__"
+    cached = sorted(cache_dir.glob("calculator*.pyc"))
+    assert cached, "bytecode cache was not created"
+
+    # Stamp the source with the whole second the cache recorded, so the cache
+    # would still look valid to the import machinery.
+    recorded = int.from_bytes(cached[0].read_bytes()[8:12], "little")
+    os.utime(module, (recorded, recorded))
+    assert int(module.stat().st_mtime) == recorded
+
+    with WorkspaceGuard(str(tmp_path), "bytecode-test") as guard:
+        receipt = PatchEngine(guard).write("calculator.py", "def add(a, b):\n    return a + b\n")
+
+    assert receipt.get("purged_bytecode"), "stale bytecode was not dropped"
+    assert not list(cache_dir.glob("calculator*.pyc"))
+
+    with WorkspaceGuard(str(tmp_path), "bytecode-verify") as guard:
+        result = TestRunner(guard).run('"%s" -m pytest -q' % sys.executable)
+    assert result.passed, (result.stdout or "") + (result.stderr or "")
+
+
 def test_test_runner_only_accepts_bounded_development_commands(tmp_path):
     with WorkspaceGuard(str(tmp_path), "command-test") as guard:
         runner = TestRunner(guard)
@@ -82,6 +123,21 @@ def test_test_runner_only_accepts_bounded_development_commands(tmp_path):
                 pass
             else:
                 raise AssertionError("unsafe/non-test command accepted: %s" % command)
+
+
+def test_test_runner_executes_without_a_shell(tmp_path):
+    """The verification command must not be handed to a shell interpreter."""
+    with WorkspaceGuard(str(tmp_path), "no-shell-test") as guard:
+        runner = TestRunner(guard)
+        try:
+            runner.run("python -c \"import os; os.system('echo pwned')\"")
+        except CodingHarnessError:
+            pass
+        else:
+            raise AssertionError("inline code execution was accepted")
+        result = runner.run("python -m pytest -q")
+        assert result.exit_code is not None
+        assert result.passed is False, "an empty workspace has no test to pass"
 
 
 def test_coding_route_hint_distinguishes_read_only_workspace_questions():

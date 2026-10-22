@@ -14,11 +14,14 @@ import dataclasses
 import copy
 import difflib
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -49,13 +52,19 @@ _COMMAND_ALLOW = frozenset((
     "pnpm", "pnpm.cmd", "yarn", "yarn.cmd", "ruff", "mypy", "pyright",
     "tsc", "tsc.cmd", "cargo", "go", "git",
 ))
+# `python3`, `python3.12`, `py3` ... are the normal names on Linux and in
+# virtual environments, so they have to be recognised as the same interpreter.
+_PYTHON_EXECUTABLE = re.compile(r"^(?:python|py)\d*(?:\.\d+)?(?:\.exe)?$", re.I)
 _SHELL_META = re.compile(r"[|;&<>]|[`$()]", re.I)
 
 
 def _command_tokens(command: str) -> list[str]:
     """Parse the small cross-platform command grammar used by TestRunner."""
     try:
-        tokens = shlex.split(command, posix=False)
+        # POSIX shells strip quotes before exec; Windows keeps them.  Parsing
+        # with the native rules keeps the argv identical to what the user
+        # would have typed in that shell.
+        tokens = shlex.split(command, posix=(os.name != "nt"))
     except ValueError as exc:
         raise CodingHarnessError("验证命令引号不匹配") from exc
     return [str(token).strip().strip('"') for token in tokens if str(token).strip()]
@@ -68,10 +77,10 @@ def _allowed_test_command(command: str) -> bool:
     if not tokens:
         return False
     executable = re.split(r"[\\/]", tokens[0])[-1].lower()
-    if executable not in _COMMAND_ALLOW:
+    if executable not in _COMMAND_ALLOW and not _PYTHON_EXECUTABLE.match(executable):
         return False
     args = [str(value).strip('"') for value in tokens[1:]]
-    if executable in {"python", "python.exe", "py", "py.exe"}:
+    if _PYTHON_EXECUTABLE.match(executable):
         # Only test/type-check modules may be launched through Python.  This
         # blocks `python -c`, arbitrary scripts and shell escape helpers.
         return len(args) >= 2 and args[0] in {"-m", "-B", "-u"} and (
@@ -99,6 +108,42 @@ def _allowed_test_command(command: str) -> bool:
 
 class CodingHarnessError(RuntimeError):
     """A safe, user visible harness failure."""
+
+
+def _purge_bytecode_cache(target: str) -> list[str]:
+    """Drop the cached bytecode of a module we just rewrote.
+
+    CPython validates a timestamp based ``.pyc`` with the pair
+    ``(source mtime truncated to whole seconds, source size)``.  A repair that
+    keeps the same byte size and lands in the same wall-clock second therefore
+    leaves the *previous* bytecode valid, so the next test run keeps executing
+    the pre-repair code.  The agent then sees its own fix as "still broken",
+    burns another diagnose/repair round and finally reports failure even though
+    the file on disk is correct.  Clearing the cache forces a recompile.
+
+    This is not a test-only concern: any project whose fix keeps the file size
+    (a one-character operator change, a renamed import, a tweaked constant)
+    hits it on a fast machine.
+    """
+    removed: list[str] = []
+    stem = Path(target).stem
+    candidates: list[Path] = []
+    cache_dir = Path(target).parent / "__pycache__"
+    if cache_dir.is_dir():
+        # Every interpreter tag (cpython-312, pypy, opt-1 ...) is removed.
+        candidates.extend(sorted(cache_dir.glob("%s.*.pyc" % stem)))
+    try:
+        candidates.append(Path(importlib.util.cache_from_source(target)))
+    except (NotImplementedError, ValueError):
+        pass
+    for path in candidates:
+        try:
+            if path.is_file():
+                path.unlink()
+                removed.append(path.name)
+        except OSError:
+            continue
+    return removed
 
 
 class WorkspaceError(CodingHarnessError):
@@ -396,7 +441,13 @@ class PatchEngine:
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-        return self._record(self.guard.relative(target), before, data, backup_path=backup_path)
+        entry = self._record(self.guard.relative(target), before, data, backup_path=backup_path)
+        stale = _purge_bytecode_cache(target)
+        if stale:
+            # Keep the evidence next to the diff: a reviewer has to be able to
+            # tell that the verifier really recompiled the repaired module.
+            entry["purged_bytecode"] = stale
+        return entry
 
     def delete(self, path: str) -> dict[str, Any]:
         target = self.guard.resolve(path)
@@ -405,7 +456,11 @@ class PatchEngine:
         before = Path(target).read_text(encoding="utf-8")
         backup_path = self._backup(self.guard.relative(target), before)
         os.unlink(target)
-        return self._record(self.guard.relative(target), before, "", "delete", backup_path)
+        entry = self._record(self.guard.relative(target), before, "", "delete", backup_path)
+        stale = _purge_bytecode_cache(target)
+        if stale:
+            entry["purged_bytecode"] = stale
+        return entry
 
     def restore(self, path: str) -> dict[str, Any]:
         rel = self.guard.relative(self.guard.resolve(path, allow_missing=True))
@@ -539,9 +594,35 @@ class PatchEngine:
 
 
 class TestRunner:
+    """Run one bounded development command inside the workspace.
+
+    The command is executed as an explicit argv with ``shell=False``.  The
+    earlier implementation went through ``shell=True`` and relied on a regular
+    expression to filter the shell string, which is not a security boundary:
+    the filter sees a *string*, the shell sees a *program*.  Now the parsed
+    argv is what actually runs, so metacharacters are never interpreted and
+    the allow list is checked against the real executable.
+    """
+
+    # pytest must not try to collect this helper class as a test suite.
+    __test__ = False
+
     def __init__(self, guard: WorkspaceGuard, timeout: int = 600):
         self.guard = guard
         self.timeout = max(1, int(timeout))
+
+    def _resolve(self, tokens: list[str]) -> list[str]:
+        """Turn the parsed command into a runnable argv."""
+        raw = tokens[0]
+        name = re.split(r"[\\/]", raw)[-1]
+        resolved = shutil.which(raw) or shutil.which(name)
+        if not resolved and _PYTHON_EXECUTABLE.match(name.lower()):
+            # No interpreter on PATH: fall back to the one running the brain
+            # so a workspace without a global python can still be verified.
+            resolved = sys.executable
+        if not resolved:
+            raise CodingHarnessError("找不到验证命令的可执行文件：%s" % raw)
+        return [resolved] + tokens[1:]
 
     def run(self, command: str, timeout: int | None = None) -> CommandResult:
         command = str(command or "").strip()
@@ -551,9 +632,10 @@ class TestRunner:
             raise CodingHarnessError("命令包含被禁止的危险操作")
         if not _allowed_test_command(command):
             raise CodingHarnessError("命令不在 Coding Agent 开发命令范围内：%s" % command[:120])
+        argv = self._resolve(_command_tokens(command))
         started = time.monotonic()
         try:
-            completed = subprocess.run(command, cwd=self.guard.root, shell=True, capture_output=True,
+            completed = subprocess.run(argv, cwd=self.guard.root, shell=False, capture_output=True,
                                        text=True, encoding="utf-8", errors="replace",
                                        timeout=max(1, int(timeout or self.timeout)))
             return CommandResult(command, completed.returncode, _clip(completed.stdout),
