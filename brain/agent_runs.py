@@ -584,9 +584,12 @@ def _delta(item, kind, payload):
 def _db_file(create=True):
     # create=False：只拼路径，不建目录。后台落盘线程用这个 —— 数据目录被删掉
     # （测试收尾/用户清数据）时，它绝不把目录建回来；连不上就跳过这一轮。
+    # Both writers and readers must resolve the P17 main SQLite database.
+    # create=False must never create a DB from a background flush/read path.
+    from storage import db as _store
     if create:
-        os.makedirs(paths.DATA_DIR, exist_ok=True)
-    return os.path.join(paths.DATA_DIR, 'agent_runs.sqlite3')
+        _store.ensure_schema('main')
+    return _store.main_db_path()
 
 
 def _ensure_repaired():
@@ -607,7 +610,10 @@ def _ensure_repaired():
 @contextmanager
 def _db(create=True):
     filename = _db_file(create)
-    db = sqlite3.connect(filename, timeout=10)
+    if not create and not os.path.isfile(filename):
+        raise FileNotFoundError(filename)
+    from storage import db as _store
+    db = _store.legacy_connection()
     _tx_batches()
     _TX.depth += 1
     try:
@@ -664,7 +670,8 @@ def _read_db():
     每次 commit 都是一次 fsync）。读事件这件事本身在抢写锁，还把轮询变成
     磁盘同步点，于是增量被憋成批。读路径必须完全不碰写路径。
     """
-    filename = os.path.join(paths.DATA_DIR, 'agent_runs.sqlite3')
+    from storage import db as _store
+    filename = _store.main_db_path()
     if not os.path.exists(filename):
         yield None
         return
@@ -1517,6 +1524,7 @@ def _tool(rid, owner, started, call, ctx):
     raw_chars = 0
     error = None
     raised = False
+    _tool_t0 = time.monotonic()
     try:
         import localtools
         with localtools.capture_receipts(stopped=lambda: snapshot(rid, owner)['status'] != 'running') as receipts:
@@ -1576,7 +1584,25 @@ def _tool(rid, owner, started, call, ctx):
         if reason and item['status'] == 'running':
             _finish(db, item, 'failed', reason)
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
+    # Diagnostic writes are noncritical and must not hold the Agent ledger lock.
+    _diag_tool_call(rid, name, reason, error, raw_chars, clipped,
+                    int((time.monotonic() - _tool_t0) * 1000), raised)
     return (None if reason else result), False
+
+
+def _diag_tool_call(rid, name, reason, error, raw_chars, clipped, duration_ms, raised):
+    """Best-effort tool diagnostics; never affect the Agent outcome."""
+    try:
+        from storage import diag
+        diag.log_tool_call(
+            tool=name,
+            state='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
+            duration_ms=duration_ms, run_id=rid,
+            error=str(error or reason or '')[:200],
+            scope={'raw_chars': raw_chars, 'truncated': bool(clipped),
+                   'raised': bool(raised), 'reason': reason or None})
+    except Exception:
+        pass
 
 
 def _coding_json_completion(provider, cfg, messages, strategy='balanced'):

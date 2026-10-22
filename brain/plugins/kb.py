@@ -44,12 +44,40 @@ def _scope():
 
 # ---------------- 工具 ----------------
 
+def _unified_rows(q, key, src):
+    """走 P17 统一检索（FTS5 BM25 + 向量 + RRF）。拿不到就返回 None。
+
+    为什么还要先 `sync_kb`：统一索引是**派生数据**，知识库这边刚导入的文档
+    不会自动出现在里面。同步是增量的（内容没变的块直接跳过），
+    所以这里花的是一次列表比对的代价，不是重新分词。
+    """
+    try:
+        from storage import unified
+        if not unified.unified_enabled():
+            return None
+        unified.sync_kb("", src, key, src)
+        rows, _info = unified.retrieve(q, src=src, persona=key, chan=src,
+                                       kinds=["kb"], top_k=5, budget_chars=2400)
+    except Exception:
+        return None
+    return rows or None
+
+
 def _t_kb_search(arg):
     """参数就是查询词。返回给她看的纯文本，不要 JSON。"""
     q = str(arg or "").strip()
     if not q:
         return "查不了：没给要查的内容"
     key, src = _scope()
+
+    unified_rows = _unified_rows(q, key, src)
+    if unified_rows:
+        out = ["知识库里找到 %d 段相关内容：" % len(unified_rows)]
+        for r in unified_rows:
+            out.append("\n【%s｜%.2f】\n%s"
+                       % (r.source or r.title or "?", r.score, (r.body or "")[:600]))
+        return "\n".join(out)
+
     rows = kb.search(q, persona_key=key, src=src)
     if not rows:
         return ("知识库里没找到跟「%s」相关的内容。"

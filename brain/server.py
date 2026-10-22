@@ -17,6 +17,7 @@ import base64
 import threading
 import contextlib
 import http.server
+import traceback
 
 from runtime import (
     api_config, API_CFG, MOB_CFG, BRAIN_TOKEN,
@@ -2484,6 +2485,47 @@ def start_remote_api(brain):
                     import localtools as _lt
                     self._json(200, {"ok": True, "items": _lt.audit()})
                     return
+                if path == "/api/search":
+                    # P17 统一检索：聊天历史 / 长期记忆 / 知识库 / 已授权工作区
+                    # 走同一个入口（FTS5 BM25 + Embedding 向量 + RRF）。
+                    # **只读**。范围由服务端按当前身份/渠道/人设算，
+                    # 不接受调用方自报 owner —— 报什么就查什么是越权。
+                    q = str(body.get("q") or body.get("query") or "").strip()
+                    if not q:
+                        self._json(400, {"ok": False, "err": "没给查询词"})
+                        return
+                    src = _norm_src(body.get("src") or "pc")
+                    persona = _persona_for_src(src)
+                    owner = self._display_owner(body)
+                    kinds = body.get("kinds")
+                    if not isinstance(kinds, list) or not kinds:
+                        kinds = None
+                    from storage import unified as _uni
+                    results, info = _uni.retrieve(
+                        q, owner=owner, src=src, persona=persona, chan=src,
+                        workspace_ids=_uni.scope_ids(owner, src, persona),
+                        kinds=kinds,
+                        top_k=int(body.get("top_k") or 6),
+                        budget_chars=int(body.get("budget_chars") or 2400))
+                    self._json(200, {"ok": True, "info": info,
+                                     "items": [r.to_dict() for r in results],
+                                     "text": _uni.format_results(results)})
+                    return
+                if path == "/api/search/sync":
+                    # 把四个来源的增量同步进检索索引。写操作只给管理员
+                    # （会落盘、会有 IO 开销，不该让设备 token 随便触发）。
+                    if not self._is_admin():
+                        self._json(403, {"ok": False, "err": "索引同步只允许管理员"})
+                        return
+                    src = _norm_src(body.get("src") or "pc")
+                    persona = _persona_for_src(src)
+                    owner = self._display_owner(body)
+                    from storage import unified as _uni
+                    stats = _uni.sync_all(owner=owner, src=src, persona=persona,
+                                          chan=src,
+                                          include_workspace=bool(body.get("workspace", True)))
+                    self._json(200, {"ok": True, "stats": stats})
+                    return
                 if path == "/api/memory/edit":
                     # M5 记忆管理：改一条记忆的文本。写操作只允许管理员。
                     if not self._is_admin():
@@ -3821,6 +3863,19 @@ def start_remote_api(brain):
                     errlog.log_exc("api" + str(path), e)
                 except Exception:
                     pass
+                # P17 诊断库：异常/崩溃进 vigil_logs.db。**入队即返回**，
+                # 不会给已经出错的响应再添一次 IO 等待；库坏了也只是丢条日志。
+                try:
+                    from storage import diag as _diag
+                    _src = "pc"
+                    if isinstance(body, dict):
+                        _src = _norm_src(body.get("src"))
+                    _diag.log_error("%s: %s" % (type(e).__name__, e),
+                                    category="api", where="POST " + str(path),
+                                    traceback_text=traceback.format_exc(),
+                                    scope={"src": _src})
+                except Exception:
+                    pass
                 self._json(500, {"err": f"{type(e).__name__}: {e}"})
 
         def do_GET(self):
@@ -3835,6 +3890,15 @@ def start_remote_api(brain):
             except (BrokenPipeError, ConnectionResetError):
                 pass                      # 客户端先走了，正常的
             except Exception as e:
+                # P17 诊断库：GET 侧同样记一条。入队即返回，不影响已经要发的 500。
+                try:
+                    from storage import diag as _diag
+                    _diag.log_error("%s: %s" % (type(e).__name__, e),
+                                    category="api", where="GET " + str(self.path),
+                                    traceback_text=traceback.format_exc(),
+                                    scope={"src": "pc"})
+                except Exception:
+                    pass
                 try:
                     self._json(500, {"err": f"{type(e).__name__}: {e}"})
                 except Exception:

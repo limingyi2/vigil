@@ -58,6 +58,34 @@ DEVICES_PATH = os.path.join(DATA_DIR, "devices.json")  # 已绑定设备表（�
 MANAGEMENT_PATH = os.path.join(DATA_DIR, "management.json")  # 服务器与 Agent 运行状态
 AGENT_CENTER_DIR = os.path.join(DATA_DIR, "agent_center")  # 独立 Codex 监督数据
 RUN_DIR = os.path.join(DATA_DIR, "run")
+# P17 双库：主库装业务数据，诊断库装可丢的诊断数据。分开是为了
+# 「日志自动清理」能下狠手而不误伤业务，以及诊断库写爆时业务照跑。
+DB_DIR = os.path.join(DATA_DIR, "db")
+MAIN_DB_PATH = os.path.join(DB_DIR, "vigil.db")
+LOGS_DB_PATH = os.path.join(DB_DIR, "vigil_logs.db")
+
+
+def db_dir():
+    """数据库目录。**运行时算**，不是常量。
+
+    为什么不能直接用 DB_DIR 常量：测试普遍用 `patch.object(paths, 'DATA_DIR', tmp)`
+    换掉数据目录。常量在 import 期就定死了，patch 之后它还指着老地方 ——
+    于是测试会把库写进真实用户数据目录。函数在调用时读全局 `DATA_DIR`，
+    patch 才生效。
+    """
+    return os.path.join(DATA_DIR, "db")
+
+
+def main_db_path():
+    """主库文件路径（业务数据）。"""
+    return os.path.join(db_dir(), "vigil.db")
+
+
+def logs_db_path():
+    """诊断库文件路径（可丢的数据）。"""
+    return os.path.join(db_dir(), "vigil_logs.db")
+
+
 CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 # 主对话滚动摘要的持久化状态（P8.4 conversation_context），按
 # persona×src×conversation 分文件
@@ -154,7 +182,7 @@ WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
 _DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR,
          MEMORY_DIR, LIFE_DIR, SUMMARY_DIR, UPLOAD_DIR,
          STICKERS_DIR, RUN_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR,
-         CONTEXT_COMPACTION_DIR)
+         CONTEXT_COMPACTION_DIR, DB_DIR)
 
 
 def ensure():
