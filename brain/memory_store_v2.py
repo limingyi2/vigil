@@ -1052,7 +1052,7 @@ class MemoryStore:
         return best_txt if best >= thresh else None
 
     # --- 写入 ---
-    def add(self, text, mtype="event", src="", chan=None):
+    def add(self, text, mtype="event", src="", chan=None, test=False):
         """添加一条记忆（自动向量化）。
 
         本方法是唯一会从**别的线程**跑的写入口（brain 里记忆抽取是后台线程），
@@ -1060,7 +1060,11 @@ class MemoryStore:
         免得一次 embedding 超时把请求线程的检索一起堵住。
 
         src 记这条记忆的来源：chat = 对话里说的（可信），proactive = 主动搭话
-        自己冒出来的（大概率是编的，检索时降权）。空 = 用户那边抽的。
+        自己冒出来的（大概率是编的，检索时降权），test = 测试数据（永远不注入）。
+        空 = 用户那边抽的。
+
+        test=True 时 src 强制设为 "test"，且 render() 永远不会返回它。
+        用于评测/调试时往库里灌数据，不污染正式对话。
 
         chan 记渠道（app / wechat）。她同时在手机和微信上跟不同的人说话时，
         两边认得的人不该混：检索按渠道过滤，见 render 的 chan 参数。
@@ -1069,6 +1073,8 @@ class MemoryStore:
         text = (text or "").strip()
         if not text:
             return
+        if test:
+            src = "test"
         # 拦在这里而不是只拦抽取层：抽取有 API 路径和规则降级路径，
         # 上游还可能是她自己的承诺抽取 —— 任何一条漏下来都会写进库。
         # add() 是漏斗底，拦这一处就够。
@@ -1287,16 +1293,40 @@ class MemoryStore:
                 "total": len(self.data["items"])}
 
     @_synchronized
-    def upsert_many(self, items, deletes=None):
+    def upsert_many(self, items, deletes=None, skip_dup_check=False):
         """推送入口（本地 → 云端）：按 id 幂等写，删除记墓碑。
 
         不走 add()：推上来的已经是别的库里的正式记忆，
         过滤器/近义去重会把同样的东西拦出不同的结果，反而制造分歧。
+
+        但**逐字去重和近义去重必须做**：同步循环反复拉同一批数据时，
+        不同分区的同一条记忆会被反复写入，不去重就是指数级膨胀。
+        skip_dup_check=True 时跳过（云端权威源全量对账场景，信任对端）。
         """
         self._ensure_seqs()
-        stats = {"added": 0, "updated": 0, "same": 0, "deleted": 0}
+        stats = {"added": 0, "updated": 0, "same": 0, "deleted": 0, "skipped_dup": 0}
         for it in (items or []):
-            r = self._upsert_locked(it if isinstance(it, dict) else {})
+            if not isinstance(it, dict):
+                continue
+            text = str(it.get("text") or "").strip()
+            if not text:
+                continue
+            if not skip_dup_check:
+                # 逐字去重：同文本已存在就跳过
+                if any(existing.get("text", "").strip() == text
+                       for existing in self.data["items"]):
+                    stats["skipped_dup"] += 1
+                    continue
+                # 近义去重：需要向量索引且 embedding 可用
+                self._load_index()
+                if self._rows:
+                    vs = embed_texts([text])
+                    if vs:
+                        dup = self._near_dup(vs[0], it.get("type"), it.get("chan"))
+                        if dup:
+                            stats["skipped_dup"] += 1
+                            continue
+            r = self._upsert_locked(it)
             stats[r] = stats.get(r, 0) + 1
         for iid in (deletes or []):
             iid = str(iid or "").strip()
@@ -1460,6 +1490,9 @@ class MemoryStore:
         want = str(chan or "").strip().lower()
 
         def _ok(item):
+            # test 标记的记忆永远不注入正式对话（评测/调试数据）
+            if (item.get("src") or "") == "test":
+                return False
             if not want:
                 return True
                         # 没标渠道的条目算主渠道 —— 加渠道字段之前写入的记忆全是"她在手机上
@@ -1522,6 +1555,54 @@ class MemoryStore:
             json_kb = 0
         return {"目录": self.embed_dir, "记忆条数": total, "已向量化": len(self._ids),
                 "向量大小": f"{vec_mb:.2f} MB", "memory.json": f"{json_kb:.1f} KB"}
+
+    @_synchronized
+    def archive_expired(self, days=30, dry_run=False):
+        """把过期超过 N 天的事件移到归档文件，返回归档条数。
+
+        只归档**带明确日期且已过期**的条目（_due_date 能解析出来的）。
+        解析不出日期的事实类记忆不动——事实没有"过期"一说。
+        归档不删数据：移到 .archive 文件，需要时能找回来。
+        """
+        import datetime
+        archive = []
+        keep = []
+        now = datetime.datetime.now()
+        for it in self.data["items"]:
+            text = (it.get("text") or "").strip()
+            written = None
+            if it.get("time"):
+                try:
+                    written = datetime.datetime.strptime(it["time"], "%Y-%m-%d %H:%M")
+                except ValueError:
+                    pass
+            due = _due_date(text, written=written)
+            if due and (now - due).days >= days:
+                archive.append(it)
+            else:
+                keep.append(it)
+        if not archive or dry_run:
+            return {"archived": len(archive), "dry_run": dry_run}
+        # 写归档文件（追加模式）
+        ap = self.path + ".archive"
+        old = []
+        if os.path.exists(ap):
+            try:
+                with open(ap, encoding="utf-8") as f:
+                    old = json.load(f).get("items", [])
+            except Exception:
+                old = []
+        _atomic_write_json(ap, {
+            "items": old + archive,
+            "meta": {"archived_at": time.strftime("%Y-%m-%d %H:%M"),
+                     "reason": f"expired >= {days} days"}
+        })
+        self.data["items"] = keep
+        # 归档的条目从向量索引里摘掉
+        for it in archive:
+            self._drop_vec(it.get("id", ""))
+        self.save()
+        return {"archived": len(archive), "archive_file": ap}
 
     # --- API 智能提取 ---
     @staticmethod

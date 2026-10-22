@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.vigil.client",
-    "productName": "Vigil",
+    "productName": "Kestrel",
     "electronDist": "node_modules/electron/dist",
     "files": [
       "electron/**",
@@ -48,7 +48,7 @@
       ]
     },
     "nsis": {
-      "artifactName": "Vigil.Setup.${version}.exe",
+      "artifactName": "Kestrel.Setup.${version}.exe",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
