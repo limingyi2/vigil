@@ -375,6 +375,10 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
     FAISS 不可用或索引未构建时自动降级到暴力扫描。
     **失败返回空列表**，绝不抛异常 —— 调用方据此降级到 BM25。
     """
+    # Independent gate: disabled means zero embedding calls, including explicit backends.
+    from . import unified
+    if not unified.semantic_enabled():
+        return []
     conn = db.connection("main")
     backend = backend or _default_backend()
     ok, reason = backend.available()
@@ -613,6 +617,9 @@ def index_embeddings(doc_ids, backend=None, include_workspace=False):
     为主，中文嵌入模型对代码语义理解有限，且代码检索靠 BM25 精确匹配
     （函数名/类名/注释）已经够用。需要给代码建向量时显式传 include_workspace=True。
     """
+    from . import unified
+    if not unified.semantic_enabled():
+        return {"ok": False, "reason": "semantic_disabled", "indexed": 0}
     conn = db.connection("main")
     backend = backend or _default_backend()
     ok, reason = backend.available()
