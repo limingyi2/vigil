@@ -1689,10 +1689,10 @@ class Brain:
             _t2 = time.time()
             # 主动搭话的 user_text 是"说/无"那个决策提示词，不是用户的话 ——
             # 那种轮次不会有工具需求，挂上去纯属白花钱。
-            draft = self.draft_native(user_text, memory_block,
-                                      no_tools=no_tools or proactive,
-                                      ctx_src=self._cur_src,
-                                      native_content=native_content)
+            _draft_kwargs = dict(no_tools=no_tools or proactive, ctx_src=self._cur_src)
+            if native_content is not None:
+                _draft_kwargs['native_content'] = native_content
+            draft = self.draft_native(user_text, memory_block, **_draft_kwargs)
             print(f"[perf] 原生FC起草 {time.time()-_t2:.1f}s "
                   f"({'有稿' if draft else '没稿'})", flush=True)
         self.last_draft = draft

@@ -990,10 +990,11 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             except Exception as e:
                 print(f"[大脑] 自拍生成失败，回退正常对话：{e}", flush=True)
             # 锁在 _chat_with_tools 的每轮 chat 里拿（带超时），别抱着锁等网络
-            ans, mode = _chat_with_tools(text, img_path or None,
-                                         trace_out=trace_out, src=src,
-                                         conversation_id=conversation_id,
-                                         native_content=native_content)
+            _chat_kwargs = dict(trace_out=trace_out, src=src,
+                                conversation_id=conversation_id)
+            if native_content is not None:
+                _chat_kwargs['native_content'] = native_content
+            ans, mode = _chat_with_tools(text, img_path or None, **_chat_kwargs)
             if getattr(_LOCAL.get('brain'), 'last_err', ''):
                 return ans, mode, str(getattr(_LOCAL.get('brain'), 'last_err', '')
                                       or '模型请求未完成，未自动重试')[:300]
