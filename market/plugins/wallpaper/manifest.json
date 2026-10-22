@@ -1,0 +1,51 @@
+{
+  "schema": "vigil.brain-plugin/v1",
+  "name": "wallpaper",
+  "version": "4.0.0",
+  "entry": "__init__.py",
+  "frontend": {
+    "script": "frontend.js",
+    "style": "frontend.css"
+  },
+  "feature": "wallpaper",
+  "protocol": {
+    "name": "vigil-brain-plugin",
+    "major": 1
+  },
+  "permissions": [
+    "wallpaper.workshop.read",
+    "wallpaper.config.write",
+    "wallpaper.media.read"
+  ],
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "a116f28b94e928c3b22acc3346cbd29b3cb2fddd68f73be5c9b93d7626f20cf6"
+    },
+    {
+      "path": "README.md",
+      "sha256": "2886de290daf617c4d16abd75c3d5db3e056537121f7da1416ce339f2b54c222"
+    },
+    {
+      "path": "UPSTREAM.md",
+      "sha256": "a2aef1d62b473cea7dcd301dada10682e24959914d4436aa49cee772dbc20f49"
+    },
+    {
+      "path": "__init__.py",
+      "sha256": "9911efecdfae64ef641f3fcaedcc9a979d9bd9c963dd2b0d950ee6e6e52a51fb"
+    },
+    {
+      "path": "frontend.css",
+      "sha256": "d89405883c80b9b442ea6373302c07463bfd6748aabbb4720d280117e06aaf22"
+    },
+    {
+      "path": "frontend.js",
+      "sha256": "482a885db80743fd808684474d19e00e1b19e9ab4c73e679dedbf63f5e902e54"
+    },
+    {
+      "path": "version.json",
+      "sha256": "3b4f04bbe6a87148a5b2e4015221669d84b2ab431b070fe480ebd03c7ab47a5c"
+    }
+  ],
+  "dependencies": []
+}

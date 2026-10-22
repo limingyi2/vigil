@@ -1,110 +1,66 @@
-/* wallpaper 插件 v3.0 —— Wallpaper Engine 接入样式 */
-
-/* 背景层：固定在最底层 */
-.wallpaper-bg {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-  display: none;
+/* Vigil Wallpaper v4 — the plugin owns only its namespaced layers. */
+#vigil-wallpaper-root {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  background: transparent; contain: strict;
 }
-.wp-scene-stage { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
-.wp-scene-stage canvas.wp-scene-canvas { display: block; width: 100%; height: 100%; }
-.wp-scene-status { position: absolute; z-index: 2; left: 12px; bottom: 12px; max-width: min(80%, 720px);
-  padding: 6px 10px; border-radius: 6px; color: #fff; background: rgba(0,0,0,.65); font-size: 12px; pointer-events: auto; }
-.wp-scene-status.error { background: rgba(120, 24, 24, .88); }
-.wp-scene-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.wallpaper-scrim {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 1;
-  pointer-events: none;
-  display: none;
+#vigil-wallpaper-stage,
+#vigil-wallpaper-stage > iframe,
+#vigil-wallpaper-stage > video,
+#vigil-wallpaper-stage > img,
+#vigil-wallpaper-stage > canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
 }
-
-/* 激活壁纸后，主内容层要在遮罩之上 */
-body.wallpaper-active > .app {
-  position: relative;
-  z-index: 2;
+#vigil-wallpaper-stage > iframe { pointer-events: auto; background: transparent; }
+#vigil-wallpaper-stage > video,
+#vigil-wallpaper-stage > img { object-fit: cover; object-position: center; }
+#vigil-wallpaper-scrim { position: absolute; inset: 0; background: #070b16; pointer-events: none; }
+body.vigil-wallpaper-active { --vigil-wallpaper-blur: 0px; }
+body.vigil-wallpaper-active > .app,
+body.vigil-wallpaper-active > .settings-shell,
+body.vigil-wallpaper-active .app {
+  position: relative; z-index: 1; background: transparent !important;
 }
-body.wallpaper-active .app,
-body.wallpaper-active .gnav,
-body.wallpaper-active .panel,
-body.wallpaper-active .main,
-body.wallpaper-active .topbar,
-body.wallpaper-active .scroll,
-body.wallpaper-active .titlebar,
-body.wallpaper-active .statusbar {
-  background: transparent;
+body.vigil-wallpaper-active .gnav,
+body.vigil-wallpaper-active .topbar,
+body.vigil-wallpaper-active .panel,
+body.vigil-wallpaper-active .main,
+body.vigil-wallpaper-active .scroll,
+body.vigil-wallpaper-active .titlebar,
+body.vigil-wallpaper-active .statusbar {
+  background: color-mix(in srgb, var(--surface, #141822) 66%, transparent) !important;
+  backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
+  -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
 }
-body.wallpaper-active .main,
-body.wallpaper-active .panel {
-  backdrop-filter: blur(var(--wp-glass-blur, 0px));
-}
-
-/* 设置页容器 */
-.wp-settings {
-  padding: 20px;
-  max-width: 900px;
-  margin: 0 auto;
-  font-family: inherit;
-}
-.wp-header { margin-bottom: 16px; }
-.wp-header h2 { margin: 0 0 4px 0; font-size: 20px; }
-.wp-path { font-size: 12px; color: #888; word-break: break-all; }
-
-.wp-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 0; border-bottom: 1px solid rgba(128,128,128,0.15);
-}
-.wp-row label { flex: 1; font-size: 14px; }
-.wp-row input[type="range"] { flex: 1; max-width: 300px; }
-.wp-row input[type="checkbox"] { width: 18px; height: 18px; }
-
-.wp-section { margin-top: 20px; }
-.wp-section-title {
-  font-size: 14px; font-weight: 600; margin-bottom: 10px;
-  color: #666; text-transform: uppercase; letter-spacing: 0.5px;
-}
-
-/* 壁纸库网格 */
-.wp-library {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-}
-.wp-empty {
-  grid-column: 1 / -1;
-  text-align: center; padding: 40px; color: #888; font-size: 14px;
-}
-.wp-card {
-  border: 2px solid transparent; border-radius: 8px; overflow: hidden;
-  cursor: pointer; transition: all 0.2s; background: rgba(128,128,128,0.08);
-}
-.wp-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-.wp-card.active { border-color: #4f8cff; box-shadow: 0 0 0 2px rgba(79,140,255,0.3); }
-.wp-thumb {
-  width: 100%; aspect-ratio: 16/9; overflow: hidden; background: #222;
-}
-.wp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.wp-info { padding: 8px; }
-.wp-title {
-  font-size: 12px; font-weight: 500; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
-}
-.wp-type { font-size: 11px; color: #888; margin-top: 2px; }
-
-.wp-current {
-  margin-top: 12px; padding: 8px 12px; border-radius: 6px;
-  background: rgba(79,140,255,0.1); font-size: 13px;
-}
-
-.wp-actions { margin-top: 20px; display: flex; gap: 10px; }
-.wp-actions button {
-  padding: 8px 16px; border-radius: 6px; border: 1px solid #ccc;
-  background: transparent; cursor: pointer; font-size: 13px;
-}
-.wp-actions button:hover { background: rgba(128,128,128,0.1); }
-#wp-close { border-color: #e74c3c; color: #e74c3c; }
-#wp-close:hover { background: rgba(231,76,60,0.1); }
+body.vigil-wallpaper-active .chat,
+body.vigil-wallpaper-active .chat-messages,
+body.vigil-wallpaper-active .composer,
+body.vigil-wallpaper-active .input-wrap,
+body.vigil-wallpaper-active .message-list,
+body.vigil-wallpaper-active .settings-home,
+body.vigil-wallpaper-active .settings-detail-view { background: transparent !important; }
+.vigil-wallpaper-page { display: grid; gap: 18px; max-width: 1080px; padding: 6px 0 42px; }
+.vigil-wallpaper-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.vigil-wallpaper-head h2 { margin: 0 0 4px; font-size: 22px; }
+.vigil-wallpaper-head p { margin: 0; opacity: .68; }
+.vigil-wallpaper-status { font-size: 12px; opacity: .66; text-align: right; max-width: 420px; }
+.vigil-wallpaper-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.vigil-wallpaper-control { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--surface, #fff) 72%, transparent); }
+.vigil-wallpaper-control label { display: flex; justify-content: space-between; font-size: 12px; opacity: .8; }
+.vigil-wallpaper-control input[type=range] { width: 100%; accent-color: var(--accent, #8ea7ff); }
+.vigil-wallpaper-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.vigil-wallpaper-toolbar input { min-width: 220px; flex: 1; }
+.vigil-wallpaper-toolbar select { min-width: 120px; }
+.vigil-wallpaper-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.vigil-wallpaper-card { display: grid; gap: 8px; text-align: left; padding: 0; overflow: hidden; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--surface, #fff) 76%, transparent); color: inherit; cursor: pointer; transition: transform .16s ease, border-color .16s ease; }
+.vigil-wallpaper-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent, #8ea7ff) 72%, transparent); }
+.vigil-wallpaper-card.is-active { outline: 2px solid var(--accent, #8ea7ff); }
+.vigil-wallpaper-thumb { aspect-ratio: 16 / 9; background: #0a0d15; overflow: hidden; }
+.vigil-wallpaper-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vigil-wallpaper-card-body { display: grid; gap: 3px; padding: 0 11px 11px; }
+.vigil-wallpaper-card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.vigil-wallpaper-card-meta { font-size: 11px; opacity: .6; }
+.vigil-wallpaper-empty { padding: 28px; border: 1px dashed color-mix(in srgb, currentColor 20%, transparent); border-radius: 14px; opacity: .72; }
+.vigil-wallpaper-error { color: #ffb4ab; font-size: 12px; }
+.vigil-wallpaper-live-badge { position: absolute; left: 14px; bottom: 12px; z-index: 2; padding: 4px 8px; border-radius: 999px; background: #0b1220cc; color: #d9e5ff; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
+@media (max-width: 860px) { .vigil-wallpaper-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .vigil-wallpaper-controls { grid-template-columns: 1fr; } .vigil-wallpaper-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
