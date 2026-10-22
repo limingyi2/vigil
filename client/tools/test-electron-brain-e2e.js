@@ -699,7 +699,14 @@ function providerTrace(pluginTrace) {
 }
 function retainedAgentEventStats(runId) {
   const python = process.env.VIGIL_TEST_PYTHON || path.join(repo, 'venv', 'Scripts', 'python.exe');
-  const database = path.join(home, 'data', 'agent_runs.sqlite3');
+  // P17 双库之后 Agent Run 落在主库 data/db/vigil.db；升级前的机器上还是
+  // 独立文件 data/agent_runs.sqlite3。两个都试，先存在的那个为准。
+  const candidates = [
+    path.join(home, 'data', 'db', 'vigil.db'),
+    path.join(home, 'data', 'agent_runs.sqlite3'),
+  ];
+  const database = candidates.find(p => fs.existsSync(p));
+  if (!database) throw new Error('no agent run database found under ' + home);
   const query = [
     'import json, sqlite3, sys',
     'db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)',
