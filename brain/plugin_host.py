@@ -756,6 +756,16 @@ def _enabled(p, src=None):
     src 不传就按"当前渠道"（features 的 ambient 语义）判；**调用方能传就传** ——
     当前渠道是个进程级全局，两个渠道并发时它可能已经被另一个请求改掉了。
     """
+    # Unified lifecycle state is persisted by plugin_manager/plugin_ops. Keep
+    # FEATURE channel semantics for compatibility, but let the manager disable
+    # every plugin (including legacy featureless Python plugins) consistently.
+    try:
+        import plugin_ops
+        meta = (plugin_ops.read_registry().get("plugins") or {}).get(p.name) or {}
+        if meta.get("enabled") is False:
+            return False
+    except Exception:
+        pass
     if not p.feature:
         return True
     try:

@@ -308,8 +308,13 @@ def _find_manifest(names):
 
 
 @transaction.serialized
-def install(zip_path, note=""):
-    """Validate without import, commit files transactionally, defer activation."""
+def install(zip_path, note="", replace=False):
+    """Validate and commit files transactionally.
+
+    ``replace`` is reserved for the unified manager's update path. The legacy
+    upload path keeps duplicate installs rejected, while updates use the same
+    protected backup/rollback transaction instead of deleting the old plugin.
+    """
     ok, names, err = inspect_zip(zip_path)
     if not ok:
         return False, {"err": err, "static_validated": False}
@@ -336,12 +341,12 @@ def install(zip_path, note=""):
             return False, {"err": "; ".join(e["message"] for e in report["errors"]),
                            "static_validated": False}
         if report["layout"] == "directory":
-            if os.path.lexists(os.path.join(_PLUG_DIR, pname + ".py")):
+            if os.path.lexists(os.path.join(_PLUG_DIR, pname + ".py")) and not replace:
                 raise ValueError("同名单文件插件已存在，拒绝跨布局覆盖")
             replacements = {pname: source}
             old = [pname]
         else:
-            if os.path.lexists(os.path.join(_PLUG_DIR, pname)):
+            if os.path.lexists(os.path.join(_PLUG_DIR, pname)) and not replace:
                 raise ValueError("同名目录插件已存在，拒绝跨布局覆盖")
             main = report["entry"]
             replacements = {pname + ".py": os.path.join(source, main)}
@@ -504,6 +509,22 @@ def _read_manifest(tmp_root, names):
         return d if isinstance(d, dict) else None
     except Exception:
         return None
+
+
+def manifest_from_zip(zip_path):
+    """Read a package manifest without importing or extracting plugin code."""
+    ok, names, err = inspect_zip(zip_path)
+    if not ok:
+        return None, err
+    entry = _find_manifest(names)
+    if not entry:
+        return {}, ""
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            value = json.loads(archive.read(entry).decode("utf-8"))
+        return (value, "") if isinstance(value, dict) else (None, "zxplugin.json 必须是 JSON 对象")
+    except Exception as exc:
+        return None, "zxplugin.json 无法读取：%s" % str(exc)[:120]
 
 
 _MANIFEST_TEXT_LIMITS = {
