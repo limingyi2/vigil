@@ -2020,8 +2020,13 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     _event(db, item, 'text_delta', dict(text=tail, step_id=sid))
                 completion['content'] = boundary.text
                 reason = completion['reason']
+                # A streamed tool call can end with an incomplete JSON
+                # arguments fragment. Keep it in the tool-call path so the
+                # common validation/retry handler below can explain the exact
+                # parse error and ask the model for a corrected call. The call
+                # is still never dispatched unless _calls validates it.
                 if boundary.malformed and reason in ('normal', 'length'):
-                    reason = 'invalid_tool'
+                    reason = 'tool_calls' if completion.get('tool_calls') else 'invalid_tool'
                 xml_mode = False
                 if reason == 'normal' and boundary.blocks:
                     # Preserve the existing explicitly opted-in provider protocol;
