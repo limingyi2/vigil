@@ -28,9 +28,9 @@ function response(method,raw){
     return{ok:true,status:200,json:{version:wallpaperState.enabled?2:3,plugins:[{name:'wallpaper',enabled:wallpaperState.enabled,
       js:require('fs').readFileSync(path.join(dir,'frontend.js'),'utf8'),css:require('fs').readFileSync(path.join(dir,'frontend.css'),'utf8')}]}};
   }
-  if(p==='/api/plugin/wallpaper/config')return{ok:true,status:200,json:{ok:true,config:{enabled:false,opacity:.7,scrim:.4,blur:0,muted:true}}};
-  if(p==='/api/plugin/wallpaper/we/library')return{ok:true,status:200,json:{ok:true,wallpapers:[],we_path:null}};
-  if(p==='/api/market/list')return{ok:true,status:200,json:{state:'ready',state_message:'插件市场已就绪',plugins:[{name:'fixture_plugin',version:'1.0',author:'fixture',desc:'isolated',tags:[],installed},{name:'wallpaper',version:'3.2.1',author:'Vigil',desc:'Wallpaper Engine fixture',tags:['Wallpaper Engine'],installed:false}],installed_count:installed?1:0}};
+  if(p==='/api/plugin/wallpaper/config')return{ok:true,status:200,json:{ok:true,config:{enabled:false,opacity:.7,scrim:.4,blur:0,fps:60,wallpaper_id:null}}};
+  if(p==='/api/plugin/wallpaper/library')return{ok:true,status:200,json:{ok:true,wallpapers:[],we_path:null}};
+  if(p==='/api/market/list')return{ok:true,status:200,json:{state:'ready',state_message:'插件市场已就绪',plugins:[{name:'fixture_plugin',version:'1.0',author:'fixture',desc:'isolated',tags:[],installed},{name:'wallpaper',version:'4.0.0',author:'limingyi2',desc:'Standalone Wallpaper Engine renderer fixture',tags:['Wallpaper Engine'],installed:false}],installed_count:installed?1:0}};
   if(p==='/api/market/refresh')return{ok:true,status:200,json:{ok:true,state:'ready',state_message:'插件市场已就绪'}};
   if(p==='/api/market/install'){
     installCalls++;
@@ -42,10 +42,6 @@ async function run(){
   ipcMain.handle('api',(_,req)=>response(req.method,req.path));
   for(const [name,value]of Object.entries({'app:version':'fixture','app:instance-id':'fixture-process','auto:connect':{ok:false},'sidecar:status':{status:'stopped'},'token:get':'fixture','cfg:get':{wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'}}))ipcMain.handle(name,()=>value);
   ipcMain.handle('plugins:release-resources',()=>({ok:true}));
-  ipcMain.handle('wallpaper-import:list',()=>({ok:true,items:[]}));
-  ipcMain.handle('wallpaper-import:add',()=>({ok:true,canceled:true}));
-  ipcMain.handle('wallpaper-import:url',()=>({ok:false,err:'not found'}));
-  ipcMain.handle('wallpaper-import:delete',()=>({ok:false,err:'not found'}));
   ipcMain.handle('plugins:load',async()=>{
     if(!wallpaperState.installed||!wallpaperState.enabled)return{ok:true,loaded:0,errors:[]};
     const js=require('fs').readFileSync(path.resolve(client,'../market/plugins/wallpaper/frontend.js'),'utf8');
@@ -145,7 +141,7 @@ async function run(){
     await ev(assets.js);
     await until('document.querySelector("#gnav [data-page=wallpaper]")');
     await ev('document.querySelector("#gnav [data-page=wallpaper]").click()');
-    await until('document.querySelector("#wp-library")');
+    await until('document.querySelector("#wp4-grid")');
     assert.equal(await ev('document.querySelectorAll("#gnav [data-page=wallpaper]").length'),1);
     assert.equal(BrowserWindow.getAllWindows().length,1);
     console.log('PASS real downloaded Wallpaper frontend registers and opens its plugin page');
