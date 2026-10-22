@@ -153,9 +153,16 @@ exports.run=async h=>{
   await h.submit('P12_RESTART ledger replacement');
   await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="agent_run") && document.querySelector("#sendBtn").getAttribute("aria-label")==="暂停任务"','run before ledger replacement');
   const lostId=await h.evaluate('window.__vigilE2EEvents.find(e=>e.type==="agent_run").run_id');
+  // P17 双库之后 Agent Run 落在主库 data/db/vigil.db；升级前的机器上还是
+  // 独立文件 data/agent_runs.sqlite3。两个都试，先存在的那个为准。
+  const agentDbCandidates=[
+    require('path').join(h.home,'data','db','vigil.db'),
+    require('path').join(h.home,'data/agent_runs.sqlite3')];
+  const agentDb=agentDbCandidates.find(p=>require('fs').existsSync(p));
+  if(!agentDb) throw new Error('no agent run database found under '+h.home);
   require('child_process').execFileSync(process.env.VIGIL_TEST_PYTHON,['-c',
     'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("DELETE FROM runs WHERE id=?",(sys.argv[2],)); c.commit()',
-    path.join(h.home,'data/agent_runs.sqlite3'),lostId],{windowsHide:true});
+    agentDb,lostId],{windowsHide:true});
   await h.evaluate('document.querySelector("#sendBtn").click();true');
   await h.waitFor('document.querySelector("#sendBtn").getAttribute("aria-label")==="发送消息"','missing task clears stale Pause');
   assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("任务已不存在")'));
