@@ -65,6 +65,8 @@ _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()
 _loaded = False
+_runtime_brain = None
+_started = set()
 
 
 def _log(tag, msg):
@@ -737,17 +739,60 @@ def route_table():
     return out
 
 
-def start_all(brain):
+def runtime_brain():
+    """Return the Brain instance registered by the running server, if any."""
+    return _runtime_brain
+
+
+def stop(name=None):
+    """Stop one/all started plugins when they expose a stop-like hook."""
+    global _runtime_brain
+    names = [name] if name else list(_started)
+    errors = []
+    for item_name in names:
+        plugin = get(item_name)
+        if not plugin:
+            _started.discard(item_name)
+            continue
+        stopped = False
+        for hook_name in ("stop", "shutdown", "close"):
+            hook = plugin.hook(hook_name)
+            if callable(hook):
+                try:
+                    hook()
+                    stopped = True
+                except Exception as exc:
+                    errors.append("%s.%s: %s" % (item_name, hook_name, str(exc)[:120]))
+                break
+        if stopped or not callable(plugin.hook("start")):
+            _started.discard(item_name)
+    if not _started:
+        _runtime_brain = None
+    return (not errors), errors
+
+
+def start_all(brain, names=None):
     """把带 start 的插件的后台线程跑起来（run_server 装完大脑后调一次）。"""
+    global _runtime_brain
+    if brain is None:
+        return 0
+    _runtime_brain = brain
     n = 0
+    wanted = set(names or ())
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
+        if wanted and p.name not in wanted:
+            continue
+        if p.name in _started:
+            continue
         if not _enabled(p) or not callable(p.hook("start")):
             continue
         ok, _v = _call(p, "start", brain)
         if ok:
+            _started.add(p.name)
             n += 1
     if n:
         _log("启动", "%d 个插件的后台循环已起" % n)
+    return n
 
 
 def _enabled(p, src=None):

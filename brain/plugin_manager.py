@@ -7,6 +7,9 @@
 和后续模型、工具、工作流插件复用同一套契约。
 """
 import re
+import os
+import shutil
+import tempfile
 import threading
 import time
 
@@ -68,11 +71,14 @@ def _stop(name):
         plugin = plugin_host.get(name)
         if not plugin:
             return True, ""
-        for hook_name in ("stop", "shutdown", "close"):
-            hook = plugin.hook(hook_name)
-            if callable(hook):
-                hook()
-                return True, hook_name
+        if callable(plugin.hook("start")) and not any(callable(plugin.hook(h)) for h in ("stop", "shutdown", "close")):
+            return False, "插件提供 start(brain) 但没有 stop/shutdown/close；需要重启 Brain"
+        stopped, errors = plugin_host.stop(name)
+        if not stopped:
+            return False, "; ".join(errors)
+        if errors:
+            return False, "; ".join(errors)
+        return True, ""
     except Exception as exc:
         return False, "%s: %s" % (type(exc).__name__, str(exc)[:160])
     return True, ""
@@ -80,12 +86,81 @@ def _stop(name):
 
 def _reload(name=None, brain=None):
     import plugin_host
-    if name:
-        _stop(name)
     loaded = plugin_host.load(force=True)
-    if brain is not None:
-        plugin_host.start_all(brain)
-    return name is None or name in loaded
+    if name and name not in loaded:
+        raise RuntimeError("插件 %s 未能加载；请查看插件错误诊断" % name)
+    running_brain = brain if brain is not None else plugin_host.runtime_brain()
+    target = [name] if name else None
+    needs_brain = any(callable(p.hook("start")) for n, p in loaded.items() if not target or n in target)
+    if needs_brain and running_brain is None:
+        return False
+    if running_brain is not None:
+        plugin_host.start_all(running_brain, names=target)
+    return True
+
+
+def _backup(name):
+    """Snapshot plugin files and registry before an update.
+
+    The backup remains on disk when restoration fails, so an operator can
+    recover manually instead of receiving a false ``rollback=restored``.
+    """
+    ops = _ops()
+    root = os.path.abspath(str(ops._PLUG_DIR))
+    os.makedirs(root, exist_ok=True)
+    path = tempfile.mkdtemp(prefix="_manager_backup_", dir=root)
+    entries = []
+    for item in os.listdir(root):
+        if item == name or item == name + ".py" or item.startswith("_" + name + "_"):
+            source = os.path.join(root, item)
+            target = os.path.join(path, item)
+            if os.path.isdir(source):
+                shutil.copytree(source, target)
+            else:
+                shutil.copy2(source, target)
+            entries.append(item)
+    registry = os.path.join(path, "_registry.snapshot")
+    if os.path.isfile(ops.REGISTRY):
+        shutil.copy2(ops.REGISTRY, registry)
+    return {"path": path, "root": root, "name": name, "registry": registry,
+            "registry_path": ops.REGISTRY, "entries": entries}
+
+
+def _restore_backup(backup):
+    """Restore files and registry, returning (success, diagnostic)."""
+    if not backup:
+        return False, "没有可用的更新备份"
+    try:
+        root = backup["root"]
+        owned_prefix = "_" + backup["name"] + "_"
+        for item in list(os.listdir(root)):
+            if item == backup["name"] or item == backup["name"] + ".py" or item.startswith(owned_prefix):
+                _remove_path(os.path.join(root, item))
+        for item in backup["entries"]:
+            source = os.path.join(backup["path"], item)
+            target = os.path.join(root, item)
+            if os.path.isdir(source):
+                shutil.copytree(source, target)
+            else:
+                shutil.copy2(source, target)
+        if os.path.isfile(backup["registry"]):
+            os.makedirs(os.path.dirname(backup["registry_path"]), exist_ok=True)
+            shutil.copy2(backup["registry"], backup["registry_path"])
+        else:
+            try:
+                os.remove(backup["registry_path"])
+            except FileNotFoundError:
+                pass
+        return True, ""
+    except Exception as exc:
+        return False, "%s: %s" % (type(exc).__name__, str(exc)[:180])
+
+
+def _remove_path(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    elif os.path.lexists(path):
+        os.remove(path)
 
 
 def _dependencies(manifest, reg):
@@ -157,10 +232,17 @@ def install_archive(path, *, source="zip", replace=False, reload=True):
         _update_meta(name, manifest, source=source)
         if reload:
             try:
-                _reload(name)
+                if not _reload(name):
+                    raise RuntimeError("运行中的 Brain 不可用，插件需要重启后才能启动")
             except Exception as exc:
-                result.update(runtime_warning="文件已提交，运行时重载失败：%s" % str(exc)[:120])
-                _set_state(name, state="error", last_error=result["runtime_warning"])
+                message = "文件已提交，运行时重载失败：%s" % str(exc)[:120]
+                if "运行中的 Brain 不可用" in message:
+                    _set_state(name, state="restart_required", last_error=message)
+                    result.update(ok=True, state="restart_required", restart_needed=True,
+                                  runtime_state="pending", runtime_warning=message)
+                    return True, result
+                result.update(runtime_warning=message)
+                _set_state(name, state="error", last_error=message)
                 return False, result
         result.update(ok=True, name=name, state="installed", runtime_state="loaded" if reload else "pending")
         return True, result
@@ -182,20 +264,46 @@ def update(name, archive_path, *, source="market", reload=True):
     reg = _registry()
     if not _meta(reg, name):
         return False, {"ok": False, "err": "插件尚未安装", "state": "not_installed"}
+    backup = _backup(name)
     ok, stopped = _stop(name)
     if not ok:
+        shutil.rmtree(backup["path"], ignore_errors=True)
         _set_state(name, state="error", last_error="停止旧插件失败：" + stopped)
         return False, {"ok": False, "err": "停止旧插件失败：" + stopped, "state": "error"}
-    result_ok, result = install_archive(archive_path, source=source, replace=True, reload=reload)
-    if not result_ok:
-        # Transaction rollback preserves the old files; restore the old runtime too.
+    result_ok, result = install_archive(archive_path, source=source, replace=True, reload=False)
+    if result_ok and reload:
         try:
-            _reload(name)
-        except Exception:
-            pass
-        result.setdefault("rollback", "restored")
-        result["state"] = "error"
-    return result_ok, result
+            if not _reload(name):
+                raise RuntimeError("运行中的 Brain 不可用，插件需要重启后才能启动")
+            result.update(runtime_state="loaded")
+        except Exception as exc:
+            result_ok = False
+            result["err"] = "更新后重载失败：%s" % str(exc)[:180]
+    if result_ok:
+        shutil.rmtree(backup["path"], ignore_errors=True)
+        if reload:
+            result.update(ok=True, state="updated", rollback="not_needed")
+        else:
+            _set_state(name, state="restart_required", last_error="更新文件已提交，尚未重载运行时")
+            result.update(ok=True, state="restart_required", restart_needed=True,
+                          runtime_state="pending", rollback="not_needed")
+        return True, result
+    restored, restore_err = _restore_backup(backup)
+    if restored:
+        try:
+            reloaded = _reload(name)
+        except Exception as exc:
+            reloaded = False
+            restore_err = "旧插件重载异常：%s" % str(exc)[:180]
+        if reloaded:
+            shutil.rmtree(backup["path"], ignore_errors=True)
+            result.update(ok=False, rollback="restored", rollback_diagnostic="旧文件、注册表和运行态均已恢复", state="error")
+        else:
+            result.update(ok=False, rollback="failed", rollback_diagnostic="文件和注册表已恢复，但旧插件无法重新加载；备份保留于 %s" % backup["path"], recovery_path=backup["path"], state="error")
+    else:
+        result.update(ok=False, rollback="failed", rollback_diagnostic="恢复旧插件失败：%s；备份保留于 %s" % (restore_err, backup["path"]), recovery_path=backup["path"], state="error")
+    _set_state(name, state="error", last_error=result.get("err") or result.get("rollback_diagnostic", "更新失败"))
+    return False, result
 
 
 def enable(name):
@@ -210,7 +318,10 @@ def enable(name):
         feature = (item.get("manifest") or {}).get("feature")
         if feature:
             features.set_features({feature: True})
-        _reload(name)
+        if not _reload(name):
+            _set_state(name, state="restart_required", last_error="运行中的 Brain 不可用")
+            return False, {"ok": False, "name": name, "state": "restart_required",
+                           "err": "插件已启用，但运行中的 Brain 不可用；请重启后启动插件"}
     except Exception as exc:
         _set_state(name, state="error", last_error=str(exc)[:180])
         return False, {"ok": False, "err": str(exc)[:180], "state": "error"}
@@ -229,8 +340,11 @@ def disable(name):
         feature = (item.get("manifest") or {}).get("feature")
         if feature:
             features.set_features({feature: False})
-        _stop(name)
-        _reload(name)
+        stopped, stop_err = _stop(name)
+        if not stopped:
+            raise RuntimeError(stop_err)
+        if not _reload(name):
+            raise RuntimeError("插件已禁用，但运行中的 Brain 不可用；请重启后完成重载")
     except Exception as exc:
         _set_state(name, state="error", last_error=str(exc)[:180])
         return False, {"ok": False, "err": str(exc)[:180], "state": "error"}
@@ -257,8 +371,18 @@ def uninstall(name, *, purge_data=False):
 
 def reload(name=None, brain=None):
     try:
+        if name:
+            stopped, detail = _stop(name)
+            if not stopped:
+                return {"ok": False, "name": name, "state": "restart_required",
+                        "restart_needed": True, "err": detail}
         ok = _reload(name, brain=brain)
-        return {"ok": bool(ok), "name": name or "*", "state": "loaded" if ok else "error"}
+        if not ok:
+            message = "运行中的 Brain 不可用；请重启后启动插件"
+            if name:
+                _set_state(name, state="restart_required", last_error=message)
+            return {"ok": False, "name": name or "*", "state": "restart_required", "restart_needed": True, "err": message}
+        return {"ok": True, "name": name or "*", "state": "loaded"}
     except Exception as exc:
         if name:
             _set_state(name, state="error", last_error=str(exc)[:180])

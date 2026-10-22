@@ -258,7 +258,7 @@ def _read_remote_market():
                 "diagnostic": diagnostic}
 
 
-def _install_remote_directory(meta, name, replace=False):
+def _install_remote_directory(meta, name, replace=False, managed=False):
     """Download a published package, verify artifact and Manifest hashes, then install transactionally."""
     artifact = meta.get("artifact")
     if not isinstance(artifact, dict):
@@ -332,6 +332,13 @@ def _install_remote_directory(meta, name, replace=False):
                     raise ValueError("Manifest 文件 SHA-256 校验失败：" + item["path"])
             # The generic installer performs static plugin structure checks and the normal atomic commit.
             stage = "静态校验与事务安装"
+            if managed:
+                import plugin_manager
+                return plugin_manager.update(
+                    name, archive_path,
+                    source="market:%s@%s" % (name, meta["version"]),
+                    reload=True,
+                )
             ok, result = plugin_ops.install(archive_path, note="market:%s@%s" % (name, meta["version"]), replace=replace)
             if ok:
                 result["manifest"] = manifest
@@ -458,6 +465,9 @@ def api_install(body, query):
                                         source="market:%s@%s" % (name, meta.get("version", "")))
             reload_result = plugin_manager.reload(name)
             result["runtime_state"] = reload_result.get("state", "loaded")
+            if reload_result.get("restart_needed"):
+                result["restart_needed"] = True
+                result["state"] = "restart_required"
             if not reload_result.get("ok"):
                 result["runtime_warning"] = reload_result.get("err", "重载失败")
         except Exception as exc:
@@ -508,20 +518,10 @@ def api_update(body, query):
     deps = plugin_manager._dependencies(meta, plugin_ops.read_registry())
     if deps:
         return {"ok": False, "name": name, "state": "error", "err": "依赖检查失败：" + "; ".join(deps)}
-    stopped, stop_err = plugin_manager._stop(name)
-    if not stopped:
-        return {"ok": False, "state": "error", "err": "停止旧插件失败：%s" % stop_err}
-    # Reuse the market verifier and pass replace=True so plugin_ops retains its backup.
-    ok, result = _install_remote_directory(meta, name, replace=True)
-    if ok:
-        plugin_manager._update_meta(name, result.get("manifest") or meta, source="market:%s@%s" % (name, meta.get("version", "")))
-        rr = plugin_manager.reload(name)
-        result.update(rr, ok=bool(rr.get("ok")), state="updated" if rr.get("ok") else "error")
-    else:
-        # The file transaction has restored the previous version; bring its
-        # module back into the host before reporting the failed update.
-        plugin_manager.reload(name)
-        result["ok"] = False
+    # Reuse the market verifier, then delegate replacement and rollback to the
+    # unified manager instead of maintaining a second lifecycle transaction.
+    ok, result = _install_remote_directory(meta, name, replace=True, managed=True)
+    result["ok"] = bool(ok)
     return result
 
 
