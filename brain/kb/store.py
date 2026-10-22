@@ -157,7 +157,9 @@ class KBStore:
                         if c.get("source") != source]
             old = [self._chunks[i] for i in keep_idx]
             width = self._vectors.shape[1] if self._vectors.ndim == 2 else 0
-            old_vecs = (self._vectors[keep_idx] if keep_idx and self._vectors.size
+            # A (rows, 0) text-only matrix has size==0 but still has rows.
+            # Preserve those rows or the chunks/vectors row counts diverge on reload.
+            old_vecs = (self._vectors[keep_idx] if keep_idx and self._vectors.ndim == 2
                         else np.zeros((0, width), dtype=np.float32))
 
             new = []
@@ -218,7 +220,7 @@ class KBStore:
             if len(keep) == len(self._chunks):
                 return 0
             self._chunks = [self._chunks[i] for i in keep]
-            self._vectors = (self._vectors[keep] if keep and self._vectors.size
+            self._vectors = (self._vectors[keep] if keep and self._vectors.ndim == 2
                              else np.zeros((0, self._vectors.shape[1] if self._vectors.ndim == 2
                                             else 0), dtype=np.float32))
             src = dict(self._meta.get("sources") or {})
