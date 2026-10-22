@@ -4356,9 +4356,9 @@
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
     // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
-    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['video-apps', '视频软件'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['retrieval', '检索与知识库'], ['video-apps', '视频软件'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'video-apps' ? 'video' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'retrieval' ? 'search' : k === 'video-apps' ? 'video' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('本地内核', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -5070,7 +5070,50 @@
       } catch (e) { /* 无云端配置等，静默 */ }
     }
 
-    const draw = { conn, model, 'video-apps': videoApps, danger, about };
+    async function retrieval() {
+      ctx.topbar.querySelector('h1').textContent = '检索与知识库';
+      v.innerHTML = '<div class="card" role="status">正在读取检索设置…</div>';
+      const r = pick(await get('/api/retrieval/settings'));
+      if (!v.isConnected) return;
+      if (!r.ok) {
+        v.innerHTML = errBox('检索设置读取失败', r._err || '请检查本地 Brain 连接与版本') +
+          '<button class="btn oline" type="button" id="retrievalRetry">重新加载</button>';
+        v.querySelector('#retrievalRetry').addEventListener('click', () => { void retrieval(); });
+        return;
+      }
+      let enabled = r.semantic_enabled !== false;
+      v.innerHTML =
+        '<div class="sec" style="margin-top:0">检索方式</div>' +
+        '<div class="card">' +
+        '<div class="row"><div class="lb"><b>语义检索</b>' +
+        '<span>开启：BM25 + 向量 + RRF；关闭：只使用 BM25 关键词检索</span></div>' +
+        '<button class="sw ' + (enabled ? 'on' : '') + '" id="retrievalSemantic" type="button" role="switch" aria-label="语义检索" aria-checked="' + String(enabled) + '"></button></div>' +
+        '<div class="muted" style="font-size:12px;margin-top:10px">关闭后不调用嵌入模型、不执行 FAISS 检索，新导入的知识库内容仍可用 BM25 搜索。已有向量不会删除；重新开启后可按需重建向量索引。</div>' +
+        '<div id="retrievalResult" role="status" aria-live="polite" class="muted" style="font-size:12px;margin-top:10px"></div>' +
+        '</div>';
+      const toggle = v.querySelector('#retrievalSemantic');
+      const result = v.querySelector('#retrievalResult');
+      toggle.addEventListener('click', async () => {
+        if (toggle.disabled) return;
+        const proposed = !enabled;
+        toggle.disabled = true;
+        result.textContent = '正在保存…';
+        const next = pick(await post('/api/retrieval/settings', { semantic_enabled: proposed }));
+        if (!v.isConnected) return;
+        if (!next.ok || typeof next.semantic_enabled !== 'boolean') {
+          result.textContent = '保存失败：' + (next._err || next.err || '请检查连接后重试');
+          toggle.disabled = false;
+          return;
+        }
+        enabled = next.semantic_enabled;
+        toggle.classList.toggle('on', enabled);
+        toggle.setAttribute('aria-checked', String(enabled));
+        toggle.disabled = false;
+        result.textContent = enabled ? '已启用混合检索' : '已切换为纯 BM25，无需重启 Brain';
+      });
+    }
+
+    const draw = { conn, model, retrieval, 'video-apps': videoApps, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -5180,6 +5223,7 @@
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
+      {title:'检索与知识库', desc:'语义检索开关、BM25 与混合检索', icon:'search', page:'system', sub:'retrieval'},
       {title:'视频软件', desc:'管理视频工作台中的本地软件', icon:'video', page:'system', sub:'video-apps'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
       {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
