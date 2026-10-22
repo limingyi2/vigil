@@ -205,6 +205,27 @@ def test_update_start_hook_failure_restores_old_version(tmp_path):
     assert json.loads(registry.read_text(encoding="utf-8"))["plugins"]["demo"]["version"] == "1.0.0"
 
 
+def test_update_without_stop_hook_requires_restart_instead_of_forcing_replace(tmp_path):
+    target = tmp_path / "installed"
+    target.mkdir()
+    old = target / "demo"
+    old.mkdir()
+    (old / "__init__.py").write_text("old", encoding="utf-8")
+    registry = target / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"demo": {
+        "version": "1.0.0", "enabled": True}}}), encoding="utf-8")
+    newer = tmp_path / "new.zip"
+    _archive(newer, "2.0.0")
+    with patch.object(plugin_ops, "_PLUG_DIR", str(target)), \
+         patch.object(plugin_ops, "REGISTRY", str(registry)), \
+         patch.object(plugin_manager, "_stop", return_value=(False, "插件提供 start(brain) 但没有 stop/shutdown/close；需要重启 Brain")):
+        ok, result = plugin_manager.update("demo", str(newer), reload=True)
+    assert not ok
+    assert result["state"] == "restart_required"
+    assert result["restart_needed"] is True
+    assert (old / "__init__.py").read_text(encoding="utf-8") == "old"
+
+
 def test_manager_status_exposes_market_update_state(tmp_path):
     target = tmp_path / "installed"
     target.mkdir()

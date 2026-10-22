@@ -84,6 +84,10 @@ def _stop(name):
     return True, ""
 
 
+def _needs_restart(detail):
+    return "需要重启 Brain" in str(detail or "")
+
+
 def _reload(name=None, brain=None, allow_missing=False):
     import plugin_host
     if name:
@@ -328,8 +332,11 @@ def update(name, archive_path, *, source="market", reload=True, manifest=None):
     ok, stopped = _stop(name)
     if not ok:
         shutil.rmtree(backup["path"], ignore_errors=True)
-        _set_state(name, state="error", last_error="停止旧插件失败：" + stopped)
-        return False, {"ok": False, "err": "停止旧插件失败：" + stopped, "state": "error"}
+        state = "restart_required" if _needs_restart(stopped) else "error"
+        message = "停止旧插件失败：" + stopped
+        _set_state(name, state=state, last_error=message)
+        return False, {"ok": False, "err": message, "state": state,
+                       "restart_needed": state == "restart_required"}
     result_ok, result = install_archive(
         archive_path, source=source, replace=True, reload=False,
         manifest_override=manifest,
@@ -415,6 +422,10 @@ def disable(name):
             features.set_features({feature: False})
         stopped, stop_err = _stop(name)
         if not stopped:
+            if _needs_restart(stop_err):
+                _set_state(name, state="restart_required", last_error=stop_err)
+                return False, {"ok": False, "name": name, "state": "restart_required",
+                               "restart_needed": True, "err": stop_err}
             raise RuntimeError(stop_err)
         if not _reload(name):
             raise RuntimeError("插件已禁用，但运行中的 Brain 不可用；请重启后完成重载")
@@ -429,7 +440,9 @@ def uninstall(name, *, purge_data=False):
         return False, {"ok": False, "err": "插件名不合法"}
     ok, detail = _stop(name)
     if not ok:
-        return False, {"ok": False, "err": "停止插件失败：" + detail, "state": "error"}
+        state = "restart_required" if _needs_restart(detail) else "error"
+        return False, {"ok": False, "err": "停止插件失败：" + detail,
+                       "state": state, "restart_needed": state == "restart_required"}
     ok, result = _ops().uninstall(name, purge_data=purge_data)
     if not ok:
         _set_state(name, state="error", last_error=result.get("err", "卸载失败"))
