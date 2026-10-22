@@ -173,6 +173,10 @@ class KBStore:
                                  % (len(new), "None" if vecs is None else len(vecs)))
 
             mat = np.asarray(vecs, dtype=np.float32)
+            # Turning semantic search back on: earlier BM25-only rows have
+            # shape (n, 0). Pad those old rows rather than dropping KB text.
+            if old and old_vecs.ndim == 2 and old_vecs.shape[1] == 0 and mat.shape[1] > 0:
+                old_vecs = np.zeros((len(old), mat.shape[1]), dtype=np.float32)
             if self._vectors.ndim == 2 and self._vectors.shape[1] and mat.shape[1] != self._vectors.shape[1]:
                 # 维度变了 = 换了嵌入模型，旧向量全部作废（留着算余弦只会得出垃圾）。
                 self._chunks, old, old_vecs = [], [], np.zeros((0, mat.shape[1]), dtype=np.float32)
