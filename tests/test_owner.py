@@ -213,7 +213,8 @@ def test_call_unknown_tool(owner_only, rc_on):
 
 def test_specs_all_have_risk():
     sp = localtools.specs()
-    assert len(sp) == 20
+    # 清单是故意写死的：少一个（工具消失）或多一个（新增没交代清楚）都要人看
+    assert len(sp) == 27
     assert all("risk" in v and v["risk"] in ("safe", "confirm", "dangerous")
                for v in sp.values())
 

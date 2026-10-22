@@ -221,22 +221,50 @@ def _t_search(arg):
         _mem[ck] = (time.time() + _CACHE_TTL, out)
         return out
 
-    lines = ["搜到 %d 条关于「%s」的：" % (len(res), query[:40])]
-    for r in res[:opt["n"]]:
+    # 同一页被索引成多条很常见。按 URL 去重，别让同一个来源把结果位占满 ——
+    # 让她看见"三条来源"其实是一家博客，比只给她一条更容易误导。
+    picked, seen = [], set()
+    for r in res:
         if not isinstance(r, dict):
             continue
+        url = str(r.get("url") or "").strip()
+        dedup = re.sub(r"[#?].*$", "", url).rstrip("/").lower()
+        if dedup and dedup in seen:
+            continue
+        seen.add(dedup)
+        picked.append(r)
+        if len(picked) >= opt["n"]:
+            break
+
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    lines = ["搜到 %d 条关于「%s」的（检索时间 %s；摘要可能被截断，"
+             "价格、配置、优惠和使用条件一律以下面来源的原文为准）："
+             % (len(picked), query[:40], stamp)]
+    for r in picked:
         title = str(r.get("title") or "").strip()[:80]
         # 文档说字段叫 description，真实返回里叫 snippet，两个都认
         body = (str(r.get("snippet") or "").strip()
                 or str(r.get("description") or "").strip()
                 or str(r.get("content") or "").strip())
-        body = re.sub(r"\s+", " ", body)[:_SNIPPET_CHARS]
-        url = str(r.get("url") or "").strip()[:120]
+        body = re.sub(r"\s+", " ", body)
+        cut = len(body) > _SNIPPET_CHARS
+        body = body[:_SNIPPET_CHARS]
+        if cut:
+            # 留痕：被截断的摘要可能正好切掉了适用条件，模型不能当成全文
+            body += "……（摘要已截断，原文可能还有条件）"
+        url = str(r.get("url") or "").strip()[:160]
+        published = str(r.get("published_at") or r.get("date")
+                        or r.get("publish_time") or "").strip()[:40]
         one = "· " + (title or "（无标题）")
         if body:
             one += "：" + body
+        tail = []
+        if published:
+            tail.append("发布 " + published)
         if url:
-            one += "（来源：" + url + "）"
+            tail.append("来源：" + url)
+        if tail:
+            one += "（" + "；".join(tail) + "）"
         lines.append(one)
     out = "\n".join(lines)
     print("[联网] 搜到 %d 条：%s" % (len(res), query[:30]), flush=True)
@@ -294,7 +322,9 @@ TOOL_HELP = (
 
 TOOL_HELP_NATIVE = (
     "- 联网搜索：真的去网上查，中文直接写（如查「英伟达最新股价」）。\n"
-    "  返回是一段文本，每条形如「· 标题：摘要（来源：网址）」。\n"
+    "  返回是一段文本，第一行带检索时间，每条形如「· 标题：摘要（来源：网址）」。\n"
+    "  价格、优惠、资格与适用条件只能照结果原文说并给出处；摘要标了「已截断」"
+    "就不是全文；查不到或连不上就说没核实，别凭记忆补价格或购买链接。\n"
     "  它查的是会变的东西：现在的天气股价新闻、某个库最新的版本和报错、"
     "他正在学的技术最近出了什么、他哪天提到过的某件事后来怎么样了 —— "
     "这些你训练时没吃过、或者吃的时候还没发生，搜一下比凭印象说准得多。\n"
@@ -313,10 +343,12 @@ TOOL_HELP_NATIVE = (
 def prompt(ctx=None):
     """告诉她有联网搜索这个本事。只说能力，不教她什么时候必须用。"""
     return ("\n你有一个联网搜索工具（[tool:search:要搜的话]），能真的去网上查资料，"
-            "查到的内容会连同来源网址一起给你。要调它就把那一行标签写出来，"
+            "查到的内容会连同来源网址和检索时间一起给你。要调它就把那一行标签写出来，"
             "别用嘴说“等我查查”却不动手。碰到训练时没吃过、或者吃的时候"
             "还没发生的消息（最新版本、现在的行情、最近出了什么事），"
-            "你可以用它去查实，别靠印象编。")
+            "还有报价、套餐配置、优惠券规则和资格条件这类会变的东西，"
+            "你可以用它去查实，别靠印象编。"
+            "查到的价格和条件要说明出自哪条来源；没查到就说没核实，不要补一个出来。")
 
 
 def on_turn_in(ctx):

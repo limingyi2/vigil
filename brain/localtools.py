@@ -222,6 +222,67 @@ REMOTE_TOOLS = {
         "risk": "dangerous",
         "group": "system",
     },
+    # --- 视频工作台的原生窗口托管 -------------------------------------
+    # 这些操作真正发生在客户端的 Electron 主进程里（那里才有原生窗口
+    # 宿主），Brain 不直接碰 IPC —— 走同一条"派发→客户端执行→回执"通道，
+    # 所以拿到的结果和回执都是真的。
+    "local_video_window_status": {
+        "desc": "看视频工作台当前托管状态：托管的是哪个软件、PID、窗口状态。"
+                "只想知道状态时用这个，不要用 local_process_list 猜。",
+        "params": [],
+        "arg_param": None,
+        "danger": False,
+        "risk": "safe",
+        "group": "system",
+    },
+    "local_video_window_focus": {
+        "desc": "把已托管的软件窗口切到最前面（聚焦）。**没托管任何软件时做不了。**",
+        "params": [],
+        "arg_param": None,
+        "danger": False,
+        "risk": "confirm",
+        "group": "system",
+    },
+    "local_video_window_show": {
+        "desc": "把已托管的软件窗口显示出来（它可能被藏起来了）。",
+        "params": [],
+        "arg_param": None,
+        "danger": False,
+        "risk": "confirm",
+        "group": "system",
+    },
+    "local_video_window_hide": {
+        "desc": "把已托管的软件窗口藏起来（不关掉它，之后还能再显示回来）。",
+        "params": [],
+        "arg_param": None,
+        "danger": False,
+        "risk": "confirm",
+        "group": "system",
+    },
+    "local_video_window_attach": {
+        "desc": "把已启动的软件窗口托管进视频工作台的槽位里。软件必须已经在跑。",
+        "params": [],
+        "arg_param": None,
+        "danger": False,
+        "risk": "confirm",
+        "group": "system",
+    },
+    "local_video_window_detach": {
+        "desc": "解除托管，让软件窗口恢复成独立窗口（软件本身不会被关掉）。",
+        "params": [],
+        "arg_param": None,
+        "danger": False,
+        "risk": "confirm",
+        "group": "system",
+    },
+    "local_video_window_close": {
+        "desc": "关掉已托管的软件窗口。**这会真的关掉那个软件**，客户端会先问他。",
+        "params": [],
+        "arg_param": None,
+        "danger": True,
+        "risk": "dangerous",
+        "group": "system",
+    },
 }
 
 # 默认等客户端多久。超过就当作"没人在"，把超时如实交给模型，

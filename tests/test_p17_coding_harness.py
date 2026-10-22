@@ -1,10 +1,13 @@
 """P17 Coding Harness: real multi-file edit, failing test, diagnosis and repair."""
 
+import hashlib
 import os
 import sys
 import json
 from unittest.mock import patch
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "brain"))
 
@@ -69,6 +72,56 @@ def test_multi_file_patch_rolls_back_earlier_files_when_a_later_hunk_fails(tmp_p
     assert first.read_text(encoding="utf-8") == "one\ntwo\n"
     assert second.read_text(encoding="utf-8") == "alpha\nbeta\n"
     assert engine.changed == []
+
+
+def test_a_batch_of_writes_rolls_back_when_a_later_file_conflicts(tmp_path):
+    """一批 operations 是一个整体：第 2 个文件撞上哈希冲突，第 1 个也要退回去。
+
+    半批落盘比整批失败更糟：磁盘上留下没人知道来源的改动，台账里又查不到
+    （台账随回滚一起清），下一次运行会以为自己是从原始状态开始的。
+    """
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text("a = 1\n", encoding="utf-8")
+    second.write_text("b = 2\n", encoding="utf-8")
+    stale = hashlib.sha256(b"b = 999\n").hexdigest()   # 别人已经改过了
+    harness = CodingHarness(str(tmp_path), verify_commands=[])
+    with pytest.raises(Exception):
+        harness._apply_operations([
+            {"op": "write", "path": "first.py", "content": "a = 100\n"},
+            {"op": "write", "path": "second.py", "content": "b = 200\n",
+             "expected_sha256": stale},
+        ])
+    assert first.read_text(encoding="utf-8") == "a = 1\n"
+    assert second.read_text(encoding="utf-8") == "b = 2\n"
+    assert harness.patches.changed == []
+    assert any(e.get("type") == "coding_rollback" for e in harness.events)
+
+
+def test_a_hash_conflict_never_overwrites_another_writers_change(tmp_path):
+    target = tmp_path / "shared.py"
+    target.write_text("value = 2\n", encoding="utf-8")
+    theirs = hashlib.sha256(b"value = 2\n").hexdigest()
+    with WorkspaceGuard(str(tmp_path), "conflict-test") as guard:
+        engine = PatchEngine(guard)
+        engine.write("shared.py", "value = 3\n", expected_sha256=theirs)
+        assert target.read_text(encoding="utf-8") == "value = 3\n"
+        # 另一个 Agent 又改了一次；拿着过期的哈希再写必须被拒
+        target.write_text("value = 99\n", encoding="utf-8")
+        with pytest.raises(Exception):
+            engine.write("shared.py", "value = 4\n", expected_sha256=theirs)
+        assert target.read_text(encoding="utf-8") == "value = 99\n"
+
+
+def test_a_rolled_back_new_file_is_removed_not_left_empty(tmp_path):
+    harness = CodingHarness(str(tmp_path), verify_commands=[])
+    with pytest.raises(Exception):
+        harness._apply_operations([
+            {"op": "write", "path": "created.py", "content": "# new\n"},
+            {"op": "write", "path": "broken.py", "content": "x",
+             "expected_sha256": hashlib.sha256(b"someone else").hexdigest()},
+        ])
+    assert not (tmp_path / "created.py").exists(), "回滚新建文件应当是删掉，不是留个空壳"
 
 
 def test_same_size_repair_is_not_masked_by_a_stale_bytecode_cache(tmp_path):

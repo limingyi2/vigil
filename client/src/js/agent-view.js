@@ -20,6 +20,53 @@
   const ERROR_LABEL={client_offline:'客户端离线',client_busy:'客户端繁忙',
     permission_denied:'权限拒绝',approval_denied:'审批拒绝',tool_failed:'执行失败',
     invalid_args:'参数不合法',unknown:'结果未知',empty_output:'没有输出',cancelled:'已取消'};
+  // Tool categories are decided by the **real tool identity**, not by a loose
+  // keyword match. The old regex (/find|grep|search|list/) could not tell the
+  // web `search` tool from `local_file_grep`, so a live web search was
+  // labelled "搜索文件" — the user was told the wrong thing happened.
+  // Order matters: the first matching rule wins, so specific names come first.
+  const TOOL_RULES=[
+    // 联网检索
+    {cat:'web',icon:'i-search',match:/^web_?search$|^search$|^websearch$|^browser_search$|^fetch_url$|^web_fetch$|^open_url$/},
+    // 能力中心（查询 / 调用）
+    {cat:'capability',icon:'i-plug',match:/^capability_(status|call|invoke)$/},
+    // Codex / Agent 工作室
+    {cat:'codex',icon:'i-puzzle',match:/^codex[_:]|^agent_?center|^dynamic_tool_call$/},
+    // 视频工作台
+    {cat:'video',icon:'i-video',match:/video_window|^video_|^window_(attach|detach|focus|show|hide)/},
+    // 命令执行
+    {cat:'exec',icon:'i-term',match:/^local_exec$|^exec$|^command$|^shell$/},
+    // 文件读取
+    {cat:'read',icon:'i-book',match:/^local_file_read$|^read_file$|^file_read$|^cat$/},
+    // 文件编辑（写入 / 补丁 / 移动 / 删除）
+    {cat:'edit',icon:'i-book',match:/^(local_)?(file_)?(write|append|edit|patch|delete|mkdir|move|copy)(_|$)|^fs_/},
+    // 本地文件查询（在允许目录里按名字/内容找）
+    {cat:'find',icon:'i-folder',match:/^local_file_(find|grep|list|recent)$|^(find|grep|list)_files?$|^file_(find|grep|list)$|^glob$/},
+    // 本机状态 / 进程 / 剪贴板 / 截图
+    {cat:'system',icon:'i-activity',match:/^local_(system_info|process_list|process_kill|active_window|clipboard_read|clipboard_write|screenshot)$/},
+    // 动态技能（包名__工具名）
+    {cat:'skill',icon:'i-puzzle',match:/__/},
+  ];
+  function classify(name){
+    const n=String(name||'');
+    for(const rule of TOOL_RULES) if(rule.match.test(n)) return rule;
+    return {cat:'other',icon:'i-activity'};
+  }
+  // Human label per category, per state. The category decides the wording;
+  // the state decides whether it is running, done, refused or unknown.
+  const CAT_LABEL={
+    web:{run:'正在联网搜索',done:'联网搜索了',fail:'联网搜索'+'失败',denied:'联网搜索被拒绝'},
+    capability:{run:'正在调用能力',done:'调用了能力',fail:'能力调用失败',denied:'能力调用被拒绝'},
+    codex:{run:'正在操作 Agent 工作室',done:'操作了 Agent 工作室',fail:'Agent 工作室操作失败',denied:'Agent 工作室操作被拒绝'},
+    video:{run:'正在操作视频窗口',done:'操作了视频窗口',fail:'视频窗口操作失败',denied:'视频窗口操作被拒绝'},
+    exec:{run:'正在运行命令',done:'运行了命令',fail:'命令执行失败',denied:'命令执行被拒绝'},
+    read:{run:'正在读取文件',done:'读取了文件',fail:'文件读取失败',denied:'文件读取被拒绝'},
+    edit:{run:'正在编辑文件',done:'编辑了文件',fail:'文件编辑失败',denied:'文件编辑被拒绝'},
+    find:{run:'正在搜索文件',done:'搜索了文件',fail:'文件搜索失败',denied:'文件搜索被拒绝'},
+    system:{run:'正在查询本机状态',done:'查询了本机状态',fail:'本机状态查询失败',denied:'本机状态查询被拒绝'},
+    skill:{run:'正在执行技能',done:'执行了技能',fail:'技能执行失败',denied:'技能执行被拒绝'},
+    other:{run:'正在执行 ',done:'已完成 ',fail:'执行失败',denied:'执行被拒绝'},
+  };
   function errorInfo(meta){
     const raw=meta.error;
     if(!raw)return null;
@@ -37,14 +84,24 @@
     // 'returned' 但带了 error（如执行完没有任何输出）同样不能显示成完成。
     const failed=['failed','unknown','not_dispatched','not_returned','interrupted','denied'].includes(state)
       || (state==='returned' && !!info);
-    const command=/exec|command/.test(name), read=/read/.test(name), edit=/write|edit|patch/.test(name), find=/find|grep|search|list/.test(name);
-    const failWord=state==='denied' ? '被拒绝' : '失败';
-    const label=command?(running?'正在运行命令':failed?'命令执行'+failWord:'运行了命令')
-      :read?(running?'正在读取文件':failed?'文件读取'+failWord:'读取了文件')
-      :edit?(running?'正在编辑文件':failed?'文件编辑'+failWord:'编辑了文件')
-      :find?(running?'正在搜索文件':failed?'文件搜索'+failWord:'搜索了文件')
-      :(running?'正在执行 '+name:failed?name+' 执行'+failWord:'已完成 '+name);
-    const preview=command?(input.cmd || input.command || ''):(input.path || input.pattern || '');
+    const rule=classify(name), cat=rule.cat;
+    // The category decides the wording; the state decides which variant.
+    // An unknown outcome reads as unknown — never as a plain success.
+    const unknownOutcome=state==='unknown'||state==='not_returned'||state==='interrupted';
+    const words=CAT_LABEL[cat]||CAT_LABEL.other;
+    let label;
+    if(state==='denied')label=words.denied;
+    else if(unknownOutcome)label=words.fail.replace(/失败$/,'结果未知');
+    else if(running)label=words.run;
+    else if(failed)label=words.fail;
+    else label=words.done+(cat==='other'?' '+name:'');
+    // The preview must show what was actually asked for. Web search shows the
+    // query, file tools show the path/pattern, commands show the command.
+    const preview=cat==='exec'?(input.cmd||input.command||'')
+      :cat==='web'?(input.query||input.q||input.url||'')
+      :cat==='capability'?(input.operation||input.capability||'')
+      :cat==='video'?(input.action||input.operation||'')
+      :(input.path||input.pattern||input.name||input.file||'');
     const key=encodeURIComponent(String(meta.run_id || '')+':'+String(meta.call_id || meta.step_id || name));
     // The short reason stays in the always-visible summary; the raw diagnostic
     // only expands on demand. A tool that never ran must not read as "done".
@@ -66,8 +123,8 @@
       错误:info ? undefined : meta.error}).filter(([,v])=>v!==undefined && v!=='')
       .map(([title,v])=>'<div class="agent-detail-label">'+title+'</div><pre>'+esc(typeof v==='object'?JSON.stringify(redact(v),null,2):redact(v))+'</pre>').join(''));
     const detail=parts.join('');
-    return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'" data-error="'+esc(info?.category || '')+'"'+(open?' open':'')+'>'+
-      '<summary><svg class="i xs agent-step-icon" aria-hidden="true"><use href="#i-'+(command?'term':edit?'book':'folder')+'"/></svg><span>'+esc(label)+'</span>'+badge+why+
+    return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'" data-error="'+esc(info?.category || '')+'" data-tool-cat="'+esc(cat)+'"'+(open?' open':'')+'>'+
+      '<summary><svg class="i xs agent-step-icon" aria-hidden="true"><use href="#'+(rule.icon||'i-activity')+'"/></svg><span>'+esc(label)+'</span>'+badge+why+
       (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+'</summary>'+detail+'</details>';
   }
   function elapsed(ms) {

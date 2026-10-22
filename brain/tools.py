@@ -171,6 +171,20 @@ _STATIC_SPECS = {
         "params": [("capability", "能力名称；留空返回全部能力", False)],
         "arg_param": "capability",
     },
+    "capability_call": {
+        "desc": "调用一个已注册能力（Codex Agent 工作室、视频工作台窗口、本机工具、插件、工作区等）的具体操作。"
+                "🔴 **先查再调**：先用 capability_status 看这个能力现在是什么状态、有哪些操作，"
+                "不可用就别调。操作会真的动到电脑上（开软件、聚焦窗口、起任务），"
+                "所以只在你确实被要求这么做时才调。"
+                "返回里带 task_id（这次执行的编号）和 status（succeeded/failed/awaiting_authorization）。"
+                "如果 status 是 awaiting_authorization，说明这一步需要用户先批准 —— "
+                "把要做的事说清楚请他批准，**不要自己换个办法绕过去**。",
+        "params": [("capability", "能力名称，如 codex / video_workbench / local_tools", True),
+                   ("operation", "操作名，如 status / tasks / focus / create_task", True),
+                   ("args", "操作参数，JSON 对象字符串；没有参数就传 {}", False)],
+        "arg_param": "capability",
+        "multi_args": True,
+    },
     # --- 静态插件（执行路由到 plugin_host）---
     "calc": {
         "desc": "数学计算（加减乘除、括号、百分比、幂）。涉及具体数字一律用它，不要自己心算。",
@@ -179,9 +193,20 @@ _STATIC_SPECS = {
     },
     "search": {
         "desc": "联网搜索实时信息：新闻、股价、最新版本、近期事件等训练数据里没有或会过时的东西。"
+                "**报价、套餐配置、优惠券规则、资格与适用条件、买哪个更划算**这类也要用它 —— "
+                "它们全都随时间和账号变化，凭印象说一定是错的。"
                 "🔴 **天气不要用它**（用 weather）、**快递单号不要用它**（用 tracking）、"
                 "某个网页的正文不要用它（用网页抓取类工具）。"
-                "它管的是「泛泛地查一下公开信息」。",
+                "它管的是「泛泛地查一下公开信息」。\n"
+                "用它的时候守住这几条：\n"
+                "1. 价格、配置、优惠额度、适用条件只能照检索结果里的原文说，并说明出自哪条来源；"
+                "结果里没写的就是没查到，不要说成默认规则"
+                "（比如把「学生券」当成「无门槛券」就是自己补的）。\n"
+                "2. 摘要被标了「已截断」时，别把它当全文 —— 缺的那半段往往正是条件。\n"
+                "3. 优先官方来源（厂商/政府/平台自己的域名），社区帖子只能当线索，不能当价格依据。\n"
+                "4. 搜不到、或者连不上搜索服务，就直说「这个我没查到、没核实」，"
+                "**不许**凭记忆补一个价格、配置或购买链接出来。\n"
+                "5. 同一个问题不要反复搜同一句话；结果不够就换个更具体的说法再搜一次。",
         "params": [("query", "要搜索的内容，直接写中文", True)],
         "arg_param": "query",
     },
@@ -546,6 +571,35 @@ def invoke_spec(name, args, ctx=None):
                               ensure_ascii=False, sort_keys=True)
         except Exception as exc:
             return "能力状态读取失败：%s" % str(exc)[:160]
+
+    if n == "capability_call":
+        try:
+            import capability_registry as _caps
+            _caps.bootstrap()
+            raw_args = args.get("args")
+            if isinstance(raw_args, dict):
+                op_args = raw_args
+            else:
+                text = str(raw_args or "").strip()
+                op_args = json.loads(text) if text else {}
+                if not isinstance(op_args, dict):
+                    return "capability_call 的 args 必须是 JSON 对象字符串。"
+            # 身份/会话由**这次对话**决定，不是模型能填的字段 ——
+            # 模型自己传 identity=admin 之类的东西不会生效。
+            identity = str(getattr(ctx, "capability_identity", "") or "")
+            session = str(getattr(ctx, "capability_session", "") or "")
+            if not identity and ctx is not None:
+                # Agent Run 带着 owner；普通聊天没有 owner，按渠道区分。
+                identity = "owner:%s" % str(getattr(ctx, "owner", "") or getattr(ctx, "src", "") or "local")
+                session = str(getattr(ctx, "conversation_id", "") or "")
+            out = _caps.REGISTRY.invoke(
+                str(args.get("capability") or "").strip(),
+                str(args.get("operation") or "").strip(),
+                op_args, identity=identity, session=session,
+                target=str(getattr(ctx, "capability_target", "") or ""))
+            return json.dumps(out, ensure_ascii=False, sort_keys=True)
+        except Exception as exc:
+            return "能力调用失败：%s" % str(exc)[:160]
 
     # 混合模式委派工具：不走静态/插件表，直接进 delegation 桥（内部再做门控、
     # 合同校验与有界子循环）。永远返回字符串、不抛，避免主循环被打断。

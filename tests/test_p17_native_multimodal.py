@@ -69,17 +69,60 @@ def test_ask_with_retry_passes_native_image_and_surfaces_provider_error(tmp_path
 
 
 def test_capability_registry_is_truthful_and_permission_checked():
+    """写操作要真授权，且身份不能当通行证用。
+
+    🔴 这里刻意不再有 ``authorized=True`` 这种参数：它曾让调用方一句话把
+    "我是管理员"变成"所有能力都已批准"。现在唯一的通行证是 grant，而 grant
+    限定在 (能力, 操作, 身份, 会话, 目标) 上。
+    """
     registry = capability_registry.CapabilityRegistry()
     registry.register(
         "video_workbench", status={"connected": False, "state": "unknown"},
         operations={"status": {"permission": "read", "handler": lambda _args: {"state": "attached"}},
                     "focus": {"permission": "window", "handler": lambda _args: {"focused": True}}},
         source="test.video")
-    registry.publish("state", "video_workbench", {"status": {"connected": True, "state": "attached", "hosted_software": "fake.exe"}})
+    registry.publish("state", "video_workbench",
+                     {"status": {"connected": True, "state": "attached", "hosted_software": "fake.exe"}})
     current = registry.get("video_workbench")
     assert current["status"]["hosted_software"] == "fake.exe"
-    assert registry.invoke("video_workbench", "focus", {}, authorized=False)["error"] == "authorization_required"
-    assert registry.invoke("video_workbench", "focus", {}, authorized=True)["result"]["focused"] is True
+
+    # 读操作直接可查询
+    read = registry.invoke("video_workbench", "status", {}, identity="brain")
+    assert read["status"] == "succeeded"
+    assert read["result"]["state"] == "attached"
+    assert read["task_id"] and read["receipts"]
+
+    # 写操作没授权：拦下，并给出一个可审批的请求
+    denied = registry.invoke("video_workbench", "focus", {}, identity="brain", session="s1")
+    assert denied["ok"] is False
+    assert denied["status"] == "awaiting_authorization"
+    assert denied["error"] == "authorization_required"
+    assert denied["request_id"]
+    assert denied["receipts"][0]["state"] == "denied"
+
+    # 同一身份再来一次仍然被拦 —— 管理员不是免检牌
+    again = registry.invoke("video_workbench", "focus", {}, identity="brain", session="s1")
+    assert again["status"] == "awaiting_authorization"
+
+    # 批准之后才真的执行
+    approved = registry.approve(denied["request_id"], identity="brain", session="s1")
+    assert approved["status"] == "succeeded"
+    assert approved["result"]["focused"] is True
+    # 授权生效，同作用域可以直接复用
+    assert registry.invoke("video_workbench", "focus", {},
+                           identity="brain", session="s1")["status"] == "succeeded"
+    # 但换会话 / 换身份都不行
+    assert registry.invoke("video_workbench", "focus", {},
+                           identity="brain", session="s2")["status"] == "awaiting_authorization"
+    assert registry.invoke("video_workbench", "focus", {},
+                           identity="device:other", session="s1")["status"] == "awaiting_authorization"
+
+    # 拒绝就是拒绝，不会留下授权
+    pending = registry.invoke("video_workbench", "focus", {}, identity="brain", session="s3")
+    assert registry.deny(pending["request_id"])["ok"] is True
+    assert registry.invoke("video_workbench", "focus", {},
+                           identity="brain", session="s3")["status"] == "awaiting_authorization"
+
     assert registry.events(0)["items"]
 
 

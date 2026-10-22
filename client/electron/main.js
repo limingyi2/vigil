@@ -676,6 +676,10 @@ function openSettingsWindow(options) {
 // 自己生成在 config.json 里的那把。不需要人填地址、端口、token，也没有
 // "连不上就换一台"的逻辑 —— 起不来就把原因报出来并允许重试。
 const localtool = require('./localtool');
+// The native window host lives in the main process; the video workbench
+// tools reach it through this injection.  Without it those tools must say
+// "unavailable" rather than pretend the window moved.
+localtool.setNativeWindowService(() => nativeWindowService);
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
 const { createPluginMedia, shouldCancelLoopbackRequest } = require('./plugin-media');

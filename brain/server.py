@@ -157,14 +157,21 @@ MAX_BODY = 12 * 1024 * 1024
 # 单张聊天图片上限，与客户端 ATTACH_IMAGE_MAX 对齐。模型看不到超限的图，
 # 与其悄悄截断，不如明确告诉她"这张图没收到"。
 IMAGE_MAX_BYTES = 8 * 1024 * 1024
-IMAGE_DESC_TTL = 3600
-_IMAGE_DESC_CACHE = {}
 
 IMAGE_REJECT_TEXT = {
     'empty': '图片数据是空的',
     'not_base64': '图片数据不是有效的 base64',
     'too_large': '图片超过 8 MB 上限，没有送进当前对话模型',
 }
+
+
+class _NativeImageUnsupported(RuntimeError):
+    """The current chat model cannot take an image directly.
+
+    Raised instead of silently swapping in a separate vision model: the user
+    must be told the image never reached the model, not be handed a
+    second-hand description dressed up as if the model had seen the picture.
+    """
 
 
 def _native_image_content(blob, text):
@@ -182,18 +189,23 @@ def _native_image_content(blob, text):
                 "url": "data:%s;base64,%s" % (mime, encoded)}}]
 
 
-def _supports_native_image(brain_obj):
-    """Compatibility probe for old test/bridge Brain implementations.
+def _supports_native_image(brain_obj, method="chat"):
+    """这个 Brain 的某个入口**显式**接受 native_content 吗。
 
-    The production Brain always accepts ``native_content``.  A legacy bridge
-    object that does not expose that argument may still receive the old
-    descriptive fallback, while the real chat path never substitutes a
-    vision model for a capable provider.
+    🔴 只认显式形参，不认 ``**kwargs``：老桥接实现写的是
+    ``def chat(self, text, **kw)``，传进去的 native_content 会被**静默吞掉**
+    —— 图没进模型，用户却以为模型看到了截图。比直接报错更糟。
+
+    生产 Brain 的 ``chat`` 与 ``stream_chat`` 都显式声明了这个参数
+    （见 brain.py），所以两条路都过。
     """
+    fn = getattr(brain_obj, method, None)
+    if fn is None:
+        return False
     try:
         import inspect
-        return "native_content" in inspect.signature(brain_obj.chat).parameters
-    except Exception:
+        return "native_content" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
         return False
 
 
@@ -249,47 +261,20 @@ def _image_ext(blob):
     return 'jpg'
 
 
-def _describe_turn_image(blob, scope=''):
-    """视觉分析，按内容哈希缓存，返回 (描述, 错误原因)。
-
-    同一张图在一小时内只烧一次视觉调用：客户端重连、同图重发、以及
-    "先问一句再追问一句"都会重复贴同一张图，重复调用纯属浪费。
-    🔴 缓存键带 scope（身份/渠道/人设）：描述文本本身不跨权限边界泄露，
-    但"这张图被分析过"这个事实不该跨边界可见 —— 宁可多烧一次调用。
-    """
-    import hashlib
-    key = hashlib.sha256((str(scope or '') + '\x00').encode('utf-8', 'replace')
-                         + blob).hexdigest()
-    hit = _IMAGE_DESC_CACHE.get(key)
-    if hit and time.time() - hit[1] < IMAGE_DESC_TTL:
-        print("[视觉] 命中缓存，未重复调用视觉模型", flush=True)
-        return hit[0], None
-    try:
-        import vision
-        desc = str(vision.describe_bytes(blob, API_CFG) or '').strip()
-    except Exception as e:
-        print(f"[视觉] 分析失败：{e}", flush=True)
-        return '', str(e)[:200]
-    if desc:
-        # 有界缓存：图片描述只用来省一次调用，不值得无限增长。
-        if len(_IMAGE_DESC_CACHE) >= 32:
-            _IMAGE_DESC_CACHE.pop(next(iter(_IMAGE_DESC_CACHE)))
-        _IMAGE_DESC_CACHE[key] = (desc, time.time())
-    return desc, None
-
-
-def _image_note(desc, rejected=None):
-    """把"这一轮有没有看到图"写进她读到的文本。
+def _image_note(rejected=None):
+    """把"这一轮有没有真的看到图"写进她读到的文本。
 
     🔴 看不到图时**必须说一声**。什么都不加，她就不知道他发过图，会把
-    一张截图当没发生过；人设规则靠"（他发的图：…）"与"没看清"两档区分
-    "看到了"和"看不到"，绝不能让她自己编。
+    一张截图当没发生过；绝不能让她自己编。
+
+    🔴 这里**只有"没看到"这一档**。以前还有"（他发的图：…）"那档 ——
+    那是把另一个视觉模型的转述塞进用户原话，冒充"她看到了图"。
+    现在图要么原样进当前对话模型，要么这一轮明确报错；
+    没有任何一条路会把描述当成用户的话送进去。
     """
     if rejected:
         return "（他发了张图片，但%s，没看到内容）" % IMAGE_REJECT_TEXT.get(rejected, rejected)
-    if desc:
-        return "（他发的图：%s）" % desc
-    return "（他发了张图片，没看清）"
+    return "（他发了张图片，没看到内容）"
 
 
 def _save_turn_image(blob, src=None, desc=''):
@@ -640,7 +625,13 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             chat_kwargs = dict(img=img_path, log=False, src=src,
                                conversation_id=conversation_id,
                                no_tools=no_tools)
-            if native_content is not None and _supports_native_image(b):
+            if native_content is not None:
+                # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
+                # 悄悄换成"另一个视觉模型的描述"）就是骗人：用户以为模型看到了
+                # 图，其实这一轮根本没有图。
+                if not _supports_native_image(b):
+                    raise _NativeImageUnsupported(
+                        "当前对话模型不支持图片输入，这一轮没有把图送进去")
                 chat_kwargs['native_content'] = native_content
             ans, mode = b.chat(t, **chat_kwargs)
             # trace 字段长在共享的大脑对象上，得趁锁还在手里抄，出了锁并发
@@ -994,7 +985,12 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                                 conversation_id=conversation_id)
             if native_content is not None:
                 _chat_kwargs['native_content'] = native_content
-            ans, mode = _chat_with_tools(text, img_path or None, **_chat_kwargs)
+            try:
+                ans, mode = _chat_with_tools(text, img_path or None, **_chat_kwargs)
+            except _NativeImageUnsupported as exc:
+                # 图没进模型就说没进模型 —— 绝不用"她看不到图"搪塞，
+                # 也绝不偷偷换成别的视觉模型描述。
+                return "", "图片能力不支持", str(exc)[:300]
             if getattr(_LOCAL.get('brain'), 'last_err', ''):
                 return ans, mode, str(getattr(_LOCAL.get('brain'), 'last_err', '')
                                       or '模型请求未完成，未自动重试')[:300]
@@ -1767,7 +1763,13 @@ def start_remote_api(brain):
                             allow_summarize=False)
                         brain.last_context_info = _ci
                     except Exception:
-                        _hist = brain.recent_hist()
+                        # 上下文构建失败时退回裸历史。这一步自己也可能不可用
+                        # （桥接型 Brain 没有 recent_hist）：一条降级路径不该
+                        # 把整个请求打成 500，没有历史就按空历史起步。
+                        try:
+                            _hist = brain.recent_hist()
+                        except Exception:
+                            _hist = []
                         _ci = {}
                     if _ci.get('fixed_overflow'):
                         raise ValueError('系统提示、工具与当前消息超过输入预算')
@@ -2263,13 +2265,22 @@ def start_remote_api(brain):
                 body = {}
             if self._agent_api('POST', path, body):
                 return
-            if path == '/api/capabilities/events' or path == '/api/capabilities/invoke':
+            if path in ('/api/capabilities/events', '/api/capabilities/invoke',
+                        '/api/capabilities/approve', '/api/capabilities/deny',
+                        '/api/capabilities/grants'):
                 if not self._is_admin():
                     self._json(403, {"ok": False, "err": "需要管理员权限"})
                     return
                 try:
                     import capability_registry as _caps
                     _caps.bootstrap(API_CFG)
+                    # 🔴 身份来自**这次请求的凭据**，不是请求体里的字段。
+                    # 管理员身份只是"有权管理能力"，不等于"每个能力操作都已获批准"。
+                    _who_kind, _who_id = getattr(self, "_who", ("", ""))
+                    _identity = _who_kind if _who_kind == "brain" else (
+                        "device:%s" % _who_id if _who_kind == "device" else "")
+                    _session = str(body.get('session') or '')
+                    _target = str(body.get('target') or '')
                     if path.endswith('/events'):
                         name = str(body.get('capability') or '').strip()
                         status = body.get('status')
@@ -2278,11 +2289,22 @@ def start_remote_api(brain):
                             {"status": status, "metadata": body.get('metadata') or {}})
                         self._json(200, {"ok": True, "event": event,
                                          "capability": _caps.REGISTRY.get(name)})
-                    else:
+                    elif path.endswith('/invoke'):
                         out = _caps.REGISTRY.invoke(
                             body.get('capability'), body.get('operation'),
-                            body.get('args') or {}, authorized=True)
+                            body.get('args') or {}, identity=_identity,
+                            session=_session, target=_target)
                         self._json(200 if out.get('ok') else 409, out)
+                    elif path.endswith('/approve'):
+                        out = _caps.REGISTRY.approve(
+                            str(body.get('request_id') or ''),
+                            identity=_identity, session=_session, target=_target)
+                        self._json(200 if out.get('ok') else 409, out)
+                    elif path.endswith('/deny'):
+                        out = _caps.REGISTRY.deny(str(body.get('request_id') or ''))
+                        self._json(200 if out.get('ok') else 409, out)
+                    else:
+                        self._json(200, {"ok": True, "grants": _caps.REGISTRY.grants()})
                 except (TypeError, ValueError):
                     self._json(400, {"ok": False, "err": "能力调用参数无效"})
                 except Exception as exc:
@@ -2886,20 +2908,7 @@ def start_remote_api(brain):
                                 "err": IMAGE_REJECT_TEXT.get(_img_err, _img_err)})
                             return
                         body['img'] = base64.b64encode(_img_blob).decode()
-                        try:
-                            _img_ext = _image_ext(_img_blob)
-                        except NameError:
-                            _img_ext = ('png' if _img_blob.startswith(b'\x89PNG') else
-                                        'webp' if _img_blob.startswith(b'RIFF') else
-                                        'gif' if _img_blob.startswith((b'GIF87a', b'GIF89a')) else 'jpg')
-                        _mime = {"jpg": "image/jpeg", "png": "image/png", "gif": "image/gif",
-                                 "bmp": "image/bmp", "webp": "image/webp"}.get(_img_ext, "image/jpeg")
-                        _native_content = [
-                            {"type": "text", "text": _in_text},
-                            {"type": "image_url", "image_url": {
-                                "url": "data:%s;base64,%s" % (
-                                    _mime, base64.b64encode(_img_blob).decode("ascii"))}},
-                        ]
+                        _native_content = _native_image_content(_img_blob, _in_text)
                     _rid = body.get('request_id') if not body.get('dry_run') else None
                     _display_owner = self._display_owner(body)
                     if _rid:
@@ -3039,7 +3048,7 @@ def start_remote_api(brain):
                     # `not body.get('img')` 这个排除条件里 —— 带图的请求因此
                     # 被踢出 Agent 分支，又落进从不消费 img 的流式分支，
                     # 图就凭空消失了：上传成功，模型却什么都没看到。
-                    _disp_text = _in_text          # 存档/幂等用原文，不带图片描述
+                    _disp_text = _in_text          # 存档/幂等用原文，不带图片说明
                     _img_state, _img_path, _native_content = None, '', None
                     if body.get("img"):
                         _blob, _img_err = _decode_turn_image(body.get("img"))
@@ -3047,50 +3056,19 @@ def start_remote_api(brain):
                             _img_state = dict(stage='receive', ok=False,
                                               status=_img_err,
                                               msg=IMAGE_REJECT_TEXT.get(_img_err, _img_err))
-                            try:
-                                import inspect as _inspect
-                                _native_capable = "native_content" in _inspect.signature(
-                                    _LOCAL.get('brain').chat).parameters
-                            except Exception:
-                                _native_capable = False
-                            if not _native_capable:
-                                _in_text = (_in_text + " " if _in_text else "") + _image_note('', _img_err)
+                            # 图没送到模型手上（超限/坏数据），**无论大脑能不能收图**
+                            # 都得让她知道：少了这一句，她会当他什么都没发，
+                            # 然后对着"看不见的图"自由发挥。
+                            _in_text = (_in_text + " " if _in_text else "") + _image_note(_img_err)
                         else:
                             _img_state = dict(stage='receive', ok=True,
                                               status='received', bytes=len(_blob))
-                            try:
-                                _img_ext = _image_ext(_blob)
-                            except NameError:
-                                _img_ext = ('png' if _blob.startswith(b'\x89PNG') else
-                                            'webp' if _blob.startswith(b'RIFF') else
-                                            'gif' if _blob.startswith((b'GIF87a', b'GIF89a')) else 'jpg')
-                            _mime = {"jpg": "image/jpeg", "png": "image/png", "gif": "image/gif",
-                                     "bmp": "image/bmp", "webp": "image/webp"}.get(_img_ext, "image/jpeg")
-                            _native_content = [
-                                {"type": "text", "text": _in_text},
-                                {"type": "image_url", "image_url": {
-                                    "url": "data:%s;base64,%s" % (
-                                        _mime, base64.b64encode(_blob).decode("ascii"))}},
-                            ]
+                            _native_content = _native_image_content(_blob, _in_text)
                             _img_path = _save_turn_image(_blob, src=_src)
-                            try:
-                                import inspect as _inspect
-                                _native_capable = "native_content" in _inspect.signature(
-                                    _LOCAL.get('brain').chat).parameters
-                            except Exception:
-                                _native_capable = False
-                            if not _native_capable:
-                                # Legacy bridge/test Brain compatibility only.
-                                # The production Brain takes the native content
-                                # and never enters this branch.
-                                _desc, _vis_err = _describe_turn_image(
-                                    _blob, scope=self._display_owner(body))
-                                _img_state['describe'] = dict(
-                                    ok=bool(_desc),
-                                    status='described' if _desc else 'unavailable',
-                                    msg='' if _desc else (_vis_err or '视觉模型没有返回描述'))
-                                _in_text = (_in_text + " " if _in_text else "") + _image_note(_desc)
-                                _native_content = None
+                    # 这一轮会走哪条路由，先算出来（只判定，不动手）。图片闸门
+                    # 必须对准**真正会消费图的那个入口**：靠"是不是管理员发的"
+                    # 猜成 Agent Run，会把普通聊天误判成不支持图片；反过来只查
+                    # 方法名存在，又会放过"签名接住了、内部把图丢了"的哑弹。
                     _agent_item = None
                     import tools as _run_tools
                     import agent_runs as _runs
@@ -3108,7 +3086,56 @@ def start_remote_api(brain):
                     # 插话优先于续跑：两者都可能带同一个 request_id，必须互斥，
                     # 否则前一个刚建好 run，后一个就会报"request_id 已用于不同请求"。
                     _interject_of = str(body.get('interject_of') or '')
-                    if _interject_of and self._is_admin() and _src == 'pc' and body.get('request_id'):
+                    _admin_pc = bool(self._is_admin() and _src == 'pc' and body.get('request_id'))
+                    _route_interject = bool(_interject_of and _admin_pc)
+                    _route_resume = bool(_resume_of and _admin_pc)
+                    _route_agent = bool(_admin_pc and not _route_interject and not _route_resume
+                                        and (_existing_run or (
+                                            not _existing_legacy
+                                            and _run_tools.schema_needed(_in_text)
+                                            and isinstance(_agent_cfg, dict)
+                                            and _agent_cfg.get('enabled', True))))
+                    # 🔴 图片能力闸门：**必须在做任何 Agent Run 工作之前**判。
+                    # 放到流里判就晚了：客户端已经收到 200，再补一个 error
+                    # 事件，它看起来像"回复完了"，而图根本没进模型。
+                    if _native_content is not None:
+                        _gate_ok, _gate_err = True, ''
+                        if _route_interject or _route_resume:
+                            # 插话与续跑都只传文本：图在这条路上没有落点，
+                            # 就必须说清楚。悄悄丢掉 = 用户以为她看到了图。
+                            _gate_ok = False
+                            _gate_err = ('插话与续跑不支持携带图片，这一轮没有把图送进去；'
+                                         '请把图片作为新消息发送')
+                        elif _route_agent:
+                            # Agent Run 由 server 自己拼 user 消息：要验的是
+                            # **拼出来的消息里真的有图**，不是签名长得像。
+                            _img_builder = getattr(brain, '_native_user_content', None)
+                            try:
+                                _built = (_img_builder(_in_text, _native_content)
+                                          if callable(_img_builder) else None)
+                            except Exception:
+                                _built = None
+                            _gate_ok = any(isinstance(_p, dict) and _p.get('type') == 'image_url'
+                                           for _p in (_built if isinstance(_built, list) else []))
+                            _gate_err = ('当前对话模型不支持在任务中直接接收图片，'
+                                         '这一轮没有把图送进去')
+                        else:
+                            # 普通聊天这一轮走 chat 还是 stream_chat，由
+                            # schema_needed 决定 —— 判的那个入口必须接得住。
+                            import tools as _gate_tools
+                            _gate_method = ('chat' if _gate_tools.schema_needed(_in_text)
+                                            else 'stream_chat')
+                            _gate_ok = _supports_native_image(brain, _gate_method)
+                            _gate_err = ('当前对话模型不支持直接接收图片，'
+                                         '这一轮没有把图送进去')
+                        if not _gate_ok:
+                            _img_state['native'] = dict(ok=False, status='unsupported',
+                                                        msg=_gate_err)
+                            self._json(415, {"ok": False, "err": _gate_err,
+                                             "capability": "native_image_input",
+                                             "supported": False})
+                            return
+                    if _route_interject:
                         import copy as _rcopy
                         try:
                             _agent_item = _runs.interject(_interject_of, _owner,
@@ -3120,7 +3147,7 @@ def start_remote_api(brain):
                         except ValueError as _exc:
                             self._json(400, {'ok': False, 'err': str(_exc)})
                             return
-                    elif _resume_of and self._is_admin() and _src == 'pc' and body.get('request_id'):
+                    elif _route_resume:
                         import copy as _rcopy
                         try:
                             _agent_item = _runs.resume(_resume_of, _owner, _rcopy.deepcopy(API_CFG),
@@ -3128,12 +3155,9 @@ def start_remote_api(brain):
                         except ValueError as _exc:
                             self._json(400, {'ok': False, 'err': str(_exc)})
                             return
-                    elif (self._is_admin() and _src == 'pc' and body.get('request_id') and
-                            (_existing_run or (not _existing_legacy
-                             and _run_tools.schema_needed(_in_text) and isinstance(_agent_cfg, dict)
-                             and _agent_cfg.get('enabled', True)))):
+                    elif _route_agent:
                         try:
-                             # Agent Run 接收原生 content；用户原文仍由 display
+                            # Agent Run 接收原生 content；用户原文仍由 display
                             # 台账保存，绝不把视觉描述或内部提示写回用户气泡。
                             _agent_item = self._new_agent_run(dict(
                                 body, src=_src, text=_in_text,
@@ -3167,13 +3191,11 @@ def start_remote_api(brain):
                             if _chat_tools.schema_needed(_in_text):
                                 _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
                                 if _native_content is not None:
-                                    try:
-                                        import inspect as _inspect
-                                        if "native_content" in _inspect.signature(
-                                                _LOCAL['brain'].chat).parameters:
-                                            _chat_kwargs['native_content'] = _native_content
-                                    except Exception:
-                                        pass
+                                    # 闸门已经确认这一轮走的入口接得住图，
+                                    # 这里就**无条件**带上。旧写法在这里再探一次
+                                    # 签名，探不过就悄悄不带 —— 那就是"上传成功、
+                                    # 模型什么都没看到"的哑弹。
+                                    _chat_kwargs['native_content'] = _native_content
                                 _ans, _mode = _LOCAL['brain'].chat(_in_text, **_chat_kwargs)
                                 if getattr(_LOCAL['brain'], 'last_err', ''):
                                     yield {'type': 'error', 'class': 'service_error',
@@ -3183,13 +3205,7 @@ def start_remote_api(brain):
                             else:
                                 _stream_kwargs = dict(src=_src, conversation_id=_brain_cid)
                                 if _native_content is not None:
-                                    try:
-                                        import inspect as _inspect
-                                        if "native_content" in _inspect.signature(
-                                                _LOCAL['brain'].stream_chat).parameters:
-                                            _stream_kwargs['native_content'] = _native_content
-                                    except Exception:
-                                        pass
+                                    _stream_kwargs['native_content'] = _native_content
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
                     if _agent_item:
                         _events = self._agent_chat_events(_agent_item, self._display_owner(body), _agent_after)

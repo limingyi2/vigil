@@ -406,9 +406,12 @@ class PatchEngine:
         return target
 
     def _record(self, rel: str, before: str, after: str, kind: str = "write",
-                backup_path: str | None = None) -> dict[str, Any]:
+                backup_path: str | None = None, existed: bool = True) -> dict[str, Any]:
         digest = hashlib.sha256(after.encode("utf-8")).hexdigest()
-        entry = {"path": rel, "kind": kind, "before_sha256": hashlib.sha256(before.encode("utf-8")).hexdigest(),
+        # existed：回滚一个新建文件要把它删掉，不能留一个空文件在那儿。
+        # 只看 before 是不是空串分不出"原本就是空文件"和"原本没有这个文件"。
+        entry = {"path": rel, "kind": kind, "existed_before": bool(existed),
+                 "before_sha256": hashlib.sha256(before.encode("utf-8")).hexdigest(),
                  "after_sha256": digest, "diff": "".join(difflib.unified_diff(
                      before.splitlines(True), after.splitlines(True), fromfile=rel, tofile=rel))}
         if backup_path:
@@ -419,6 +422,7 @@ class PatchEngine:
     def write(self, path: str, text: str, expected_sha256: str | None = None) -> dict[str, Any]:
         target = self.guard.resolve(path, allow_missing=True)
         before = ""
+        existed = os.path.exists(target)
         if os.path.exists(target):
             if os.path.isdir(target):
                 raise WorkspaceError("不能把文件写到目录：%s" % path)
@@ -441,7 +445,8 @@ class PatchEngine:
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-        entry = self._record(self.guard.relative(target), before, data, backup_path=backup_path)
+        entry = self._record(self.guard.relative(target), before, data,
+                             backup_path=backup_path, existed=existed)
         stale = _purge_bytecode_cache(target)
         if stale:
             # Keep the evidence next to the diff: a reviewer has to be able to
@@ -456,7 +461,8 @@ class PatchEngine:
         before = Path(target).read_text(encoding="utf-8")
         backup_path = self._backup(self.guard.relative(target), before)
         os.unlink(target)
-        entry = self._record(self.guard.relative(target), before, "", "delete", backup_path)
+        entry = self._record(self.guard.relative(target), before, "", "delete",
+                             backup_path, existed=True)
         stale = _purge_bytecode_cache(target)
         if stale:
             entry["purged_bytecode"] = stale
@@ -826,31 +832,89 @@ class CodingHarness:
         if not isinstance(raw, list):
             raise CodingHarnessError("实现器没有返回 operations 数组")
         receipts: list[dict[str, Any]] = []
-        for op in raw:
-            if not isinstance(op, dict):
-                raise CodingHarnessError("实现操作必须是对象")
-            kind = str(op.get("op") or op.get("type") or "").lower()
-            if kind in ("write", "create", "replace"):
-                receipts.append(self.patches.write(str(op.get("path") or ""), str(op.get("content", op.get("text", ""))),
-                                                  op.get("expected_sha256")))
-            elif kind in ("patch", "diff"):
-                receipts.extend(self.patches.apply_unified_diff(str(op.get("patch") or op.get("diff") or "")))
-            elif kind == "delete":
-                receipts.append(self.patches.delete(str(op.get("path") or "")))
-            elif kind in ("command", "run"):
-                result = self.tests.run(str(op.get("command") or op.get("cmd") or ""), op.get("timeout"))
-                receipts.append({"kind": "command", **result.as_dict()})
-            elif kind in ("inspect", "read"):
-                path = self.guard.resolve(str(op.get("path") or ""))
-                receipts.append({"kind": "inspect", "path": self.guard.relative(path),
-                                 "content": _clip(Path(path).read_text(encoding="utf-8"), 30000)})
-            elif kind in ("noop", "note"):
-                receipts.append({"kind": "note", "text": _clip(op.get("text"), 1000)})
-            else:
-                raise CodingHarnessError("不支持的实现操作：%s" % kind)
+        # 🔴 一批 operations 是一个整体：第 3 个操作因为哈希冲突被拒时，
+        # 前两个已经落盘的改动必须退回原样。半批落盘等于给工作区留下
+        # 没人知道来源的修改，台账和磁盘也不再对得上。
+        changed_before = len(self.patches.changed)
+        try:
+            for op in raw:
+                if not isinstance(op, dict):
+                    raise CodingHarnessError("实现操作必须是对象")
+                kind = str(op.get("op") or op.get("type") or "").lower()
+                if kind in ("write", "create", "replace"):
+                    receipts.append(self.patches.write(str(op.get("path") or ""), str(op.get("content", op.get("text", ""))),
+                                                      op.get("expected_sha256")))
+                elif kind in ("patch", "diff"):
+                    receipts.extend(self.patches.apply_unified_diff(str(op.get("patch") or op.get("diff") or "")))
+                elif kind == "delete":
+                    receipts.append(self.patches.delete(str(op.get("path") or "")))
+                elif kind in ("command", "run"):
+                    result = self.tests.run(str(op.get("command") or op.get("cmd") or ""), op.get("timeout"))
+                    receipts.append({"kind": "command", **result.as_dict()})
+                elif kind in ("inspect", "read"):
+                    path = self.guard.resolve(str(op.get("path") or ""))
+                    receipts.append({"kind": "inspect", "path": self.guard.relative(path),
+                                     "content": _clip(Path(path).read_text(encoding="utf-8"), 30000)})
+                elif kind in ("noop", "note"):
+                    receipts.append({"kind": "note", "text": _clip(op.get("text"), 1000)})
+                else:
+                    raise CodingHarnessError("不支持的实现操作：%s" % kind)
+        except Exception:
+            self._rollback_since(changed_before)
+            raise
         for receipt in receipts:
             self.emit("coding_file" if receipt.get("path") else "coding_operation", receipt)
         return receipts
+
+    def _rollback_since(self, index: int) -> list[str]:
+        """把这一批里已经落盘的修改按逆序退回原样。
+
+        index 是本批开始前 ``patches.changed`` 的长度；退到它就说明整批都撤回了。
+        任何一步撤不回去都要留痕（``coding_rollback_failed``）—— 悄悄跳过会让
+        工作区停在一个既不是原样、也没人知道的状态上。
+        """
+        restored: list[str] = []
+        while len(self.patches.changed) > index:
+            entry = self.patches.changed[-1]
+            path = str(entry.get("path") or "")
+            try:
+                self._restore_entry(entry)
+            except Exception as exc:
+                self.emit("coding_rollback_failed",
+                          {"path": path, "error": "%s: %s" % (type(exc).__name__, str(exc)[:200])})
+                break
+            self.patches.changed.pop()
+            restored.append(path)
+        if restored:
+            self.emit("coding_rollback", {"restored": list(reversed(restored))})
+        return restored
+
+    def _restore_entry(self, entry: Mapping[str, Any]) -> None:
+        """按台账把单个条目恢复成写入前的样子。"""
+        rel = str(entry.get("path") or "")
+        target = self.guard.resolve(rel, allow_missing=True)
+        if not entry.get("existed_before", True):
+            if os.path.exists(target):
+                os.unlink(target)
+            _purge_bytecode_cache(target)
+            return
+        backup = str(entry.get("backup_path") or "")
+        if not backup:
+            raise WorkspaceError("没有可用于回滚的备份：%s" % rel)
+        source = backup if os.path.isabs(backup) else self.guard.resolve(backup)
+        content = Path(source).read_text(encoding="utf-8")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".vigil-rollback-", dir=self.guard.root)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp, target)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        _purge_bytecode_cache(target)
 
     def _verify(self, commands: Sequence[str]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
