@@ -56,14 +56,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vigil-windows-plugin-market-code30
-          # electron-builder 同时产出 nsis 安装器、portable 便携版和差分更新用的
-          # blockmap。历史上正式 release 会把三者一起挂上去，客户端的
-          # public-updates 只读 release-manifest.json 指向的安装器，但便携版是
-          # 用户在没有安装权限时的备用入口 —— 只上传 Setup.* 会把它丢掉。
+          # electron-builder 同时产出 nsis 安装器和差分更新用的 blockmap，
+          # 但上传列表只匹配 Vigil.Setup.*.exe —— blockmap 每次都被丢掉。
+          # 历史 release（v1.1.8-p9.3.20261021.1、p12-candidate-20261021-e6ae1a8）
+          # 都挂了它，从 CI 走出来的候选包却没有，资产结构与正式版不一致。
+          # blockmap 是客户端差分更新的依据，补齐后产品代码零改动。
+          #
+          # 便携版（portable target）故意不上传：它的文件名是
+          # "Vigil <版本>.exe"（中间是空格），通配符匹配不到；而且它是
+          # 250MB 起步的重复内容，候选包阶段没有必要拖着一份。
           path: |
             client/dist-release/Vigil.Setup.*.exe
             client/dist-release/Vigil.Setup.*.exe.blockmap
-            client/dist-release/Vigil.*.exe
             client/dist-release/release-manifest.json
             client/dist-release/Vigil.Setup.*.contents.json
           if-no-files-found: error
