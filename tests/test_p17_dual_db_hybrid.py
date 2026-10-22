@@ -1365,3 +1365,32 @@ def test_walk_authorized_checks_resolved_paths(home, monkeypatch):
     assert "a.md" in got and "b.md" in got, "误杀了授权范围内的正常文件：%r" % got
     assert "evil.md" not in got, "文件符号链接逃逸没挡住"
     assert "leak.txt" not in got, "目录符号链接/junction 逃逸没挡住"
+
+
+def test_agent_runs_read_and_write_share_one_db(home, store):
+    """Agent Run 的读写路径必须同源。
+
+    曾经出过一次真实的分裂：写路径换成了主库（vigil.db），读路径还硬编码
+    旧的独立文件 `data/agent_runs.sqlite3` —— 于是"写进主库、读旧文件"，
+    SSE 读不到刚写的增量，任务看起来一直没动。
+
+    这里钉两件事：
+      1. 运行时 `_db_file()` 返回的就是主库路径，读写都从它来；
+      2. 源码里不再出现硬编码的旧库文件名（注释除外）。
+    """
+    import ast
+    import agent_runs
+
+    assert agent_runs._db_file(create=True) == store.main_db_path()
+
+    # 源码级守卫：解析 AST，只看真实的字符串常量（注释不在 AST 里）。
+    src_path = agent_runs.__file__
+    with open(src_path, "r", encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    literals = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            literals.append(node.value)
+    for lit in literals:
+        assert "agent_runs.sqlite3" not in lit, \
+            "agent_runs 里又硬编码了旧库文件名：%r" % lit
