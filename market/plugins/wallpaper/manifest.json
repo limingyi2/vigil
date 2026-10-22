@@ -19,12 +19,12 @@
   ],
   "files": [
     {
-      "path": "LICENSE",
+      "path": "LICENSE.txt",
       "sha256": "a116f28b94e928c3b22acc3346cbd29b3cb2fddd68f73be5c9b93d7626f20cf6"
     },
     {
       "path": "README.md",
-      "sha256": "2886de290daf617c4d16abd75c3d5db3e056537121f7da1416ce339f2b54c222"
+      "sha256": "f9ef32d2b971178805344967e062831e13e9af2757bb923cb5fd69b26a6060ca"
     },
     {
       "path": "UPSTREAM.md",
