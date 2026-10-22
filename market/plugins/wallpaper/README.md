@@ -12,7 +12,7 @@
 
 ## 来源与许可
 
-渲染器源自 `elysia395/dsh-wallpaper-engine`，上游提交和 MIT 署名见 [UPSTREAM.md](UPSTREAM.md) 与 [LICENSE](LICENSE)。Vigil 适配代码由 Vigil 项目维护。
+渲染器源自 `elysia395/dsh-wallpaper-engine`，上游提交和 MIT 署名见 [UPSTREAM.md](UPSTREAM.md) 与 [LICENSE](LICENSE.txt)。Vigil 适配代码由 Vigil 项目维护。
 
 ## 安装与卸载
 
