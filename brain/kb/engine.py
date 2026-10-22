@@ -62,6 +62,54 @@ def reset_cache():
 
 # ---------------- 摄入 ----------------
 
+def _sync_chunks_to_unified(chunks, persona_key="", src="app", owner="", source_name=""):
+    """把知识库块同步进统一检索（文本+向量）。
+
+    这是 Phase2 统一向量化存储的核心：kb 投喂后，除了存自己的 npy，
+    还写进 storage/search_docs + embeddings，这样统一检索能搜到知识库内容。
+    失败不抛异常，只返回错误信息 —— 知识库是锦上添花，不能拖死聊天。
+    """
+    try:
+        from storage import indexer, search, vector, db
+        # 给 chunks 补上 source 字段（chunker 不返回 source）
+        enriched = []
+        for i, chunk in enumerate(chunks or []):
+            if not isinstance(chunk, dict):
+                chunk = {"text": str(chunk)}
+            if not chunk.get("text") or not str(chunk.get("text", "")).strip():
+                continue
+            chunk = dict(chunk)
+            if not chunk.get("source"):
+                chunk["source"] = source_name or "文档"
+            if "chunk" not in chunk:
+                chunk["chunk"] = i
+            enriched.append(chunk)
+        if not enriched:
+            return {"ok": False, "error": "no_chunks"}
+        # 1. 同步文本进 search_docs
+        result = indexer.sync_kb_chunks(
+            enriched, owner=owner, src=src, persona=persona_key, chan="")
+        indexed = result.get("indexed", 0)
+        if indexed == 0:
+            return {"ok": False, "error": "no_chunks_indexed"}
+        # 2. 给这些文档建向量（用统一的 EmbeddingBackend）
+        doc_ids = []
+        for chunk in enriched:
+            source = chunk.get("source", "")
+            ordinal = chunk.get("chunk", 0)
+            doc_id = "kb:%s:%s:%s:%s" % (persona_key or "-", src or "-", source, ordinal)
+            doc_ids.append(doc_id)
+        if doc_ids:
+            vec_result = search.index_embeddings(doc_ids, include_workspace=False)
+            return {"ok": bool(vec_result.get("ok")),
+                    "indexed": indexed,
+                    "vectorized": vec_result.get("indexed", 0),
+                    "model": vec_result.get("model", "")}
+        return {"ok": True, "indexed": indexed, "vectorized": 0}
+    except Exception as exc:
+        return {"ok": False, "error": "%s: %s" % (type(exc).__name__, str(exc)[:180])}
+
+
 def ingest_text(text, name, persona_key="", src="app"):
     """把一段文本切成块入库。name 是来源名（显示与删除都用它）。"""
     cfg = _cfg.load()
@@ -80,7 +128,13 @@ def ingest_text(text, name, persona_key="", src="app"):
     st = store_for(persona_key, src)
     n = st.upsert(name, chunks, vecs, model)
     st.set_source_meta(name, size=len(text or ""))
-    return {"ok": True, "name": name, "chunks": n, "model": model, "scope": scope_of(persona_key, src)}
+    result = {"ok": True, "name": name, "chunks": n, "model": model,
+              "scope": scope_of(persona_key, src)}
+    # Phase2：同步到统一检索（文本+向量）
+    if cfg.get("sync_to_unified", True):
+        sync_result = _sync_chunks_to_unified(chunks, persona_key, src, source_name=name)
+        result["unified_sync"] = sync_result
+    return result
 
 
 def ingest_path(path, persona_key="", src="app"):
@@ -137,27 +191,72 @@ def delete_doc(name, persona_key="", src="app"):
     st.load()
     st.delete_source(str(name))
     left = [s for s in (st.stats().get("sources") or {}) if s != str(name)]
+    # Phase2：同步删除统一检索里的对应文档
+    try:
+        from storage import search, db
+        conn = db.connection("main")
+        # kb 的 doc_id 格式：kb:{persona}:{src}:{source}:{ordinal}
+        pattern = "kb:%s:%s:%s:%%" % (persona_key or "-", src or "-", str(name))
+        conn.execute("DELETE FROM search_docs WHERE id LIKE ?", (pattern,))
+        conn.execute("DELETE FROM embeddings WHERE doc_id LIKE ?", (pattern,))
+        conn.commit()
+    except Exception:
+        pass  # 删除失败不影响主流程
     return {"ok": True, "name": name, "left": len(left)}
 
 
 def clear(persona_key="", src="app"):
     store_for(persona_key, src).clear()
+    # Phase2：同步清空统一检索里的 kb 文档
+    try:
+        from storage import db
+        conn = db.connection("main")
+        pattern = "kb:%s:%s:%%" % (persona_key or "-", src or "-")
+        conn.execute("DELETE FROM search_docs WHERE id LIKE ?", (pattern,))
+        conn.execute("DELETE FROM embeddings WHERE doc_id LIKE ?", (pattern,))
+        conn.commit()
+    except Exception:
+        pass
     return {"ok": True}
 
 
 # ---------------- 检索 ----------------
 
 def search(query, persona_key="", src="app", top_k=None, min_score=None):
+    """知识库检索。优先走统一检索（BM25+向量+RRF），失败降级到旧 npy 搜索。"""
     cfg = _cfg.load()
     q = str(query or "").strip()
     if not q or not cfg["enabled"]:
         return []
+    k = int(top_k or cfg["search_k"])
+    ms = cfg["min_score"] if min_score is None else min_score
+
+    # Phase2：优先走统一检索
+    if cfg.get("use_unified_search", True):
+        try:
+            from storage import unified
+            results, info = unified.retrieve(
+                q, owner="", src=src, persona=persona_key, chan="",
+                kinds=["kb"], top_k=k, budget_chars=2400)
+            if results:
+                # 转换成 kb search 的格式
+                out = []
+                for r in results:
+                    out.append({
+                        "source": r.source or r.title or "文档",
+                        "text": r.body or "",
+                        "score": float(r.score or 0.0),
+                        "chunk": (r.meta or {}).get("chunk", 0),
+                    })
+                return out
+        except Exception:
+            pass  # 统一检索失败，降级到旧搜索
+
+    # 降级：旧的 npy 暴力扫描
     qv, _tag = _emb.embed_one(q)
     if qv is None:
         return []
     st = store_for(persona_key, src)
-    k = int(top_k or cfg["search_k"])
-    ms = cfg["min_score"] if min_score is None else min_score
     return st.search(qv, top_k=k, min_score=ms)
 
 

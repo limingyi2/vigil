@@ -42,6 +42,8 @@ RRF 只看**排名**，不看分数：
 import json
 import os
 import time
+import hashlib
+import threading
 
 from . import db
 from . import tokenizer
@@ -55,6 +57,36 @@ RRF_K = 60
 DEFAULT_TOP_K = 8
 # 默认候选池大小
 DEFAULT_CANDIDATES = 60
+
+# 查询向量缓存：相同 query 不重复向量化，省 30ms/次
+_QUERY_CACHE = {}
+_QUERY_CACHE_LOCK = threading.Lock()
+QUERY_CACHE_TTL = 3600  # 1小时
+QUERY_CACHE_MAX = 1000  # 最多缓存1000条，防止内存膨胀
+
+
+def _cached_query_embed(query, backend):
+    """带缓存的查询向量化。命中缓存直接返回，不调模型。"""
+    q = str(query or "").strip()
+    if not q:
+        return [], ""
+    key = hashlib.md5(q.encode("utf-8")).hexdigest()
+    with _QUERY_CACHE_LOCK:
+        cached = _QUERY_CACHE.get(key)
+        if cached and time.time() - cached[1] < QUERY_CACHE_TTL:
+            return cached[0], cached[2]  # (vectors, tag)
+    # 缓存未命中，调模型
+    vectors, tag = backend.embed([q])
+    if vectors:
+        with _QUERY_CACHE_LOCK:
+            # 超过上限就清掉最旧的一半
+            if len(_QUERY_CACHE) >= QUERY_CACHE_MAX:
+                cutoff = time.time() - QUERY_CACHE_TTL / 2
+                for k in list(_QUERY_CACHE.keys()):
+                    if _QUERY_CACHE[k][1] < cutoff:
+                        del _QUERY_CACHE[k]
+            _QUERY_CACHE[key] = (vectors, time.time(), tag)
+    return vectors, tag
 
 # 检索范围种类
 SCOPE_CHAT = "chat"
@@ -302,6 +334,8 @@ def bm25_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES):
 def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backend=None):
     """向量语义检索。返回 (doc_id, score) 列表。
 
+    **优先用 FAISS HNSW 近似最近邻索引**，1万条以上比暴力扫描快50-100倍。
+    FAISS 不可用或索引未构建时自动降级到暴力扫描。
     **失败返回空列表**，绝不抛异常 —— 调用方据此降级到 BM25。
     """
     conn = db.connection("main")
@@ -311,7 +345,7 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
         return []
     where, args = _scope_where(scope, kinds)
     try:
-        vectors, tag = backend.embed([query])
+        vectors, tag = _cached_query_embed(query, backend)
     except Exception:
         return []
     if not vectors:
@@ -325,38 +359,48 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
         args).fetchall()
     if not rows:
         return []
+    # 过滤出同模型同维度的向量
+    valid_rows = []
+    for row in rows:
+        if row[1] != tag or int(row[2]) != dim:
+            continue
+        packed = vector.unpack(row[3])
+        if len(packed) != dim:
+            continue
+        valid_rows.append((row[0], packed))
+    if not valid_rows:
+        return []
+
+    # ---- 优先用 ANN 索引 ----
+    try:
+        ann = vector.get_ann_index(db.data_dir(), dim, tag)
+        if ann.ensure_loaded(all_docs=valid_rows):
+            results = ann.search(qv, k=limit)
+            if results:
+                # ANN 用的是归一化内积，分数范围 [-1, 1]，只取正数
+                return [(did, s) for did, s in results if s > 0][:limit]
+    except Exception:
+        pass  # ANN 失败，降级到暴力扫描
+
+    # ---- 降级：暴力扫描 ----
     scored = []
     np = vector.have_numpy()
-    if np and len(rows) > 50:
+    if np and len(valid_rows) > 50:
         import numpy as np
-        mat = np.zeros((len(rows), dim), dtype=np.float32)
-        for i, row in enumerate(rows):
-            if row[1] != tag or int(row[2]) != dim:
-                continue
-            packed = vector.unpack(row[3])
-            if len(packed) != dim:
-                continue
-            mat[i] = packed
+        mat = np.array([v for _, v in valid_rows], dtype=np.float32)
         q = np.asarray(qv, dtype=np.float32)
         qn = q / (np.linalg.norm(q) + 1e-9)
         mn = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
         sims = mn @ qn
-        for i, row in enumerate(rows):
-            if row[1] != tag or int(row[2]) != dim:
-                continue
+        for i, (doc_id, _) in enumerate(valid_rows):
             s = float(sims[i])
             if s > 0:
-                scored.append((row[0], s))
+                scored.append((doc_id, s))
     else:
-        for row in rows:
-            if row[1] != tag or int(row[2]) != dim:
-                continue
-            packed = vector.unpack(row[3])
-            if len(packed) != dim:
-                continue
-            s = vector.cosine(qv, packed)
+        for doc_id, vec in valid_rows:
+            s = vector.cosine(qv, vec)
             if s > 0:
-                scored.append((row[0], s))
+                scored.append((doc_id, s))
     scored.sort(key=lambda x: (-x[1], x[0]))
     return scored[:limit]
 
@@ -514,11 +558,15 @@ def _default_backend():
 # 向量索引
 # --------------------------------------------------------------------------
 
-def index_embeddings(doc_ids, backend=None):
+def index_embeddings(doc_ids, backend=None, include_workspace=False):
     """给文档批量补向量。
 
     **严格校验模型与维度**：索引里存了 `(model, dim)`，跟当前后端对不上就
     跳过（并把旧的作废），绝不混算。
+
+    **默认跳过工作区文件**（scope_kind='workspace'）：代码文件以英文标识符
+    为主，中文嵌入模型对代码语义理解有限，且代码检索靠 BM25 精确匹配
+    （函数名/类名/注释）已经够用。需要给代码建向量时显式传 include_workspace=True。
     """
     conn = db.connection("main")
     backend = backend or _default_backend()
@@ -529,8 +577,12 @@ def index_embeddings(doc_ids, backend=None):
     if not doc_ids:
         return {"ok": True, "indexed": 0}
     placeholders = ",".join("?" for _ in doc_ids)
-    rows = conn.execute("SELECT id, title, body FROM search_docs WHERE id IN (%s)" % placeholders,
-                        doc_ids).fetchall()
+    # 默认排除 workspace 类型：代码文件不向量化，只走 BM25
+    scope_filter = "" if include_workspace else " AND scope_kind != 'workspace'"
+    rows = conn.execute(
+        "SELECT id, title, body FROM search_docs WHERE id IN (%s)%s"
+        % (placeholders, scope_filter),
+        doc_ids).fetchall()
     if not rows:
         return {"ok": True, "indexed": 0}
     texts = ["%s\n%s" % (r[1] or "", r[2] or "") for r in rows]
@@ -550,6 +602,14 @@ def index_embeddings(doc_ids, backend=None):
                 "ON CONFLICT(doc_id) DO UPDATE SET model=excluded.model, dim=excluded.dim, "
                 "vector=excluded.vector, created_at=excluded.created_at",
                 (row[0], tag, dim, vector.pack(vec), now))
+    # 增量更新 ANN 索引：如果索引已加载，直接 add 新向量，避免下次查询重建
+    try:
+        ann = vector.get_ann_index(db.data_dir(), dim, tag)
+        if ann is not None and ann.is_loaded():
+            ann.add([r[0] for r in rows], list(vectors))
+            ann.save()
+    except Exception:
+        pass  # 索引更新失败不影响主流程，下次查询会重建
     return {"ok": True, "indexed": len(rows), "model": tag, "dim": dim}
 
 

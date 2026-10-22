@@ -34,6 +34,8 @@ DEFAULTS = {
     "batch": 32,            # 向量化批量
     "backend": "api",       # api | local | fastembed，见 embedder.py
     "model": "BAAI/bge-m3",  # local 后端加载的模型名
+    "use_unified_search": True,  # 检索走统一检索（storage），旧 npy 做降级
+    "sync_to_unified": True,     # 投喂时自动同步到统一检索（文本+向量）
 }
 
 # 只允许这几个键被写进 settings.json —— 别的键进来就是拼错了名字。

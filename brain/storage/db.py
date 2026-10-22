@@ -87,6 +87,11 @@ def main_db_path():
     return os.path.join(_dir(), MAIN_DB_NAME)
 
 
+def data_dir():
+    """数据库目录。ANN 索引等附属文件存在这里。"""
+    return _dir()
+
+
 def logs_db_path():
     return os.path.join(_dir(), LOGS_DB_NAME)
 

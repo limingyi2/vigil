@@ -623,8 +623,197 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
                           source="brain.workspaces", operations={
                               "status": {"permission": READ, "handler": lambda _a: {"state": "ready"}},
                           })
+
+        # ---- 统一检索（storage/unified）----
+        # 把聊天/记忆/知识库/工作区的混合检索暴露给 Agent。
+        # search 是只读；sync/reindex 会触发文件扫描和向量化，属于 delegated。
+        try:
+            from storage import unified as _unified
+            def _unified_status():
+                st = _unified.status()
+                st["state"] = "ready" if st.get("unified") else "disabled"
+                st["connected"] = bool(st.get("unified"))
+                return st
+            REGISTRY.register("unified_search", status=_safe_status(_unified_status),
+                              source="brain.storage.unified", operations={
+                                  "status": {"permission": READ,
+                                             "handler": lambda a: _unified.status(
+                                                 owner=a.get("owner", ""), src=a.get("src", ""),
+                                                 persona=a.get("persona", ""), chan=a.get("chan", ""))},
+                                  "search": {"permission": READ,
+                                             "handler": lambda a: _unified_search_handler(a)},
+                                  "sync": {"permission": DELEGATED,
+                                           "handler": lambda a: _unified_sync_handler(a)},
+                                  "reindex": {"permission": DELEGATED,
+                                              "handler": lambda a: _unified_reindex_handler(a)},
+                              }, metadata={"description": "混合检索（BM25+向量+RRF），覆盖聊天/记忆/知识库/工作区"})
+        except Exception as exc:
+            REGISTRY.register("unified_search", status={"connected": False, "state": "unavailable",
+                                                        "error": str(exc)[:180]},
+                              source="brain.storage.unified")
+
+        # ---- 知识库（kb）----
+        # 投喂/搜索/管理知识库文档。ingest 会写入并触发向量化，属于 delegated。
+        try:
+            import kb as _kb
+            def _kb_status():
+                st = _kb.stats()
+                st["state"] = "ready" if st.get("enabled") else "disabled"
+                st["connected"] = bool(st.get("enabled"))
+                return st
+            REGISTRY.register("knowledge_base", status=_safe_status(_kb_status),
+                              source="brain.kb", operations={
+                                  "status": {"permission": READ,
+                                             "handler": lambda a: _kb.stats(
+                                                 persona_key=a.get("persona", ""), src=a.get("src", "app"))},
+                                  "list": {"permission": READ,
+                                           "handler": lambda a: _kb.list_docs(
+                                               persona_key=a.get("persona", ""), src=a.get("src", "app"))},
+                                  "search": {"permission": READ,
+                                             "handler": lambda a: _kb_search_handler(a)},
+                                  "ingest_text": {"permission": DELEGATED,
+                                                  "handler": lambda a: _kb_ingest_text_handler(a)},
+                                  "ingest_path": {"permission": DELEGATED,
+                                                  "handler": lambda a: _kb_ingest_path_handler(a)},
+                                  "delete": {"permission": DELEGATED,
+                                             "handler": lambda a: _kb_delete_handler(a)},
+                                  "reindex": {"permission": DELEGATED,
+                                              "handler": lambda a: _kb_reindex_handler(a)},
+                              }, metadata={"description": "知识库：投喂文档/文本，语义搜索，自动向量化"})
+        except Exception as exc:
+            REGISTRY.register("knowledge_base", status={"connected": False, "state": "unavailable",
+                                                        "error": str(exc)[:180]},
+                              source="brain.kb")
+
         _BOOTSTRAPPED = True
     return REGISTRY
+
+
+# --------------------------------------------------------------------------
+# 统一检索 handler
+# --------------------------------------------------------------------------
+
+def _unified_search_handler(args):
+    """统一检索：返回结果列表 + 诊断信息。"""
+    from storage import unified
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "empty_query"}
+    results, info = unified.retrieve(
+        query,
+        owner=args.get("owner", ""),
+        src=args.get("src", ""),
+        persona=args.get("persona", ""),
+        chan=args.get("chan", ""),
+        workspace_ids=args.get("workspace_ids"),
+        kinds=args.get("kinds"),
+        top_k=int(args.get("top_k") or 6),
+        budget_chars=int(args.get("budget_chars") or 2400),
+    )
+    return {
+        "ok": True,
+        "query": query,
+        "method": info.get("method", "unknown"),
+        "hits": info.get("hits", 0),
+        "vector_available": info.get("vector_available", False),
+        "results": [r.to_dict() for r in results],
+    }
+
+
+def _unified_sync_handler(args):
+    """同步所有来源数据进检索索引。"""
+    from storage import unified
+    result = unified.sync_all(
+        owner=args.get("owner", ""),
+        src=args.get("src", ""),
+        persona=args.get("persona", ""),
+        chan=args.get("chan", ""),
+        include_workspace=bool(args.get("include_workspace", True)),
+    )
+    return {"ok": True, "synced": result}
+
+
+def _unified_reindex_handler(args):
+    """重建向量索引。耗时操作，放 delegated。"""
+    from storage import unified
+    doc_ids = args.get("doc_ids")
+    if doc_ids is not None and not isinstance(doc_ids, list):
+        return {"ok": False, "error": "doc_ids_must_be_list"}
+    result = unified.reindex_embeddings(doc_ids=doc_ids)
+    return {"ok": bool(result.get("ok")), "result": result}
+
+
+# --------------------------------------------------------------------------
+# 知识库 handler
+# --------------------------------------------------------------------------
+
+def _kb_search_handler(args):
+    """知识库语义搜索。"""
+    import kb
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "empty_query"}
+    results = kb.search(
+        query,
+        persona_key=args.get("persona", ""),
+        src=args.get("src", "app"),
+        top_k=args.get("top_k"),
+        min_score=args.get("min_score"),
+    )
+    return {"ok": True, "query": query, "count": len(results), "results": results}
+
+
+def _kb_ingest_text_handler(args):
+    """投喂文本到知识库。"""
+    import kb
+    text = str(args.get("text") or "").strip()
+    name = str(args.get("name") or "").strip()
+    if not text or not name:
+        return {"ok": False, "error": "text_and_name_required"}
+    result = kb.ingest_text(
+        text, name,
+        persona_key=args.get("persona", ""),
+        src=args.get("src", "app"),
+    )
+    return {"ok": True, "ingested": result}
+
+
+def _kb_ingest_path_handler(args):
+    """投喂文件到知识库。"""
+    import kb
+    path = str(args.get("path") or "").strip()
+    if not path:
+        return {"ok": False, "error": "path_required"}
+    result = kb.ingest_path(
+        path,
+        persona_key=args.get("persona", ""),
+        src=args.get("src", "app"),
+    )
+    return {"ok": True, "ingested": result}
+
+
+def _kb_delete_handler(args):
+    """删除知识库文档。"""
+    import kb
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required"}
+    result = kb.delete_doc(
+        name,
+        persona_key=args.get("persona", ""),
+        src=args.get("src", "app"),
+    )
+    return {"ok": True, "deleted": result}
+
+
+def _kb_reindex_handler(args):
+    """重建知识库索引。"""
+    import kb
+    result = kb.reindex(
+        persona_key=args.get("persona", ""),
+        src=args.get("src", "app"),
+    )
+    return {"ok": True, "reindexed": result}
 
 
 def _codex_create_task(codex: Any, args: Mapping[str, Any]) -> dict[str, Any]:
