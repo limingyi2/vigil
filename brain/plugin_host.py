@@ -65,6 +65,8 @@ _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()
 _loaded = False
+_runtime_brain = None
+_started = set()
 
 
 def _log(tag, msg):
@@ -281,7 +283,22 @@ def _scan_plugin_directory(directory):
     return found
 
 
-def load(force=False):
+def _plugin_entry_path(name):
+    """Find one plugin entry without importing unrelated plugin modules."""
+    name = str(name or "").strip()
+    for directory in (_INSTALLED_DIR, _DIR):
+        if not directory:
+            continue
+        package_init = os.path.join(directory, name, "__init__.py")
+        if os.path.isfile(package_init):
+            return package_init
+        module_file = os.path.join(directory, name + ".py")
+        if os.path.isfile(module_file):
+            return module_file
+    return ""
+
+
+def load(force=False, only=None):
     """Load core plugins first, then runtime-installed plugins as overrides.
 
     Market installs live under data/installed_plugins, never in the tracked source
@@ -289,6 +306,21 @@ def load(force=False):
     """
     global _loaded
     with _lock:
+        if only:
+            name = str(only).strip()
+            _started.discard(name)
+            _registry.pop(name, None)
+            entry = _plugin_entry_path(name)
+            if entry:
+                plugin = _load_one(entry)
+                if plugin and plugin.name == name:
+                    _registry[name] = plugin
+                elif plugin:
+                    _log(name, "插件 NAME 与目标名称不一致，已拒绝定向重载")
+            _reindex_tools()
+            _loaded = True
+            _sync_features()
+            return dict(_registry)
         found = _scan_plugin_directory(_DIR)
         if os.path.abspath(_INSTALLED_DIR) != os.path.abspath(_DIR):
             # Installed plugins override a same-named core plugin intentionally.
@@ -300,6 +332,13 @@ def load(force=False):
                 sys.modules.pop(key, None)
         _registry.clear()
         _registry.update(found)
+        # A forced scan creates fresh Plugin/module objects.  Do not let the
+        # old name set make the new module skip its start(brain) hook.  The
+        # lifecycle coordinator stops running hooks before a forced reload;
+        # clearing this set here also keeps the state truthful for callers
+        # that use load(force=True) directly.
+        if force:
+            _started.clear()
         _reindex_tools()
         _loaded = True
         _sync_features()
@@ -338,14 +377,9 @@ def get(name):
 def listing():
     """给 /api/plugins：所有插件 + 开关状态。"""
     out = []
-    try:
-        import features
-        on_map = features.all_features()
-    except Exception:
-        on_map = {}
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         d = p.info()
-        d["enabled"] = (not p.feature) or bool(on_map.get(p.feature, True))
+        d["enabled"] = _enabled(p)
         out.append(d)
     return out
 
@@ -358,15 +392,10 @@ def frontend_assets():
     资源没变就保持不变，供客户端判断是否需要热重载。
     """
     items = []
-    try:
-        import features
-        on_map = features.all_features()
-    except Exception:
-        on_map = {}
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if not (p.frontend_js or p.frontend_css):
             continue
-        enabled = (not p.feature) or bool(on_map.get(p.feature, True))
+        enabled = _enabled(p)
         items.append({
             "name": p.name,
             "js": p.frontend_js,
@@ -737,17 +766,81 @@ def route_table():
     return out
 
 
-def start_all(brain):
+def runtime_brain():
+    """Return the Brain instance registered by the running server, if any."""
+    return _runtime_brain
+
+
+def started_names():
+    """Return a snapshot of plugins whose start hook completed successfully."""
+    with _lock:
+        return set(_started)
+
+
+def is_started(name):
+    with _lock:
+        return str(name or "") in _started
+
+
+def is_enabled(name):
+    plugin = get(name)
+    return bool(plugin is not None and _enabled(plugin))
+
+
+def stop(name=None):
+    """Stop one/all started plugins when they expose a stop-like hook."""
+    names = [name] if name else list(_started)
+    errors = []
+    for item_name in names:
+        plugin = get(item_name)
+        if not plugin:
+            # A stale registry entry must not affect the Brain reference or
+            # another plugin's running state.
+            continue
+        stopped = False
+        for hook_name in ("stop", "shutdown", "close"):
+            hook = plugin.hook(hook_name)
+            if callable(hook):
+                try:
+                    hook()
+                    stopped = True
+                except Exception as exc:
+                    errors.append("%s.%s: %s" % (item_name, hook_name, str(exc)[:120]))
+                break
+        if stopped or not callable(plugin.hook("start")):
+            _started.discard(item_name)
+    return (not errors), errors
+
+
+def start_all(brain, names=None, detailed=False):
     """把带 start 的插件的后台线程跑起来（run_server 装完大脑后调一次）。"""
+    global _runtime_brain
+    if brain is None:
+        return 0
+    _runtime_brain = brain
     n = 0
+    started = []
+    failed = []
+    wanted = set(names or ())
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
+        if wanted and p.name not in wanted:
+            continue
+        if p.name in _started:
+            continue
         if not _enabled(p) or not callable(p.hook("start")):
             continue
         ok, _v = _call(p, "start", brain)
         if ok:
+            _started.add(p.name)
+            started.append(p.name)
             n += 1
+        else:
+            failed.append(p.name)
     if n:
         _log("启动", "%d 个插件的后台循环已起" % n)
+    if detailed:
+        return {"count": n, "started": started, "failed": failed}
+    return n
 
 
 def _enabled(p, src=None):
@@ -756,6 +849,16 @@ def _enabled(p, src=None):
     src 不传就按"当前渠道"（features 的 ambient 语义）判；**调用方能传就传** ——
     当前渠道是个进程级全局，两个渠道并发时它可能已经被另一个请求改掉了。
     """
+    # Unified lifecycle state is persisted by plugin_manager/plugin_ops. Keep
+    # FEATURE channel semantics for compatibility, but let the manager disable
+    # every plugin (including legacy featureless Python plugins) consistently.
+    try:
+        import plugin_ops
+        meta = (plugin_ops.read_registry().get("plugins") or {}).get(p.name) or {}
+        if meta.get("enabled") is False:
+            return False
+    except Exception:
+        pass
     if not p.feature:
         return True
     try:

@@ -258,7 +258,7 @@ def _read_remote_market():
                 "diagnostic": diagnostic}
 
 
-def _install_remote_directory(meta, name):
+def _install_remote_directory(meta, name, replace=False, managed=False):
     """Download a published package, verify artifact and Manifest hashes, then install transactionally."""
     artifact = meta.get("artifact")
     if not isinstance(artifact, dict):
@@ -332,7 +332,15 @@ def _install_remote_directory(meta, name):
                     raise ValueError("Manifest 文件 SHA-256 校验失败：" + item["path"])
             # The generic installer performs static plugin structure checks and the normal atomic commit.
             stage = "静态校验与事务安装"
-            ok, result = plugin_ops.install(archive_path, note="market:%s@%s" % (name, meta["version"]))
+            if managed:
+                import plugin_manager
+                return plugin_manager.update(
+                    name, archive_path,
+                    source="market:%s@%s" % (name, meta["version"]),
+                    manifest=manifest,
+                    reload=True,
+                )
+            ok, result = plugin_ops.install(archive_path, note="market:%s@%s" % (name, meta["version"]), replace=replace)
             if ok:
                 result["manifest"] = manifest
             else:
@@ -369,8 +377,24 @@ def api_list(body, query):
     plugins = []
     for p in market.get("plugins", []):
         item = dict(p)
+        item["market_version"] = p.get("version", "")
         item["installed"] = p.get("name") in installed
+        try:
+            import plugin_manager
+            item.update(plugin_manager.status(p.get("name"), p.get("version", "")))
+        except Exception:
+            pass
         plugins.append(item)
+    # Also expose locally installed extensions that are no longer published in
+    # the current market, so users can diagnose or remove them safely.
+    try:
+        import plugin_manager
+        known = {str(p.get("name")) for p in plugins}
+        for item in plugin_manager.list_plugins(market.get("plugins", [])):
+            if item.get("name") not in known:
+                plugins.append(item)
+    except Exception:
+        pass
     return {
         "ok": True,
         "state": market.get("state", "read_failed"),
@@ -398,6 +422,7 @@ def api_install(body, query):
     body: {"name": "插件名"}
     """
     name = str((body or {}).get("name") or "").strip()
+    import plugin_ops
     import re
     from plugin_structure import _filename_issue
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) or _filename_issue(name):
@@ -418,11 +443,36 @@ def api_install(body, query):
 
     # Never import newly downloaded code during the install transaction.
     repo = _repo_path()
+    already = name in _list_local()
+    if already:
+        return {"ok": False, "name": name, "state": "already_installed",
+                "err": "插件已安装，请使用更新操作", "installed_version":
+                plugin_ops.read_registry().get("plugins", {}).get(name, {}).get("version", "")}
+    try:
+        import plugin_manager
+        deps = plugin_manager._dependencies(meta, plugin_ops.read_registry())
+        if deps:
+            return {"ok": False, "name": name, "state": "error", "err": "依赖检查失败：" + "; ".join(deps)}
+    except Exception:
+        pass
     if repo:
         ok, result = _install_remote_directory(meta, name) if meta.get("artifact") else (False, {"err": "本地市场条目缺少可校验制品"})
     else:
         ok, result = _install_remote_directory(meta, name)
     if ok:
+        try:
+            import plugin_manager
+            plugin_manager._update_meta(name, result.get("manifest") or meta,
+                                        source="market:%s@%s" % (name, meta.get("version", "")))
+            reload_result = plugin_manager.reload(name)
+            result["runtime_state"] = reload_result.get("state", "loaded")
+            if reload_result.get("restart_needed"):
+                result["restart_needed"] = True
+                result["state"] = "restart_required"
+            if not reload_result.get("ok"):
+                result["runtime_warning"] = reload_result.get("err", "重载失败")
+        except Exception as exc:
+            result["runtime_warning"] = "安装后重载失败：%s" % str(exc)[:120]
         result["msg"] = "插件已安装到独立运行时目录；重启本地 Brain 后生效"
         result["restart_needed"] = True
         result["name"] = name
@@ -442,9 +492,8 @@ def api_uninstall(body, query):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) or _filename_issue(name):
         return {"ok": False, "err": "插件名不合法或为 Windows 保留名称"}
 
-    # 只允许卸载目录型插件（市场里的都是目录型）
-    import plugin_ops
-    ok, result = plugin_ops.uninstall(name, purge_data=False)
+    import plugin_manager
+    ok, result = plugin_manager.uninstall(name, purge_data=False)
     if ok:
         result.update(ok=True, name=name, msg="插件已卸载；用户配置和素材保留")
     else:
@@ -452,11 +501,41 @@ def api_uninstall(body, query):
     return result
 
 
+def api_update(body, query):
+    """POST /api/market/update —— 下载并原子替换市场版本。"""
+    name = str((body or {}).get("name") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        return {"ok": False, "err": "插件名不合法"}
+    market = _read_market()
+    if market.get("state") not in ("ready", "cached_stale"):
+        return {"ok": False, "state": market.get("state"), "err": market.get("err") or "插件市场当前不可用"}
+    meta = next((p for p in market.get("plugins", []) if p.get("name") == name), None)
+    if not meta:
+        return {"ok": False, "err": "市场里找不到插件 %s" % name}
+    if name not in _list_local():
+        return {"ok": False, "state": "not_installed", "err": "插件尚未安装，请先安装"}
+    import plugin_manager
+    import plugin_ops
+    deps = plugin_manager._dependencies(meta, plugin_ops.read_registry())
+    if deps:
+        return {"ok": False, "name": name, "state": "error", "err": "依赖检查失败：" + "; ".join(deps)}
+    # Reuse the market verifier, then delegate replacement and rollback to the
+    # unified manager instead of maintaining a second lifecycle transaction.
+    ok, result = _install_remote_directory(meta, name, replace=True, managed=True)
+    result["ok"] = bool(ok)
+    return result
+
+
 def _reload_plugins():
     """热重载插件目录。失败静默，重启后仍会生效。"""
     try:
-        import plugin_host
-        plugin_host.load(force=True)
+        # Keep market refreshes on the same lifecycle coordinator as install,
+        # update and uninstall. This preserves the running Brain and validates
+        # start(brain) hooks instead of merely replacing module objects.
+        import plugin_manager
+        result = plugin_manager.reload()
+        if not result.get("ok"):
+            raise RuntimeError(result.get("err") or "统一插件重载未完成")
     except Exception as e:
         print("[插件市场] 热重载失败（不影响卸载，重启后生效）：%s" % str(e)[:80], flush=True)
 
@@ -500,9 +579,34 @@ def api_refresh(body, query):
         return {"ok": False, "state": "read_failed", "err": str(e)[:80]}
 
 
+def api_lifecycle(body, query):
+    """POST /api/market/lifecycle — unified enable/disable/reload/status."""
+    import plugin_manager
+    body = body or {}
+    name = str(body.get("name") or "").strip()
+    action = str(body.get("action") or "status").strip().lower()
+    if action == "status":
+        return {"ok": True, "plugin": plugin_manager.status(name)}
+    if action == "enable":
+        ok, result = plugin_manager.enable(name)
+    elif action == "disable":
+        ok, result = plugin_manager.disable(name)
+    elif action == "reload":
+        result = plugin_manager.reload(name)
+        ok = bool(result.get("ok"))
+    elif action == "uninstall":
+        ok, result = plugin_manager.uninstall(name, purge_data=bool(body.get("purge_data")))
+    else:
+        return {"ok": False, "err": "不支持的生命周期操作"}
+    result["ok"] = bool(ok)
+    return result
+
+
 ROUTES = [
     ("GET", "/api/market/list", api_list),
     ("POST", "/api/market/install", api_install),
+    ("POST", "/api/market/update", api_update),
     ("POST", "/api/market/uninstall", api_uninstall),
     ("POST", "/api/market/refresh", api_refresh),
+    ("POST", "/api/market/lifecycle", api_lifecycle),
 ]

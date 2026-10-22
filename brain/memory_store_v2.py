@@ -1312,6 +1312,16 @@ class MemoryStore:
             if not text:
                 continue
             if not skip_dup_check:
+                # Same-id writes must reach _upsert_locked so an identical
+                # retry is reported as ``same`` and a changed payload is
+                # reported as ``updated``. Text-level deduplication is only
+                # for a new id; otherwise it masks the idempotency result.
+                same_id = any(existing.get("id") == it.get("id")
+                              for existing in self.data["items"])
+                if same_id:
+                    r = self._upsert_locked(it)
+                    stats[r] = stats.get(r, 0) + 1
+                    continue
                 # 逐字去重：同文本已存在就跳过
                 if any(existing.get("text", "").strip() == text
                        for existing in self.data["items"]):

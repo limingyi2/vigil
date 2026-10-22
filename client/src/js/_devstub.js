@@ -15,6 +15,14 @@
   const now = Math.floor(Date.now() / 1000);
   const PREVIEW_SESSIONS = [];
   const PREVIEW_HISTORY = new Map();
+  const PREVIEW_MARKET = [
+    { name: 'weather', desc: '查天气', author: 'Vigil', version: '1.2.0', market_version: '1.2.0',
+      installed: true, enabled: true, update_state: 'current', runtime_state: 'loaded', tags: ['工具'] },
+    { name: 'memo', desc: '记账', author: 'Vigil', version: '0.9.0', market_version: '1.0.0',
+      installed: true, enabled: false, update_state: 'update_available', runtime_state: 'disabled', tags: ['数据'] },
+    { name: 'translate', desc: '翻译', author: 'Vigil', version: '2.0.0', market_version: '2.0.0',
+      installed: false, enabled: false, update_state: 'not_installed', runtime_state: 'not_loaded', tags: ['工具'] },
+  ];
 
   const STATS = {
     turns: 128, tok_in: 31200, tok_out: 10900, fallback: 2, avg_ms: 2900,
@@ -143,6 +151,39 @@
         history.push({role:'user',text:body.text||'',t:new Date().toISOString()},{role:'assistant',text:'（网页验收模拟）已收到：'+(body.text||''),t:new Date().toISOString()});
         PREVIEW_HISTORY.set(id,history); const item=PREVIEW_SESSIONS.find(x=>x.id===id); if(item){item.has_content=true;item.title=(body.text||'新对话').slice(0,48);item.updated_at=Date.now()/1000;}
         return J({ok:true,reply:'（网页验收模拟）已收到：'+(body.text||'')});
+      }
+      if (url.pathname === '/api/market/list' && method === 'GET') {
+        return J({ ok: true, state: 'ready', state_message: '插件市场已就绪', source: 'preview',
+          market_version: 'preview', updated: '2026-10-23', installed_count: PREVIEW_MARKET.filter(x => x.installed).length,
+          plugins: PREVIEW_MARKET });
+      }
+      if (url.pathname === '/api/market/refresh' && method === 'POST') return J({ ok: true, state: 'ready' });
+      if (url.pathname === '/api/market/lifecycle' && method === 'POST') {
+        const item = PREVIEW_MARKET.find(x => x.name === (body && body.name));
+        if (!item) return J({ ok: false, err: '插件不存在' }, 404);
+        const action = body.action;
+        if (action === 'enable') { item.enabled = true; item.runtime_state = 'loaded'; }
+        if (action === 'disable') { item.enabled = false; item.runtime_state = 'disabled'; }
+        if (action === 'reload') item.runtime_state = 'loaded';
+        return J({ ok: true, name: item.name, state: item.runtime_state, enabled: item.enabled });
+      }
+      if (url.pathname === '/api/market/install' && method === 'POST') {
+        const item = PREVIEW_MARKET.find(x => x.name === (body && body.name));
+        if (!item) return J({ ok: false, err: '市场里找不到插件' }, 404);
+        item.installed = true; item.enabled = true; item.runtime_state = 'loaded'; item.update_state = 'current'; item.version = item.market_version;
+        return J({ ok: true, name: item.name, state: 'installed', msg: '插件已安装' });
+      }
+      if (url.pathname === '/api/market/update' && method === 'POST') {
+        const item = PREVIEW_MARKET.find(x => x.name === (body && body.name));
+        if (!item || !item.installed) return J({ ok: false, err: '插件尚未安装' }, 404);
+        item.version = item.market_version; item.update_state = 'current'; item.runtime_state = 'loaded';
+        return J({ ok: true, name: item.name, state: 'updated', stage: 'loaded' });
+      }
+      if (url.pathname === '/api/market/uninstall' && method === 'POST') {
+        const item = PREVIEW_MARKET.find(x => x.name === (body && body.name));
+        if (!item || !item.installed) return J({ ok: false, err: '插件不存在' }, 404);
+        item.installed = false; item.enabled = false; item.runtime_state = 'not_loaded'; item.update_state = 'not_installed';
+        return J({ ok: true, name: item.name, state: 'uninstalled', user_data: 'preserved' });
       }
       for (const [re, fn] of ROUTES) {
         if (re.test(path)) return fn(body, path);

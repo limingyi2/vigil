@@ -5737,8 +5737,14 @@
         const tags = (p.tags || []).map(function (t) {
           return '<span class="tag" style="margin-right:4px;margin-bottom:4px">' + esc(t) + '</span>';
         }).join('');
-        const btn = p.installed
-          ? '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>'
+        const localVersion = p.installed ? (p.version || '未知') : '';
+        const marketVersion = p.market_version || p.version || '未知';
+        const state = p.runtime_state || p.state || (p.installed ? 'unknown' : 'not_installed');
+        const updateAvailable = p.installed && p.update_state === 'update_available';
+        const actionButtons = p.installed
+          ? '<button class="btn" data-action="' + (updateAvailable ? 'update' : 'reload') + '" data-name="' + esc(p.name) + '">' + (updateAvailable ? '更新' : '重载') + '</button>' +
+            '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>' +
+            '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>'
           : '<button class="btn" data-action="install" data-name="' + esc(p.name) + '">安装</button>';
         const badge = p.installed
           ? '<span class="tag" style="background:var(--ok-bg);color:var(--ok);margin-left:8px">已安装</span>'
@@ -5748,13 +5754,16 @@
           '<div style="display:flex;align-items:center;gap:8px">' +
           '<span class="market-icon" aria-hidden="true">' + icon('puzzle', 'md') + '</span>' +
           '<strong>' + esc(p.name) + '</strong>' +
-          '<span class="muted" style="font-size:12px">v' + esc(p.version || '?') + '</span>' +
+          '<span class="muted" style="font-size:12px">市场 v' + esc(marketVersion) + '</span>' +
           badge +
           '</div>' +
           '<div class="muted" style="font-size:12px">' + esc(p.author || '未知') + '</div>' +
           '<div style="flex:1;font-size:13px;line-height:1.5">' + esc(p.desc || '') + '</div>' +
           '<div style="margin-top:4px">' + tags + '</div>' +
-          '<div style="display:flex;gap:8px;margin-top:8px">' + btn + '</div>' +
+          (p.installed ? '<div class="market-meta">本地 v' + esc(localVersion) + ' · ' + esc(updateAvailable ? '有可用更新' : (p.update_state === 'ahead' ? '本地版本较新' : '已是最新')) + '</div>' : '') +
+          '<div class="market-meta">运行状态：' + esc(state) + (p.enabled === false ? ' · 已禁用' : '') + '</div>' +
+          (p.diagnostic ? '<div class="market-error">诊断：' + esc(p.diagnostic) + '</div>' : '') +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">' + actionButtons + '</div>' +
           '</div>'
         );
       }).join('');
@@ -5769,24 +5778,29 @@
           const action = btn.dataset.action;
           const name = btn.dataset.name;
           if (marketPending.has(name)) return;
+          if (action === 'uninstall' && !await confirmDialog('确认卸载“' + name + '”？插件会停止并移除，但默认保留用户数据。')) return;
           marketPending.set(name, action);
           btn.disabled = true;
-          btn.textContent = action === 'install' ? '安装中...' : '卸载中...';
+          btn.textContent = ({ install: '安装中...', update: '更新中...', uninstall: '卸载中...', enable: '启用中...', disable: '禁用中...', reload: '重载中...' })[action] || '处理中...';
           try {
-            const r = await API.post('/api/market/' + action, { name: name });
+            const path = action === 'enable' || action === 'disable' || action === 'reload'
+              ? '/api/market/lifecycle' : '/api/market/' + action;
+            const body = path.endsWith('/lifecycle') ? { name: name, action: action } : { name: name };
+            const r = await API.post(path, body);
             if (r && r.ok && r.json && r.json.ok) {
               marketPending.delete(name);
               if (!disposed) await load();
-              if (r.json.msg) toast(r.json.msg);
+              if (r.json.msg || r.json.runtime_warning) toast(r.json.msg || r.json.runtime_warning);
             } else {
-              toast((r && r.json && r.json.err) || '操作失败');
+              const body = r && r.json;
+              toast((body && (body.err || body.runtime_warning)) || (r && r.err) || '操作失败');
               btn.disabled = false;
-              btn.textContent = action === 'install' ? '安装' : '卸载';
+              btn.textContent = action === 'install' ? '安装' : action === 'update' ? '更新' : action === 'uninstall' ? '卸载' : action === 'reload' ? '重载' : action === 'enable' ? '启用' : '禁用';
             }
           } catch (e) {
             toast('操作失败：' + e.message);
             btn.disabled = false;
-            btn.textContent = action === 'install' ? '安装' : '卸载';
+            btn.textContent = action === 'install' ? '安装' : action === 'update' ? '更新' : action === 'uninstall' ? '卸载' : action === 'reload' ? '重载' : action === 'enable' ? '启用' : '禁用';
           } finally {
             marketPending.delete(name);
             if (!disposed && marketData) draw();
