@@ -1165,6 +1165,12 @@ class Brain:
         _model_request_seconds = 0.0
         used = []
 
+        # P17 诊断：把请求开始的时刻和本轮配置快照存到 self 上。
+        # 存 self 而不是靠局部变量，是因为 finally 里要读 —— 而这个函数有
+        # 十几处 return，逐个传参必然漏一处。
+        self._diag_t0 = _t0
+        self._diag_api = _api0
+
         try:
             # 工具循环的轮数与时间预算。
             #
@@ -1427,6 +1433,41 @@ class Brain:
                 # Unknown completion / network errors must never replay a task.
                 return '模型请求失败，未自动重试；请核对已完成操作'
             return None
+        finally:
+            # P17 诊断：一次完整模型请求的耗时与 token 用量进诊断库。
+            # 放 finally 是因为上面有十几处 return，逐个补调用必然漏；
+            # 这里对每条出口都生效，包括异常和委派短路。
+            # `_diag_model_request` 内部入队即返回，不会拖慢收尾。
+            self._diag_model_request()
+
+    def _diag_model_request(self):
+        """把本轮模型请求的耗时/token/成败写进诊断库。绝不抛异常。
+
+        放在独立方法里是为了让 `finally` 只有一行：异常安全由
+        `storage.diag` 的 `_guard` 和调用处的 try 双重保证。
+        """
+        try:
+            from storage import diag
+            usage = self.last_usage if isinstance(self.last_usage, dict) else {}
+            api = self._diag_api if isinstance(getattr(self, "_diag_api", None), dict) else {}
+            t0 = getattr(self, "_diag_t0", None)
+            duration_ms = self.last_ms
+            if duration_ms is None and t0:
+                duration_ms = int((time.time() - t0) * 1000)
+            diag.log_model_request(
+                provider=str(api.get("provider") or self.last_provider_kind or "cloud"),
+                model=str(api.get("model") or ""),
+                duration_ms=int(duration_ms or 0),
+                prompt_tokens=int(usage.get("in") or 0),
+                completion_tokens=int(usage.get("out") or 0),
+                purpose="draft_native",
+                ok=not bool(self.last_err),
+                error=str(self.last_err or "")[:200],
+                scope={"src": getattr(self, "_cur_src", None) or "pc",
+                       "route": getattr(self, "last_route", None),
+                       "tools": getattr(self, "last_tools_used", None) or []})
+        except Exception:
+            pass
 
     # --- 前置判断（router）：便宜模型先决策并调工具，主模型只组织回答 ---
     #

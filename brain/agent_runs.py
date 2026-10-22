@@ -265,9 +265,11 @@ def _steps_digest(item, per_entry=500, total=6000):
 
 @contextmanager
 def _db():
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    filename = os.path.join(paths.DATA_DIR, 'agent_runs.sqlite3')
-    db = sqlite3.connect(filename, timeout=10)
+    # P17：任务状态与执行审计属于主库。表名与列序一字未改（旧模块用的是
+    # 位置插入，改动列序会静默写错列），只把连接目标从独立文件换成 vigil.db。
+    from storage import db as _store
+    filename = _store.main_db_path()
+    db = _store.legacy_connection()
     try:
         db.execute('PRAGMA synchronous=FULL')
         db.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(owner,request_id))')
@@ -984,6 +986,7 @@ def _tool(rid, owner, started, call, ctx):
     raw_chars = 0
     error = None
     raised = False
+    _tool_t0 = time.monotonic()
     try:
         import localtools
         with localtools.capture_receipts(stopped=lambda: snapshot(rid, owner)['status'] != 'running') as receipts:
@@ -1043,7 +1046,26 @@ def _tool(rid, owner, started, call, ctx):
         if reason and item['status'] == 'running':
             _finish(db, item, 'failed', reason)
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
+    # P17 诊断：一次工具调用的成败、失败原因、耗时进诊断库。
+    # 放在事务外：入队即返回，不该占着写锁等 IO；诊断库坏了也只是丢条日志。
+    _diag_tool_call(rid, name, reason, error, raw_chars, clipped,
+                    int((time.monotonic() - _tool_t0) * 1000), raised)
     return (None if reason else result), False
+
+
+def _diag_tool_call(rid, name, reason, error, raw_chars, clipped, duration_ms, raised):
+    """工具调用诊断。**任何情况下都不许抛** —— 它是观察者，不是参与者。"""
+    try:
+        from storage import diag
+        diag.log_tool_call(
+            tool=name,
+            state='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
+            duration_ms=duration_ms, run_id=rid,
+            error=str(error or reason or '')[:200],
+            scope={"raw_chars": raw_chars, "truncated": bool(clipped),
+                   "raised": bool(raised), "reason": reason or None})
+    except Exception:
+        pass
 
 
 def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):

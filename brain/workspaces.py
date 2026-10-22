@@ -64,8 +64,9 @@ def display_name(display):
 
 @contextmanager
 def _db():
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    db = sqlite3.connect(os.path.join(paths.DATA_DIR, "workspaces.sqlite3"), timeout=10)
+    # P17：工作区并入主库。表结构与列名保持原样，SQL 一行未改。
+    from storage import db as _store
+    db = _store.legacy_connection()
     db.execute("CREATE TABLE IF NOT EXISTS workspaces (owner TEXT NOT NULL, src TEXT NOT NULL,"
                " persona TEXT NOT NULL, id TEXT NOT NULL, path TEXT NOT NULL, key TEXT NOT NULL,"
                " name TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL,"
