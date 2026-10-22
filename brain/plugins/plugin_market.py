@@ -337,6 +337,7 @@ def _install_remote_directory(meta, name, replace=False, managed=False):
                 return plugin_manager.update(
                     name, archive_path,
                     source="market:%s@%s" % (name, meta["version"]),
+                    manifest=manifest,
                     reload=True,
                 )
             ok, result = plugin_ops.install(archive_path, note="market:%s@%s" % (name, meta["version"]), replace=replace)
@@ -528,8 +529,13 @@ def api_update(body, query):
 def _reload_plugins():
     """热重载插件目录。失败静默，重启后仍会生效。"""
     try:
-        import plugin_host
-        plugin_host.load(force=True)
+        # Keep market refreshes on the same lifecycle coordinator as install,
+        # update and uninstall. This preserves the running Brain and validates
+        # start(brain) hooks instead of merely replacing module objects.
+        import plugin_manager
+        result = plugin_manager.reload()
+        if not result.get("ok"):
+            raise RuntimeError(result.get("err") or "统一插件重载未完成")
     except Exception as e:
         print("[插件市场] 热重载失败（不影响卸载，重启后生效）：%s" % str(e)[:80], flush=True)
 

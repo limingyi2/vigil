@@ -101,6 +101,10 @@ def test_manager_reports_and_keeps_backup_when_restore_fails(tmp_path):
     assert result["rollback"] == "failed"
     assert "permission denied" in result["rollback_diagnostic"]
     assert result["recovery_path"]
+    persisted = json.loads(registry.read_text(encoding="utf-8"))["plugins"]["demo"]
+    assert "permission denied" in persisted["last_error"]
+    assert result["recovery_path"] in persisted["last_error"]
+    assert persisted["recovery_path"] == result["recovery_path"]
 
 
 def test_enable_requires_running_brain_for_start_hook(tmp_path):
@@ -142,6 +146,64 @@ def test_host_start_all_executes_start_hook_with_runtime_brain():
         plugin_host._registry, plugin_host._started, plugin_host._runtime_brain = old_registry, old_started, old_brain
 
 
+def test_host_stop_missing_plugin_keeps_running_brain_reference():
+    brain = object()
+    old_registry, old_started, old_brain = plugin_host._registry, plugin_host._started, plugin_host._runtime_brain
+    try:
+        plugin_host._registry = {}
+        plugin_host._started = {"removed"}
+        plugin_host._runtime_brain = brain
+        assert plugin_host.stop("removed")[0]
+        assert plugin_host.runtime_brain() is brain
+    finally:
+        plugin_host._registry, plugin_host._started, plugin_host._runtime_brain = old_registry, old_started, old_brain
+
+
+def test_manager_reload_rejects_failed_start_hook():
+    class FakePlugin:
+        name = "demo"
+
+        @staticmethod
+        def hook(name):
+            return (lambda brain: None) if name == "start" else None
+
+    brain = object()
+    with patch.object(plugin_host, "started_names", return_value=set()), \
+         patch.object(plugin_host, "stop", return_value=(True, [])), \
+         patch.object(plugin_host, "load", return_value={"demo": FakePlugin()}), \
+         patch.object(plugin_host, "runtime_brain", return_value=brain), \
+         patch.object(plugin_host, "is_enabled", return_value=True), \
+         patch.object(plugin_host, "start_all", return_value={"count": 0, "started": [], "failed": ["demo"]}), \
+         patch.object(plugin_host, "is_started", return_value=False):
+        try:
+            plugin_manager._reload("demo")
+        except RuntimeError as exc:
+            assert "start(brain)" in str(exc)
+        else:
+            raise AssertionError("failed start hook must fail reload")
+
+
+def test_update_start_hook_failure_restores_old_version(tmp_path):
+    target = tmp_path / "installed"
+    target.mkdir()
+    old = target / "demo"
+    old.mkdir()
+    (old / "__init__.py").write_text("old", encoding="utf-8")
+    registry = target / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"demo": {
+        "version": "1.0.0", "enabled": True}}}), encoding="utf-8")
+    newer = tmp_path / "new.zip"
+    _archive(newer, "2.0.0", b"NAME='demo'\nDESC='new'\n")
+    with patch.object(plugin_ops, "_PLUG_DIR", str(target)), \
+         patch.object(plugin_ops, "REGISTRY", str(registry)), \
+         patch.object(plugin_manager, "_reload", side_effect=[RuntimeError("start(brain) failed"), True]):
+        ok, result = plugin_manager.update("demo", str(newer), reload=True)
+    assert not ok
+    assert result["rollback"] == "restored"
+    assert (old / "__init__.py").read_text(encoding="utf-8") == "old"
+    assert json.loads(registry.read_text(encoding="utf-8"))["plugins"]["demo"]["version"] == "1.0.0"
+
+
 def test_manager_status_exposes_market_update_state(tmp_path):
     target = tmp_path / "installed"
     target.mkdir()
@@ -152,3 +214,46 @@ def test_manager_status_exposes_market_update_state(tmp_path):
         value = plugin_manager.status("demo", "1.1.0")
     assert value["update_state"] == "update_available"
     assert value["permissions"] == ["x"]
+
+
+def test_featureless_plugin_disable_is_consistent_in_listing_and_frontend(tmp_path):
+    class FakePlugin:
+        name = "demo"
+        desc = "demo"
+        feature = ""
+        tools = {}
+        routes = []
+        frontend_js = "window.demo = true;"
+        frontend_css = ""
+        err = ""
+
+        def info(self):
+            return {"name": self.name, "desc": self.desc, "feature": self.feature,
+                    "tools": [], "routes": [], "hooks": [], "file": "demo.py", "err": ""}
+
+        def hook(self, _name):
+            return None
+
+    registry = tmp_path / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"demo": {
+        "version": "1.0.0", "enabled": False}}}), encoding="utf-8")
+    old_registry = plugin_host._registry
+    try:
+        plugin_host._registry = {"demo": FakePlugin()}
+        with patch.object(plugin_ops, "REGISTRY", str(registry)):
+            listed = plugin_host.listing()
+            assets = plugin_host.frontend_assets()
+        assert listed[0]["enabled"] is False
+        assert assets["plugins"][0]["enabled"] is False
+    finally:
+        plugin_host._registry = old_registry
+
+
+def test_uninstall_reloads_remaining_plugins_without_missing_target_warning():
+    with patch.object(plugin_manager, "_valid_name", return_value=True), \
+         patch.object(plugin_manager, "_stop", return_value=(True, "")), \
+         patch.object(plugin_ops, "uninstall", return_value=(True, {"name": "demo"})), \
+         patch.object(plugin_manager, "_reload", return_value=True):
+        ok, result = plugin_manager.uninstall("demo")
+    assert ok
+    assert "runtime_warning" not in result

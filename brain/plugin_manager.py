@@ -86,16 +86,45 @@ def _stop(name):
 
 def _reload(name=None, brain=None):
     import plugin_host
+    # A forced load recreates module objects. Stop every previously started
+    # hook first so a full reload cannot leave old worker threads running while
+    # the new module is started. The Brain object itself remains registered in
+    # plugin_host and is intentionally not cleared by stop().
+    active = plugin_host.started_names()
+    for running_name in sorted(active):
+        plugin = plugin_host.get(running_name)
+        if (plugin is not None and callable(plugin.hook("start"))
+                and not any(callable(plugin.hook(h)) for h in ("stop", "shutdown", "close"))):
+            return False
+    stopped, stop_errors = plugin_host.stop()
+    if not stopped:
+        return False
     loaded = plugin_host.load(force=True)
     if name and name not in loaded:
         raise RuntimeError("插件 %s 未能加载；请查看插件错误诊断" % name)
     running_brain = brain if brain is not None else plugin_host.runtime_brain()
     target = [name] if name else None
-    needs_brain = any(callable(p.hook("start")) for n, p in loaded.items() if not target or n in target)
+    # Targeted reloads still stopped all running hooks above so the recreated
+    # modules are safe to start. Restart the previously running set plus the
+    # target; a full reload starts every enabled start hook.
+    restart_names = None if not name else [n for n in sorted(active | {name}) if n in loaded]
+    candidate_names = list(loaded) if restart_names is None else restart_names
+    needs_brain = any(
+        callable(loaded[n].hook("start")) and plugin_host.is_enabled(n)
+        for n in candidate_names
+    )
     if needs_brain and running_brain is None:
         return False
     if running_brain is not None:
-        plugin_host.start_all(running_brain, names=target)
+        details = plugin_host.start_all(running_brain, names=restart_names, detailed=True)
+        if details["failed"]:
+            failed = ", ".join(details["failed"])
+            raise RuntimeError("插件 start(brain) 启动失败：%s" % failed)
+        required = [n for n in candidate_names
+                    if callable(loaded[n].hook("start")) and plugin_host.is_enabled(n)]
+        missing = [n for n in required if not plugin_host.is_started(n)]
+        if missing:
+            raise RuntimeError("插件 start(brain) 未完成：%s" % ", ".join(missing))
     return True
 
 
@@ -207,7 +236,7 @@ def _update_meta(name, manifest, *, enabled=None, source=""):
     return item
 
 
-def install_archive(path, *, source="zip", replace=False, reload=True):
+def install_archive(path, *, source="zip", replace=False, reload=True, manifest_override=None):
     """Install one archive through the existing safe transaction."""
     name = ""
     try:
@@ -218,7 +247,8 @@ def install_archive(path, *, source="zip", replace=False, reload=True):
         if package_name and not replace and _meta(_registry(), package_name):
             return False, {"ok": False, "name": package_name,
                            "err": "插件已安装，请使用更新操作", "state": "already_installed"}
-        missing = _dependencies(incoming, _registry())
+        metadata_manifest = manifest_override if manifest_override is not None else incoming
+        missing = _dependencies(metadata_manifest, _registry())
         if missing:
             return False, {"ok": False, "err": "依赖检查失败：" + "; ".join(missing), "state": "error"}
         ok, result = _ops().install(path, note=source, replace=replace)
@@ -227,8 +257,11 @@ def install_archive(path, *, source="zip", replace=False, reload=True):
             if name:
                 _set_state(name, state="error", last_error=result.get("err", "安装失败"))
             return False, result
-        manifest = result.get("manifest") or {}
-        reg = _registry()
+        # Market packages carry a signed/verified manifest.json in addition to
+        # the optional legacy zxplugin.json. Keep those formats distinct and
+        # persist the already-verified market manifest as registry metadata.
+        manifest = dict(manifest_override if manifest_override is not None
+                        else (result.get("manifest") or {}))
         _update_meta(name, manifest, source=source)
         if reload:
             try:
@@ -259,7 +292,7 @@ def install(name, archive_path, **kwargs):
     return install_archive(archive_path, **kwargs)
 
 
-def update(name, archive_path, *, source="market", reload=True):
+def update(name, archive_path, *, source="market", reload=True, manifest=None):
     """Replace an existing plugin atomically; plugin_ops keeps its backup until commit."""
     reg = _registry()
     if not _meta(reg, name):
@@ -270,7 +303,10 @@ def update(name, archive_path, *, source="market", reload=True):
         shutil.rmtree(backup["path"], ignore_errors=True)
         _set_state(name, state="error", last_error="停止旧插件失败：" + stopped)
         return False, {"ok": False, "err": "停止旧插件失败：" + stopped, "state": "error"}
-    result_ok, result = install_archive(archive_path, source=source, replace=True, reload=False)
+    result_ok, result = install_archive(
+        archive_path, source=source, replace=True, reload=False,
+        manifest_override=manifest,
+    )
     if result_ok and reload:
         try:
             if not _reload(name):
@@ -297,12 +333,22 @@ def update(name, archive_path, *, source="market", reload=True):
             restore_err = "旧插件重载异常：%s" % str(exc)[:180]
         if reloaded:
             shutil.rmtree(backup["path"], ignore_errors=True)
-            result.update(ok=False, rollback="restored", rollback_diagnostic="旧文件、注册表和运行态均已恢复", state="error")
+            diagnostic = "旧文件、注册表和运行态均已恢复"
+            result.update(ok=False, rollback="restored", rollback_diagnostic=diagnostic, state="error")
         else:
-            result.update(ok=False, rollback="failed", rollback_diagnostic="文件和注册表已恢复，但旧插件无法重新加载；备份保留于 %s" % backup["path"], recovery_path=backup["path"], state="error")
+            diagnostic = "文件和注册表已恢复，但旧插件无法重新加载；备份保留于 %s" % backup["path"]
+            result.update(ok=False, rollback="failed", rollback_diagnostic=diagnostic, recovery_path=backup["path"], state="error")
     else:
-        result.update(ok=False, rollback="failed", rollback_diagnostic="恢复旧插件失败：%s；备份保留于 %s" % (restore_err, backup["path"]), recovery_path=backup["path"], state="error")
-    _set_state(name, state="error", last_error=result.get("err") or result.get("rollback_diagnostic", "更新失败"))
+        diagnostic = "恢复旧插件失败：%s；备份保留于 %s" % (restore_err, backup["path"])
+        result.update(ok=False, rollback="failed", rollback_diagnostic=diagnostic, recovery_path=backup["path"], state="error")
+    if result.get("rollback") == "failed":
+        # Recovery diagnostics must win over the original update error and be
+        # persisted so a restart still tells the operator where the backup is.
+        _set_state(name, state="error", last_error=result.get("rollback_diagnostic", "更新回滚失败"),
+                   rollback="failed", recovery_path=result.get("recovery_path", ""))
+    else:
+        _set_state(name, state="error", last_error=result.get("err") or result.get("rollback_diagnostic", "更新失败"),
+                   rollback="restored", recovery_path="")
     return False, result
 
 
@@ -362,7 +408,11 @@ def uninstall(name, *, purge_data=False):
         _set_state(name, state="error", last_error=result.get("err", "卸载失败"))
         return False, result
     try:
-        _reload(name)
+        # The target no longer exists. Reload the remaining registry instead of
+        # asking for the removed name and reporting an expected absence as a
+        # runtime failure.
+        if not _reload():
+            result["runtime_warning"] = "插件已卸载，但其他插件运行态未完成重载；请重启 Brain"
     except Exception as exc:
         result["runtime_warning"] = str(exc)[:120]
     result.update(ok=True, name=name, state="uninstalled", user_data="purged" if purge_data else "preserved")

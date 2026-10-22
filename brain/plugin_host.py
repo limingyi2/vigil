@@ -302,6 +302,13 @@ def load(force=False):
                 sys.modules.pop(key, None)
         _registry.clear()
         _registry.update(found)
+        # A forced scan creates fresh Plugin/module objects.  Do not let the
+        # old name set make the new module skip its start(brain) hook.  The
+        # lifecycle coordinator stops running hooks before a forced reload;
+        # clearing this set here also keeps the state truthful for callers
+        # that use load(force=True) directly.
+        if force:
+            _started.clear()
         _reindex_tools()
         _loaded = True
         _sync_features()
@@ -340,14 +347,9 @@ def get(name):
 def listing():
     """给 /api/plugins：所有插件 + 开关状态。"""
     out = []
-    try:
-        import features
-        on_map = features.all_features()
-    except Exception:
-        on_map = {}
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         d = p.info()
-        d["enabled"] = (not p.feature) or bool(on_map.get(p.feature, True))
+        d["enabled"] = _enabled(p)
         out.append(d)
     return out
 
@@ -360,15 +362,10 @@ def frontend_assets():
     资源没变就保持不变，供客户端判断是否需要热重载。
     """
     items = []
-    try:
-        import features
-        on_map = features.all_features()
-    except Exception:
-        on_map = {}
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if not (p.frontend_js or p.frontend_css):
             continue
-        enabled = (not p.feature) or bool(on_map.get(p.feature, True))
+        enabled = _enabled(p)
         items.append({
             "name": p.name,
             "js": p.frontend_js,
@@ -744,15 +741,31 @@ def runtime_brain():
     return _runtime_brain
 
 
+def started_names():
+    """Return a snapshot of plugins whose start hook completed successfully."""
+    with _lock:
+        return set(_started)
+
+
+def is_started(name):
+    with _lock:
+        return str(name or "") in _started
+
+
+def is_enabled(name):
+    plugin = get(name)
+    return bool(plugin is not None and _enabled(plugin))
+
+
 def stop(name=None):
     """Stop one/all started plugins when they expose a stop-like hook."""
-    global _runtime_brain
     names = [name] if name else list(_started)
     errors = []
     for item_name in names:
         plugin = get(item_name)
         if not plugin:
-            _started.discard(item_name)
+            # A stale registry entry must not affect the Brain reference or
+            # another plugin's running state.
             continue
         stopped = False
         for hook_name in ("stop", "shutdown", "close"):
@@ -766,18 +779,18 @@ def stop(name=None):
                 break
         if stopped or not callable(plugin.hook("start")):
             _started.discard(item_name)
-    if not _started:
-        _runtime_brain = None
     return (not errors), errors
 
 
-def start_all(brain, names=None):
+def start_all(brain, names=None, detailed=False):
     """把带 start 的插件的后台线程跑起来（run_server 装完大脑后调一次）。"""
     global _runtime_brain
     if brain is None:
         return 0
     _runtime_brain = brain
     n = 0
+    started = []
+    failed = []
     wanted = set(names or ())
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if wanted and p.name not in wanted:
@@ -789,9 +802,14 @@ def start_all(brain, names=None):
         ok, _v = _call(p, "start", brain)
         if ok:
             _started.add(p.name)
+            started.append(p.name)
             n += 1
+        else:
+            failed.append(p.name)
     if n:
         _log("启动", "%d 个插件的后台循环已起" % n)
+    if detailed:
+        return {"count": n, "started": started, "failed": failed}
     return n
 
 

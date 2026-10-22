@@ -192,15 +192,15 @@ def test_fetch_still_rejects_disallowed_download_hosts():
         market._fetch_bytes("https://evil.example.com/market.json", 1024)
 
 
-def _package(extra=False, bad_hash=False, duplicate=False):
+def _package(extra=False, bad_hash=False, duplicate=False, version='1.0.0', permissions=None):
     import hashlib
     import io
     import zipfile
     files = {'__init__.py': b'NAME = "fixture"\nDESC = "Fixture"\n',
              'frontend.js': b'window.fixture = true;', 'frontend.css': b'.fixture {}',
              'version.json': b'{"version":"1.0.0"}'}
-    manifest = {'schema': 'vigil.brain-plugin/v1', 'name': 'fixture', 'version': '1.0.0',
-                'protocol': market.PLUGIN_PROTOCOL, 'permissions': [], 'entry': '__init__.py',
+    manifest = {'schema': 'vigil.brain-plugin/v1', 'name': 'fixture', 'version': version,
+                'protocol': market.PLUGIN_PROTOCOL, 'permissions': permissions or [], 'entry': '__init__.py',
                 'frontend': {'script': 'frontend.js', 'style': 'frontend.css'},
                 'files': [{'path': n, 'sha256': hashlib.sha256(b).hexdigest()} for n, b in files.items()]}
     if extra:
@@ -239,6 +239,34 @@ def test_complete_package_install_refresh_uninstall_and_reinstall(tmp_path):
             assert market.api_list({}, {})['plugins'][0]['installed'] == installed
             assert (target / 'fixture' / 'frontend.js').exists() == installed
         assert not list(target.glob('_tmp*'))
+
+
+def test_managed_market_update_persists_verified_manifest_and_clears_update_state(tmp_path):
+    import plugin_manager
+    import plugin_ops
+    meta, data = _package(version='2.0.0', permissions=['fixture.read'])
+    target = tmp_path / 'installed'
+    old = target / 'fixture'
+    old.mkdir(parents=True)
+    (old / '__init__.py').write_text('NAME = "fixture"\nDESC = "old"\n', encoding='utf-8')
+    registry = target / '_registry.json'
+    registry.write_text(json.dumps({'version': 1, 'plugins': {'fixture': {
+        'version': '1.0.0', 'enabled': True, 'source': 'market:fixture@1.0.0'}}}), encoding='utf-8')
+    with patch.object(plugin_ops, '_PLUG_DIR', str(target)), \
+         patch.object(plugin_ops, 'REGISTRY', str(registry)), \
+         patch.object(market, '_fetch_bytes', return_value=data), \
+         patch.object(plugin_manager, '_reload', return_value=True):
+        ok, result = market._install_remote_directory(meta, 'fixture', replace=True, managed=True)
+    assert ok, result
+    saved = json.loads(registry.read_text(encoding='utf-8'))['plugins']['fixture']
+    assert saved['version'] == '2.0.0'
+    assert saved['permissions'] == ['fixture.read']
+    assert saved['dependencies'] == {}
+    assert saved['source'] == 'market:fixture@2.0.0'
+    assert saved['manifest']['version'] == '2.0.0'
+    assert saved['manifest']['permissions'] == ['fixture.read']
+    with patch.object(plugin_ops, 'REGISTRY', str(registry)):
+        assert plugin_manager.status('fixture', '2.0.0')['update_state'] == 'current'
 
 
 def test_validation_and_network_failures_preserve_existing_install(tmp_path):
