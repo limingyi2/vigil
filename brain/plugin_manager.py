@@ -72,7 +72,13 @@ def _stop(name):
         if not plugin:
             return True, ""
         if callable(plugin.hook("start")) and not any(callable(plugin.hook(h)) for h in ("stop", "shutdown", "close")):
-            return False, "插件提供 start(brain) 但没有 stop/shutdown/close；需要重启 Brain"
+            if plugin_host.is_started(name):
+                return False, ("插件正在运行，提供 start(brain) 但没有 stop/shutdown/close；"
+                               "本次操作未执行，请先重启 Brain 后重试")
+            # The plugin is loaded but has not started in this Brain (for
+            # example it was disabled before a restart), so there is no worker
+            # to stop and a file update/uninstall is safe to proceed.
+            return True, ""
         stopped, errors = plugin_host.stop(name)
         if not stopped:
             return False, "; ".join(errors)
@@ -85,7 +91,7 @@ def _stop(name):
 
 
 def _needs_restart(detail):
-    return "需要重启 Brain" in str(detail or "")
+    return "重启 Brain" in str(detail or "")
 
 
 def _reload(name=None, brain=None, allow_missing=False):

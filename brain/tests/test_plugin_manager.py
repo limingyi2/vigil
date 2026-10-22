@@ -141,10 +141,42 @@ def test_host_start_all_executes_start_hook_with_runtime_brain():
         with patch.object(plugin_host, "_enabled", return_value=True):
             brain = object()
             assert plugin_host.start_all(brain) == 1
+            assert plugin_host.start_all(brain) == 0
             assert calls == [brain]
             assert plugin_host.runtime_brain() is brain
     finally:
         plugin_host._registry, plugin_host._started, plugin_host._runtime_brain = old_registry, old_started, old_brain
+
+
+def test_stop_running_start_only_plugin_refuses_operation():
+    class FakePlugin:
+        @staticmethod
+        def hook(name):
+            return (lambda brain: None) if name == "start" else None
+
+    with patch.object(plugin_host, "get", return_value=FakePlugin()), \
+         patch.object(plugin_host, "is_started", return_value=True), \
+         patch.object(plugin_host, "stop") as stop:
+        ok, detail = plugin_manager._stop("demo")
+    assert not ok
+    assert "本次操作未执行" in detail
+    assert "重启 Brain" in detail
+    stop.assert_not_called()
+
+
+def test_stop_loaded_but_not_started_plugin_allows_operation_after_restart():
+    class FakePlugin:
+        @staticmethod
+        def hook(name):
+            return (lambda brain: None) if name == "start" else None
+
+    with patch.object(plugin_host, "get", return_value=FakePlugin()), \
+         patch.object(plugin_host, "is_started", return_value=False), \
+         patch.object(plugin_host, "stop") as stop:
+        ok, detail = plugin_manager._stop("demo")
+    assert ok
+    assert detail == ""
+    stop.assert_not_called()
 
 
 def test_host_stop_missing_plugin_keeps_running_brain_reference():
@@ -224,6 +256,33 @@ def test_update_without_stop_hook_requires_restart_instead_of_forcing_replace(tm
     assert result["state"] == "restart_required"
     assert result["restart_needed"] is True
     assert (old / "__init__.py").read_text(encoding="utf-8") == "old"
+
+
+def test_update_loaded_but_disabled_plugin_after_restart_is_allowed(tmp_path):
+    target = tmp_path / "installed"
+    target.mkdir()
+    old = target / "demo"
+    old.mkdir()
+    (old / "__init__.py").write_text("old", encoding="utf-8")
+    registry = target / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"demo": {
+        "version": "1.0.0", "enabled": False}}}), encoding="utf-8")
+    newer = tmp_path / "new.zip"
+    _archive(newer, "2.0.0")
+
+    class FakePlugin:
+        @staticmethod
+        def hook(name):
+            return (lambda brain: None) if name == "start" else None
+
+    with patch.object(plugin_ops, "_PLUG_DIR", str(target)), \
+         patch.object(plugin_ops, "REGISTRY", str(registry)), \
+         patch.object(plugin_host, "get", return_value=FakePlugin()), \
+         patch.object(plugin_host, "is_started", return_value=False), \
+         patch.object(plugin_manager, "_reload", return_value=True):
+        ok, result = plugin_manager.update("demo", str(newer), reload=True)
+    assert ok, result
+    assert json.loads((target / "demo" / "zxplugin.json").read_text(encoding="utf-8"))["version"] == "2.0.0"
 
 
 def test_manager_status_exposes_market_update_state(tmp_path):
