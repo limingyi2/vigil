@@ -134,9 +134,10 @@ def build(candidate=False, brain_only=False):
         subprocess.run(['cmd', '/c', *command] if os.name == 'nt' else command,
             cwd=ROOT / 'client', env=env, check=True)
         verify(candidate)
-        # 安装包名从 package.json 的 productName 读取，不硬编码。
+        # 安装包名从 package.json 的 build.productName 读取，不硬编码。
         # electron-builder 会按 productName 生成 Setup EXE，这里必须与之一致。
-        product_name = package.get('productName') or package.get('name') or 'Vigil'
+        build_cfg = package.get('build') or {}
+        product_name = build_cfg.get('productName') or package.get('productName') or package.get('name') or 'Vigil'
         installer = CLIENT_DIST / (product_name + '.Setup.' + info['version'] + '.exe')
         if not installer.is_file():
             # 兜底：在 dist 目录里找唯一的 *.Setup.*.exe，避免改名后找不到

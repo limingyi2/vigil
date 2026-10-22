@@ -27,6 +27,7 @@ import os
 import struct
 import threading
 import time
+import weakref
 
 _LOCK = threading.RLock()
 _CACHE = {}
@@ -108,7 +109,7 @@ DEFAULT_LOCAL_MODEL = "BAAI/bge-small-zh-v1.5"
 
 # 后台空闲卸载：真正的后台线程定期检查，而不是等下次查询才懒卸载。
 # 懒卸载（_check_idle_unload）作为兜底保留。
-_BACKENDS = []           # 所有 EmbeddingBackend 实例（弱引用更优，但简单起见用强引用）
+_BACKENDS = weakref.WeakSet()  # 所有 EmbeddingBackend 实例的弱引用，避免强引用导致内存泄漏
 _BACKENDS_LOCK = threading.Lock()
 _IDLE_WATCHER = None     # 后台线程实例
 _IDLE_WATCHER_INTERVAL = 30  # 每30秒检查一次
@@ -119,9 +120,8 @@ def _idle_watcher_loop():
     while True:
         time.sleep(_IDLE_WATCHER_INTERVAL)
         try:
-            with _BACKENDS_LOCK:
-                backends = list(_BACKENDS)
-            for backend in backends:
+            # WeakSet 迭代时自动跳过已被 GC 的对象
+            for backend in list(_BACKENDS):
                 try:
                     backend._check_idle_unload()
                 except Exception:
@@ -178,9 +178,8 @@ class EmbeddingBackend:
         self._checked = False
         self._last_used = 0.0
         self._idle_unload = int(idle_unload_seconds or self.IDLE_UNLOAD_SECONDS)
-        # 注册到后台空闲卸载线程
-        with _BACKENDS_LOCK:
-            _BACKENDS.append(self)
+        # 注册到后台空闲卸载线程（弱引用，不阻止 GC）
+        _BACKENDS.add(self)
         _ensure_idle_watcher()
 
     def unload(self):
@@ -217,10 +216,17 @@ class EmbeddingBackend:
         return False, "embedding_unknown_mode"
 
     def tag(self):
-        """后端身份。索引用它判断兼容性。"""
+        """后端身份。索引用它判断兼容性。
+
+        必须与 embed() 实际返回的 model_tag 完全一致，否则查询缓存无法命中。
+        - 本地模式：model:dim（与 fastembed / sentence-transformers 返回一致）
+        - API 模式：model@base:dim（与 _embed_remote 返回一致）
+        """
         if self.mode == "api":
             return identity("%s@%s" % (self.model, self.base), self.dim)
-        return identity("%s@%s" % (self.model, self.mode), self.dim)
+        # 本地模式：fastembed 在 model 为空时用默认名，这里保持一致
+        model_name = self.model or "bge-small-zh-v1.5"
+        return identity(model_name, self.dim)
 
     # -- 真正向量化 --
     def embed(self, texts):
@@ -241,7 +247,10 @@ class EmbeddingBackend:
             self._check_idle_unload()
             if self._local is None:
                 self._local = self._load_local()
-        vectors, tag = self._local(texts)
+            # 在锁内拿到函数引用，避免锁外执行时被 unload 竞态置空
+            local_fn = self._local
+        # 锁外执行推理：unload 只会把 self._local 置 None，不会影响已拿到的 local_fn
+        vectors, tag = local_fn(texts)
         dim = validate_vectors(vectors, len(texts), self.dim or None)
         if self.dim and dim != self.dim:
             raise ValueError("embedding_dimension_changed")
@@ -296,6 +305,11 @@ class EmbeddingBackend:
         return vectors, identity("%s@%s" % (self.model, self.base), dim)
 
 
+# backend_from_config 的实例缓存：相同配置复用同一个后端，避免重复创建
+_BACKEND_CACHE = {}
+_BACKEND_CACHE_LOCK = threading.Lock()
+
+
 def backend_from_config(api_config, section="embedding"):
     """从 config.json 的 `embedding` 段构造后端。
 
@@ -306,6 +320,8 @@ def backend_from_config(api_config, section="embedding"):
       key             远程 key
       remote_enabled  **远程开关，默认 False**
       timeout         超时秒数
+
+    相同配置复用同一个实例（带缓存），避免 _BACKENDS 弱引用集合无限增长。
     """
     cfg = dict(api_config or {})
     opts = cfg.get(section) if isinstance(cfg.get(section), dict) else {}
@@ -316,15 +332,24 @@ def backend_from_config(api_config, section="embedding"):
     if remote_enabled is None:
         # 显式写了 mode='api' 视为有意启用远程；否则一律视为未启用。
         remote_enabled = (mode == "api")
-    return EmbeddingBackend(
-        mode=mode,
-        model=opts.get("model") or opts.get("embedding_model") or "",
-        base=opts.get("base") or opts.get("base_url") or "",
-        key=opts.get("key") or opts.get("api_key") or "",
-        remote_enabled=bool(remote_enabled),
-        timeout=opts.get("timeout") or 8.0,
-        dim=opts.get("dim") or 0,
-    )
+    model = opts.get("model") or opts.get("embedding_model") or ""
+    base = opts.get("base") or opts.get("base_url") or ""
+    key = opts.get("key") or opts.get("api_key") or ""
+    timeout = opts.get("timeout") or 8.0
+    dim = opts.get("dim") or 0
+
+    # 缓存 key：配置的稳定哈希
+    cache_key = (mode, model, base, bool(remote_enabled), float(timeout), int(dim or 0))
+    with _BACKEND_CACHE_LOCK:
+        cached = _BACKEND_CACHE.get(cache_key)
+        if cached is not None and cached() is not None:
+            return cached()
+        backend = EmbeddingBackend(
+            mode=mode, model=model, base=base, key=key,
+            remote_enabled=bool(remote_enabled), timeout=timeout, dim=dim,
+        )
+        _BACKEND_CACHE[cache_key] = weakref.ref(backend)
+        return backend
 
 
 def local_only_reason(api_config):
@@ -371,7 +396,7 @@ class ANNIndex:
         self._index = None
         self._id_to_doc = {}   # faiss内部id -> doc_id
         self._doc_to_id = {}   # doc_id -> faiss内部id
-        self._tombstones = set()  # 已删除的 doc_id
+        self._tombstones = set()  # 已删除的 faiss 内部 ID（int），不是业务 doc_id
         self._next_id = 0
         self._dirty = False
         self._index_path = os.path.join(self.data_dir, "embeddings_hnsw.faiss")
@@ -427,7 +452,7 @@ class ANNIndex:
             self._index.hnsw.efSearch = self.EF_SEARCH
             self._id_to_doc = {int(k): str(v) for k, v in (meta.get("id_to_doc") or {}).items()}
             self._doc_to_id = {str(v): int(k) for k, v in self._id_to_doc.items()}
-            self._tombstones = set(str(x) for x in (meta.get("tombstones") or []))
+            self._tombstones = set(int(x) for x in (meta.get("tombstones") or []))
             self._next_id = int(meta.get("next_id", max(self._id_to_doc.keys()) + 1 if self._id_to_doc else 0))
             self._dirty = False
             return True
@@ -472,8 +497,9 @@ class ANNIndex:
     def add(self, doc_ids, vectors):
         """增量添加向量。doc_ids 和 vectors 一一对应。
 
-        同 doc_id 已存在时：先标记旧的为墓碑，再添加新的（HNSW 不支持原地更新）。
-        使用内积度量，向量归一化后内积=余弦相似度。
+        同 doc_id 已存在时：旧的 faiss 内部 ID 标记墓碑，新的用新 faiss_id 添加。
+        墓碑存的是 faiss 内部 ID（int），不是业务 doc_id，这样同 doc_id 的
+        最新版本不会被误过滤。
         """
         if self._index is None:
             return False
@@ -488,8 +514,9 @@ class ANNIndex:
             if not vec or len(vec) != self.dim:
                 continue
             if did in self._doc_to_id:
-                # 同 doc_id 内容变化：旧的标记墓碑，新的用新 faiss_id 添加
-                self._tombstones.add(did)
+                # 同 doc_id 内容变化：旧的 faiss_id 标记墓碑
+                old_faiss_id = self._doc_to_id[did]
+                self._tombstones.add(int(old_faiss_id))
             faiss_id = self._next_id
             self._next_id += 1
             self._doc_to_id[did] = faiss_id
@@ -507,21 +534,20 @@ class ANNIndex:
         return True
 
     def remove(self, doc_id):
-        """标记删除（墓碑）。HNSW 不支持直接删，搜索时过滤，定期重建。"""
+        """标记删除（墓碑）。HNSW 不支持直接删，搜索时过滤，定期重建。
+
+        墓碑存的是 faiss 内部 ID（int），不是业务 doc_id。
+        """
         doc_id = str(doc_id)
         if doc_id in self._doc_to_id:
-            self._tombstones.add(doc_id)
+            faiss_id = int(self._doc_to_id[doc_id])
+            self._tombstones.add(faiss_id)
             self._dirty = True
-            # 墓碑太多就重建
-            total = len(self._doc_to_id)
-            if total > 0 and len(self._tombstones) / total >= self.REBUILD_TOMBSTONE_RATIO:
-                # 标记需要重建，但不在这里做（避免阻塞查询）
-                pass
         return True
 
     def needs_rebuild(self):
         """墓碑比例是否超过阈值，需要重建。"""
-        total = len(self._doc_to_id)
+        total = self._index.ntotal if self._index is not None else len(self._id_to_doc)
         if total == 0:
             return False
         return len(self._tombstones) / total >= self.REBUILD_TOMBSTONE_RATIO
@@ -548,8 +574,12 @@ class ANNIndex:
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0:
                 continue
-            doc_id = self._id_to_doc.get(int(idx))
-            if not doc_id or doc_id in self._tombstones:
+            faiss_id = int(idx)
+            # 墓碑存的是 faiss 内部 ID，同 doc_id 更新后旧 ID 被墓碑，新 ID 正常检索
+            if faiss_id in self._tombstones:
+                continue
+            doc_id = self._id_to_doc.get(faiss_id)
+            if not doc_id:
                 continue
             results.append((doc_id, float(score)))
             if len(results) >= k:

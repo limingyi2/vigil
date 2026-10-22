@@ -63,3 +63,44 @@ jobs:
         run: |
           python -m compileall -q brain pet
           echo "compileall OK"
+
+  rag-acceptance:
+    name: RAG 混合检索真实 FAISS 验收
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 FAISS + 嵌入依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install faiss-cpu fastembed numpy
+
+      - name: 检查 FAISS 是否可用
+        id: faiss-check
+        run: |
+          python -c "import faiss; print('FAISS', faiss.__version__)" || echo "faiss_unavailable=true" >> $GITHUB_OUTPUT
+
+      - name: 运行 RAG 验收测试（真实 FAISS）
+        if: steps.faiss-check.outputs.faiss_unavailable != 'true'
+        env:
+          RAG_ACCEPTANCE_FORCE_FAISS: "1"
+        run: |
+          cd brain
+          python ../test_rag_acceptance.py
+
+      - name: FAISS 不可用时明确标记
+        if: steps.faiss-check.outputs.faiss_unavailable == 'true'
+        run: |
+          echo "::warning::FAISS not available in CI, RAG ANN acceptance tests were NOT executed"
+          echo "This is a known limitation - ANN-specific tests require faiss-cpu"
+
+      - name: 保存测试结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-acceptance-results
+          path: test_result*.txt

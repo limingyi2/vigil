@@ -6,7 +6,8 @@ import time
 import tempfile
 import shutil
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "brain"))
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(ROOT, "brain"))
 
 TEST_DIR = tempfile.mkdtemp(prefix="vigil_rag_test_")
 os.environ["VIGIL_DATA_DIR"] = TEST_DIR
@@ -74,10 +75,15 @@ def test_p0_scope_isolation():
     scope_b = {"owner": "ownerB", "persona": "personaB", "src": "app", "chan": ""}
 
     ra, _ = search.search("machine learning", scope=scope_a, top_k=10, backend=TEST_BACKEND)
+    # 不能用空结果通过：必须确实搜到范围A的文档
+    check("scopeA returns non-empty results", len(ra) > 0,
+          "scopeA got %d results" % len(ra))
     check("scopeA no scopeB docs", all(r.doc_id.startswith("sA") for r in ra),
           "got: %s" % [r.doc_id for r in ra])
 
     rb, _ = search.search("cooking", scope=scope_b, top_k=10, backend=TEST_BACKEND)
+    check("scopeB returns non-empty results", len(rb) > 0,
+          "scopeB got %d results" % len(rb))
     check("scopeB no scopeA docs", all(r.doc_id.startswith("sB") for r in rb),
           "got: %s" % [r.doc_id for r in rb])
 
@@ -150,22 +156,52 @@ def test_p1_cache_identity():
 
 
 def test_p1_ann_update():
-    print("\n=== P1: ANN same doc_id update ===")
+    print("\n=== P1: ANN same doc_id update (vector-only) ===")
     if faiss is None:
         print("  [SKIP] FAISS not installed")
         return
     setup_db()
-    search.upsert_doc("upd:1", "memory", "original: apple iphone launch",
+    # 初始内容
+    search.upsert_doc("upd:1", "memory", "original apple iphone launch event",
                       title="orig", owner="u1", src="app", persona="p1", chan="")
     search.index_embeddings(["upd:1"], backend=TEST_BACKEND)
-    search.upsert_doc("upd:1", "memory", "updated: android new phone release",
+    # 强制加载 ANN 索引
+    conn = db.connection("main")
+    rows = conn.execute("SELECT doc_id, vector FROM embeddings").fetchall()
+    valid = [(r[0], vector.unpack(r[1])) for r in rows]
+    ann = vector.get_ann_index(db.data_dir(), len(valid[0][1]), TEST_BACKEND.tag())
+    ann.ensure_loaded(all_docs=valid)
+
+    # 更新内容（同 doc_id）
+    search.upsert_doc("upd:1", "memory", "updated android new phone release",
                       title="updated", owner="u1", src="app", persona="p1", chan="")
     search.index_embeddings(["upd:1"], backend=TEST_BACKEND)
-    results, _ = search.search("android", scope={"owner": "u1", "persona": "p1"},
-                               top_k=5, backend=TEST_BACKEND)
-    check("updated content searchable",
-          any("android" in (r.body or "").lower() for r in results),
-          "results: %s" % [(r.doc_id, r.body[:30]) for r in results])
+
+    # 直接调 vector_search（只走向量通道，不能靠 BM25 掩盖）
+    scope = {"owner": "u1", "persona": "p1", "src": "app", "chan": ""}
+    vec_results = search.vector_search("android smartphone", scope=scope,
+                                       limit=5, backend=TEST_BACKEND)
+    check("vector_search finds updated content", len(vec_results) > 0,
+          "vector results: %s" % vec_results)
+    check("vector_search returns updated doc",
+          any(did == "upd:1" for did, _ in vec_results),
+          "results: %s" % vec_results)
+
+    # 验证旧向量的 faiss_id 被加入 tombstones（直接检查索引内部状态）
+    check("old faiss_id in tombstones", len(ann._tombstones) > 0,
+          "tombstones: %s" % ann._tombstones)
+    # 新向量的 faiss_id 不在 tombstones 里
+    new_faiss_id = ann._doc_to_id.get("upd:1")
+    check("new faiss_id not tombstoned",
+          new_faiss_id is not None and new_faiss_id not in ann._tombstones,
+          "new_id=%s tombstones=%s" % (new_faiss_id, ann._tombstones))
+    # 持久化后重新加载，墓碑仍然有效
+    ann.save()
+    vector._ANN_INDEXES.clear()
+    ann2 = vector.get_ann_index(db.data_dir(), len(valid[0][1]), TEST_BACKEND.tag())
+    ann2.ensure_loaded(all_docs=[])
+    check("tombstones persisted after reload", len(ann2._tombstones) > 0,
+          "reloaded tombstones: %s" % ann2._tombstones)
 
 
 def test_p1_ann_consistency():
@@ -213,14 +249,15 @@ def test_p2_idle_watcher():
 def test_windows_build():
     print("\n=== Windows build: productName ===")
     import json
-    pkg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client", "package.json")
-    if os.path.exists(pkg_path):
-        pkg = json.loads(open(pkg_path, encoding="utf-8").read())
-        pn = pkg.get("productName")
-        check("package.json has productName", pn is not None, "productName: %s" % pn)
-        check("productName is Kestrel", pn == "Kestrel", "actual: %s" % pn)
-    else:
+    pkg_path = os.path.join(ROOT, "client", "package.json")
+    if not os.path.exists(pkg_path):
         print("  [SKIP] package.json not found")
+        return
+    pkg = json.loads(open(pkg_path, encoding="utf-8").read())
+    # electron-builder 的 productName 在 build 字段下
+    pn = pkg.get("build", {}).get("productName") or pkg.get("productName")
+    check("package.json has productName", pn is not None, "productName: %s" % pn)
+    check("productName is Kestrel", pn == "Kestrel", "actual: %s" % pn)
 
 
 if __name__ == "__main__":
