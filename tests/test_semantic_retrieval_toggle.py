@@ -112,3 +112,18 @@ def test_kb_text_only_persistence(tmp_path):
     assert {item["source"] for item in reopened.chunks()} == {"one.md", "two.md"}
     assert reopened.stats()["count"] == 2
     assert reopened.stats()["dim"] == 0
+
+
+def test_switching_semantic_back_on_preserves_bm25_only_documents(tmp_path):
+    pytest.importorskip("numpy")
+    from kb.store import KBStore
+    root = str(tmp_path / "kb-mixed")
+    store = KBStore(root)
+    store.upsert_text("old.md", [{"text": "text indexed while BM25-only"}])
+    assert store.upsert("new.md", [{"text": "new semantic document"}],
+                        [[0.6, 0.8]], "fake-model:2") == 1
+    restored = KBStore(root)
+    assert {c["source"] for c in restored.chunks()} == {"old.md", "new.md"}
+    assert restored.stats()["dim"] == 2
+    restored.delete_source("old.md")
+    assert [c["source"] for c in KBStore(root).chunks()] == ["new.md"]
