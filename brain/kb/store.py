@@ -189,6 +189,18 @@ class KBStore:
             self.save()
             return len(new)
 
+    def upsert_text(self, source, chunks):
+        """Store searchable KB chunks without generating embeddings.
+
+        Existing vectors are preserved; newly ingested chunks get zero vectors
+        of the current width, which are ignored until an explicit reindex.
+        """
+        with self._lock:
+            self.load()
+            width = self._vectors.shape[1] if self._vectors.ndim == 2 else 0
+            empty_vectors = np.zeros((len(chunks), width), dtype=np.float32)
+            return self.upsert(source, chunks, empty_vectors, self._meta.get("model") or "")
+
     def set_source_meta(self, source, **kw):
         with self._lock:
             self.load()
