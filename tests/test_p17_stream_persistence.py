@@ -243,9 +243,15 @@ class StreamPersistenceTests(unittest.TestCase):
             runs._run(item['run_id'], 'owner', {})
         page = runs.events(item['run_id'], 'owner', 0)
         self.assertFalse([e for e in page['events'] if e['type'] == 'think_delta'])
-        with open(os.path.join(self.tmp.name, 'agent_runs.sqlite3'), 'rb') as fh:
-            blob = fh.read()
-        self.assertNotIn('悄悄想一段'.encode(), blob)
+        # P17 unified DB: inspect committed rows through SQLite, not the
+        # legacy agent_runs.sqlite3 path or raw DB bytes (WAL may hold writes).
+        with runs._read_db() as conn:
+            stored_run = conn.execute('SELECT data FROM runs WHERE id=?',
+                                      (item['run_id'],)).fetchone()[0]
+            stored_events = [r[0] for r in conn.execute(
+                'SELECT data FROM events WHERE run_id=?', (item['run_id'],))]
+        self.assertNotIn('悄悄想一段', stored_run)
+        self.assertNotIn('悄悄想一段', ''.join(stored_events))
         self.assertEqual(page['snapshot']['content'], '正文甲正文乙')
         # 快照里的 "reasoning" 是推理**策略**配置（applied/requested/downgrade），
         # 不是思考内容；红线要钉的是思考文本本身不在快照里。
