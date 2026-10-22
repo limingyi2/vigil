@@ -156,18 +156,30 @@ def walk_authorized(root, allowed_roots=None):
     `allowed_roots` 是白名单（规范化后的绝对路径列表）。为空表示不限。
     符号链接不跟随（避免跳出授权范围）。
 
-    🔴 三道检查，缺一不可：
+    🔴 四道检查，缺一不可：
       1. **root 本身**必须在白名单内 —— 否则整个目录都不该被碰
       2. **子目录**必须在白名单内
       3. **文件**的完整路径必须在白名单内
+      4. **解析后的真实路径**也必须在白名单内
 
     只查子目录是不够的：调用方传了一个未授权的 root 时，
     root 下的文件照样会被索引 —— 那就等于授权边界形同虚设。
+
+    第 4 道是后来补的，补之前这里有个真漏洞：`os.walk(followlinks=False)`
+    **只挡目录递归，不挡文件符号链接** —— `/ws/evil.md → C:/secret.md`
+    会原样出现在 `filenames` 里被 yield 出去。而 `_within` 用的是
+    `abspath`，`abspath` 不解析链接，词汇路径 `/ws/evil.md` 当然"在
+    /ws 内"，检查等于没做。Windows 的目录 junction 更隐蔽：
+    `os.walk` 连递归都拦不住它。所以必须拿 `realpath` 再判一次。
     """
     root = os.path.abspath(root)
     allowed = None
+    allowed_real = None
     if allowed_roots:
         allowed = {os.path.abspath(p) for p in allowed_roots}
+        # 白名单自己也解析一份：授权根本身是符号链接/junction 是正常用法
+        # （比如把工作区挂到别处），不能因此把整个工作区误杀成空。
+        allowed_real = {os.path.realpath(p) for p in allowed_roots}
         # root 与白名单必须"相交"：要么 root 在某个白名单路径之下，
         # 要么某个白名单路径在 root 之下。两者都不成立 → 一个文件都不碰。
         # （只查子目录是不够的：root 未授权时其下的文件照样会被索引。）
@@ -178,14 +190,31 @@ def walk_authorized(root, allowed_roots=None):
                        if d not in SKIP_DIRS and not d.startswith(".")]
         if allowed is not None:
             dirnames[:] = [d for d in dirnames
-                           if any(_within(os.path.join(dirpath, d), a) for a in allowed)]
+                           if _authorized(os.path.join(dirpath, d), allowed, allowed_real)]
         for name in filenames:
             if name.startswith("."):
                 continue
             path = os.path.join(dirpath, name)
-            if allowed is not None and not any(_within(path, a) for a in allowed):
-                continue          # 文件路径本身越权
+            if allowed is not None and not _authorized(path, allowed, allowed_real):
+                continue          # 文件路径本身越权（含链接逃逸）
             yield path
+
+
+def _authorized(path, allowed, allowed_real):
+    """路径必须同时过**词汇**与**解析后**两道关。
+
+    词汇路径守的是"目录结构上在不在授权范围内"；
+    解析后路径守的是"这个链接最终指向哪里"。两道都过才算数。
+    """
+    lex = os.path.abspath(path)
+    if not any(_within(lex, a) for a in allowed):
+        return False
+    real = os.path.realpath(path)
+    if real == lex:
+        return True                      # 普通文件/目录，词汇路径即真实路径
+    # 是符号链接/junction：解析后的落点也必须被授权。
+    # realpath 对不存在的目标也返回一个路径，坏链接自然落不到白名单里。
+    return any(_within(real, a) for a in (allowed | allowed_real))
 
 
 def _within(path, root):

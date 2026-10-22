@@ -23,6 +23,9 @@ P17 要求的是**两个**数据库，所以这 5 个要并进 `vigil.db`。
   的 `conversations` 还没有 `workspace_id`），按位置搬会错位。
 - **单条坏行不影响整批**。某行 JSON 无法解析就跳过并计数，不抛出去 ——
   迁移失败会让主库打不开，等于聊天全挂。
+- **台账只说真话**。一个文件里只要有一张表没搬成，就记 `partial`；
+  只有全部成功才记 `ok`。`ok` 的语义是"下次可以跳过"，
+  所以它**只能**表示"这个文件确实搬完了"。
 """
 import json
 import os
@@ -61,6 +64,16 @@ SOURCES = (
 # 台账键：一个源文件一条，记录搬了多少行。用主库的 migration_ledger，
 # 和 legacy_import 共用一张表。
 LEDGER_KIND = "legacy_sqlite"
+
+
+# 台账状态：
+#   ok      —— 这个文件里所有表都搬成功了（或本来就没数据）
+#   partial —— 有表失败。**绝不能说 ok**：说 ok 下次就直接跳过，失败的
+#              表永远不会重试，记录被静默吞掉。
+#   failed  —— 文件打不开
+_LEDGER_OK = "ok"
+_LEDGER_PARTIAL = "partial"
+_LEDGER_FAILED = "failed"
 
 
 def _ro_uri(path):
@@ -146,13 +159,13 @@ def _ledger_seen(conn, mig_id):
     return row[0] if row else None
 
 
-def _ledger_write(conn, mig_id, source, rows, detail):
+def _ledger_write(conn, mig_id, source, rows, detail, status):
     now = time.time()
     conn.execute(
         "INSERT INTO migration_ledger (id,kind,source,rows,status,detail,created_at,updated_at)"
         " VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rows=excluded.rows,"
         " status=excluded.status, detail=excluded.detail, updated_at=excluded.updated_at",
-        (mig_id, LEDGER_KIND, source, int(rows or 0), "ok",
+        (mig_id, LEDGER_KIND, source, int(rows or 0), status,
          json.dumps(detail, ensure_ascii=False), now, now))
 
 
@@ -161,12 +174,25 @@ def import_legacy_files(conn, data_dir=None, force=False):
 
     `conn` 是主库连接。**不要在这里提交事务** —— 由调用方（迁移）统一提交，
     半途失败时整体回滚，不留半截数据。
+
+    台账只认三种状态，且**只有全表成功才记 ok**：
+
+    - `ok`：这个文件里每张表都搬成了 → 下次跳过
+    - `partial`：有表失败 → 下次**重跑整个文件**。搬动的表靠主键 +
+      `INSERT OR IGNORE` 去重，失败的表这次拿到机会，不会漏记录。
+    - `failed`：文件打不开 → 下次重试
+
+    🔴 曾经的 bug：一张表搬失败，错误信息先写进 detail，紧接着又被
+    `dict(moved, skipped=...)` 整体覆盖掉，然后无条件记 `ok`。结果
+    台账显示成功、下次直接跳过，失败的表**永远**不会重试，
+    而调用方看到的统计里连错误都没有 —— 静默丢数据。
     """
     if data_dir is None:
         import paths
         data_dir = paths.DATA_DIR
 
-    result = {"files": 0, "rows": 0, "skipped": 0, "missing": [], "detail": {}}
+    result = {"files": 0, "rows": 0, "skipped": 0, "missing": [], "detail": {},
+              "partial": []}
     if not data_dir or not os.path.isdir(data_dir):
         return result
 
@@ -176,39 +202,54 @@ def import_legacy_files(conn, data_dir=None, force=False):
         if not os.path.exists(path):
             result["missing"].append(filename)
             continue
-        if not force and _ledger_seen(conn, mig_id) == "ok":
+        # 只有"整个文件都 ok"才跳过。partial / failed / 没记录 → 重跑。
+        if not force and _ledger_seen(conn, mig_id) == _LEDGER_OK:
             continue
 
         try:
             src = sqlite3.connect(_ro_uri(path), uri=True, timeout=5.0)
         except Exception as exc:
-            # 打不开就记一笔跳过：旧文件损坏不该让主库打不开。
-            result["detail"][filename] = {"error": str(exc)[:200]}
+            # 打不开：记 failed 以便重试，绝不计 ok —— 那等于静默丢一个文件。
+            detail = {"error": str(exc)[:200]}
+            _ledger_write(conn, mig_id, path, 0, detail, _LEDGER_FAILED)
+            result["partial"].append(filename)
+            result["detail"][filename] = detail
             continue
 
+        moved = {}
+        errors = {}
+        total = 0
+        skipped = 0
         try:
-            moved = {}
-            total = 0
-            skipped = 0
             for src_table, dst_table, columns in tables:
                 try:
                     got, lost = _copy_table(src, conn, src_table, dst_table, columns)
                 except Exception as exc:
-                    # 一张表搬不动不该连累同一文件里的其它表
-                    result["detail"].setdefault(filename, {})["%s_error" % dst_table] = str(exc)[:160]
+                    # 一张表搬不动不该连累同一文件里的其它表；
+                    # 但也不能被"整文件 ok"盖掉 —— 那样这张表永远不会重试。
+                    errors[dst_table] = str(exc)[:160]
                     continue
                 if got:
                     moved[dst_table] = got
                 total += got
                 skipped += lost
-            result["files"] += 1
-            result["rows"] += total
-            result["skipped"] += skipped
-            result["detail"][filename] = dict(moved, skipped=skipped)
-            _ledger_write(conn, mig_id, path, total, moved)
-        except Exception as exc:
-            result["detail"][filename] = {"error": str(exc)[:200]}
         finally:
             src.close()
+
+        result["files"] += 1
+        result["rows"] += total
+        result["skipped"] += skipped
+        # 错误和成绩**并列**存放，谁都不盖谁。曾经的 bug 就是这里把
+        # errors 整个覆盖没了。
+        detail = dict(moved)
+        detail["skipped"] = skipped
+        if errors:
+            detail["errors"] = errors
+            status = _LEDGER_PARTIAL
+            result["partial"].append(filename)
+        else:
+            status = _LEDGER_OK
+        result["detail"][filename] = detail
+        _ledger_write(conn, mig_id, path, total, detail, status)
 
     return result

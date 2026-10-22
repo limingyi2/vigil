@@ -509,7 +509,9 @@ def _m_main_1(conn):
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
         )""")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口：步骤内部绝不中途落盘，
+    # 否则这步后半段失败时，前半段已经写进去的 DDL 回滚不掉，
+    # 留下"表建了但版本号没记"的半截状态。
 
 
 def _m_main_2(conn):
@@ -568,7 +570,7 @@ def _m_main_2(conn):
             cursor TEXT NOT NULL DEFAULT '{}',
             updated_at REAL NOT NULL DEFAULT 0
         )""")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见 v1 末尾注释）。
 
 
 def _m_main_3(conn):
@@ -590,7 +592,7 @@ def _m_main_3(conn):
             value TEXT NOT NULL DEFAULT '',
             updated_at REAL NOT NULL DEFAULT 0
         )""")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见 v1 末尾注释）。
 
 
 def _m_logs_1(conn):
@@ -661,7 +663,7 @@ def _m_logs_1(conn):
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
         )""")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见主库 v1 末尾注释）。
 
 
 def _m_logs_2(conn):
@@ -676,14 +678,14 @@ def _m_logs_2(conn):
             bytes_after INTEGER NOT NULL DEFAULT 0,
             reason TEXT NOT NULL DEFAULT ''
         )""")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见主库 v1 末尾注释）。
 
 
 def _m_logs_3(conn):
     """诊断库 v3：给高频表加覆盖索引（按时间淘汰用）。"""
     conn.execute("CREATE INDEX IF NOT EXISTS ix_tool_fp ON tool_calls(tool,state,created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_model_ok ON model_requests(ok,created_at)")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见主库 v1 末尾注释）。
 
 
 def _m_main_4(conn):
@@ -714,7 +716,7 @@ def _m_logs_4(conn):
     columns = {r[1] for r in conn.execute("PRAGMA table_info(error_events)").fetchall()}
     if "where" in columns:
         conn.execute("ALTER TABLE error_events RENAME COLUMN where TO origin")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见主库 v1 末尾注释）。
 
 
 # --------------------------------------------------------------------------
@@ -861,7 +863,8 @@ def _m_main_5(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS ix_events_run ON events(run_id,seq)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_jobs_owner ON jobs(owner)")
     conn.execute("CREATE INDEX IF NOT EXISTS ix_turns_owner ON turns(owner,created)")
-    conn.commit()
+    # 事务由 `_migrate` 统一收口，步骤内部不中途落盘（见 v1 末尾注释）。
+    # v6 搬旧库数据同理：`legacy_sqlite` 只用传入的连接写，绝不自己结束事务。
 
 
 def _m_main_6(conn):

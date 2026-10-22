@@ -1109,3 +1109,259 @@ def test_origin_is_a_list_not_a_string(store):
     assert isinstance(rows[0].origin, list), type(rows[0].origin)
     text = unified.format_results(rows)
     assert "bm25" in text and "＋b＋" not in text
+
+
+# --------------------------------------------------------------------------
+# 11. 合并前收尾修掉的三个问题（2026-10-22）
+# --------------------------------------------------------------------------
+
+def _make_agent_runs_db(path):
+    """造一个旧 agent_runs.sqlite3，runs / calls 各一行。"""
+    import sqlite3
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, owner TEXT, request_id TEXT,"
+                 " fingerprint TEXT, data TEXT, UNIQUE(owner,request_id))")
+    conn.execute("CREATE TABLE calls (run_id TEXT, signature TEXT, state TEXT, result TEXT,"
+                 " step_id INTEGER, PRIMARY KEY(run_id,signature))")
+    conn.execute("INSERT INTO runs VALUES ('r1','u','q1','fp','{}')")
+    conn.execute("INSERT INTO calls VALUES ('r1','sig','dispatched','ok',1)")
+    conn.commit()
+    conn.close()
+
+
+def _ledger(main, mig_id, column="status"):
+    return main.execute("SELECT %s FROM migration_ledger WHERE id=?"
+                        % column, (mig_id,)).fetchone()
+
+
+def test_table_failure_is_not_recorded_as_file_ok(home, store):
+    """一张表搬失败，绝不能被记成"整个文件 ok"。
+
+    曾经的 bug：表级错误先写进 detail，紧接着被 `dict(moved, skipped=...)`
+    整体覆盖，然后无条件记 `ok`。台账显示成功 → 下次直接跳过 →
+    失败的表永远不会重试，记录被静默吞掉。
+    """
+    from storage import legacy_sqlite
+    import sqlite3
+    data_dir = os.path.join(home, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    old = os.path.join(data_dir, "agent_runs.sqlite3")
+
+    # 🔴 先建主库连接（此刻 v6 迁移跑完，data_dir 里还没有旧文件），
+    # 再放旧文件 —— 顺序反了台账里已经是 ok，这个测试就变成空跑。
+    main = store.connection("main")
+    _make_agent_runs_db(old)
+
+    real_copy = legacy_sqlite._copy_table
+
+    def flaky(src, dst, src_table, dst_table, columns):
+        if dst_table == "calls":
+            raise sqlite3.OperationalError("database is locked")
+        return real_copy(src, dst, src_table, dst_table, columns)
+
+    legacy_sqlite._copy_table = flaky
+    try:
+        stats = legacy_sqlite.import_legacy_files(main, data_dir=data_dir)
+    finally:
+        legacy_sqlite._copy_table = real_copy
+
+    mig_id = "sqlite:agent_runs.sqlite3"
+    assert stats["partial"] == ["agent_runs.sqlite3"], stats
+    assert _ledger(main, mig_id)[0] == "partial", "部分失败不能记 ok"
+    detail = json.loads(_ledger(main, mig_id, "detail")[0])
+    assert "calls" in detail.get("errors", {}), detail     # 错误必须留着
+    assert detail.get("runs") == 1, detail                 # 成绩不能被盖掉
+    assert main.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+    assert main.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 0
+
+    # 关键：**不 force** 再跑，partial 必须被重试，然后才能记 ok
+    legacy_sqlite.import_legacy_files(main, data_dir=data_dir)
+    assert main.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 1
+    assert _ledger(main, mig_id)[0] == "ok"
+
+
+def test_unopenable_legacy_file_records_failed_and_retries(home, store):
+    """旧文件打不开 → 记 failed 并可重试，不是静默跳过。"""
+    from storage import legacy_sqlite
+    data_dir = os.path.join(home, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    main = store.connection("main")
+
+    # 同名目录：sqlite3.connect 在连接阶段就抛，走 failed 分支
+    blocked = os.path.join(data_dir, "creator_jobs.sqlite3")
+    os.makedirs(blocked, exist_ok=True)
+    stats = legacy_sqlite.import_legacy_files(main, data_dir=data_dir)
+    assert "creator_jobs.sqlite3" in stats["partial"], stats
+    assert _ledger(main, "sqlite:creator_jobs.sqlite3")[0] == "failed"
+
+    # 换成能打开的真库，不 force 再跑 → 必须重试成功
+    os.rmdir(blocked)
+    import sqlite3
+    conn = sqlite3.connect(blocked)
+    conn.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY, owner TEXT, request_id TEXT,"
+                 " fingerprint TEXT, data TEXT, UNIQUE(owner,request_id))")
+    conn.execute("INSERT INTO jobs VALUES ('j1','u','q1','fp','{}')")
+    conn.commit()
+    conn.close()
+    legacy_sqlite.import_legacy_files(main, data_dir=data_dir)
+    assert main.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert _ledger(main, "sqlite:creator_jobs.sqlite3")[0] == "ok"
+
+
+def test_corrupt_legacy_file_failure_is_visible_and_retryable(home, store):
+    """损坏的旧文件：错误要看得见，且换成正版后能补上。"""
+    from storage import legacy_sqlite
+    data_dir = os.path.join(home, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    main = store.connection("main")
+    old = os.path.join(data_dir, "agent_runs.sqlite3")
+    with open(old, "wb") as f:
+        f.write(b"this is definitely not a sqlite database")
+
+    legacy_sqlite.import_legacy_files(main, data_dir=data_dir)
+    mig_id = "sqlite:agent_runs.sqlite3"
+    assert _ledger(main, mig_id)[0] != "ok", "损坏文件不能记 ok"
+    detail = json.loads(_ledger(main, mig_id, "detail")[0])
+    assert detail.get("errors"), "错误被吞了：%r" % detail
+
+    os.remove(old)                      # 坏文件还在盘上，直接连会报 not a database
+    _make_agent_runs_db(old)
+    legacy_sqlite.import_legacy_files(main, data_dir=data_dir)
+    assert main.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+    assert main.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 1
+    assert _ledger(main, mig_id)[0] == "ok"
+
+def test_migration_step_failure_rolls_back_whole_step(store):
+    """一步失败 → 整步回滚，版本号不前进，半截 DDL 不留。"""
+    conn = __import__("sqlite3").connect(":memory:")
+    conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL,"
+                 " applied_at REAL NOT NULL, note TEXT)")
+    saved_mig, saved_ver = store.MIGRATIONS, store.SCHEMA_VERSION
+
+    def ok_step(c):
+        """第一步：成功"""
+        c.execute("CREATE TABLE t_ok (x TEXT)")
+
+    def bad_step(c):
+        """第二步：建了表再抛"""
+        c.execute("CREATE TABLE t_bad (x TEXT)")
+        raise RuntimeError("boom")
+
+    store.MIGRATIONS = {("main", 1): ok_step, ("main", 2): bad_step}
+    store.SCHEMA_VERSION = 2
+    try:
+        raised = False
+        try:
+            store._migrate(conn, "main")
+        except RuntimeError:
+            raised = True
+        assert raised, "失败的一步必须往外抛，不能咽下去"
+    finally:
+        store.MIGRATIONS, store.SCHEMA_VERSION = saved_mig, saved_ver
+
+    def table_count(name):
+        return conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name=?",
+                            (name,)).fetchone()[0]
+
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 1
+    assert table_count("t_ok") == 1, "前一步的成果应该在"
+    assert table_count("t_bad") == 0, "失败那一步的 DDL 必须被回滚掉"
+
+
+def test_no_migration_step_commits_internally(store):
+    """迁移步骤内部不许自己结束事务 —— 否则上面那条回滚语义是假的。
+
+    曾经的 bug：8 个 step 末尾都有一句 `conn.commit()`，把 `_migrate`
+    开的 `BEGIN IMMEDIATE` 提前结束。之后这步再失败，`rollback()`
+    已经没有活动事务可回，前半段 DDL 已经落盘 → "表建了、版本号没记"
+    的半截状态，下次重跑还可能撞 `duplicate column`。
+    """
+    import inspect
+    for (kind, version), step in store.MIGRATIONS.items():
+        source = inspect.getsource(step)
+        assert ".commit(" not in source, "%s v%d 在步骤内部提交了事务" % (kind, version)
+
+
+def _make_link(root, name, target):
+    """建符号链接；环境不允许时返回 False（调用方 skip）。"""
+    link = os.path.join(root, name)
+    try:
+        os.symlink(target, link)
+    except OSError:
+        return False
+    return os.path.islink(link)      # 沙箱会静默丢弃链接，必须复查
+
+
+def test_walk_authorized_skips_symlink_escape(home):
+    """真实符号链接：指向授权范围外的文件/junction 不许进索引。"""
+    from storage import indexer
+    root = os.path.join(home, "ws")
+    outside = os.path.join(home, "outside")
+    os.makedirs(root, exist_ok=True)
+    os.makedirs(outside, exist_ok=True)
+    with open(os.path.join(root, "inside.md"), "w", encoding="utf-8") as f:
+        f.write("inside")
+    with open(os.path.join(outside, "secret.md"), "w", encoding="utf-8") as f:
+        f.write("SECRET-CANARY")
+
+    link = os.path.join(root, "escape.md")
+    if not _make_link(root, "escape.md", os.path.join(outside, "secret.md")):
+        pytest.skip("当前环境不允许创建符号链接")
+
+    # 先证明漏洞是真的：os.walk(followlinks=False) 会把**文件**符号链接
+    # 原样列进 filenames（它只挡目录递归，不挡文件链接）。
+    walked = [os.path.join(dp, n)
+              for dp, _dn, fn in os.walk(root, followlinks=False) for n in fn]
+    assert link in walked, "os.walk 行为变了，这个测试的前提不成立"
+
+    got = [os.path.basename(p) for p in indexer.walk_authorized(root, [root])]
+    assert "inside.md" in got
+    assert "escape.md" not in got, "符号链接逃逸：界外文件被放进索引了"
+
+
+def test_walk_authorized_checks_resolved_paths(home, monkeypatch):
+    """解析后的真实路径越权必须被挡，且不能误杀"授权根自己是链接"。
+
+    这里不依赖真符号链接（CI/沙箱常不让建），直接安排 realpath 的返回值：
+    - `evil.md`  解析到界外    → 挡
+    - `jdirlink` 解析到界外    → 挡（它下面的 leak.txt 也不许出现）
+    - root 自己解析到别处      → 正常文件照旧放行（不能误杀）
+    """
+    from storage import indexer
+    root = os.path.join(home, "ws")
+    outside = os.path.join(home, "outside")
+    elsewhere = os.path.join(home, "elsewhere")
+    for d in (root, outside, elsewhere):
+        os.makedirs(d, exist_ok=True)
+    with open(os.path.join(root, "a.md"), "w", encoding="utf-8") as f:
+        f.write("ok")
+    os.makedirs(os.path.join(root, "sub"), exist_ok=True)
+    with open(os.path.join(root, "sub", "b.md"), "w", encoding="utf-8") as f:
+        f.write("ok")
+    with open(os.path.join(outside, "secret.md"), "w", encoding="utf-8") as f:
+        f.write("SECRET-CANARY")
+    with open(os.path.join(root, "evil.md"), "w", encoding="utf-8") as f:
+        f.write("x")
+    os.makedirs(os.path.join(root, "jdirlink"), exist_ok=True)
+    with open(os.path.join(root, "jdirlink", "leak.txt"), "w", encoding="utf-8") as f:
+        f.write("x")
+
+    real = os.path.realpath
+
+    def fake(p):
+        ap = os.path.abspath(p)
+        if ap == os.path.abspath(root):
+            return real(elsewhere)                       # 授权根自己是个链接
+        base = os.path.basename(ap)
+        if base == "evil.md":
+            return real(os.path.join(outside, "secret.md"))
+        if base == "jdirlink":
+            return real(outside)
+        return real(p)
+
+    monkeypatch.setattr(os.path, "realpath", fake)
+    got = sorted(os.path.basename(p)
+                 for p in indexer.walk_authorized(root, [root]))
+    assert "a.md" in got and "b.md" in got, "误杀了授权范围内的正常文件：%r" % got
+    assert "evil.md" not in got, "文件符号链接逃逸没挡住"
+    assert "leak.txt" not in got, "目录符号链接/junction 逃逸没挡住"
