@@ -122,6 +122,8 @@ body[data-vigil-page="market"] #gPanel { display:none; }
 .market-intro { margin:0 0 24px; }
 .market-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:16px; }
 .market-grid .card { min-width:0; overflow-wrap:anywhere; }
+.market-meta { color:var(--text-2); font-size:12px; line-height:1.45; }
+.market-error { color:var(--err); font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
 .market-icon { display:grid; place-items:center; width:40px; height:40px; flex:none; border-radius:10px; background:var(--bg-hover); color:var(--text-2); }
 .market-icon svg.i { width:20px; height:20px; }
 @media (max-width:700px) { .market-wrap { padding:16px; } }

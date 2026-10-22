@@ -369,6 +369,7 @@ def api_list(body, query):
     plugins = []
     for p in market.get("plugins", []):
         item = dict(p)
+        item["market_version"] = p.get("version", "")
         item["installed"] = p.get("name") in installed
         try:
             import plugin_manager

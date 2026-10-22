@@ -27,7 +27,8 @@ def _node():
 def _run(payload):
     try:
         done = subprocess.run([_node(), str(SCRIPT)], input=json.dumps(payload),
-                              capture_output=True, text=True, timeout=120)
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         pytest.skip('node runtime unavailable: %s' % exc)
     if done.returncode != 0:
