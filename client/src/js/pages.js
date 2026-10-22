@@ -2203,7 +2203,7 @@
       for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
         const input = item.input || item.requirement || '';
         const status = item.status || 'pending';
-        if (item.kind === 'chat' && item.run_id) {
+        if (['chat', 'coding'].includes(item.kind) && item.run_id) {
           if ((item.created_at || 0) >= newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; lastActive = null; }
           if (['queued', 'running'].includes(status)) lastActive = item;
           if (item.can_resume !== false && ['paused','paused_budget','interrupted'].includes(status)) lastResumable = item;
@@ -2295,11 +2295,12 @@
         const note = (m.statusNote ? '<div class="run-note"><span>' + esc(m.statusNote) + '</span>' +
           (runable ? '<button class="agent-cancel" data-run="' + esc(m.run.run_id) + '">取消</button>' : '') + '</div>' : '');
         const evidence = (m.run?.steps || []).map((step,index,steps)=>step.kind==='tool' ? global.VigilAgentView.step({...step,run_id:m.run.run_id,state:step.result_state || step.status,output:step.result}) : (index < steps.length-1 && step.content ? '<div class="agent-commentary">'+U.md(step.content)+'</div>' : '')).join('');
+        const coding = m.run?.kind === 'coding' ? global.VigilAgentView.codingSummary(m.run.coding) : '';
         const body = m.text
           ? '<div class="txt md">' + t + '</div>' + note
           : (note || '<div class="txt md"></div>');
         return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
-          (evidence ? '<div class="agent-progress live-steps">'+evidence+'</div>' : '') + body +
+          (coding || evidence ? '<div class="agent-progress live-steps">'+coding+evidence+'</div>' : '') + body +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span>' +
           '</div></div></div>';
       }).join('');
@@ -2621,6 +2622,25 @@
           statusEl.appendChild(agentCancel);
           setComposerMode('pause');
           if (!reconcileTimer) reconcileTimer = setTimeout(reconcileRun, 2000);
+        } else if (evt.type && evt.type.startsWith('coding_')) {
+          finishThinking();
+          const payload = evt.payload || evt;
+          const phase = payload.phase || evt.phase || '';
+          if (evt.type === 'coding_phase') {
+            statusEl.textContent = 'Coding Agent · ' + phase + ' ';
+            if (agentRunId) statusEl.appendChild(agentCancel);
+          } else if (evt.type === 'coding_plan') {
+            const count = Array.isArray(payload.steps) ? payload.steps.length : 0;
+            addStep('coding-plan', '已生成计划（' + count + ' 步）', 'neutral');
+          } else if (evt.type === 'coding_file') {
+            addStep('coding-file', '修改 ' + String(payload.path || ''), 'ok');
+          } else if (evt.type === 'coding_test') {
+            addStep('coding-test', (payload.passed ? '验证通过：' : '验证失败：') + String(payload.command || ''), payload.passed ? 'ok' : 'err');
+          } else if (evt.type === 'coding_diagnosis') {
+            addStep('coding-diagnosis', '已定位失败原因：' + String(payload.summary || payload.root_cause || ''), 'warn');
+          } else if (evt.type === 'coding_repair') {
+            addStep('coding-repair', '自动修复第 ' + String(payload.repair_count || 0) + ' 轮', 'ok');
+          }
         } else if (evt.type === 'stage') {
           if(evt.stage==='generating'){thinkingFinished=false;startThinking();}
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
@@ -2730,6 +2750,10 @@
       try {
       const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId,
         conversation_id: activeConversationId, session_id: activeConversationId };
+      const activeSession = sessionItems.find((s) => s.id === activeConversationId);
+      if (activeSession && activeSession.workspace_id) {
+        chatPayload.workspace_id = activeSession.workspace_id;
+      }
       if (resumeOf) chatPayload.resume_of = resumeOf;
         if (interjectOf) chatPayload.interject_of = interjectOf;
         if (sendingImg) chatPayload.img = sendingImg;

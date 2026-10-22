@@ -92,7 +92,10 @@ MESSAGES = dict(ERROR_MESSAGES,
     tool_unknown='工具结果不明，需人工核对，未重试',
     tool_failed='工具被拒绝或未能派发，已停止后续执行',
     resource_limit='输出超过保存上限，已截断',
-    internal_error='执行服务异常，已停止后续派发')
+    internal_error='执行服务异常，已停止后续派发',
+    coding_failed='Coding Agent 未通过真实验证，已保留诊断、修改记录和测试回执',
+    coding_workspace='Coding Agent 工作区无效或越界',
+    coding_model='Coding Agent 模型输出不符合结构化契约')
 
 
 def _json(value):
@@ -436,7 +439,9 @@ def display_records(owner):
         content=i['content'], result=i.get('result'), steps=[dict(s,
             input=_safe_event_value(s.get('input')),
             result=_safe_event_value(s.get('result'))) if s['kind']=='tool' else s for s in i['steps']],
-        status=i['status'], error=i['error'], created_at=i['created_at'])
+        status=i['status'], error=i['error'], created_at=i['created_at'],
+        kind=i.get('kind', 'chat'), workspace_root=i.get('workspace_root'),
+        coding=_safe_event_value(i.get('coding') or {}))
         for i in listing(owner)]
 
 
@@ -527,12 +532,19 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
            replan=False):
     request = str(body.get('request_id') or '')
     text = body.get('intent', body.get('text'))
-    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', request) or not isinstance(text, str) or not text.strip() or len(text) > 16000 or body.get('kind', 'chat') != 'chat':
+    kind = str(body.get('kind') or 'chat').strip().lower()
+    if (not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', request) or not isinstance(text, str)
+            or not text.strip() or len(text) > 16000 or kind not in ('chat', 'coding')):
         raise ValueError('request_id 或任务内容无效')
     src = str(body.get('src') or 'pc')
     if src not in ('pc', 'wechat', 'wechat_group'):
         raise ValueError('渠道无效')
-    fingerprint = hashlib.sha256(_json([text, src, body.get('sender_id', ''), body.get('budget', {})]).encode()).hexdigest()
+    workspace_root = str(body.get('workspace_root') or '').strip()
+    if kind == 'coding' and not workspace_root:
+        raise ValueError('Coding Agent 必须指定 workspace_root')
+    coding = body.get('coding') if isinstance(body.get('coding'), dict) else {}
+    fingerprint = hashlib.sha256(_json([kind, text, src, workspace_root,
+                                        body.get('sender_id', ''), body.get('budget', {}), coding]).encode()).hexdigest()
     with LOCK, _db() as db:
         row = db.execute('SELECT fingerprint,data FROM runs WHERE owner=? AND request_id=?', (owner, request)).fetchone()
         if row:
@@ -541,6 +553,7 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
             return json.loads(row[1])
         budget = _budget(body, cfg)
         item = dict(run_id='run_' + uuid.uuid4().hex, request_id=request, intent=text,
+            kind=kind, workspace_root=workspace_root or None, coding=copy.deepcopy(coding),
             src=src, status='queued', stage='queued', steps=[], content='', result=None,
             error=None, event_cursor=0, created_at=time.time(), budget=budget,
             resume_from=resume_from, replan=bool(replan),
@@ -595,6 +608,8 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
     if parent_conversation and body.get('conversation_id') not in (None, '', parent_conversation):
         raise ValueError('续跑不能改变会话归属')
     derived = dict(body, intent=intent, src=src,
+                   kind=item.get('kind', 'chat'), workspace_root=item.get('workspace_root'),
+                   coding=copy.deepcopy(item.get('coding') or {}),
                    conversation_id=parent_conversation or str(body.get('conversation_id') or ''))
     # 客户端续跑时会带来自己的 request_id（用于把事件绑回会话气泡）；
     # 没带或格式不对就生成一个。合法且未被用过 → 原样使用（create 幂等）。
@@ -657,8 +672,9 @@ def interject(rid, owner, cfg, body=None, brain=None, start=True):
         if parent_status != 'paused':
             _finish(db, item, 'paused', 'interjected')
         _save(db, item)
-    derived = dict(body, intent=merged, src=src, conversation_id=conversation,
-                   request_id=want_request)
+    derived = dict(body, intent=merged, src=src, kind=item.get('kind', 'chat'),
+                   workspace_root=item.get('workspace_root'), coding=copy.deepcopy(item.get('coding') or {}),
+                   conversation_id=conversation, request_id=want_request)
     try:
         child = create(derived, cfg, owner, brain=brain, start=start,
                        resume_from=rid, replan=True)
@@ -1046,7 +1062,190 @@ def _tool(rid, owner, started, call, ctx):
     return (None if reason else result), False
 
 
+def _coding_json_completion(provider, cfg, messages, strategy='balanced'):
+    """Make one bounded JSON-only model request for the coding harness."""
+    from model_providers.execution import apply_reasoning_strategy, prepare, completion_events
+    payload = dict(model=getattr(provider, 'model', None) or cfg.get('model'),
+                   messages=messages, temperature=0)
+    payload, _state = apply_reasoning_strategy(payload, cfg, provider, strategy)
+    prepared = prepare(payload, cfg)
+    completion = None
+    for event in completion_events(provider, prepared,
+                                   timeout=int((cfg.get('agent_execution') or {}).get('request_timeout', 90))):
+        if event.get('type') == 'completion':
+            completion = event.get('result')
+    completion = completion or {}
+    if completion.get('reason') not in ('normal', 'tool_calls'):
+        raise ValueError('coding model request failed: %s' % completion.get('reason'))
+    raw = str(completion.get('content') or '').strip()
+    if raw.startswith('```'):
+        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.I | re.S).strip()
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        match = re.search(r'(\{.*\}|\[.*\])', raw, re.S)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except ValueError:
+                pass
+    raise ValueError('coding model output is not valid JSON')
+
+
+def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
+    """Run a provider backed CodingHarness and persist its evidence in the ledger."""
+    import coding_harness
+    started = time.monotonic()
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+        if not item or item['status'] != 'queued':
+            return
+        item['status'] = 'running'
+        item['stage'] = 'PLAN'
+        item.setdefault('coding', {})
+        item['coding'].update(status='running', phase='PLAN', repair_count=0)
+        _event(db, item, 'coding_started', {'workspace_root': item.get('workspace_root')})
+        _save(db, item)
+
+    provider = None
+    try:
+        provider = get_provider(cfg)
+        coding_cfg = item.get('coding') or {}
+        execution_cfg = cfg.get('agent_execution') or {}
+        max_repairs = coding_cfg.get('max_repairs', execution_cfg.get('coding_max_repairs', 2))
+        max_seconds = coding_cfg.get('max_seconds', execution_cfg.get('coding_max_seconds',
+                                                                      item['budget']['max_seconds']))
+        max_repairs = max(0, min(10, int(max_repairs)))
+        max_seconds = max(1, min(item['budget']['max_seconds'], int(max_seconds)))
+        strategy = str(execution_cfg.get('reasoning_strategy') or 'balanced')
+        root = item.get('workspace_root')
+
+        def persist(kind, payload):
+            with LOCK, _db() as db:
+                current = _get(db, rid, owner)
+                if not current or current.get('status') != 'running':
+                    return
+                coding = current.setdefault('coding', {})
+                coding['phase'] = payload.get('phase') or coding.get('phase')
+                if kind in ('coding_plan', 'coding_plan_updated'):
+                    coding['plan'] = payload
+                elif kind == 'coding_test':
+                    coding.setdefault('tests', []).append(copy.deepcopy(payload))
+                elif kind == 'coding_file':
+                    coding.setdefault('files', []).append(copy.deepcopy(payload.get('path')))
+                elif kind == 'coding_repair':
+                    coding['repair_count'] = payload.get('repair_count', coding.get('repair_count', 0))
+                elif kind in ('coding_diagnosis', 'coding_failed'):
+                    coding.setdefault('diagnostics', []).append(copy.deepcopy(payload))
+                current['stage'] = coding.get('phase') or kind
+                _event(db, current, kind, _safe_event_value(payload))
+                _save(db, current)
+
+        def ask(role, instruction, context):
+            system = ('你是 Vigil Coding Agent 的%s。只能返回合法 JSON，不要 Markdown、解释或工具调用。'
+                      '所有文件路径必须是工作区相对路径；修改只能通过 operations 返回。' % role)
+            body = json.dumps(context, ensure_ascii=False, sort_keys=True)[:100000]
+            sid = None
+            with LOCK, _db() as db:
+                current = _get(db, rid, owner)
+                if not current or current.get('status') != 'running':
+                    raise coding_harness.CodingHarnessError('任务已被暂停或取消')
+                if not _check_budget(db, current, started, 'model'):
+                    raise coding_harness.BudgetExceeded('模型请求预算已用尽')
+                sid = _step(db, current, 'model', coding_role=role)
+            try:
+                result = _coding_json_completion(provider, cfg,
+                    [{'role': 'system', 'content': system},
+                     {'role': 'user', 'content': instruction + '\n\n工作区事实：\n' + body}], strategy)
+            except Exception:
+                with LOCK, _db() as db:
+                    current = _get(db, rid, owner)
+                    if current and sid:
+                        current['steps'][sid-1].update(status='failed', reason='coding_model', finished_at=time.time())
+                        _event(db, current, 'coding_model_failed', {'step_id': sid, 'role': role})
+                        _save(db, current)
+                raise
+            with LOCK, _db() as db:
+                current = _get(db, rid, owner)
+                if current and sid:
+                    current['steps'][sid-1].update(status='completed', reason='normal', finished_at=time.time())
+                    _event(db, current, 'coding_model_completed', {'step_id': sid, 'role': role})
+                    _save(db, current)
+            return result
+
+        def plan_provider(request, snapshot):
+            # Reuse planner.py's single complexity heuristic for telemetry and
+            # policy alignment, while keeping execution in this agent run.  We
+            # intentionally do not call planner.plan(), whose legacy chat path
+            # has a five-step response format and no repair state machine.
+            try:
+                import planner as legacy_planner
+                decision, why = legacy_planner.plan_decision(request)
+                persist('coding_planning_decision', {'would_plan': bool(decision), 'why': why})
+            except Exception:
+                pass
+            return ask('规划器', '为任务生成结构化计划。字段为 complexity、rationale、steps；每步含 id、title、description、dependencies、acceptance、verification。不要超过 20 步。',
+                       {'request': request, 'snapshot': snapshot})
+
+        def implementer(request, step, snapshot):
+            return ask('实现器', '完成当前计划步骤。返回 {"operations":[...]}。operation 支持 write(path,content,expected_sha256)、patch(patch)、delete(path)、command(command)。先实现代码，不要声称已经验证。',
+                       {'request': request, 'step': step, 'snapshot': snapshot,
+                        'changed_files': []})
+
+        def diagnostician(request, failure, snapshot, changes):
+            return ask('诊断器', '分析真实验证失败。返回 summary、root_cause、files、next_action；只能根据退出码和日志作出判断，不要声称已修复。',
+                       {'request': request, 'failure': failure, 'snapshot': snapshot, 'changes': changes})
+
+        def repairer(request, diagnosis, snapshot, changes):
+            return ask('修复器', '根据诊断返回需要应用的修复，格式为 {"operations":[...]}。只修改工作区内相关文件；修复后必须由外部验证命令重新确认。',
+                       {'request': request, 'diagnosis': diagnosis, 'snapshot': snapshot, 'changes': changes})
+
+        def replanner(plan, diagnosis):
+            return ask('重规划器', '验证失败后调整后续计划。返回完整 steps 数组；保留已经完成的步骤，新增修复和重验步骤。',
+                       {'plan': plan, 'diagnosis': diagnosis})
+
+        harness = coding_harness.CodingHarness(
+            root, run_id=rid, max_repairs=max_repairs, max_seconds=max_seconds,
+            verify_commands=coding_cfg.get('verify_commands') or [],
+            planner=plan_provider, implementer=implementer,
+            diagnostician=diagnostician, repairer=repairer, replanner=replanner,
+            stop_check=lambda: (agent_runs_snapshot := snapshot(rid, owner)) is None
+            or agent_runs_snapshot.get('status') != 'running',
+            event_sink=persist)
+        result = harness.run(item['intent'])
+        with LOCK, _db() as db:
+            current = _get(db, rid, owner)
+            if not current or current.get('status') != 'running':
+                return
+            current['result'] = result
+            current['content'] = ('Coding Agent 已完成验证。修改文件：%s；自动修复 %d 次。' %
+                                  (', '.join(result.get('changed_files') or []) or '无',
+                                   int(result.get('repair_count') or 0)))
+            current.setdefault('coding', {}).update(result)
+            current['budget']['consumed']['seconds'] = round(time.monotonic() - started, 3)
+            if result.get('status') == 'succeeded':
+                _finish(db, current, 'succeeded')
+            else:
+                detail = result.get('error') or (result.get('diagnostics') or [{}])[-1].get('summary')
+                _finish(db, current, 'failed', 'coding_failed', detail)
+            _save(db, current)
+    except Exception as exc:
+        reason = 'coding_workspace' if isinstance(exc, coding_harness.WorkspaceError) else 'coding_model'
+        with LOCK, _db() as db:
+            current = _get(db, rid, owner)
+            if current:
+                current.setdefault('coding', {})['error'] = str(exc)[:500]
+                current['budget']['consumed']['seconds'] = round(time.monotonic() - started, 3)
+                _finish(db, current, 'failed', reason, str(exc))
+                _save(db, current)
+
+
 def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
+    with LOCK, _db() as db:
+        initial = _get(db, rid, owner)
+    if initial and initial.get('kind') == 'coding':
+        _run_coding(rid, owner, cfg, brain=brain, sender_id=sender_id)
+        return
     started = time.monotonic()
     try:
         with LOCK, _db() as db:

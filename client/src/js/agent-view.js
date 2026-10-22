@@ -74,6 +74,21 @@
     const seconds=Math.max(0,Math.floor(ms/1000));
     return '已处理 '+(seconds>=60?Math.floor(seconds/60)+' 分钟 ':'')+(seconds%60)+' 秒';
   }
-  const api={step,elapsed,redact};root.VigilAgentView=api;
+  function codingSummary(coding) {
+    if (!coding || typeof coding !== 'object') return '';
+    const plan=coding.plan || {}, steps=Array.isArray(plan.steps)?plan.steps:[];
+    const tests=Array.isArray(coding.tests)?coding.tests:[];
+    const files=Array.isArray(coding.changed_files)?coding.changed_files:
+      (Array.isArray(coding.files)?coding.files.filter(Boolean):[]);
+    const phases=steps.map(s=>'<li><span class="ac-state ac-'+esc(s.status||'pending')+'">'+esc(s.status||'pending')+'</span> '+esc(s.title||s.id||'step')+'</li>').join('');
+    const testRows=tests.map(t=>'<li><span class="ac-state ac-'+(t.passed?'succeeded':'failed')+'">'+(t.passed?'通过':'失败')+'</span> <code>'+esc(t.command||'')+'</code> · exit '+esc(t.exit_code==null?'—':t.exit_code)+'</li>').join('');
+    return '<section class="agent-coding-card"><header><strong>Coding Agent</strong><span class="ac-state ac-'+esc(coding.phase||coding.status||'')+'">'+esc(coding.phase||coding.status||'')+'</span></header>'+
+      (steps.length?'<div class="agent-coding-section"><b>计划</b><ol>'+phases+'</ol></div>':'')+
+      (files.length?'<div class="agent-coding-section"><b>修改文件</b><div class="agent-coding-files">'+files.map(f=>'<code>'+esc(f)+'</code>').join('')+'</div></div>':'')+
+      (testRows?'<div class="agent-coding-section"><b>验证</b><ul>'+testRows+'</ul></div>':'')+
+      '<div class="agent-coding-meta">自动修复 '+esc(coding.repair_count||0)+' 次</div>'+
+      (coding.diff?'<details><summary>查看 Diff</summary><pre>'+esc(coding.diff)+'</pre></details>':'')+'</section>';
+  }
+  const api={step,elapsed,redact,codingSummary};root.VigilAgentView=api;
   if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

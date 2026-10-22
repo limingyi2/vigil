@@ -1664,6 +1664,38 @@ def start_remote_api(brain):
             body = dict(body, src=src)
             if not isinstance(body.get('intent', body.get('text')), str):
                 raise ValueError('任务内容无效')
+            # A selected workspace is the project root for development shaped
+            # requests.  Plain questions in the same chat remain normal Agent
+            # runs; the heuristic only selects the coding harness when the
+            # request asks to inspect/change/build/test code.
+            if not body.get('kind') and body.get('conversation_id'):
+                try:
+                    _conv, _owner, _conv_src, _persona = self._conversation_context(
+                        src, body.get('conversation_id'))
+                    _coding_words = ('代码', '项目', '文件', '实现', '修改', '修复', '重构',
+                                     '测试', '构建', 'bug', 'bugfix', 'refactor', 'pytest', 'npm')
+                    if (_conv and _conv.get('workspace_id') and
+                            any(word.lower() in str(body.get('intent', body.get('text'))).lower()
+                                for word in _coding_words)):
+                        body['kind'] = 'coding'
+                        body['workspace_id'] = _conv['workspace_id']
+                except Exception:
+                    pass
+            if str(body.get('kind') or 'chat').lower() == 'coding':
+                # A Coding Agent always receives a server side workspace record,
+                # never an arbitrary path supplied by the model.  The record is
+                # created by the existing workspace picker and is scoped to this
+                # owner/channel/persona.
+                wid = str(body.get('workspace_id') or '').strip()
+                if wid:
+                    import workspaces as _workspaces
+                    workspace = _workspaces.get(self._display_owner(body), src,
+                                                str(_persona_for_src(src)), wid)
+                    if not workspace:
+                        raise ValueError('工作区不存在或不属于当前会话')
+                    body['workspace_root'] = workspace['path']
+                if not body.get('workspace_root'):
+                    raise ValueError('Coding Agent 必须选择工作区')
             messages = None
             # Snapshot the existing persona/context under its existing lock, then
             # release it: the run never mutates shared Brain history/last_* fields.
@@ -1800,7 +1832,14 @@ def start_remote_api(brain):
                 for event in agent_runs.stream(rid, owner, cursor):
                     cursor = event['seq']
                     kind, payload = event['type'], event['payload']
-                    if kind in ('text_delta', 'think_delta'):
+                    if kind.startswith('coding_'):
+                        # Coding events already carry structured, durable
+                        # evidence (plan, files, test receipts, diagnostics).
+                        # Keep their names and payload intact so the existing
+                        # chat card can render a lightweight progress view.
+                        yield dict(type=kind, run_id=rid, request_id=item['request_id'],
+                                   seq=event['seq'], **payload)
+                    elif kind in ('text_delta', 'think_delta'):
                         yield {'type': 'text' if kind == 'text_delta' else 'think', 'text': payload['text'],
                                'run_id': rid, 'request_id': item['request_id'], 'seq': event['seq']}
                     elif kind == 'step_started':
