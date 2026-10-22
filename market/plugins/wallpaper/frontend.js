@@ -107,7 +107,8 @@
       } requestAnimationFrame(tick); };
       addEventListener('pagehide', () => { dead = true; }); tick();
     })();`;
-    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}canvas,iframe,video,img{display:block;width:100%;height:100%;border:0}</style></head><body><script>history.replaceState({},"",' + query + ');</script><script type="module">' + RENDERER_SOURCE + '</script><script>' + control + '</script></body></html>';
+    const renderer = RENDERER_SOURCE.replaceAll('location.search', query);
+    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}canvas,iframe,video,img{display:block;width:100%;height:100%;border:0}</style></head><body><script type="module">' + renderer + '</script><script>' + control + '</script></body></html>';
   }
   async function mount(item) {
     clearStage();
@@ -131,7 +132,7 @@
           node.src = src; node.style.objectFit = config.fit === 'contain' ? 'contain' : config.fit === 'stretch' ? 'fill' : 'cover'; stage.appendChild(node);
           if (item.type === 'video') node.play().catch(() => {});
         } else {
-          frame = document.createElement('iframe'); frame.title = 'Vigil Wallpaper Engine ' + typeLabel(item.type); frame.setAttribute('sandbox', 'allow-scripts'); frame.srcdoc = frameDocument(item.type, src, config.fit); stage.appendChild(frame);
+          frame = document.createElement('iframe'); frame.title = 'Vigil Wallpaper Engine ' + typeLabel(item.type); frame.setAttribute('sandbox', 'allow-scripts'); frame.src = URL.createObjectURL(new Blob([frameDocument(item.type, src, config.fit)], { type: 'text/html' })); stage.appendChild(frame);
           resizeObserver = new ResizeObserver(() => { try { frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'resize' }, '*'); } catch (_) {} }); resizeObserver.observe(stage);
           badge.textContent = '实时 ' + typeLabel(item.type); badge.hidden = false;
         }

@@ -61,8 +61,9 @@ async function main() {
   await ev(`window.__page.render({view:document.getElementById('view')})`);
   await until(() => ev('document.querySelectorAll(".vigil-wallpaper-card").length===1'));
   assert.equal(await ev('document.querySelector(".vigil-wallpaper-card-title").textContent'), 'V4 Scene');
-  await ev('document.querySelector("[data-wp4-id=123]").click()');
+  await ev('document.querySelector("[data-wp4-id=\'123\']").click()');
   await until(() => ev('!!document.querySelector("#vigil-wallpaper-stage iframe")'), 10000);
+  await until(() => Promise.resolve(seen.some(x => x.includes('file=scene.json'))), 10000);
   await until(() => ev('document.querySelector("#vigil-wallpaper-live-badge")?.hidden===false'), 20000);
   assert.equal(await ev('document.body.classList.contains("vigil-wallpaper-active")'), true);
   assert(seen.some(x => x.includes('file=scene.json')));
