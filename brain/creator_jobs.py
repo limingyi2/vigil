@@ -41,9 +41,10 @@ MAX_PREVIEW = 65536
 
 @contextmanager
 def _db():
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    filename = os.path.join(paths.DATA_DIR, 'creator_jobs.sqlite3')
-    db = sqlite3.connect(filename, timeout=10)
+    # P17：作业状态并入主库。表结构与列名保持原样，SQL 一行未改。
+    from storage import db as _store
+    filename = _store.main_db_path()
+    db = _store.legacy_connection()
     db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, owner TEXT, request_id TEXT, fingerprint TEXT, data TEXT, UNIQUE(owner, request_id))')
     if filename not in INITIALIZED:
         for jid, blob in db.execute('SELECT id,data FROM jobs').fetchall():
@@ -86,15 +87,19 @@ def _log_detail(jid, text):
         pass
 
 
-def _mirror_update(owner, jid, **changes):
+def _mirror_update(owner, jid, conn=None, **changes):
     """把 Creator 作业状态镜像进主对话记录库（display_turns）。
 
     复用主聊天的持久化与去重：失败/中断也保留用户请求与部分输出，
     刷新或重开后仍可见；该记录库明确不作为模型历史。
+
+    `conn` 必须在**自己已经开着写事务**时传入 —— 并库后两个模块写同一个文件，
+    另开连接会在写锁上互等，等到 busy_timeout 超时抛错再被这里吞掉，
+    表现为镜像无声无息地不再更新。
     """
     try:
         import display_turns as _dt
-        _dt.update(owner, jid, **changes)
+        _dt.update(owner, jid, _conn=conn, **changes)
     except Exception:
         pass
 
@@ -320,7 +325,7 @@ def _run(jid, owner, cfg):
                             text.append(delta)
                             item['content'] = (item['content'] + delta)[-MAX_PREVIEW:]
                             item['preview_truncated'] = size > MAX_PREVIEW
-                            _mirror_update(owner, item['request_id'], content=item['content'])
+                            _mirror_update(owner, item['request_id'], conn=db, content=item['content'])
                         _event(item, event['type'], {'text': delta})
                     _save(db, item)
         finally:
@@ -370,7 +375,7 @@ def _run(jid, owner, cfg):
                     return
                 else:
                     _event(item, 'done', {'status': 'succeeded', 'draft_id': draft['id']})
-                    _mirror_update(owner, item['request_id'], status='succeeded', content=''.join(text))
+                    _mirror_update(owner, item['request_id'], conn=db, status='succeeded', content=''.join(text))
                 _save(db, item)
         if cancelled:
             _finish_cancel(jid, owner)

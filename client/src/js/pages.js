@@ -2203,7 +2203,7 @@
       for (const item of [...records.values()].sort((a,b)=>a.created_at-b.created_at)) {
         const input = item.input || item.requirement || '';
         const status = item.status || 'pending';
-        if (item.kind === 'chat' && item.run_id) {
+        if (['chat', 'coding'].includes(item.kind) && item.run_id) {
           if ((item.created_at || 0) >= newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; lastActive = null; }
           if (['queued', 'running'].includes(status)) lastActive = item;
           if (item.can_resume !== false && ['paused','paused_budget','interrupted'].includes(status)) lastResumable = item;
@@ -2295,11 +2295,12 @@
         const note = (m.statusNote ? '<div class="run-note"><span>' + esc(m.statusNote) + '</span>' +
           (runable ? '<button class="agent-cancel" data-run="' + esc(m.run.run_id) + '">取消</button>' : '') + '</div>' : '');
         const evidence = (m.run?.steps || []).map((step,index,steps)=>step.kind==='tool' ? global.VigilAgentView.step({...step,run_id:m.run.run_id,state:step.result_state || step.status,output:step.result}) : (index < steps.length-1 && step.content ? '<div class="agent-commentary">'+U.md(step.content)+'</div>' : '')).join('');
+        const coding = m.run?.kind === 'coding' ? global.VigilAgentView.codingSummary(m.run.coding) : '';
         const body = m.text
           ? '<div class="txt md">' + t + '</div>' + note
           : (note || '<div class="txt md"></div>');
         return '<div class="turn"' + (m.job ? ' data-job="' + esc(m.job.job_id) + '"' : '') + '><div class="bdy">' +
-          (evidence ? '<div class="agent-progress live-steps">'+evidence+'</div>' : '') + body +
+          (coding || evidence ? '<div class="agent-progress live-steps">'+coding+evidence+'</div>' : '') + body +
           '<div class="foot"><span>' + esc(fmtTime(m.t, 'time')) + '</span>' +
           '</div></div></div>';
       }).join('');
@@ -2603,9 +2604,11 @@
           // 图片四段状态各有各的话：收到 / 分析中 / 看不了 / 已看到。
           // 「看不了」必须说出来 —— 否则她答的是猜的，用户却以为她看过了。
           if (evt.stage === 'describe') {
-            statusEl.textContent = evt.ok ? '图片已看懂，正在回复 '
-              : '视觉模型不可用（' + String(evt.msg || '没有返回描述') + '），她看不到这张图 ';
-            if (!evt.ok) toast('视觉模型不可用，她看不到这张图');
+            // Kept only for old bridge events.  Native chat requests do not
+            // emit this stage; a provider refusal is shown as its real error.
+            statusEl.textContent = evt.ok ? '图片已收到，正在回复 '
+              : '图片没有送进当前对话模型（' + String(evt.msg || '未知错误') + '）';
+            if (!evt.ok) toast(String(evt.msg || '图片没有送进当前对话模型'));
           } else {
             statusEl.textContent = evt.ok ? '图片已收到'
               : '图片没收到：' + String(evt.msg || evt.status || '未知原因');
@@ -2621,6 +2624,25 @@
           statusEl.appendChild(agentCancel);
           setComposerMode('pause');
           if (!reconcileTimer) reconcileTimer = setTimeout(reconcileRun, 2000);
+        } else if (evt.type && evt.type.startsWith('coding_')) {
+          finishThinking();
+          const payload = evt.payload || evt;
+          const phase = payload.phase || evt.phase || '';
+          if (evt.type === 'coding_phase') {
+            statusEl.textContent = 'Coding Agent · ' + phase + ' ';
+            if (agentRunId) statusEl.appendChild(agentCancel);
+          } else if (evt.type === 'coding_plan') {
+            const count = Array.isArray(payload.steps) ? payload.steps.length : 0;
+            addStep('coding-plan', '已生成计划（' + count + ' 步）', 'neutral');
+          } else if (evt.type === 'coding_file') {
+            addStep('coding-file', '修改 ' + String(payload.path || ''), 'ok');
+          } else if (evt.type === 'coding_test') {
+            addStep('coding-test', (payload.passed ? '验证通过：' : '验证失败：') + String(payload.command || ''), payload.passed ? 'ok' : 'err');
+          } else if (evt.type === 'coding_diagnosis') {
+            addStep('coding-diagnosis', '已定位失败原因：' + String(payload.summary || payload.root_cause || ''), 'warn');
+          } else if (evt.type === 'coding_repair') {
+            addStep('coding-repair', '自动修复第 ' + String(payload.repair_count || 0) + ' 轮', 'ok');
+          }
         } else if (evt.type === 'stage') {
           if(evt.stage==='generating'){thinkingFinished=false;startThinking();}
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
@@ -2730,6 +2752,10 @@
       try {
       const chatPayload = { text: text, src: state.src || 'pc', request_id:requestId,
         conversation_id: activeConversationId, session_id: activeConversationId };
+      const activeSession = sessionItems.find((s) => s.id === activeConversationId);
+      if (activeSession && activeSession.workspace_id) {
+        chatPayload.workspace_id = activeSession.workspace_id;
+      }
       if (resumeOf) chatPayload.resume_of = resumeOf;
         if (interjectOf) chatPayload.interject_of = interjectOf;
         if (sendingImg) chatPayload.img = sendingImg;
@@ -4566,8 +4592,7 @@
         '</div>' +
         '<div class="sec">模型分配（下拉选或直接输入；本地部署的 Qwen 填它的模型名）</div>' +
         '<div class="grid g3">' +
-        '<div class="card"><b style="font-size:13px">对话</b><div style="margin-top:10px">' + combo('mChat', groups.chat, cur.chat, '必填') + '</div></div>' +
-        '<div class="card"><b style="font-size:13px">看图</b><div style="margin-top:10px">' + combo('mVision', groups.vision, cur.vision) + '</div></div>' +
+        '<div class="card"><b style="font-size:13px">对话（含原生图片输入）</b><div style="margin-top:10px">' + combo('mChat', groups.chat, cur.chat, '必填') + '</div></div>' +
         '<div class="card"><b style="font-size:13px">生图</b><div style="margin-top:10px">' + combo('mImage', groups.image, cur.image) + '</div></div>' +
         '<div class="card"><b style="font-size:13px">语音识别</b><div style="margin-top:10px">' + combo('mAudio', groups.audio, cur.audio) + '</div></div>' +
         '</div>' +
@@ -4653,7 +4678,7 @@
       // 清单就地换血：只刷四个下拉的候选和来源行，不整页重画 —— 整页重画
       // 会把用户刚输到一半的密钥洗掉。
       const applyList = (rr) => {
-        const K = { mChat: 'chat', mVision: 'vision', mImage: 'image', mAudio: 'audio' };
+        const K = { mChat: 'chat', mImage: 'image', mAudio: 'audio' };
         Object.keys(K).forEach((id) => {
           const dl = v.querySelector('#' + id + '_dl');
           if (dl) dl.innerHTML = ((rr.groups || {})[K[id]] || []).map((m) => {
@@ -4844,7 +4869,6 @@
           provider: pk,
           api_base: baseInp.value.trim(),
           chat: v.querySelector('#mChat').value,
-          vision: v.querySelector('#mVision').value,
           image: v.querySelector('#mImage').value,
           audio: v.querySelector('#mAudio').value,
         };
@@ -5865,6 +5889,25 @@
     intersection.observe(slot);
     const offEvents = api.onEvent(event => {
       if (!active || !event) return;
+      // Native window events are the source of truth for the shared capability
+      // registry.  The Agent can therefore answer from the same state shown
+      // in this workbench instead of maintaining a second local status cache.
+      if (global.vigil && typeof global.vigil.api === 'function') {
+        const terminal = ['exited', 'detached', 'fallback', 'window-closed-resident',
+          'helper-exit', 'session-released'].includes(event.type);
+        const live = !terminal && (['starting', 'attaching', 'attached', 'resident',
+          'window-hidden', 'window-rebuilding', 'busy'].includes(event.state) ||
+          ['attached', 'start-reused', 'recreated'].includes(event.type));
+        global.vigil.api('POST', '/api/capabilities/events', {
+          capability: 'video_workbench', type: 'state',
+          status: {
+            connected: live,
+            state: event.state || event.type || 'unknown',
+            hosted_software: event.profileName || event.exePath || null,
+            pid: event.pid || null,
+          },
+        }).catch(() => {});
+      }
       // 托管成功后占位文字必须让位；否则容器被藏起来时页面看起来像是“没启动”。
       if (event.type === 'attached' || event.type === 'start-reused' || event.type === 'recreated') {
         slot.classList.add('is-hosted');

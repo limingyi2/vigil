@@ -4,7 +4,7 @@
 只有 "api" 一种模式（config.json 的 chat_mode）：直接让 API 产出她的话，
 事实准、会用记忆、守人设。本地 Qwen3-4B + LoRA 那套和 two_stage 均已移除。
 """
-import os, re, json
+import os, re, json, copy
 import datetime
 import time
 import threading
@@ -1028,6 +1028,25 @@ class Brain:
         return (user_text + "\n\n—— 下面是回话要求（不是他说的话）——\n"
                 + rules)
 
+    def _native_user_content(self, user_text, native_content=None):
+        """Build model-only multimodal content without changing user history.
+
+        `native_content` is transient request context supplied by the server.
+        The persisted turn always receives the plain `user_text`; internal
+        rules are added only to the copied text part sent to the provider.
+        """
+        text = self._user_msg_with_rules(user_text)
+        if not isinstance(native_content, list):
+            return text
+        content = copy.deepcopy(native_content)
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                item["text"] = text
+                break
+        else:
+            content.insert(0, {"type": "text", "text": text})
+        return content
+
     # --- 原生 function calling 多轮（**线上只有这一条**）---
     #
     # 历史上还有两条（`draft()` 靠正文里的 [tool:...] 标签、`draft_router()`
@@ -1037,7 +1056,8 @@ class Brain:
     #     于是整块说话规则静默失效（"她不像群友、不会梗、说话多少没反应"）；
     #   * 它们的提示词还在教 `[tool:...]` 标签，和 tools schema 打架。
     # 一个决策点只留一条路，这类"改一处漏一处"才不会重演。
-    def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None):
+    def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None,
+                     native_content=None):
         """原生 FC 出草稿：工具调用走结构化 tool_calls，时序仍是 ReAct。
 
         和 draft 的区别只在"工具怎么传"：工具表挂在请求的 tools 字段，模型在
@@ -1136,7 +1156,7 @@ class Brain:
         msgs.extend(_hist)
         # 说话规则贴在他原话后面（**不是 system**）—— 见 _user_msg_with_rules
         msgs.append({"role": "user",
-                     "content": self._user_msg_with_rules(user_text)})
+                     "content": self._native_user_content(user_text, native_content)})
 
         ctx = _ph.Turn(text=user_text, src=ctx_src or self._cur_src, brain=self)
 
@@ -1164,6 +1184,12 @@ class Brain:
         _usage = None
         _model_request_seconds = 0.0
         used = []
+
+        # P17 诊断：把请求开始的时刻和本轮配置快照存到 self 上。
+        # 存 self 而不是靠局部变量，是因为 finally 里要读 —— 而这个函数有
+        # 十几处 return，逐个传参必然漏一处。
+        self._diag_t0 = _t0
+        self._diag_api = _api0
 
         try:
             # 工具循环的轮数与时间预算。
@@ -1232,7 +1258,7 @@ class Brain:
                     _cinfo = dict(_retry_info, context_recovery_attempt=1)
                     self.last_context_info = _cinfo
                     msgs = ([{'role': 'system', 'content': ''.join(parts)}] + list(_hist)
-                            + [{'role': 'user', 'content': self._user_msg_with_rules(user_text)}])
+                            + [{'role': 'user', 'content': self._native_user_content(user_text, native_content)}])
                     _payload['messages'] = msgs
                     _context_recovered = True
                     self.last_cloud_requests += 1
@@ -1427,12 +1453,47 @@ class Brain:
                 # Unknown completion / network errors must never replay a task.
                 return '模型请求失败，未自动重试；请核对已完成操作'
             return None
+        finally:
+            # P17 诊断：一次完整模型请求的耗时与 token 用量进诊断库。
+            # 放 finally 是因为上面有十几处 return，逐个补调用必然漏；
+            # 这里对每条出口都生效，包括异常和委派短路。
+            # `_diag_model_request` 内部入队即返回，不会拖慢收尾。
+            self._diag_model_request()
+
+    def _diag_model_request(self):
+        """把本轮模型请求的耗时/token/成败写进诊断库。绝不抛异常。
+
+        放在独立方法里是为了让 `finally` 只有一行：异常安全由
+        `storage.diag` 的 `_guard` 和调用处的 try 双重保证。
+        """
+        try:
+            from storage import diag
+            usage = self.last_usage if isinstance(self.last_usage, dict) else {}
+            api = self._diag_api if isinstance(getattr(self, "_diag_api", None), dict) else {}
+            t0 = getattr(self, "_diag_t0", None)
+            duration_ms = self.last_ms
+            if duration_ms is None and t0:
+                duration_ms = int((time.time() - t0) * 1000)
+            diag.log_model_request(
+                provider=str(api.get("provider") or self.last_provider_kind or "cloud"),
+                model=str(api.get("model") or ""),
+                duration_ms=int(duration_ms or 0),
+                prompt_tokens=int(usage.get("in") or 0),
+                completion_tokens=int(usage.get("out") or 0),
+                purpose="draft_native",
+                ok=not bool(self.last_err),
+                error=str(self.last_err or "")[:200],
+                scope={"src": getattr(self, "_cur_src", None) or "pc",
+                       "route": getattr(self, "last_route", None),
+                       "tools": getattr(self, "last_tools_used", None) or []})
+        except Exception:
+            pass
 
     # --- 前置判断（router）：便宜模型先决策并调工具，主模型只组织回答 ---
     #
     # **当前没有被 chat() 调用**（线上走 draft_native）。保留是因为它省 token
     # --- 流式聊天：实时产出思考过程和正文 ---
-    def stream_chat(self, user_text, src=None, conversation_id=None):
+    def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None):
         """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
         产出的事件格式：
@@ -1483,7 +1544,7 @@ class Brain:
             return
         msgs = [{"role": "system", "content": "".join(parts)}]
         msgs.extend(_hist)
-        msgs.append({"role": "user", "content": self._user_msg_with_rules(user_text)})
+        msgs.append({"role": "user", "content": self._native_user_content(user_text, native_content)})
 
         _know = _is_knowledge_q(user_text)
         _eff = "medium" if _know else "low"
@@ -1558,7 +1619,7 @@ class Brain:
                         _cinfo = dict(_retry_info, context_recovery_attempt=1)
                         self.last_context_info = _cinfo
                         payload['messages'] = ([{'role': 'system', 'content': ''.join(parts)}]
-                            + list(_hist) + [{'role': 'user', 'content': self._user_msg_with_rules(user_text)}])
+                            + list(_hist) + [{'role': 'user', 'content': self._native_user_content(user_text, native_content)}])
                         continue
                     if is_context_limit_error(e):
                         yield {'type': 'error', 'reason': 'context_overflow',
@@ -1602,7 +1663,7 @@ class Brain:
 
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,
-             no_tools=False, conversation_id=None):
+             no_tools=False, conversation_id=None, native_content=None):
         """返回 (她说的话, 模式标签)。模式标签用于排查到底走的哪条路
 
         img：这一轮带的图片路径（有的话会记进聊天存档，手机/App 那边好显示）。
@@ -1669,9 +1730,10 @@ class Brain:
             _t2 = time.time()
             # 主动搭话的 user_text 是"说/无"那个决策提示词，不是用户的话 ——
             # 那种轮次不会有工具需求，挂上去纯属白花钱。
-            draft = self.draft_native(user_text, memory_block,
-                                      no_tools=no_tools or proactive,
-                                      ctx_src=self._cur_src)
+            _draft_kwargs = dict(no_tools=no_tools or proactive, ctx_src=self._cur_src)
+            if native_content is not None:
+                _draft_kwargs['native_content'] = native_content
+            draft = self.draft_native(user_text, memory_block, **_draft_kwargs)
             print(f"[perf] 原生FC起草 {time.time()-_t2:.1f}s "
                   f"({'有稿' if draft else '没稿'})", flush=True)
         self.last_draft = draft

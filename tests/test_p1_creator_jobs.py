@@ -10,6 +10,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'brain'))
 import creator_jobs as jobs
 
 
+def _main_db_bytes(data_dir):
+    """主库原始字节（含 WAL）。
+
+    P17 把 creator_jobs / agent_runs 并入主库 `db/vigil.db`。"思考不落盘"这类
+    断言必须扫真文件 —— WAL 模式下刚写的内容可能还在 `-wal` 里，只读主文件
+    会漏掉真正要防的那一次写入。
+    """
+    blob = b''
+    for name in ('vigil.db', 'vigil.db-wal'):
+        path = os.path.join(data_dir, 'db', name)
+        if os.path.exists(path):
+            with open(path, 'rb') as stream:
+                blob += stream.read()
+    return blob
+
+
 class JobTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -48,8 +64,7 @@ class JobTests(unittest.TestCase):
             {'type': 'completion', 'result': {'complete': True, 'usage': None}}])
         self.assertEqual(item['status'], 'succeeded')
         self.assertNotIn('PRIVATE_REASONING', json.dumps(item))
-        with open(os.path.join(self.tmp.name, 'creator_jobs.sqlite3'), 'rb') as stream:
-            self.assertNotIn(b'PRIVATE_REASONING', stream.read())
+        self.assertNotIn(b'PRIVATE_REASONING', _main_db_bytes(self.tmp.name))
         self.assertEqual(save.call_count, 1)
 
     def test_truncated_never_persists_files(self):

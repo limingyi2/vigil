@@ -4,7 +4,7 @@ import os
 import sys
 
 PROTOCOL = 1
-CAPABILITIES = ['creator_jobs', 'agent_runs', 'models_saved', 'chat_stream']
+CAPABILITIES = ['creator_jobs', 'agent_runs', 'coding_agent', 'models_saved', 'chat_stream']
 
 
 def identity():

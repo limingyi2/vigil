@@ -28,13 +28,23 @@ def owner(identity, src='pc', session='main'):
     return hashlib.sha256(json.dumps([identity, str(src), str(session)[:128]]).encode()).hexdigest()
 
 
+_DDL_TURNS = ('CREATE TABLE IF NOT EXISTS turns (owner TEXT, request_id TEXT, created REAL,'
+              ' data TEXT, PRIMARY KEY(owner,request_id))')
+
+
+def _ensure(db):
+    """建表。给"借用调用方连接"的路径用 —— 那条路不走 database()。"""
+    db.execute(_DDL_TURNS)
+
+
 @contextmanager
 def database():
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    filename = os.path.join(paths.DATA_DIR, 'display_turns.sqlite3')
-    db = sqlite3.connect(filename, timeout=10)
+    # P17：显示记录并入主库。表结构与列名保持原样，SQL 一行未改。
+    from storage import db as _store
+    filename = _store.main_db_path()
+    db = _store.legacy_connection()
     try:
-        db.execute('CREATE TABLE IF NOT EXISTS turns (owner TEXT, request_id TEXT, created REAL, data TEXT, PRIMARY KEY(owner,request_id))')
+        _ensure(db)
         if filename not in INITIALIZED:
             for who, rid, data in db.execute('SELECT owner,request_id,data FROM turns').fetchall():
                 item = json.loads(data)
@@ -65,23 +75,37 @@ def begin(who, rid, text):
         return item, True
 
 
-def update(who, rid, **changes):
-    with LOCK, database() as db:
-        row = db.execute('SELECT data FROM turns WHERE owner=? AND request_id=?', (who, rid)).fetchone()
-        if not row:
-            return
-        item = json.loads(row[0])
-        if item['status'] in TERMINAL:
-            return item
-        allowed = {k: v for k, v in changes.items() if k in ('status', 'content', 'error')}
-        if 'content' in allowed:
-            allowed['content'] = str(allowed['content'])[-LIMITS['max_content_chars']:]
-        if item.get('cleared'):
-            allowed.pop('content', None)
-            allowed.pop('error', None)
-        item.update(allowed)
-        db.execute('UPDATE turns SET data=? WHERE owner=? AND request_id=?', (json.dumps(item, ensure_ascii=False), who, rid))
+def _apply(db, who, rid, changes):
+    row = db.execute('SELECT data FROM turns WHERE owner=? AND request_id=?', (who, rid)).fetchone()
+    if not row:
+        return
+    item = json.loads(row[0])
+    if item['status'] in TERMINAL:
         return item
+    allowed = {k: v for k, v in changes.items() if k in ('status', 'content', 'error')}
+    if 'content' in allowed:
+        allowed['content'] = str(allowed['content'])[-LIMITS['max_content_chars']:]
+    if item.get('cleared'):
+        allowed.pop('content', None)
+        allowed.pop('error', None)
+    item.update(allowed)
+    db.execute('UPDATE turns SET data=? WHERE owner=? AND request_id=?', (json.dumps(item, ensure_ascii=False), who, rid))
+    return item
+
+
+def update(who, rid, _conn=None, **changes):
+    """写一条显示记录。
+
+    `_conn` 是给同进程其它模块在自己写事务里调的（`creator_jobs` 镜像作业状态）。
+    并库之后大家写的是同一个文件，另开连接会在写锁上互等 —— 15 秒 busy_timeout
+    之后抛 `database is locked`，而调用方是 `except: pass`，表现就是镜像静默失效。
+    传同一个连接既没这问题，也让镜像与作业状态同事务提交，不会只成功一半。
+    """
+    if _conn is not None:
+        _ensure(_conn)
+        return _apply(_conn, who, rid, changes)
+    with LOCK, database() as db:
+        return _apply(db, who, rid, changes)
 
 
 def find_request(who, rid):

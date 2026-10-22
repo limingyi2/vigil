@@ -30,6 +30,22 @@ def response(content='', calls=None, finish=None, reasoning=''):
         'reasoning_content': reasoning}, 'finish_reason': finish or ('tool_calls' if calls else 'stop')}]}
 
 
+def _main_db_bytes(data_dir):
+    """主库原始字节（含 WAL）。
+
+    P17 把 creator_jobs / agent_runs 并入主库 `db/vigil.db`。"思考不落盘"这类
+    断言必须扫真文件 —— WAL 模式下刚写的内容可能还在 `-wal` 里，只读主文件
+    会漏掉真正要防的那一次写入。
+    """
+    blob = b''
+    for name in ('vigil.db', 'vigil.db-wal'):
+        path = os.path.join(data_dir, 'db', name)
+        if os.path.exists(path):
+            with open(path, 'rb') as stream:
+                blob += stream.read()
+    return blob
+
+
 class Provider:
     supports_tools = True
     supports_stream = False
@@ -189,8 +205,7 @@ class RunTests(unittest.TestCase):
         item, _, _ = self.execute([response('done', reasoning='PRIVATE_REASONING')])
         self.assertEqual(item['status'], 'succeeded')
         self.assertNotIn(item['run_id'], runs.TRANSIENT)
-        with open(os.path.join(self.tmp.name, 'agent_runs.sqlite3'), 'rb') as stream:
-            self.assertNotIn(b'PRIVATE_REASONING', stream.read())
+        self.assertNotIn(b'PRIVATE_REASONING', _main_db_bytes(self.tmp.name))
         self.assertNotIn('PRIVATE_REASONING', json.dumps(item))
 
     def test_oversized_answer_is_clipped_and_still_delivered(self):

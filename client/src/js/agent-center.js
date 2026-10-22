@@ -18,8 +18,26 @@
         if (!r.ok) toast('桌面通知不可用，提醒已显示在客户端内');
       }
     },
-    changed:state => listeners.forEach(fn => fn(state)),
+    changed:state => {
+      publishCapabilityState(state);
+      listeners.forEach(fn => fn(state));
+    },
   });
+  function publishCapabilityState(s) {
+    if (!global.vigil || typeof global.vigil.api !== 'function' || !s) return;
+    const connection = String(s.status && s.status.connection_status || 'unknown');
+    const connected = !s.stale && connection === 'connected';
+    global.vigil.api('POST', '/api/capabilities/events', {
+      capability: 'codex', type: 'state',
+      status: {
+        connected,
+        state: s.stale ? 'stale' : connection,
+        login: s.status && s.status.runtime && s.status.runtime.auth_status || 'unknown',
+        tasks: Array.isArray(s.owned) ? s.owned.length : 0,
+        pending: Array.isArray(s.approvals) ? s.approvals.filter(x => x.state === 'pending').length : 0,
+      },
+    }).catch(() => {});
+  }
   function start() {
     if (started || !global.vigil) return;
     started = true;

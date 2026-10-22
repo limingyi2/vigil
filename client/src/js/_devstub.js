@@ -63,9 +63,9 @@
     [/^\/api\/packages/, () => J({ items: [ { number: 'SF1234567890', carrier: '顺丰速运', status: '运输中',
       note: '耳机', latest: '已到达杭州转运中心' } ] })],
     [/^\/api\/models/, () => J({ current: { provider: 'xiaomi', provider_name: '小米 MiMo',
-      api_base: 'https://api.xiaomimimo.com/v1', api_key_set: true, chat: 'mimo-v2.6-pro', vision: '', image: '', audio: '' },
+      api_base: 'https://api.xiaomimimo.com/v1', api_key_set: true, chat: 'mimo-v2.6-pro', image: '', audio: '' },
       providers: [ { key: 'xiaomi', name: '小米 MiMo' }, { key: 'siliconflow', name: '硅基流动' }, { key: 'custom', name: '自定义' } ],
-      groups: { chat: ['mimo-v2.6-pro', 'mimo-v2.6'], vision: [], image: [], audio: [] },
+      groups: { chat: ['mimo-v2.6-pro', 'mimo-v2.6'], image: [], audio: [] },
       source: 'online', count: 12 })],
     [/^\/api\/models\/apply/, () => J({ ok: true })],
     [/^\/api\/trace/, (b, url) => {
@@ -99,7 +99,7 @@
     [/^\/api\/logs/, () => J({ items: [
       { t: now - 30, level: 'INFO', msg: 'turn start · persona=default · mem=3' },
       { t: now - 25, level: 'WARN', msg: 'stream 重试 1 次（连接超时）' },
-      { t: now - 20, level: 'ERROR', msg: 'vision model 未配置，跳过图片描述' } ] })],
+      { t: now - 20, level: 'INFO', msg: '图片输入交给当前对话模型处理' } ] })],
     [/^\/api\/plugin\/remote\/tools/, () => J({ ok: true, items: [
       { name: 'local_system_info', desc: '看这台电脑的基本情况：系统版本、CPU、内存、磁盘剩余', danger: false, group: 'system', params: [] },
       { name: 'local_file_list', desc: '列出一个目录里有什么', danger: false, group: 'files', params: ['path'] },

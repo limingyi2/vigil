@@ -37,9 +37,9 @@ import paths
 
 SOURCE = Path(__file__).resolve().parents[1] / 'brain' / 'server.py'
 FUNCTIONS = {'start_remote_api', '_auth_ok', '_is_loopback', '_device_path_allowed',
-             '_query_param', '_norm_src', '_decode_turn_image', '_describe_turn_image',
-             '_image_note', '_save_turn_image', '_image_ext', '_chat_lock',
-             '_persona_for_src'}
+             '_query_param', '_norm_src', '_decode_turn_image', '_supports_native_image',
+             '_native_image_content', '_image_note', '_save_turn_image', '_image_ext',
+             '_chat_lock', '_persona_for_src'}
 CONSTANT_PREFIXES = ('DEVICE_', 'IMAGE_', '_IMAGE_', 'MAX_BODY')
 
 PNG = base64.b64decode(
@@ -118,10 +118,10 @@ class ImageArchiveTests(unittest.TestCase):
             def seed_history(self, **kw):
                 pass
 
-            def chat(self, text, **kw):
+            def chat(self, text, native_content=None, **kw):
                 return 'reply text', 'local'
 
-            def stream_chat(self, text, **kw):
+            def stream_chat(self, text, native_content=None, **kw):
                 yield {'type': 'text', 'text': 'reply text'}
                 yield {'type': 'done', 'text': 'reply text'}
 
@@ -136,7 +136,6 @@ class ImageArchiveTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
-        self.ns['_IMAGE_DESC_CACHE'].clear()
 
     def _post_image(self, blob):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=10)
@@ -157,55 +156,80 @@ class ImageArchiveTests(unittest.TestCase):
         upload = Path(self.temp.name) / 'upload'
         return sorted(p.name for p in upload.glob('u_*')) if upload.exists() else []
 
-    def test_png_upload_is_archived_as_png(self):
+    def _vision_must_not_be_called(self):
+        """A separate vision model must never see a chat image any more."""
         import vision as vision_mod
-        with patch.object(vision_mod, 'describe_bytes', lambda *a, **kw: '一张图'), \
-             patch('tools.schema_needed', return_value=False):
+        calls = []
+
+        def boom(*a, **kw):
+            calls.append(a)
+            raise AssertionError('聊天图片不得走独立视觉模型')
+
+        return patch.object(vision_mod, 'describe_bytes', boom), calls
+
+    def test_png_upload_is_archived_as_png(self):
+        guard, calls = self._vision_must_not_be_called()
+        with guard, patch('tools.schema_needed', return_value=False):
             self.assertEqual(self._post_image(PNG), 200)
+        self.assertEqual(calls, [], '图片必须直接进当前对话模型')
         names = self._saved_files()
         self.assertTrue(names, '图片必须落盘')
         self.assertTrue(all(n.endswith('.png') for n in names), names)
 
     def test_webp_upload_is_archived_as_webp(self):
-        import vision as vision_mod
-        with patch.object(vision_mod, 'describe_bytes', lambda *a, **kw: '一张图'), \
-             patch('tools.schema_needed', return_value=False):
+        guard, calls = self._vision_must_not_be_called()
+        with guard, patch('tools.schema_needed', return_value=False):
             self.assertEqual(self._post_image(WEBP), 200)
+        self.assertEqual(calls, [], '图片必须直接进当前对话模型')
         names = self._saved_files()
         self.assertTrue(names and all(n.endswith('.webp') for n in names), names)
 
     def test_jpeg_upload_stays_jpg(self):
-        import vision as vision_mod
-        with patch.object(vision_mod, 'describe_bytes', lambda *a, **kw: '一张图'), \
-             patch('tools.schema_needed', return_value=False):
+        guard, calls = self._vision_must_not_be_called()
+        with guard, patch('tools.schema_needed', return_value=False):
             self.assertEqual(self._post_image(JPEG), 200)
+        self.assertEqual(calls, [], '图片必须直接进当前对话模型')
         names = self._saved_files()
         self.assertTrue(names and all(n.endswith('.jpg') for n in names), names)
 
 
-class ImageCacheScopeTests(unittest.TestCase):
+class NativeImageScopeTests(unittest.TestCase):
+    """P17: the description cache is gone; the raw bytes go to the model.
+
+    The old defect was a cache keyed by content hash alone, so "this exact
+    image was analysed" leaked across identities and sessions.  With the
+    separate vision model removed there is no analysis to cache at all: the
+    picture travels to the current chat model as a native multimodal part,
+    and every turn carries it again.
+    """
+
     def setUp(self):
         self.ns = _namespace({})
-        self.ns['_IMAGE_DESC_CACHE'].clear()
 
-    def test_same_image_in_another_scope_is_analysed_again(self):
-        import vision as vision_mod
-        calls = []
+    def test_there_is_no_description_cache_left(self):
+        """No module-level image cache may survive: it is what leaked."""
+        self.assertNotIn('_IMAGE_DESC_CACHE', self.ns)
+        self.assertNotIn('_describe_turn_image', self.ns)
 
-        def fake(blob, cfg, timeout=90):
-            calls.append(blob)
-            return '描述'
+    def test_the_same_image_is_sent_again_on_every_turn(self):
+        """The same picture must reach the model every single time."""
+        build = self.ns['_native_image_content']
+        first = build(PNG, '看图')
+        second = build(PNG, '看图')
+        self.assertEqual(first, second)
+        self.assertTrue(first[1]['image_url']['url'].startswith('data:image/png;base64,'))
 
-        describe = self.ns['_describe_turn_image']
-        with patch.object(vision_mod, 'describe_bytes', fake):
-            first, _ = describe(PNG, scope='brain|pc|conv_a')
-            second, _ = describe(PNG, scope='brain|pc|conv_b')
-            same, _ = describe(PNG, scope='brain|pc|conv_a')
-        self.assertEqual(first, '描述')
-        self.assertEqual(second, '描述')
-        self.assertEqual(same, '描述')
-        # 跨身份/会话不共享缓存；同域内才复用
-        self.assertEqual(len(calls), 2, '缓存不得跨权限边界命中')
+    def test_the_image_never_carries_a_description(self):
+        """The payload is pixels, not somebody's transcription."""
+        build = self.ns['_native_image_content']
+        content = build(PNG, '看图')
+        self.assertEqual(len(content), 2)
+        self.assertEqual(content[0]['type'], 'text')
+        self.assertEqual(content[0]['text'], '看图')
+        self.assertEqual(content[1]['type'], 'image_url')
+        blob = content[1]['image_url']['url']
+        self.assertTrue(blob.startswith('data:image/png;base64,'))
+        self.assertNotIn('他发的图', blob)
 
 
 class WorkspaceBindingTests(unittest.TestCase):
@@ -265,7 +289,6 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
-        self.ns['_IMAGE_DESC_CACHE'].clear()
         self.owner = display_turns.owner(('brain', ''), 'pc', 'main')
 
     def post(self, path, body):

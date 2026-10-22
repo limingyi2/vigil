@@ -92,7 +92,10 @@ MESSAGES = dict(ERROR_MESSAGES,
     tool_unknown='工具结果不明，需人工核对，未重试',
     tool_failed='工具被拒绝或未能派发，已停止后续执行',
     resource_limit='输出超过保存上限，已截断',
-    internal_error='执行服务异常，已停止后续派发')
+    internal_error='执行服务异常，已停止后续派发',
+    coding_failed='Coding Agent 未通过真实验证，已保留诊断、修改记录和测试回执',
+    coding_workspace='Coding Agent 工作区无效或越界',
+    coding_model='Coding Agent 模型输出不符合结构化契约')
 
 
 def _json(value):
@@ -263,13 +266,362 @@ def _steps_digest(item, per_entry=500, total=6000):
     return '\n'.join(lines)[:total]
 
 
+# --- 流式增量：内存队列 + 批量落盘 --------------------------------------
+# 模型每吐一个增量就开一次 SQLite 事务（BEGIN IMMEDIATE + synchronous=FULL），
+# 是这条链路上最贵的一步：一次 fsync 几毫秒，写锁又是按 token 持有的。而读
+# 事件那侧（SSE 每 50ms 一次）以前共用同一个 _db()，也在抢同一把写锁 ——
+# 于是增量只能憋成一批到达。现在增量先进内存，由独立线程合并落盘。
+STREAM_FLUSH_INTERVAL = 0.05    # 秒；批量落盘的最小间隔
+STREAM_FLUSH_EVENTS = 64        # 或者攒够这么多条
+STREAM_FLUSH_CHARS = 2048       # 或者攒够这么多字符
+# 背压上限：缓冲不能无限涨。到顶同步落一次；撤不回去就让任务失败并留痕，
+# 绝不让内存里堆着没人知道的输出。
+STREAM_BUFFER_MAX = 4096
+STREAM_EVENTS_KEEP = 256        # 每个 run 在库里保留的事件条数
+
+_BUFFERS = {}
+_BUFFER_LOCK = threading.Lock()
+_WAKE = threading.Condition()
+# run_id -> (owner, item)：本进程里正在执行的那一份**唯一**状态。
+# 执行线程直接改它，落盘线程读它，取消/暂停也从它读 —— 不再每个增量都从库里
+# 反序列化一份副本（否则谁写回谁的旧副本，正文就会丢）。
+_LIVE = {}
+_TX = threading.local()
+_WRITER_STARTED = False
+
+
+class _RunBuffer:
+    """一个 run 的待落盘增量。
+
+    seq 在这里统一分配：实时读路径看到的内存事件、批量写进库的事件用同一套
+    序号，所以"先看到的"和"最后落盘的"永远对得上。
+    """
+
+    __slots__ = ('run_id', 'owner', 'lock', 'pending', 'inflight', 'chars',
+                 'closed', 'stats', 'data_dir')
+
+    def __init__(self, run_id, owner):
+        self.run_id = run_id
+        self.owner = owner
+        self.lock = threading.Lock()
+        self.pending = []       # [(event, queued_at)]
+        self.inflight = []      # 正在写盘的那一批：读路径仍要看得见，避免空窗
+        self.chars = 0
+        self.closed = False
+        # 缓冲归属的数据目录。环境换过（测试收尾、数据目录迁移）之后，旧的
+        # 缓冲不许再写进新环境的库 —— 那会把上一个环境的事件混进这一份账。
+        self.data_dir = paths.DATA_DIR
+        self.stats = dict(deltas=0, chars=0, first_at=None, last_at=None,
+                          first_delta_ms=0.0, max_gap_ms=0.0,
+                          queue_ms_sum=0.0, queue_n=0, max_queue_ms=0.0,
+                          batches=0, flush_ms_sum=0.0, max_flush_ms=0.0,
+                          sse_ms_sum=0.0, sse_n=0)
+
+    def push(self, item, kind, payload, queued_from=None):
+        """一条增量：分配序号、记指标、按 kind 分流，全程只拿本 run 的锁。
+
+        text_delta 进待落盘队列（批量写进库）；think_delta 只进 TRANSIENT
+        （思考内容不进持久台账，旧行为不变）。序号与 `event_cursor` 的推进
+        在同一把锁里完成 —— 控制事件走全局锁、增量不走，两个入口必须共用
+        这把锁才不会发出重复 seq。返回 None = 这个 run 已收口，增量丢弃。
+        """
+        with self.lock:
+            if self.closed:
+                return None
+            seq = int(item['event_cursor']) + 1
+            now = time.monotonic()
+            st = self.stats
+            st['deltas'] += 1
+            chars = len(str(payload.get('text') or '')) if kind == 'text_delta' else 0
+            st['chars'] += chars
+            if st['first_at'] is None:
+                st['first_at'] = now
+                if isinstance(queued_from, (int, float)):
+                    st['first_delta_ms'] = round(max(0.0, now - queued_from) * 1000.0, 2)
+            if st['last_at'] is not None:
+                st['max_gap_ms'] = max(st['max_gap_ms'], (now - st['last_at']) * 1000.0)
+            st['last_at'] = now
+            event = dict(run_id=item['run_id'], request_id=item['request_id'], seq=seq,
+                         type=kind, ts=time.time(), payload=payload)
+            if kind == 'think_delta':
+                with _BUFFER_LOCK:
+                    if item['run_id'] not in TRANSIENT and len(TRANSIENT) >= 200:
+                        TRANSIENT.pop(next(iter(TRANSIENT)))
+                    TRANSIENT.setdefault(item['run_id'], deque(maxlen=256)).append(event)
+            else:
+                event['_q'] = now     # 入队时刻：只用于量延迟，落盘和上线都去掉
+                self.pending.append((event, now))
+                self.chars += chars
+            item['event_cursor'] = seq
+            return event
+
+    def next_seq(self, item):
+        """控制事件的序号分配：与增量共用同一把锁，两个入口不会撞 seq。"""
+        with self.lock:
+            seq = int(item['event_cursor']) + 1
+            item['event_cursor'] = seq
+            return seq
+
+    def has_pending(self):
+        with self.lock:
+            return bool(self.pending)
+
+    def take(self):
+        """取走一批并标成 inflight。事务真提交了才清掉。
+
+        批次计数在这里做：指标事件与最后的终态常常和落盘在同一笔事务里，
+        done() 要等 commit 之后才跑，那时候指标早就读出旧值了。
+        """
+        with self.lock:
+            if not self.pending:
+                return []
+            batch, self.pending = self.pending, []
+            self.inflight = batch
+            self.chars = 0
+            self.stats['batches'] += 1
+            return batch
+
+    def done(self, batch, seconds):
+        with self.lock:
+            self.inflight = []
+            st = self.stats
+            st['flush_ms_sum'] += seconds * 1000.0
+            st['max_flush_ms'] = max(st['max_flush_ms'], seconds * 1000.0)
+
+    def failed(self, batch):
+        """写盘失败：把这批退回队首，一条都不丢。"""
+        with self.lock:
+            self.pending = list(batch) + self.pending
+            self.inflight = []
+            self.chars += sum(len(str((ev.get('payload') or {}).get('text') or ''))
+                              for ev, _t in batch)
+
+    def page(self, after, item):
+        """可见事件与游标的**同一时刻**快照。
+
+        🔴 两者分开读会出读-skew：增量在"拍可见集合"之后、"读游标"之前入队，
+        这一页就呈现"游标推进了、事件却不存在"，`events()` 会误判成空洞，
+        用快照重同步把 `after` 推到游标 —— 那一跳增量从此再也出不来
+        （客户端只在那份快照的正文里见过它）。push/next_seq 本来就在这把
+        锁里推进游标，所以在这里一起读是严格同时刻的。
+        """
+        with self.lock:
+            items = [ev for ev, _t in self.inflight + self.pending if ev['seq'] > after]
+            cursor = int(item.get('event_cursor') or 0) if item is not None else None
+        return sorted(items, key=lambda e: e['seq']), cursor
+
+    def note_sse(self, delay_ms):
+        with self.lock:
+            st = self.stats
+            st['sse_ms_sum'] += max(0.0, float(delay_ms))
+            st['sse_n'] += 1
+
+    def stats_public(self):
+        with self.lock:
+            st = dict(self.stats)
+        st['queue_ms_avg'] = round(st['queue_ms_sum'] / st['queue_n'], 2) if st['queue_n'] else 0.0
+        st['sse_ms_avg'] = round(st['sse_ms_sum'] / st['sse_n'], 2) if st['sse_n'] else 0.0
+        for key in ('first_delta_ms', 'max_gap_ms', 'max_queue_ms',
+                    'flush_ms_sum', 'max_flush_ms'):
+            st[key] = round(float(st[key] or 0.0), 2)
+        for key in ('queue_ms_sum', 'queue_n', 'sse_ms_sum', 'sse_n',
+                    'first_at', 'last_at'):
+            st.pop(key, None)
+        return st
+
+    def reset_stats(self):
+        with self.lock:
+            for key in self.stats:
+                self.stats[key] = 0.0
+            for key in ('first_at', 'last_at'):
+                self.stats[key] = None
+
+
+def _tx_batches():
+    batches = getattr(_TX, 'batches', None)
+    if batches is None:
+        batches = _TX.batches = []
+        _TX.depth = 0
+    return batches
+
+
+def _buffer(run_id, owner=''):
+    fresh = False
+    with _BUFFER_LOCK:
+        buf = _BUFFERS.get(run_id)
+        if buf is None:
+            buf = _RunBuffer(run_id, owner)
+            _BUFFERS[run_id] = buf
+            fresh = True
+        elif owner:
+            buf.owner = owner
+    # 🔴 起线程必须放在锁外：_ensure_writer 自己也要拿 _BUFFER_LOCK，
+    # 在锁里调用就是非重入锁自锁（create 第一个 run 时必现）。
+    if fresh:
+        _ensure_writer()
+    return buf
+
+
+def _ensure_writer():
+    """批量落盘线程。真有 run 时才启动一次。"""
+    global _WRITER_STARTED
+    with _BUFFER_LOCK:
+        if _WRITER_STARTED:
+            return
+        _WRITER_STARTED = True
+    threading.Thread(target=_writer_loop, name='agent-run-flusher', daemon=True).start()
+
+
+def _writer_loop():
+    global _WRITER_STARTED
+    while True:
+        time.sleep(STREAM_FLUSH_INTERVAL)
+        with _BUFFER_LOCK:
+            bufs = list(_BUFFERS.values())
+        if not bufs:
+            # 没有待写缓冲：线程退场，下一个 run 进来时再起。留着它只会每
+            # 50ms 空转，还会在测试收尾/数据目录被清理的窗口里把已删除的
+            # 目录又建回来（Windows 上表现为 rmtree 报"目录不是空"）。
+            with _BUFFER_LOCK:
+                if not _BUFFERS:
+                    _WRITER_STARTED = False
+                    return
+            continue
+        for buf in bufs:
+            try:
+                if buf.data_dir != paths.DATA_DIR:
+                    # 环境变了：这个缓冲再也写不回它出生的那个库。run 已死
+                    # 就清掉，别每轮重试；还活着就交给执行线程自己收口。
+                    if _LIVE.get(buf.run_id) is None:
+                        with _BUFFER_LOCK:
+                            if _BUFFERS.get(buf.run_id) is buf:
+                                _BUFFERS.pop(buf.run_id, None)
+                    continue
+                # run 已收口且没有待写增量：这个缓冲没人用了，清掉。
+                if _LIVE.get(buf.run_id) is None and not buf.has_pending():
+                    with _BUFFER_LOCK:
+                        _BUFFERS.pop(buf.run_id, None)
+                    continue
+                _flush_buffer(buf)
+            except Exception as exc:
+                # 不把增量悄悄吞掉：已经退回队列，下一轮重试。
+                print('[agent] 批量落盘失败，稍后重试：%s' % str(exc)[:120], flush=True)
+
+
+def _write_events(db, batch):
+    for event, _queued_at in batch:
+        # 只把该留的写进库：`_q` 是进程内的单调时刻，跨重启没意义。
+        stored = {k: v for k, v in event.items() if k != '_q'}
+        db.execute('INSERT OR REPLACE INTO events VALUES (?,?,?)',
+                   (event['run_id'], event['seq'], _json(stored)))
+
+
+def _flush_pending(db, item):
+    """把缓冲里的增量写进**当前事务**，并按 seq 顺序。
+
+    提交成功才算数：批次挂在连接的事务上（见 `_db`），回滚就整批退回队列。
+    """
+    buf = _BUFFERS.get(item['run_id'])
+    if buf is None:
+        return 0
+    batch = buf.take()
+    if not batch:
+        return 0
+    _write_events(db, batch)
+    _tx_batches().append((buf, batch, time.monotonic()))
+    return len(batch)
+
+
+def _flush_buffer(buf):
+    """把内存里攒的增量合并成一次提交。返回实际写入条数。"""
+    live = _LIVE.get(buf.run_id)
+    if live is None:
+        return 0
+    if buf.data_dir != paths.DATA_DIR:
+        return 0        # 环境变了：不写进别人的库
+    if not os.path.isdir(paths.DATA_DIR):
+        return 0        # 数据目录被删掉了：不把它建回来，等执行线程自己写
+    item = live[1]
+    started = time.monotonic()
+    with LOCK, _db(create=False) as db:
+        batch = buf.take()
+        if not batch:
+            return 0
+        _write_events(db, batch)
+        _tx_batches().append((buf, batch, started))
+        db.execute('DELETE FROM events WHERE run_id=? AND seq<=?',
+                   (buf.run_id, int(item.get('event_cursor') or 0) - STREAM_EVENTS_KEEP))
+        _save(db, item)
+    return len(batch)
+
+
+def _delta(item, kind, payload):
+    """把一条流式增量放进内存队列 —— 不碰数据库、不拿全局锁。
+
+    正文片段由调用方累加到 `item['content']`；落盘写的是**绝对值**，所以
+    批量写与单次写不会重复叠加。返回 None = 这个 run 已收口（取消/暂停/
+    完成），增量被丢弃 —— 调用方这时连正文都不能要，否则落盘正文会比事件
+    多一截，客户端重连后会重复渲染。
+    """
+    payload = dict(payload or {})
+    queued_from = payload.pop('_t', None)
+    buf = _buffer(item['run_id'], '')
+    event = buf.push(item, kind, payload, queued_from)
+    # 背压：到顶就同步落一次。宁可让执行线程等一次 commit，也不能让内存
+    # 无限涨 —— 进程崩了会丢更多。
+    if event is not None:
+        with buf.lock:
+            count, weight = len(buf.pending), buf.chars
+        if count >= STREAM_BUFFER_MAX or weight >= STREAM_FLUSH_CHARS * 64:
+            try:
+                _flush_buffer(buf)
+            except Exception as exc:
+                print('[agent] 缓冲到达上限且落盘失败：%s' % str(exc)[:120], flush=True)
+        with _WAKE:
+            _WAKE.notify_all()
+    return event
+
+def _db_file(create=True):
+    # create=False：只拼路径，不建目录。后台落盘线程用这个 —— 数据目录被删掉
+    # （测试收尾/用户清数据）时，它绝不把目录建回来；连不上就跳过这一轮。
+    # Both writers and readers must resolve the P17 main SQLite database.
+    # create=False must never create a DB from a background flush/read path.
+    from storage import db as _store
+    if create:
+        _store.ensure_schema('main')
+    return _store.main_db_path()
+
+
+def _ensure_repaired():
+    """读路径补上启动修复：重启后在途任务必须变成 interrupted。
+
+    修复以前住在写路径里（读事件顺带也做了）；读路径独立之后，第一次读
+    就是这个进程第一次碰库 —— 此时库里非终态的任务全是上个进程留下的，
+    必须标 interrupted，否则它们永远显示 running。已修过（或库不存在）
+    时只是一次集合查询，不碰磁盘。
+    """
+    filename = _db_file(create=False)
+    if filename in INITIALIZED or not os.path.exists(filename):
+        return
+    with LOCK, _db() as db:
+        pass    # 修复本身在 _db() 里，跑完 INITIALIZED 就记下这个库了
+
+
 @contextmanager
-def _db():
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    filename = os.path.join(paths.DATA_DIR, 'agent_runs.sqlite3')
-    db = sqlite3.connect(filename, timeout=10)
+def _db(create=True):
+    filename = _db_file(create)
+    if not create and not os.path.isfile(filename):
+        raise FileNotFoundError(filename)
+    from storage import db as _store
+    db = _store.legacy_connection()
+    _tx_batches()
+    _TX.depth += 1
     try:
         db.execute('PRAGMA synchronous=FULL')
+        # WAL：读者（SSE 轮询）与写者（批量落盘/控制事件）互不阻塞。持久性
+        # 不变 —— synchronous=FULL 下 WAL 提交同样 fsync，崩了顶多丢一个有界
+        # 未提交窗口。库里已有的连接下次打开自动切回来。
+        db.execute('PRAGMA journal_mode=WAL')
         db.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(owner,request_id))')
         db.execute('CREATE TABLE IF NOT EXISTS calls (run_id TEXT, signature TEXT, state TEXT, result TEXT, step_id INTEGER, PRIMARY KEY(run_id,signature))')
         db.execute('CREATE TABLE IF NOT EXISTS call_ids (run_id TEXT, call_id TEXT, signature TEXT, PRIMARY KEY(run_id,call_id))')
@@ -284,20 +636,109 @@ def _db():
                         if step['status'] == 'running':
                             step['status'] = 'unknown' if step['kind'] == 'tool' else 'interrupted'
                     _save(db, item)
+                    # 修复的语义是"上个进程留的在途任务"：内存里那份副本同时失效
+                    # （测试用 INITIALIZED.clear() 模拟重启时就靠这一句）。
+                    _LIVE.pop(rid, None)
             db.execute("UPDATE calls SET state='unknown' WHERE state='dispatched'")
         yield db
         db.commit()
+        # 落到盘上才算写完：提交成功才把内存里那批标记为已持久化。
+        if _TX.depth == 1:
+            for _buf, _batch, _started in _tx_batches():
+                _buf.done(_batch, time.monotonic() - _started)
+            _TX.batches = []
         INITIALIZED.add(filename)
     except BaseException:
         db.rollback()
+        # 回滚等于这批没写进去：退回队列，一条都不丢。
+        if _TX.depth == 1:
+            for _buf, _batch, _started in reversed(_tx_batches()):
+                _buf.failed(_batch)
+            _TX.batches = []
         raise
+    finally:
+        _TX.depth -= 1
+        db.close()
+
+
+@contextmanager
+def _read_db():
+    """只读连接：不开写事务、不建表、不做启动修复。
+
+    🔴 SSE 每 50ms 读一次事件，以前和写路径共用 `_db()` —— 每次读都
+    `BEGIN IMMEDIATE` + 4 条 CREATE TABLE + commit（synchronous=FULL 下
+    每次 commit 都是一次 fsync）。读事件这件事本身在抢写锁，还把轮询变成
+    磁盘同步点，于是增量被憋成批。读路径必须完全不碰写路径。
+    """
+    from storage import db as _store
+    filename = _store.main_db_path()
+    if not os.path.exists(filename):
+        yield None
+        return
+    db = sqlite3.connect(filename, timeout=10)
+    try:
+        db.execute('PRAGMA query_only=1')
+        yield db
     finally:
         db.close()
 
 
-def _get(db, rid, owner):
+def _load(db, rid, owner):
+    """一定从库里读（读路径用）。"""
     row = db.execute('SELECT data FROM runs WHERE id=? AND owner=?', (rid, owner)).fetchone()
     return json.loads(row[0]) if row else None
+
+
+def _get(db, rid, owner):
+    """取一条 run。正在执行的那个 run 返回内存里的唯一副本。
+
+    🔴 以前每个增量都要从库里反序列化一份副本，之后又整份写回 —— 两份副本
+    互相覆盖，正文会丢；而且每个 token 一次全量 JSON 解析 + 序列化。
+    """
+    live = _LIVE.get(rid)
+    if live is not None and live[0] == owner:
+        return live[1]
+    return _load(db, rid, owner)
+
+
+def _reset_stream_stats(rid):
+    buf = _BUFFERS.get(rid)
+    if buf is not None:
+        buf.reset_stats()
+
+
+def _stream_metrics(rid, step_id):
+    """本轮流式的量化指标：只有时间和条数，没有任何输出内容。
+
+    口径：
+      first_delta_ms  —— provider 收到第一段增量 → 进内存队列
+      max_gap_ms      —— 相邻两次增量进队列的最大间隔（观察 provider 是否成批）
+      max_queue_ms    —— 单条增量在内存里等的最长时间（落盘是否拖住了队列）
+      sse_ms_avg      —— 事件从入队到被 SSE 线程取走的平均耗时
+      batches/flush   —— 落盘合并批次数与耗时（提交次数就从这里看）
+    """
+    buf = _BUFFERS.get(rid)
+    if buf is None:
+        return dict(step_id=step_id)
+    stats = buf.stats_public()
+    stats['step_id'] = step_id
+    return stats
+
+
+def _live_item(rid, owner):
+    """流式热路径取当前 run —— 只碰内存。
+
+    只有在内存里没有（别的进程建的 run、或刚被收口）时才回库里读一次。
+    """
+    live = _LIVE.get(rid)
+    if live is not None and live[0] == owner:
+        return live[1]
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+    if item is not None and item.get('status') in ('queued', 'running'):
+        _LIVE[rid] = (owner, item)
+        _buffer(rid, owner)
+    return item
 
 
 def _save(db, item):
@@ -306,31 +747,64 @@ def _save(db, item):
 
 
 def _event(db, item, kind, payload):
-    item['event_cursor'] += 1
-    event = dict(run_id=item['run_id'], request_id=item['request_id'], seq=item['event_cursor'],
+    # 增量是攒着批量写的；步骤、工具、终态这些控制事件必须按 seq 立刻落盘。
+    # 先把缓冲里序号更小的那些写进**同一个事务**，再插这一条 —— 序号不留空洞。
+    _flush_pending(db, item)
+    # 序号与增量同源：有缓冲就走缓冲的锁，没有（刚建/已收口）才直接推进。
+    buf = _BUFFERS.get(item['run_id'])
+    if buf is not None:
+        seq = buf.next_seq(item)
+    else:
+        seq = int(item['event_cursor']) + 1
+        item['event_cursor'] = seq
+    event = dict(run_id=item['run_id'], request_id=item['request_id'], seq=seq,
                  type=kind, ts=time.time(), payload=payload)
     if kind == 'think_delta':
-        if item['run_id'] not in TRANSIENT and len(TRANSIENT) >= 200:
-            TRANSIENT.pop(next(iter(TRANSIENT)))
-        TRANSIENT.setdefault(item['run_id'], deque(maxlen=256)).append(event)
+        # 思考内容照样不进持久台账：只留在内存里给正在看的那一屏。
+        with _BUFFER_LOCK:
+            if item['run_id'] not in TRANSIENT and len(TRANSIENT) >= 200:
+                TRANSIENT.pop(next(iter(TRANSIENT)))
+            TRANSIENT.setdefault(item['run_id'], deque(maxlen=256)).append(event)
     else:
         db.execute('INSERT INTO events VALUES (?,?,?)', (item['run_id'], event['seq'], _json(event)))
-    db.execute('DELETE FROM events WHERE run_id=? AND seq<=?', (item['run_id'], event['seq'] - 256))
+    db.execute('DELETE FROM events WHERE run_id=? AND seq<=?',
+               (item['run_id'], event['seq'] - STREAM_EVENTS_KEEP))
 
 
 def snapshot(rid, owner):
-    with LOCK, _db() as db:
-        return _get(db, rid, owner)
+    """给接口的一份副本。
+
+    执行线程正在改内存里那一份，直接把引用交出去会被并发序列化（列表边迭代
+    边变长）。所有对外出口都复制，内部链路继续用唯一副本。
+    """
+    _ensure_repaired()
+    with LOCK:
+        live = _LIVE.get(rid)
+        if live is not None and live[0] == owner:
+            return copy.deepcopy(live[1])
+        with _read_db() as db:
+            return _load(db, rid, owner) if db is not None else None
 
 
 def find_request(request_id, owner):
-    with LOCK, _db() as db:
-        row = db.execute('SELECT data FROM runs WHERE request_id=? AND owner=?', (request_id, owner)).fetchone()
-        return json.loads(row[0]) if row else None
+    _ensure_repaired()
+    with LOCK:
+        for _own, item in _LIVE.values():
+            if _own == owner and item.get('request_id') == request_id:
+                return copy.deepcopy(item)
+        with _read_db() as db:
+            if db is None:
+                return None
+            row = db.execute('SELECT data FROM runs WHERE request_id=? AND owner=?',
+                             (request_id, owner)).fetchone()
+            return json.loads(row[0]) if row else None
 
 
 def listing(owner):
-    with LOCK, _db() as db:
+    _ensure_repaired()
+    with LOCK, _read_db() as db:
+        if db is None:
+            return []
         return [item for row in db.execute(
             'SELECT data FROM runs WHERE owner=? ORDER BY rowid DESC LIMIT 200', (owner,))
             if not (item := json.loads(row[0])).get('hidden')]
@@ -436,21 +910,56 @@ def display_records(owner):
         content=i['content'], result=i.get('result'), steps=[dict(s,
             input=_safe_event_value(s.get('input')),
             result=_safe_event_value(s.get('result'))) if s['kind']=='tool' else s for s in i['steps']],
-        status=i['status'], error=i['error'], created_at=i['created_at'])
+        status=i['status'], error=i['error'], created_at=i['created_at'],
+        kind=i.get('kind', 'chat'), workspace_root=i.get('workspace_root'),
+        coding=_safe_event_value(i.get('coding') or {}))
         for i in listing(owner)]
 
 
 def events(rid, owner, after=0):
-    with LOCK, _db() as db:
-        item = _get(db, rid, owner)
-        if not item:
-            return None
-        rows = db.execute('SELECT seq,data FROM events WHERE run_id=? ORDER BY seq', (rid,)).fetchall()
-        buffered = sorted([json.loads(blob) for _, blob in rows] + list(TRANSIENT.get(rid, [])), key=lambda e: e['seq'])
-        outgoing = [event for event in buffered if event['seq'] > after]
-        return dict(snapshot=item, events=outgoing,
-            gap=after < item['event_cursor'] and (not outgoing or outgoing[0]['seq'] != after+1
-                or any(b['seq'] != a['seq']+1 for a, b in zip(outgoing, outgoing[1:]))))
+    """读事件：内存里的实时增量 + 已落盘的历史，按 seq 合并。
+
+    🔴 读以前和写共用 `_db()`：每次读都开写事务 + 建表 + commit，等于读事件
+    自己在抢写锁，还把 50ms 一次的轮询变成一次 fsync。现在读走只读连接。
+    🔴 游标与可见集合必须同一时刻拍（见 `_RunBuffer.page`）：分开读的
+    读-skew 会把刚入队的增量误判成空洞，SSE 拿快照重同步把它跳过。
+    """
+    _ensure_repaired()
+    with LOCK:
+        live = _LIVE.get(rid)
+        live_item = live[1] if live is not None and live[0] == owner else None
+    buf = _BUFFERS.get(rid)
+    buffered, cursor_live = [], None
+    if buf is not None:
+        buffered, cursor_live = buf.page(after, live_item)
+    with LOCK:
+        item = copy.deepcopy(live_item) if live_item is not None else None
+        with _read_db() as db:
+            if item is None:
+                item = _load(db, rid, owner) if db is not None else None
+            if item is None:
+                return None
+            rows = (db.execute('SELECT seq,data FROM events WHERE run_id=? AND seq>? ORDER BY seq',
+                               (rid, int(after))).fetchall() if db is not None else [])
+    merged = {}
+    for _seq, blob in rows:
+        event = json.loads(blob)
+        merged[event['seq']] = event
+    for event in (TRANSIENT.get(rid) or ()):
+        if event['seq'] > after:
+            merged.setdefault(event['seq'], event)
+    for event in buffered:
+        merged.setdefault(event['seq'], event)
+    outgoing = [merged[seq] for seq in sorted(merged) if seq > after]
+    # 游标口径：有缓冲就用锁内同时刻读到的那个，没有才退回快照里的。
+    cursor = cursor_live if cursor_live is not None else int(item.get('event_cursor') or 0)
+    head = max(cursor, max(merged, default=0))
+    gap = bool(outgoing) and (outgoing[0]['seq'] != after + 1
+                              or any(b['seq'] != a['seq'] + 1
+                                     for a, b in zip(outgoing, outgoing[1:])))
+    if not outgoing and head > after:
+        gap = True
+    return dict(snapshot=item, events=outgoing, gap=gap)
 
 
 def _finish(db, item, status, reason=None, detail=None):
@@ -462,13 +971,30 @@ def _finish(db, item, status, reason=None, detail=None):
                         reason=reason, finished_at=time.time())
     item.update(status=status, stage='stopped' if status != 'succeeded' else 'completed',
                 error=_error(reason, detail) if reason else None)
+    # 🔴 收口顺序：先关增量入口，再写终态。反过来的话，`_save` 与关门之间
+    # 到达的增量会排在 done 事件**后面**落盘，客户端会在任务结束后又收到
+    # 一段正文（重复渲染）。关门之后 `push` 直接拒绝，连调用方的正文累加
+    # 都不会发生（_delta 返回 None）。
+    buf = _BUFFERS.get(item['run_id'])
+    if buf is not None:
+        with buf.lock:
+            buf.closed = True
     _event(db, item, 'done' if status == 'succeeded'
            else 'paused' if status in ('paused_budget', 'paused') else status,
            dict(status=status, error=item['error']))
     _save(db, item)
+    # 终态已经落盘，内存副本交还给库：之后的读走只读连接。
+    if buf is not None and not buf.has_pending():
+        with _BUFFER_LOCK:
+            _BUFFERS.pop(item['run_id'], None)
+    _LIVE.pop(item['run_id'], None)
     # Reasoning deltas are ephemeral; retaining them after a terminal run adds
     # no recovery value and keeps private model output resident in process memory.
-    TRANSIENT.pop(item['run_id'], None)
+    with _BUFFER_LOCK:
+        TRANSIENT.pop(item['run_id'], None)
+    # 读事件的那一侧可能正睡在 _WAKE 上等下一个增量；终态到了得立刻叫醒它。
+    with _WAKE:
+        _WAKE.notify_all()
 
 
 def cancel(rid, owner):
@@ -527,12 +1053,19 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
            replan=False):
     request = str(body.get('request_id') or '')
     text = body.get('intent', body.get('text'))
-    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', request) or not isinstance(text, str) or not text.strip() or len(text) > 16000 or body.get('kind', 'chat') != 'chat':
+    kind = str(body.get('kind') or 'chat').strip().lower()
+    if (not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', request) or not isinstance(text, str)
+            or not text.strip() or len(text) > 16000 or kind not in ('chat', 'coding')):
         raise ValueError('request_id 或任务内容无效')
     src = str(body.get('src') or 'pc')
     if src not in ('pc', 'wechat', 'wechat_group'):
         raise ValueError('渠道无效')
-    fingerprint = hashlib.sha256(_json([text, src, body.get('sender_id', ''), body.get('budget', {})]).encode()).hexdigest()
+    workspace_root = str(body.get('workspace_root') or '').strip()
+    if kind == 'coding' and not workspace_root:
+        raise ValueError('Coding Agent 必须指定 workspace_root')
+    coding = body.get('coding') if isinstance(body.get('coding'), dict) else {}
+    fingerprint = hashlib.sha256(_json([kind, text, src, workspace_root,
+                                        body.get('sender_id', ''), body.get('budget', {}), coding]).encode()).hexdigest()
     with LOCK, _db() as db:
         row = db.execute('SELECT fingerprint,data FROM runs WHERE owner=? AND request_id=?', (owner, request)).fetchone()
         if row:
@@ -541,6 +1074,7 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
             return json.loads(row[1])
         budget = _budget(body, cfg)
         item = dict(run_id='run_' + uuid.uuid4().hex, request_id=request, intent=text,
+            kind=kind, workspace_root=workspace_root or None, coding=copy.deepcopy(coding),
             src=src, status='queued', stage='queued', steps=[], content='', result=None,
             error=None, event_cursor=0, created_at=time.time(), budget=budget,
             resume_from=resume_from, replan=bool(replan),
@@ -566,6 +1100,9 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
                                     st.get('result') or '', st.get('step_id')))
         _event(db, item, 'run_created', dict(status='queued'))
         _save(db, item)
+        # 从这一刻起，本进程内的读写都用这一份对象；落盘线程按它写绝对值。
+        _LIVE[item['run_id']] = (owner, item)
+        _buffer(item['run_id'], owner)
     if start:
         # Keep request-scoped feature/delegation context when leaving HTTP thread.
         context = contextvars.copy_context()
@@ -595,6 +1132,8 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
     if parent_conversation and body.get('conversation_id') not in (None, '', parent_conversation):
         raise ValueError('续跑不能改变会话归属')
     derived = dict(body, intent=intent, src=src,
+                   kind=item.get('kind', 'chat'), workspace_root=item.get('workspace_root'),
+                   coding=copy.deepcopy(item.get('coding') or {}),
                    conversation_id=parent_conversation or str(body.get('conversation_id') or ''))
     # 客户端续跑时会带来自己的 request_id（用于把事件绑回会话气泡）；
     # 没带或格式不对就生成一个。合法且未被用过 → 原样使用（create 幂等）。
@@ -657,8 +1196,9 @@ def interject(rid, owner, cfg, body=None, brain=None, start=True):
         if parent_status != 'paused':
             _finish(db, item, 'paused', 'interjected')
         _save(db, item)
-    derived = dict(body, intent=merged, src=src, conversation_id=conversation,
-                   request_id=want_request)
+    derived = dict(body, intent=merged, src=src, kind=item.get('kind', 'chat'),
+                   workspace_root=item.get('workspace_root'), coding=copy.deepcopy(item.get('coding') or {}),
+                   conversation_id=conversation, request_id=want_request)
     try:
         child = create(derived, cfg, owner, brain=brain, start=start,
                        resume_from=rid, replan=True)
@@ -984,6 +1524,7 @@ def _tool(rid, owner, started, call, ctx):
     raw_chars = 0
     error = None
     raised = False
+    _tool_t0 = time.monotonic()
     try:
         import localtools
         with localtools.capture_receipts(stopped=lambda: snapshot(rid, owner)['status'] != 'running') as receipts:
@@ -1043,10 +1584,225 @@ def _tool(rid, owner, started, call, ctx):
         if reason and item['status'] == 'running':
             _finish(db, item, 'failed', reason)
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
+    # Diagnostic writes are noncritical and must not hold the Agent ledger lock.
+    _diag_tool_call(rid, name, reason, error, raw_chars, clipped,
+                    int((time.monotonic() - _tool_t0) * 1000), raised)
     return (None if reason else result), False
 
 
+def _diag_tool_call(rid, name, reason, error, raw_chars, clipped, duration_ms, raised):
+    """Best-effort tool diagnostics; never affect the Agent outcome."""
+    try:
+        from storage import diag
+        diag.log_tool_call(
+            tool=name,
+            state='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
+            duration_ms=duration_ms, run_id=rid,
+            error=str(error or reason or '')[:200],
+            scope={'raw_chars': raw_chars, 'truncated': bool(clipped),
+                   'raised': bool(raised), 'reason': reason or None})
+    except Exception:
+        pass
+
+
+def _coding_json_completion(provider, cfg, messages, strategy='balanced'):
+    """Make one bounded JSON-only model request for the coding harness."""
+    from model_providers.execution import apply_reasoning_strategy, prepare, completion_events
+    payload = dict(model=getattr(provider, 'model', None) or cfg.get('model'),
+                   messages=messages, temperature=0)
+    payload, _state = apply_reasoning_strategy(payload, cfg, provider, strategy)
+    prepared = prepare(payload, cfg)
+    completion = None
+    for event in completion_events(provider, prepared,
+                                   timeout=int((cfg.get('agent_execution') or {}).get('request_timeout', 90))):
+        if event.get('type') == 'completion':
+            completion = event.get('result')
+    completion = completion or {}
+    if completion.get('reason') not in ('normal', 'tool_calls'):
+        raise ValueError('coding model request failed: %s' % completion.get('reason'))
+    raw = str(completion.get('content') or '').strip()
+    if raw.startswith('```'):
+        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.I | re.S).strip()
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        match = re.search(r'(\{.*\}|\[.*\])', raw, re.S)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except ValueError:
+                pass
+    raise ValueError('coding model output is not valid JSON')
+
+
+def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
+    """Run a provider backed CodingHarness and persist its evidence in the ledger."""
+    import coding_harness
+    started = time.monotonic()
+    with LOCK, _db() as db:
+        item = _get(db, rid, owner)
+        if not item or item['status'] != 'queued':
+            return
+        item['status'] = 'running'
+        item['stage'] = 'PLAN'
+        item.setdefault('coding', {})
+        item['coding'].update(status='running', phase='PLAN', repair_count=0)
+        _event(db, item, 'coding_started', {'workspace_root': item.get('workspace_root')})
+        _save(db, item)
+
+    provider = None
+    try:
+        provider = get_provider(cfg)
+        coding_cfg = item.get('coding') or {}
+        execution_cfg = cfg.get('agent_execution') or {}
+        max_repairs = coding_cfg.get('max_repairs', execution_cfg.get('coding_max_repairs', 2))
+        max_seconds = coding_cfg.get('max_seconds', execution_cfg.get('coding_max_seconds',
+                                                                      item['budget']['max_seconds']))
+        max_repairs = max(0, min(10, int(max_repairs)))
+        max_seconds = max(1, min(item['budget']['max_seconds'], int(max_seconds)))
+        strategy = str(execution_cfg.get('reasoning_strategy') or 'balanced')
+        root = item.get('workspace_root')
+
+        def persist(kind, payload):
+            with LOCK, _db() as db:
+                current = _get(db, rid, owner)
+                if not current or current.get('status') != 'running':
+                    return
+                coding = current.setdefault('coding', {})
+                coding['phase'] = payload.get('phase') or coding.get('phase')
+                if kind in ('coding_plan', 'coding_plan_updated'):
+                    coding['plan'] = payload
+                elif kind == 'coding_step':
+                    # Keep the latest step status in the durable checkpoint so
+                    # a paused/restarted Coding run can skip edits that already
+                    # landed in the workspace.
+                    plan = coding.setdefault('plan', {'steps': []})
+                    steps = plan.setdefault('steps', [])
+                    step = dict(payload)
+                    for index, previous in enumerate(steps):
+                        if previous.get('id') == step.get('id'):
+                            steps[index] = step
+                            break
+                    else:
+                        steps.append(step)
+                elif kind == 'coding_test':
+                    coding.setdefault('tests', []).append(copy.deepcopy(payload))
+                elif kind == 'coding_file':
+                    coding.setdefault('files', []).append(copy.deepcopy(payload.get('path')))
+                elif kind == 'coding_repair':
+                    coding['repair_count'] = payload.get('repair_count', coding.get('repair_count', 0))
+                elif kind in ('coding_diagnosis', 'coding_failed'):
+                    coding.setdefault('diagnostics', []).append(copy.deepcopy(payload))
+                current['stage'] = coding.get('phase') or kind
+                _event(db, current, kind, _safe_event_value(payload))
+                _save(db, current)
+
+        def ask(role, instruction, context):
+            system = ('你是 Vigil Coding Agent 的%s。只能返回合法 JSON，不要 Markdown、解释或工具调用。'
+                      '所有文件路径必须是工作区相对路径；修改只能通过 operations 返回。' % role)
+            body = json.dumps(context, ensure_ascii=False, sort_keys=True)[:100000]
+            sid = None
+            with LOCK, _db() as db:
+                current = _get(db, rid, owner)
+                if not current or current.get('status') != 'running':
+                    raise coding_harness.CodingHarnessError('任务已被暂停或取消')
+                if not _check_budget(db, current, started, 'model'):
+                    raise coding_harness.BudgetExceeded('模型请求预算已用尽')
+                sid = _step(db, current, 'model', coding_role=role)
+            try:
+                result = _coding_json_completion(provider, cfg,
+                    [{'role': 'system', 'content': system},
+                     {'role': 'user', 'content': instruction + '\n\n工作区事实：\n' + body}], strategy)
+            except Exception:
+                with LOCK, _db() as db:
+                    current = _get(db, rid, owner)
+                    if current and sid:
+                        current['steps'][sid-1].update(status='failed', reason='coding_model', finished_at=time.time())
+                        _event(db, current, 'coding_model_failed', {'step_id': sid, 'role': role})
+                        _save(db, current)
+                raise
+            with LOCK, _db() as db:
+                current = _get(db, rid, owner)
+                if current and sid:
+                    current['steps'][sid-1].update(status='completed', reason='normal', finished_at=time.time())
+                    _event(db, current, 'coding_model_completed', {'step_id': sid, 'role': role})
+                    _save(db, current)
+            return result
+
+        def plan_provider(request, snapshot):
+            # Reuse planner.py's single complexity heuristic for telemetry and
+            # policy alignment, while keeping execution in this agent run.  We
+            # intentionally do not call planner.plan(), whose legacy chat path
+            # has a five-step response format and no repair state machine.
+            try:
+                import planner as legacy_planner
+                decision, why = legacy_planner.plan_decision(request)
+                persist('coding_planning_decision', {'would_plan': bool(decision), 'why': why})
+            except Exception:
+                pass
+            return ask('规划器', '为任务生成结构化计划。字段为 complexity、rationale、steps；每步含 id、title、description、dependencies、acceptance、verification。不要超过 20 步。',
+                       {'request': request, 'snapshot': snapshot})
+
+        def implementer(request, step, snapshot):
+            return ask('实现器', '完成当前计划步骤。返回 {"operations":[...]}。operation 支持 write(path,content,expected_sha256)、patch(patch)、delete(path)、command(command)。先实现代码，不要声称已经验证。',
+                       {'request': request, 'step': step, 'snapshot': snapshot,
+                        'changed_files': []})
+
+        def diagnostician(request, failure, snapshot, changes):
+            return ask('诊断器', '分析真实验证失败。返回 summary、root_cause、files、next_action；只能根据退出码和日志作出判断，不要声称已修复。',
+                       {'request': request, 'failure': failure, 'snapshot': snapshot, 'changes': changes})
+
+        def repairer(request, diagnosis, snapshot, changes):
+            return ask('修复器', '根据诊断返回需要应用的修复，格式为 {"operations":[...]}。只修改工作区内相关文件；修复后必须由外部验证命令重新确认。',
+                       {'request': request, 'diagnosis': diagnosis, 'snapshot': snapshot, 'changes': changes})
+
+        def replanner(plan, diagnosis):
+            return ask('重规划器', '验证失败后调整后续计划。返回完整 steps 数组；保留已经完成的步骤，新增修复和重验步骤。',
+                       {'plan': plan, 'diagnosis': diagnosis})
+
+        harness = coding_harness.CodingHarness(
+            root, run_id=rid, max_repairs=max_repairs, max_seconds=max_seconds,
+            verify_commands=coding_cfg.get('verify_commands') or [],
+            planner=plan_provider, implementer=implementer,
+            diagnostician=diagnostician, repairer=repairer, replanner=replanner,
+            stop_check=lambda: (agent_runs_snapshot := snapshot(rid, owner)) is None
+            or agent_runs_snapshot.get('status') != 'running',
+            event_sink=persist,
+            resume_state=(coding_cfg if item.get('resume_from') else None))
+        result = harness.run(item['intent'])
+        with LOCK, _db() as db:
+            current = _get(db, rid, owner)
+            if not current or current.get('status') != 'running':
+                return
+            current['result'] = result
+            current['content'] = ('Coding Agent 已完成验证。修改文件：%s；自动修复 %d 次。' %
+                                  (', '.join(result.get('changed_files') or []) or '无',
+                                   int(result.get('repair_count') or 0)))
+            current.setdefault('coding', {}).update(result)
+            current['budget']['consumed']['seconds'] = round(time.monotonic() - started, 3)
+            if result.get('status') == 'succeeded':
+                _finish(db, current, 'succeeded')
+            else:
+                detail = result.get('error') or (result.get('diagnostics') or [{}])[-1].get('summary')
+                _finish(db, current, 'failed', 'coding_failed', detail)
+            _save(db, current)
+    except Exception as exc:
+        reason = 'coding_workspace' if isinstance(exc, coding_harness.WorkspaceError) else 'coding_model'
+        with LOCK, _db() as db:
+            current = _get(db, rid, owner)
+            if current:
+                current.setdefault('coding', {})['error'] = str(exc)[:500]
+                current['budget']['consumed']['seconds'] = round(time.monotonic() - started, 3)
+                _finish(db, current, 'failed', reason, str(exc))
+                _save(db, current)
+
+
 def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
+    with LOCK, _db() as db:
+        initial = _get(db, rid, owner)
+    if initial and initial.get('kind') == 'coding':
+        _run_coding(rid, owner, cfg, brain=brain, sender_id=sender_id)
+        return
     started = time.monotonic()
     try:
         with LOCK, _db() as db:
@@ -1172,37 +1928,51 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 raise
             request_started = time.monotonic()
             request_output_started = False
+            _reset_stream_stats(rid)
             try:
                 for event in completion_events(provider, prepared_payload, timeout=max(0.001, timeout)):
-                    with LOCK, _db() as db:
-                        item = _get(db, rid, owner)
-                        if item['status'] != 'running':
-                            return
-                        if time.monotonic()-started >= item['budget']['max_seconds']:
-                            item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
-                            item['steps'][sid-1].update(status='interrupted', reason='budget_exhausted')
-                            _finish(db, item, 'paused_budget', 'budget_exhausted')
-                            return
-                        if event['type'] == 'completion':
-                            completion = event['result']
-                        elif event['type'] == 'text_delta':
-                            request_output_started = True
-                            event = dict(event, text=boundary.feed(event['text']))
-                            # 展示用正文到顶就停止累积，任务继续跑：模型一次写太长不该
-                            # 让整项任务死掉。最终 result 另按 MAX_TEXT 截断并留标记。
-                            room = MAX_TEXT - len(item['content'])
-                            piece = event['text'][:room] if room > 0 else ''
-                            if piece:
+                    # 🔴 这里**不再**每个增量开一次 SQLite 事务。以前是
+                    # `with LOCK, _db()`：一次 fsync + 整份 run JSON 重写，
+                    # 而写锁按 token 持有 —— 模型吐得越快，卡得越死，SSE 只能
+                    # 成批到达。现在增量只进内存队列，由落盘线程合并提交。
+                    item = _live_item(rid, owner)
+                    if item is None:
+                        return
+                    if item['status'] != 'running':
+                        return
+                    if time.monotonic()-started >= item['budget']['max_seconds']:
+                        with LOCK, _db() as db:
+                            item = _get(db, rid, owner)
+                            if item and item['status'] == 'running':
+                                item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
+                                item['steps'][sid-1].update(status='interrupted', reason='budget_exhausted')
+                                _finish(db, item, 'paused_budget', 'budget_exhausted')
+                        return
+                    if event['type'] == 'completion':
+                        completion = event['result']
+                    elif event['type'] == 'text_delta':
+                        request_output_started = True
+                        text = boundary.feed(event['text'])
+                        # 展示用正文到顶就停止累积，任务继续跑：模型一次写太长不该
+                        # 让整项任务死掉。最终 result 另按 MAX_TEXT 截断并留标记。
+                        room = MAX_TEXT - len(item['content'])
+                        piece = text[:room] if room > 0 else ''
+                        if piece:
+                            # 增量入队成功才累加正文：被收口丢弃的增量不配进正文，
+                            # 否则落盘正文会比事件多一截，重连后重复渲染。
+                            if _delta(item, 'text_delta',
+                                      dict(text=piece, step_id=sid, _t=event.get('t'))) is not None:
                                 item['content'] += piece
-                                _event(db, item, 'text_delta', dict(text=piece, step_id=sid))
-                            if len(piece) < len(event['text']) and not item.get('content_truncated'):
-                                item['content_truncated'] = True
+                        if len(piece) < len(text) and not item.get('content_truncated'):
+                            item['content_truncated'] = True
+                            # 截断标记是控制事件：立刻落盘，并把缓冲按序号写进去。
+                            with LOCK, _db() as db:
                                 _event(db, item, 'text_truncated', dict(step_id=sid))
-                        elif event['type'] == 'think_delta':
-                            request_output_started = True
-                            _event(db, item, 'think_delta', dict(text=event['text'], step_id=sid))
-                        # Thinking stays outside persistent snapshots and event ledger.
-                        _save(db, item)
+                    elif event['type'] == 'think_delta':
+                        request_output_started = True
+                        _delta(item, 'think_delta',
+                               dict(text=event['text'], step_id=sid, _t=event.get('t')))
+                    # Thinking stays outside persistent snapshots and event ledger.
             except Exception as exc:
                 from model_providers.execution import is_context_limit_error
                 if not request_output_started and not context_recovery_used and is_context_limit_error(exc):
@@ -1240,6 +2010,10 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 totals['model_request_seconds'] = round(float(totals.get('model_request_seconds') or 0)
                                                         + request_elapsed, 3)
                 totals['requests'] = int(totals.get('requests') or 0) + 1
+                # 先把缓冲刷干净再读数：这一轮攒的增量并进当前事务，指标里的
+                # 批次/条数才是终值（_event 内部的刷新发生在 payload 求值之后）。
+                _flush_pending(db, item)
+                _event(db, item, 'stream_metrics', _stream_metrics(rid, sid))
                 tail = boundary.feed('', final=True)
                 if tail:
                     item['content'] += tail
@@ -1451,19 +2225,42 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
 
 
 def stream(rid, owner, after=0):
-    """Read-only bounded SSE pages. Disconnect does not cancel the executor."""
+    """Read-only bounded SSE pages. Disconnect does not cancel the executor.
+
+    等待改成"有新增量就醒"：增量进内存那一刻通知，首字不再被轮询间隔压住。
+    原来固定睡 50ms，模型吐得再快也要攒满一个间隔才送出去。
+    """
     until = time.monotonic()+25
+    delivered = False
     while time.monotonic() < until:
         page = events(rid, owner, after)
         if not page:
             return
-        if page['gap'] or page['snapshot']['status'] in STOPPED:
+        buf = _BUFFERS.get(rid)
+        terminal = page['snapshot']['status'] in STOPPED
+        if terminal and not delivered:
+            # 迟订户（任务已结束才连上来）：只给权威快照，不从头发历史。
+            yield dict(run_id=rid, seq=page['snapshot']['event_cursor'], type='snapshot', payload=page['snapshot'])
+            return
+        # 🔴 现场观众：先把这一页的事件全部发出去，再发快照/判终态。
+        # 反过来的话（旧写法），终态那一页里的增量——往往是最后一批正文——
+        # 只进了快照，客户端一段都收不到：任务显示成功，末尾却缺字。
+        for event in page['events']:
+            queued = event.pop('_q', None) if isinstance(event, dict) else None
+            if buf is not None and isinstance(queued, (int, float)):
+                buf.note_sse((time.monotonic() - queued) * 1000.0)
+            yield event
+            delivered = True
+            after = event['seq']
+        if page['gap'] or terminal:
             yield dict(run_id=rid, seq=page['snapshot']['event_cursor'], type='snapshot', payload=page['snapshot'])
             after = page['snapshot']['event_cursor']
-        else:
-            for event in page['events']:
-                yield event
-                after = event['seq']
-        if page['snapshot']['status'] in STOPPED:
+        if terminal:
             return
-        time.sleep(0.05)
+        # 睡前再确认一次有没有新增量：唤醒通知可能落在"读完"与"进入睡眠"
+        # 之间的缝里，不补这一眼就要白等满一个轮询间隔。
+        buf = _BUFFERS.get(rid)
+        if buf is not None and buf.has_pending():
+            continue
+        with _WAKE:
+            _WAKE.wait(0.05)

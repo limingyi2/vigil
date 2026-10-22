@@ -19,8 +19,9 @@ def valid_id(value):
 
 @contextmanager
 def _db():
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    db = sqlite3.connect(os.path.join(paths.DATA_DIR, "conversations.sqlite3"), timeout=10)
+    # P17：会话元数据并入主库。表结构与列名保持原样，SQL 一行未改。
+    from storage import db as _store
+    db = _store.legacy_connection()
     try:
         with db:
             yield db
