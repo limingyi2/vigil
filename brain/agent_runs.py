@@ -263,12 +263,27 @@ def _steps_digest(item, per_entry=500, total=6000):
     return '\n'.join(lines)[:total]
 
 
+def _db_file(create=True):
+    """Agent Run 库文件路径。**唯一真源** —— 读和写都必须走这里。
+
+    P17 之后任务状态与执行审计属于主库（vigil.db）。读写分离过一次：
+    写路径换成了主库，读路径还硬编码旧的独立 SQLite 文件
+    —— 于是出现"写进主库、读旧文件"：SSE 读不到刚写的增量，任务看着一直没动。
+
+    所以这里只给一个函数，调用方不许自己拼路径。
+    """
+    from storage import db as _store
+    if create:
+        _store.ensure_schema('main')
+    return _store.main_db_path()
+
+
 @contextmanager
 def _db():
     # P17：任务状态与执行审计属于主库。表名与列序一字未改（旧模块用的是
     # 位置插入，改动列序会静默写错列），只把连接目标从独立文件换成 vigil.db。
     from storage import db as _store
-    filename = _store.main_db_path()
+    filename = _db_file(create=True)
     db = _store.legacy_connection()
     try:
         db.execute('PRAGMA synchronous=FULL')
