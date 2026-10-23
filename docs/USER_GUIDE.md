@@ -417,7 +417,7 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 | `brain/brain.py` | 决策核心：上下文组装、人设注入、失败兜底 |
 | `brain/persona_store.py` | 人设：白名单字段、关系档、身份底线 |
 | `brain/memory_store_v2.py` | 长期记忆，bge-m3 向量检索 |
-| `brain/recap_store.py` | 历史摘要，日→周→月三层压缩，按人设 × 渠道分区 |
+| `brain/conversation_context.py` / `brain/history_retrieval.py` | 会话级历史压缩与检索，按人设 × 渠道 × conversation_id 隔离 |
 | `brain/agenda.py` | 约定账本：到期提醒，过期标 missed |
 | `brain/tools.py` | 工具调用：原生 function calling + 兼容标签解析 |
 | `brain/model_hub.py` | 服务商表、密钥按家存、模型清单拉取与分组 |
@@ -425,7 +425,7 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 | `brain/chatty.py` | 话痨度（1~10），按渠道各一份 |
 | `brain/ws_forward.py` | 微信双大脑路由的 WebSocket 转发（最小 RFC6455 实现） |
 | `brain/sync_client.py` / `sync_outbox.py` | 本地 → 云端的记忆/人设同步 |
-| `brain/paths.py` | 分区路径：记忆 / 摘要 / 存档按「人设 × 渠道」算 |
+| `brain/paths.py` | 数据路径：长期记忆、聊天存档及运行状态目录 |
 | `brain/life_engine.py` | 她的生活推演与日记 |
 | `brain/moments.py` | 朋友圈 |
 | `brain/voice.py` / `imggen.py` / `selfie.py` | 语音 / 生图 / 自拍 |

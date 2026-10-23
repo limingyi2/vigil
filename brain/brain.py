@@ -788,19 +788,6 @@ class Brain:
         # 陪伴渠道拼 —— 助手渠道重载后会拿到陪伴底线，设定又变回去。
         self.persona_text = build_system_text(self.persona, src=self._cur_src)
         self.draft_rules = build_draft_rules(self.persona)
-        # 历史摘要也跟着换人设 —— 摘要里全是"你们聊过什么"，
-        # 不切的话新人设一开口就知道你的旧事（症状：换了人设她还记得
-        # 上次说摸鱼被老板抓了）。分区跟记忆库一个道理。
-        try:
-            import recap_store
-            #渠道要一起给：只切人设不切渠道，微信那半份对话的摘要会落进
-            # app 的分区（跟记忆库同一个道理）。
-            _rs = recap_store.scoped_to(key_from_config(self.api),
-                                        self._cur_src)
-            if _rs and _rs != "(默认)":
-                print(f"[大脑] 历史摘要已切到人设分区 {_rs}", flush=True)
-        except Exception:
-            pass
         # 🔴 渠道绑定可能被改了（面板里换人设就是改 persona_by_src），
         # 所以连 _hist_persona 里记的"这份历史属于哪个人设"也要作废，
         # 否则 key 变了但 same 判定用的是旧 key 的对照结果，历史会被留下来。
@@ -943,7 +930,7 @@ class Brain:
 
     # --- 公共：组装 system 资料块（draft_native 用）---
     def _build_system_parts(self, user_text, memory_block):
-        """组装人设+此刻+记忆+历史摘要+生活+约定+贴纸+插件行为引导。
+        """组装人设+此刻+记忆+生活+约定+贴纸+插件行为引导。
 
         返回 (parts, life)：parts 是字符串列表，life 是生活块文本（调用方
         据此决定是否追加 LIFE_RULES）。**不包含**工具使用规则——那是调用方
@@ -964,15 +951,6 @@ class Brain:
         if any(str(m.get("content") or "").startswith("[")
                for m in self.hist[1:] if m.get("role") != "system"):
             parts.append("\n" + HIST_TIME_NOTE)
-        try:
-            import recap_store
-            rb = recap_store.block(
-                persona_key=self._persona_key_for(self._cur_src),
-                src=self._cur_src)
-            if rb:
-                parts.append("\n" + rb)
-        except Exception:
-            pass
         life = self._life_block()
         if life:
             parts.append("\n" + life)

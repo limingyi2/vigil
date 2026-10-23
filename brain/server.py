@@ -2,7 +2,7 @@
 """云端大脑服务（组装与路由层）。
 
 远程大脑 API（端口 8788）：手机 App 与桌宠都连它聊天，记忆/人设/上下文
-只有云上这一份；历史摘要、主动搭话也都在这个进程里跑。
+只有云上这一份；会话上下文压缩、主动搭话也都在这个进程里跑。
 
 模块分工：runtime 共享配置｜reply 回复后处理｜randimg 随机图｜selfie 自拍｜
 imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环。
@@ -4690,7 +4690,7 @@ def run_server():
         except Exception as e:
             print(f"[大脑] 远程大脑 API 没起来（不影响主服务）：{e}",
                   flush=True)
-        # 她的全部后台循环：历史摘要 / 主动搭话 / 事件提醒
+        # 后台循环：约定账本 / 主动搭话 / 事件提醒
         start_background(_LOCAL["brain"])
         # M3：本地大脑的迟到答案只写云端历史（话术已经顶出去了，不外发）
         try:
@@ -4713,7 +4713,7 @@ def run_server():
 
     print("=" * 58, flush=True)
     print(" 云端大脑", flush=True)
-    print(" 远程 API / 历史摘要 / 主动搭话 照常运行。", flush=True)
+    print(" 远程 API / 会话上下文压缩 / 主动搭话 照常运行。", flush=True)
     print("=" * 58, flush=True)
     try:
         while True:
