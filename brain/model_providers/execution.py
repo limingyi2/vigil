@@ -412,6 +412,7 @@ def completion_events(provider, payload, timeout=180, stop=None):
     _check()
     if not provider.supports_stream:
         result = normalize(provider.chat(payload, timeout=timeout))
+        result['diagnostics'] = _completion_diagnostics(result, transport='non_stream')
         _check()
         # t：收到这段增量的单调时刻。只用来量"从收到到送出去"的延迟，
         # 不进库、不上线（见 agent_runs._delta）。
@@ -423,6 +424,8 @@ def completion_events(provider, payload, timeout=180, stop=None):
         return
     content, reasoning, finish, usage = [], [], None, None
     calls = {}
+    sse_chunks = 0
+    argument_fragments = {}
     with provider.stream(dict(payload, stream=True, stream_options={'include_usage': True}), timeout=timeout) as response:
         if stop is not None:
             stop.attach(getattr(response, 'close', None) or (lambda: None))
@@ -438,6 +441,7 @@ def completion_events(provider, payload, timeout=180, stop=None):
                 blob = line[5:].strip()
                 if blob == '[DONE]':
                     break
+                sse_chunks += 1
                 try:
                     obj = json.loads(blob)
                     if obj.get('usage'):
@@ -470,6 +474,8 @@ def completion_events(provider, payload, timeout=180, stop=None):
                                     raise ValueError('invalid tool fragment')
                                 if key == 'arguments':
                                     target[key] += value
+                                    if value:
+                                        argument_fragments[index] = argument_fragments.get(index, 0) + 1
                                 else:
                                     target[key] = _merge_identifier(target[key], value)
                     for field, buffer, kind in [('content', content, 'text_delta'),
@@ -491,4 +497,22 @@ def completion_events(provider, payload, timeout=180, stop=None):
         'tool_calls': [calls[i] for i in sorted(calls)]}, 'finish_reason': finish}], 'usage': usage})
     if finish is None:
         result.update(reason='connection_lost', complete=False)
+    result['diagnostics'] = _completion_diagnostics(result, transport='sse',
+        sse_chunks=sse_chunks, argument_fragments=argument_fragments)
     yield dict(type='completion', result=result)
+
+
+def _completion_diagnostics(result, *, transport, sse_chunks=0, argument_fragments=None):
+    """Small, content-free counters for distinguishing truncation from parsing.
+
+    Never include tool names, ids, argument values, paths, or provider headers.
+    """
+    calls = result.get('tool_calls') or []
+    fragments = argument_fragments or {}
+    return dict(transport=transport, sse_chunks=int(sse_chunks),
+        tool_call_count=len(calls), finish_reason=result.get('finish_reason'),
+        response_complete=result.get('finish_reason') is not None,
+        tool_arguments=[dict(index=index,
+            argument_chars=len(((call.get('function') or {}).get('arguments') or '')),
+            argument_fragments=int(fragments.get(index, 0)))
+            for index, call in enumerate(calls)])

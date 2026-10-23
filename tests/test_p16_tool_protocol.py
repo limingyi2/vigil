@@ -138,8 +138,10 @@ def test_rejection_names_the_defect_instead_of_a_parser_error():
         runs._calls([broken], SPEC)
     message = str(excinfo.value)
     assert 'write_note' in message and 'arguments' in message
-    # the truncated payload is quoted back so the model can see what it sent
-    assert '{"text":' in message
+    # Parser position is distinct from the number of characters received.
+    assert 'position 9' in message
+    assert '实际参数长度 9 字符' in message
+    assert '{"text":' not in message
 
 
 def test_malformed_batch_is_still_refused_whole():
@@ -155,3 +157,49 @@ def test_repeated_identifier_end_to_end_dispatches_once(tmp_path):
     result, _events, count, _provider = execute(tmp_path, [chunks, [{'content': '完成'}]], xml=False)
     assert result['status'] == 'succeeded', result.get('error')
     assert count == 1
+
+
+FILE_READ_SPEC = [{"type": "function", "function": {"name": "local_file_read",
+    "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
+                    "required": ["path"], "additionalProperties": False}}}]
+
+
+@pytest.mark.parametrize('path', [
+    'README.md',
+    'a' * 4096 + '.txt',
+    '文档/配置说明.md',
+    r'C:\Users\Liming Yi\项目\README.md',
+])
+def test_complete_local_file_read_json_survives_every_sse_split(path):
+    arguments = json.dumps({'path': path}, ensure_ascii=False)
+    # Exercise every possible two-fragment boundary, including inside escaped
+    # backslashes, multibyte text, the JSON key, and the value.
+    for split in range(len(arguments) + 1):
+        events = _stream_chunks([
+            _call_delta('id', 'local_file_read', arguments[:split]),
+            _call_delta('id', 'local_file_read', arguments[split:]),
+        ])
+        result = events[-1]['result']
+        received = result['tool_calls'][0]['function']['arguments']
+        assert received == arguments
+        assert runs._calls(result['tool_calls'], FILE_READ_SPEC)[0][2] == {'path': path}
+        diagnostics = result['diagnostics']
+        assert diagnostics['transport'] == 'sse'
+        assert diagnostics['finish_reason'] == 'tool_calls'
+        assert diagnostics['tool_arguments'] == [dict(index=0,
+            argument_chars=len(arguments),
+            argument_fragments=int(bool(arguments[:split])) + int(bool(arguments[split:]))) ]
+
+
+def test_incomplete_local_file_read_json_is_rejected_without_argument_echo():
+    secret_path = r'C:\Users\Alice\private\秘密.txt'
+    incomplete = json.dumps({'path': secret_path}, ensure_ascii=False)[:-6]
+    events = _stream_chunks([_call_delta('id', 'local_file_read', incomplete)])
+    result = events[-1]['result']
+    assert result['reason'] == 'tool_calls'
+    with pytest.raises(ValueError, match='不是完整 JSON') as excinfo:
+        runs._calls(result['tool_calls'], FILE_READ_SPEC)
+    assert secret_path not in str(excinfo.value)
+    assert result['diagnostics']['tool_arguments'][0]['argument_chars'] == len(incomplete)
+    assert result['diagnostics']['finish_reason'] == 'tool_calls'
+    assert result['diagnostics']['sse_chunks'] == 2
