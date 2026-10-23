@@ -66,6 +66,27 @@ def test_resolution(history, query, status, expected):
     assert r.resolved_query == expected
 
 
+@pytest.mark.parametrize('query', [
+    '李四和他的工资分别是多少？',
+    '张三与他的工资有什么关系？',
+    '李四和张三的工资相比，他的更高吗？',
+])
+def test_mixed_explicit_names_and_pronouns_require_clarification(query):
+    resolution = qr.resolve(query, context('张三'), SCOPE)
+    assert resolution.resolution_status == 'ambiguous'
+    assert resolution.resolved_query == query
+    assert resolution.resolution_source == 'mixed_explicit_entity_and_reference'
+
+
+def test_mixed_name_and_pronoun_does_not_enter_retrieval(monkeypatch):
+    engine = Mock(side_effect=AssertionError('ambiguous query must not search'))
+    monkeypatch.setattr(search, 'search', engine)
+    rows, info = retrieve('李四和他的工资分别是多少？', context('张三'))
+    assert rows == []
+    assert info['resolution']['resolution_status'] == 'ambiguous'
+    engine.assert_not_called()
+
+
 def test_ten_turns_use_original_history_and_never_previous_rewrites():
     history = ['张三']
     for _ in range(10):
