@@ -154,6 +154,15 @@ def tool_help_extra(native=False):
 # 执行时 run_tool 会自动路由到 plugin_host —— 插件函数无需改动。
 
 _STATIC_SPECS = {
+    "agent_run_inspect": {
+        "desc": "只读查询当前会话任务的脱敏失败证据。可传 run_id；省略时查询最近失败任务。不可访问表示不存在或无权查询。不会重试或派发原任务。",
+        "params": [("run_id", "当前会话的任务编号；留空查询最近失败任务", False)],
+        "arg_param": "run_id",
+    },
+    "diagnostic_queue_status": {
+        "desc": "只读查询当前进程诊断队列计数，不刷新或清理数据库；进程重启后计数重置，不能用来判断历史日志是否丢失。",
+        "params": [], "arg_param": None,
+    },
     # --- 内置 ---
     "weather": {
         "desc": "查某城市的实时天气（天气状况、气温、风向、湿度）。不填城市就自动定位他所在的城市。"
@@ -560,6 +569,16 @@ def invoke_spec(name, args, ctx=None):
     n = str(name or "").strip()
     if not n:
         return None
+    if n in ("agent_run_inspect", "diagnostic_queue_status"):
+        import agent_inspection
+        if n == "agent_run_inspect":
+            result = agent_inspection.inspect(args, ctx)
+        elif agent_inspection.scope(ctx) is None or not isinstance(args, dict) or args:
+            result = dict(agent_inspection.INACCESSIBLE)
+        else:
+            from storage import diag
+            result = dict(ok=True, **diag.queue_snapshot())
+        return json.dumps(result, ensure_ascii=False)
     args = args if isinstance(args, dict) else {}
 
     if n == "capability_status":

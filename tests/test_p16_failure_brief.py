@@ -123,7 +123,9 @@ def test_brief_is_bounded_not_a_log_dump(ledger):
     brief = runs.failure_brief(OWNER)
     # Two most recent runs, at most three tool lines each.
     assert brief.count('- 任务 ') == runs.FAILURE_BRIEF_MAX
-    assert 'tool_d' not in brief and 'tool_e' not in brief
+    # Prefer the failed tail, rather than the earliest calls in a long run.
+    assert 'tool_a' not in brief and 'tool_b' not in brief
+    assert all(name in brief for name in ('tool_c', 'tool_d', 'tool_e'))
 
 
 def test_brief_never_targets_the_run_being_created(ledger):
