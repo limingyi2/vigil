@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'brain'))
 import conversation_context as cc
+from api.request import query_param
 import history_retrieval as hr
 import model_hub
 from test_p85_context_history import setup, feed, build
@@ -338,7 +339,8 @@ def test_real_http_save_restart_and_public_status(tmp_path, monkeypatch):
         api_config=api, API_CFG=api, model_hub=model_hub, MOB_CFG={}, BRAIN_TOKEN='fixture-token',
         MAX_BODY=1024*1024, note_client_ip=lambda ip: None, _device_role=lambda _: 'device',
         _refresh_api_cfg=lambda cfg: None, _stats_today=lambda: {'ok': True},
-        errlog=types.SimpleNamespace(log_exc=lambda *a: None))
+        errlog=types.SimpleNamespace(log_exc=lambda *a: None),
+        query_param=query_param)
     exec(compile(ast.Module(body=constants+nodes, type_ignores=[]), str(source), 'exec'), ns)
     monkeypatch.setenv('VIGIL_PORT', '0')
     with contextlib.redirect_stdout(io.StringIO()):

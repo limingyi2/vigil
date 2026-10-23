@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brain"))
 
 import server  # noqa: E402
+from api.request import query_param  # noqa: E402
 
 
 class TestLoopback(unittest.TestCase):
@@ -73,6 +74,22 @@ class TestQueryParam(unittest.TestCase):
     def test_missing_key_and_garbage(self):
         self.assertEqual(server._query_param("/api/trace", "last"), "")
         self.assertEqual(server._query_param("", "last"), "")
+
+    def test_decodes_values_and_keeps_first_repeated_value(self):
+        self.assertEqual(query_param("/api?q=hello+world", "q"), "hello world")
+        self.assertEqual(query_param("/api?q=%E4%B8%AD%E6%96%87", "q"), "中文")
+        self.assertEqual(query_param("/api?q=first&q=second", "q"), "first")
+        self.assertEqual(query_param("/api?q=a%2Fb", "q"), "a/b")
+
+    def test_blank_missing_and_malformed_inputs_are_empty(self):
+        for path, key in (("/api?q=", "q"), ("/api", "q"), ("", "q"),
+                          (None, "q"), ("http://[broken/?q=1", "q")):
+            with self.subTest(path=path):
+                self.assertEqual(query_param(path, key), "")
+
+    def test_server_compatibility_export_forwards_to_new_module(self):
+        self.assertIs(server._query_param.__globals__["query_param"], query_param)
+        self.assertEqual(server._query_param("/api?q=one&q=two", "q"), "one")
 
 
 class TestSnapshot(unittest.TestCase):

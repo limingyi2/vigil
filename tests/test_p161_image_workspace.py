@@ -33,6 +33,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'brain'))
 import display_turns
+from api.request import query_param
 import paths
 
 SOURCE = Path(__file__).resolve().parents[1] / 'brain' / 'server.py'
@@ -67,7 +68,8 @@ def _namespace(api_cfg=None):
               api_config={'bind_host': '127.0.0.1'}, MOB_CFG={},
               BRAIN_TOKEN='p161-fixture-token', API_CFG=api_cfg if api_cfg is not None else {},
               note_client_ip=lambda ip: None,
-              _cloud_history=lambda *a: [], _device_role=lambda _: 'device')
+              _cloud_history=lambda *a: [], _device_role=lambda _: 'device',
+              query_param=query_param)
     exec(compile(ast.Module(body=constants + nodes, type_ignores=[]), str(SOURCE), 'exec'), ns)
     return ns
 
