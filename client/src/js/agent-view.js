@@ -135,11 +135,17 @@
     if (!coding || typeof coding !== 'object') return '';
     const plan=coding.plan || {}, steps=Array.isArray(plan.steps)?plan.steps:[];
     const tests=Array.isArray(coding.tests)?coding.tests:[];
+    const todoSteps=Array.isArray(coding.workflow_steps)?coding.workflow_steps:[];
+    const todoProgress=coding.workflow_progress||{};
     const files=Array.isArray(coding.changed_files)?coding.changed_files:
       (Array.isArray(coding.files)?coding.files.filter(Boolean):[]);
     const phases=steps.map(s=>'<li><span class="ac-state ac-'+esc(s.status||'pending')+'">'+esc(s.status||'pending')+'</span> '+esc(s.title||s.id||'step')+'</li>').join('');
     const testRows=tests.map(t=>'<li><span class="ac-state ac-'+(t.passed?'succeeded':'failed')+'">'+(t.passed?'通过':'失败')+'</span> <code>'+esc(t.command||'')+'</code> · exit '+esc(t.exit_code==null?'—':t.exit_code)+'</li>').join('');
+    const todoRows=todoSteps.map(s=>'<li><span class="ac-state ac-'+esc(s.status||'pending')+'">'+esc(s.status||'pending')+'</span> '+esc(s.title||s.step_id||'step')+'</li>').join('');
+    const todoStatus=coding.workflow_sync_error?'sync_unavailable':
+      (coding.workflow_requires_review?'needs_review':(coding.workflow_status||''));
     return '<section class="agent-coding-card"><header><strong>Coding Agent</strong><span class="ac-state ac-'+esc(coding.phase||coding.status||'')+'">'+esc(coding.phase||coding.status||'')+'</span></header>'+
+      (todoSteps.length?'<div class="agent-coding-section"><b>任务进度 · '+esc(todoProgress.completed||0)+' / '+esc(todoProgress.total||todoSteps.length)+' · '+esc(todoStatus)+'</b><ol>'+todoRows+'</ol></div>':'')+
       (steps.length?'<div class="agent-coding-section"><b>计划</b><ol>'+phases+'</ol></div>':'')+
       (files.length?'<div class="agent-coding-section"><b>修改文件</b><div class="agent-coding-files">'+files.map(f=>'<code>'+esc(f)+'</code>').join('')+'</div></div>':'')+
       (testRows?'<div class="agent-coding-section"><b>验证</b><ul>'+testRows+'</ul></div>':'')+
