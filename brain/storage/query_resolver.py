@@ -179,6 +179,12 @@ def resolve(query, context=None, scope=None):
     switches = list(_SWITCH.finditer(text))
     anchors = entities(text[switches[-1].end():] if switches else text, confirmed)
     source = 'explicit_query'
+    # A name and a dependent pronoun in the same question are not necessarily
+    # coreferential (e.g. "李四和他的工资" may refer to someone else).
+    # Do not bind the pronoun to the only explicit name by position.
+    if dependent and anchors:
+        return Resolution(original, original, anchors, 'ambiguous',
+                          'mixed_explicit_entity_and_reference', literals)
     if not anchors and dependent and valid and not _SWITCH.search(text):
         anchors = tuple(confirmed)
         source = 'confirmed_entities'
