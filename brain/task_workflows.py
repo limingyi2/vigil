@@ -556,7 +556,8 @@ def attempt_status(scope, workflow_id, request_id, expected_revision, attempt_id
             conn.execute("UPDATE task_steps SET status='needs_review' WHERE workflow_id=?"
                          ' AND plan_version=? AND step_id=?',
                          (workflow_id, row['plan_version'], row['step_id']))
-            if workflow['status'] not in {'completed', 'cancelled'}:
+            # Preserve failure history; the unknown attempt still drives requires_review.
+            if workflow['status'] not in {'completed', 'cancelled', 'failed'}:
                 workflow['status'] = 'needs_review'
         # Late outcomes settle the attempt only; never turn a stopped workflow into success.
 

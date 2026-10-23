@@ -268,6 +268,112 @@ def test_late_outcomes_do_not_overwrite_stopped_workflow(env, status):
     assert not tasks.assess_continuation(env[0], flow.wid, lambda *a: True)['eligible']
 
 
+@pytest.mark.parametrize('status,expected', [
+    ('failed', 'failed'), ('paused', 'needs_review'), ('cancelled', 'cancelled')])
+@pytest.mark.parametrize('resolution', ['returned', 'failed', 'not_dispatched'])
+def test_late_unknown_preserves_stop_semantics_and_requires_manual_review(env, status, expected, resolution):
+    scope, _ = env
+    flow = Flow(scope, 'tool')
+    flow.active()
+    rid = flow.linked()
+    aid = flow.attempt(rid)
+    flow.call(tasks.attempt_status, aid, 'dispatched')
+    flow.call(tasks.transition, status)
+    stopped = flow.cp
+    unknown_evidence = dict(ref='receipt://unknown', digest='b' * 64, verified_by='receipt-recorder')
+    unknown = tasks.attempt_status(scope, flow.wid, 'late-unknown', stopped['revision'],
+                                   aid, 'unknown', evidence=unknown_evidence)
+    flow.cp = unknown
+    state = tasks.get(scope, flow.wid)
+    assert state['status'] == expected
+    assert state['requires_review']
+    assert state['continuation'] == 'manual_review'
+    assert state['steps'][0]['status'] == 'needs_review'
+    assert state['attempts'][0]['state'] == 'unknown'
+    assert state['attempts'][0]['evidence'] == [unknown_evidence]
+    assessment = tasks.assess_continuation(scope, flow.wid, lambda *args: True)
+    assert not assessment['eligible']
+    assert not assessment['automatically_resumed']
+    assert not assessment['dispatch_authorized']
+    assert 'manual_review' in assessment['reasons']
+    before_cps = tasks.checkpoints(scope, flow.wid)
+    for operation in [lambda: flow.attempt(rid, 'new-operation'),
+                      lambda: flow.call(tasks.transition, 'ready'),
+                      lambda: flow.call(tasks.transition, 'active'),
+                      lambda: flow.call(tasks.step_status, 'one', 'completed', evidence=EVIDENCE),
+                      lambda: flow.call(tasks.attempt_status, aid, 'returned',
+                                        result_ref=EVIDENCE['ref'], evidence=EVIDENCE)]:
+        with pytest.raises(tasks.Conflict):
+            operation()
+    assert tasks.get(scope, flow.wid) == state
+    assert tasks.checkpoints(scope, flow.wid) == before_cps
+    assert tasks.attempt_status(scope, flow.wid, 'late-unknown', stopped['revision'],
+                               aid, 'unknown', evidence=unknown_evidence) == unknown
+    # A new request cannot apply the same receipt as a second state transition.
+    with pytest.raises(tasks.Conflict):
+        flow.call(tasks.attempt_status, aid, 'unknown', evidence=unknown_evidence)
+    assert tasks.checkpoints(scope, flow.wid) == before_cps
+
+    result_ref = EVIDENCE['ref'] if resolution == 'returned' else None
+    prior_revision = flow.cp['revision']
+    reconciled = flow.call(tasks.attempt_status, aid, resolution, result_ref=result_ref,
+                           evidence=EVIDENCE, reconcile=True)
+    reconcile_request = 'req-' + str(flow.n)
+    current = tasks.get(scope, flow.wid)
+    assert current['status'] == expected  # Human evidence does not restart a stopped workflow.
+    assert current['steps'][0]['status'] == 'needs_review'
+    assert not current['requires_review']
+    assert current['attempts'][0]['state'] == resolution
+    assert current['attempts'][0]['result_ref'] == result_ref
+    assert current['attempts'][0]['evidence'] == [unknown_evidence, EVIDENCE]
+    assert not tasks.assess_continuation(scope, flow.wid, lambda *a: True)['eligible']
+    after_cps = tasks.checkpoints(scope, flow.wid)
+    assert after_cps[stopped['revision'] - 1] == stopped
+    assert after_cps[unknown['revision'] - 1] == unknown
+    assert tasks.attempt_status(scope, flow.wid, reconcile_request, prior_revision, aid,
+        resolution, result_ref=result_ref, evidence=EVIDENCE, reconcile=True) == reconciled
+    # An old receipt replay after reconciliation returns its original response,
+    # without restoring unknown state or appending evidence/checkpoints again.
+    assert tasks.attempt_status(scope, flow.wid, 'late-unknown', stopped['revision'],
+                               aid, 'unknown', evidence=unknown_evidence) == unknown
+    assert tasks.get(scope, flow.wid) == current
+    assert tasks.checkpoints(scope, flow.wid) == after_cps
+
+
+@pytest.mark.parametrize('late_state', ['unknown', 'returned', 'failed'])
+def test_completed_workflow_late_receipts_cannot_reopen_settled_attempt(env, late_state):
+    scope, _ = env
+    flow = Flow(scope, 'tool')
+    flow.active()
+    rid = flow.linked()
+    aid = flow.attempt(rid)
+    flow.call(tasks.attempt_status, aid, 'dispatched')
+    before_return = flow.cp['revision']
+    returned = flow.call(tasks.attempt_status, aid, 'returned', result_ref=EVIDENCE['ref'], evidence=EVIDENCE)
+    return_request = 'req-' + str(flow.n)
+    flow.call(tasks.step_status, 'one', 'completed', evidence=EVIDENCE)
+    flow.call(tasks.step_status, 'two', 'running')
+    flow.call(tasks.step_status, 'two', 'completed', evidence=EVIDENCE)
+    flow.call(tasks.transition, 'completed')
+    completed = tasks.get(scope, flow.wid)
+    before_cps = tasks.checkpoints(scope, flow.wid)
+    assert tasks.attempt_status(scope, flow.wid, return_request, before_return,
+        aid, 'returned', result_ref=EVIDENCE['ref'], evidence=EVIDENCE) == returned
+    # Completion requires settled attempts, so a genuinely new late transition
+    # from returned is rejected; no synthetic inconsistent DB state is needed.
+    with pytest.raises(tasks.Conflict):
+        flow.call(tasks.attempt_status, aid, late_state,
+                  result_ref=EVIDENCE['ref'], evidence=EVIDENCE)
+    assert tasks.get(scope, flow.wid) == completed
+    assert completed['status'] == 'completed'
+    assert completed['progress']['fraction'] == 1
+    assert not completed['requires_review']
+    assert completed['steps'][0]['evidence'] == [EVIDENCE]
+    assert completed['attempts'][0]['evidence'] == [EVIDENCE]
+    assert tasks.checkpoints(scope, flow.wid) == before_cps
+    assert not tasks.assess_continuation(scope, flow.wid, lambda *a: True)['eligible']
+
+
 def test_permission_and_workspace_revalidation(env):
     scope, _ = env
     flow = Flow(scope, 'tool')
