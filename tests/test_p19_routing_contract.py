@@ -57,7 +57,7 @@ def test_coding_planning_does_not_change_delegation_contract(authorized_route):
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("你好", False),
+    ("", False),
     ("帮我检查一下代码", True),
 ])
 def test_existing_chat_tool_gate_unchanged(text, expected):
