@@ -600,6 +600,34 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
     这里不再单独分支。放在 all_specs 里，换哪条起草链路都盖得住。
     """
     _route_decision = None
+    import task_intent as _task_intent
+    try:
+        _task_decision = _task_intent.classify(text)
+    except Exception:
+        _task_decision = {"task_category": "chat", "decision_source": "fallback",
+            "reason": "分类异常回退", "target_entry": "chat_no_tools",
+            "fallback_reason": "classification_error"}
+    if trace_out is not None:
+        trace_out["task_decision"] = dict(_task_decision,
+                                          target_entry="brain_tools" if _task_decision.get("target_entry") == "agent_run"
+                                          else _task_decision.get("target_entry"))
+
+    # Live-information requests must never fall through to a model answer from
+    # training data when their specific built-in retrieval tool is disabled.
+    if (_task_decision.get("task_category") == "retrieval"
+            and _task_decision.get("retrieval_mode") == "live_tools"):
+        try:
+            import tools as _live_tools
+            _live_available = _live_tools.static_tool_enabled(
+                _task_decision.get("required_tool"), src or 'pc')
+        except Exception:
+            _live_available = False
+        if not _live_available:
+            _task_decision["fallback_reason"] = "required_live_tool_unavailable"
+            _task_decision["target_entry"] = "retrieval_unavailable"
+            if trace_out is not None:
+                trace_out["task_decision"] = dict(_task_decision)
+            return "当前没有启用可用的实时查询工具，无法核实这条信息。", "实时检索不可用"
 
     def _once(t, no_tools=False):
         with _chat_lock():
@@ -609,7 +637,10 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
                 b.seed_history(src=src or 'pc', conversation_id=conversation_id)
             chat_kwargs = dict(img=img_path, log=False, src=src,
                                conversation_id=conversation_id,
-                               no_tools=no_tools,
+                               no_tools=bool(no_tools or _task_decision.get("task_category") == "chat"
+                                             or _task_decision.get("fallback_reason")
+                                             or (_task_decision.get("task_category") == "retrieval"
+                                                 and _task_decision.get("retrieval_mode") == "history_rag")),
                                route_decision=_route_decision)
             if native_content is not None:
                 # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
@@ -657,11 +688,24 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
         try:
             from delegation import bridge as _dbr
             _dbr.lock_delegation(False)
-            _dpre = _dbr.run_hybrid_delegation_direct(text, src=src)
+            _dpre = (_dbr.run_hybrid_delegation_direct(text, src=src)
+                     if _task_decision.get("task_category") in ("simple_execution", "complex_execution")
+                     and _task_decision.get("fallback_reason") not in (
+                         "classification_error", "unsupported_complex_task", "ambiguous_reference")
+                     else {"ok": False, "reason": "task_category_bypass"})
             _route_decision = _dpre.get("decision")
         except Exception as _e:
             _dpre = {"ok": False, "reason": "precheck:%s" % type(_e).__name__}
         if _dpre.get("ok"):
+            if _task_decision.get("fallback_reason") == "workspace_not_authorized":
+                # The existing delegation router just revalidated the stored
+                # workspace scope. Reflect that evidence in diagnostics only;
+                # this does not widen any tool permission.
+                _task_decision["fallback_reason"] = None
+                _task_decision["reason"] = "委派路由已确认授权工作区"
+                _task_decision["target_entry"] = "brain_tools"
+                if trace_out is not None:
+                    trace_out["task_decision"] = dict(_task_decision)
             _dres = _dpre["result"]
             _prompt = (
                 "（系统提示：本地子任务已在授权工作区内完成勘察，下面是经过程序"
@@ -694,6 +738,10 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
 
         import planner
         _yes, _plan_why = planner.plan_decision(text)
+        if (_task_decision.get("task_category") != "complex_execution"
+                or _task_decision.get("fallback_reason")):
+            _yes = False
+            _plan_why = "任务类别不需要多步规划"
         # 🔴 **关掉之后要单独记一笔，不能当成"规划失败"。**
         # `plan()` 自己在 enabled=false 时返回 None，于是 server 会走下面
         # "判要规划但没解析出步骤"那条分支、写 `plan: "empty"` ——
@@ -3064,6 +3112,7 @@ def start_remote_api(brain):
                             "tok_out": _snap.get("tok_out"),
                             "tool": _snap.get("tool") or "",
                             "route_decision": _snap.get("route_decision"),
+                            "task_decision": _snap.get("task_decision"),
                             "mode": mode,
                             "fallback": 1 if err or mode == "API失败" else 0,
                             # 🔴 规划分支的观测字段**必须显式列出来**。
@@ -3101,6 +3150,7 @@ def start_remote_api(brain):
                                          "revised": bool(_snap.get("revised")),
                                          "tool": _snap.get("tool") or "",
                                          "route_decision": _snap.get("route_decision"),
+                                         "task_decision": _snap.get("task_decision"),
                                          "mode": mode,
                                          "ms": _snap.get("ms"),
                                          "model": _snap.get("model")
@@ -3192,12 +3242,61 @@ def start_remote_api(brain):
                     _admin_pc = bool(self._is_admin() and _src == 'pc' and body.get('request_id'))
                     _route_interject = bool(_interject_of and _admin_pc)
                     _route_resume = bool(_resume_of and _admin_pc)
-                    _route_agent = bool(_admin_pc and not _route_interject and not _route_resume
-                                        and (_existing_run or (
-                                            not _existing_legacy
-                                            and _run_tools.schema_needed(_in_text)
-                                            and isinstance(_agent_cfg, dict)
-                                            and _agent_cfg.get('enabled', True))))
+                    _task_workspace_authorized = False
+                    if body.get('conversation_id'):
+                        try:
+                            _task_conv, _task_owner, _task_src, _task_persona = self._conversation_context(
+                                _src, body.get('conversation_id'))
+                            _task_wid = str((_task_conv or {}).get('workspace_id') or '')
+                            if _task_wid:
+                                _task_ws, _, _ = self._workspace_context(_src, _task_wid)
+                                _task_workspace_authorized = bool(_task_ws and _task_ws.get('path'))
+                        except Exception:
+                            _task_workspace_authorized = False
+                    import task_intent as _task_intent
+                    try:
+                        _task_tools_available = bool(_run_tools.schema_needed(_in_text))
+                        _task_decision = _task_intent.classify(
+                            _in_text, workspace_authorized=_task_workspace_authorized)
+                        _live_tool_available = False
+                        if (_task_decision.get('task_category') == 'retrieval'
+                                and _task_decision.get('retrieval_mode') == 'live_tools'):
+                            _live_tool_available = _run_tools.static_tool_enabled(
+                                _task_decision.get('required_tool'), _src)
+                        _task_agent_allowed = bool(_admin_pc and not _route_interject and not _route_resume
+                            and _task_tools_available and isinstance(_agent_cfg, dict)
+                            and _agent_cfg.get('enabled', True))
+                        _task_entry = _task_intent.select_entry(
+                            _task_decision, agent_allowed=_task_agent_allowed,
+                            tools_available=_task_tools_available,
+                            live_tool_available=_live_tool_available,
+                            existing_run=bool(_existing_run and _admin_pc))
+                        if _task_entry == 'retrieval_unavailable':
+                            _task_decision['fallback_reason'] = 'required_live_tool_unavailable'
+                    except Exception:
+                        _task_decision = {"task_category": "chat", "decision_source": "fallback",
+                            "reason": "分类异常回退", "target_entry": "chat_no_tools",
+                            "fallback_reason": "classification_error"}
+                        _task_entry = "agent_run" if (_existing_run and _admin_pc) else "chat_no_tools"
+                    _stream_brain_entry = bool(
+                        _task_entry in ('chat_no_tools', 'brain_chat', 'history_retrieval'))
+                    # Agent Run is one execution location. The P19.1 model
+                    # location route stays in route_decision and is not used as
+                    # the task category.
+                    _route_agent = bool(_task_entry == 'agent_run'
+                                        and (_existing_run or not _existing_legacy))
+                    # Keep an inspectable decision in the existing trace file;
+                    # this is diagnostics only and never grants tool access.
+                    try:
+                        _trace_write({"t": time.strftime("%Y-%m-%d %H:%M"),
+                            "kind": "task_route", "src": _src,
+                            "task_category": _task_decision.get("task_category"),
+                            "decision_source": _task_decision.get("decision_source"),
+                            "reason": str(_task_decision.get("reason") or "")[:120],
+                            "target_entry": _task_entry,
+                            "fallback_reason": _task_decision.get("fallback_reason")})
+                    except Exception:
+                        pass
                     # 🔴 图片能力闸门：**必须在做任何 Agent Run 工作之前**判。
                     # 放到流里判就晚了：客户端已经收到 200，再补一个 error
                     # 事件，它看起来像"回复完了"，而图根本没进模型。
@@ -3223,11 +3322,11 @@ def start_remote_api(brain):
                             _gate_err = ('当前对话模型不支持在任务中直接接收图片，'
                                          '这一轮没有把图送进去')
                         else:
-                            # 普通聊天这一轮走 chat 还是 stream_chat，由
-                            # schema_needed 决定 —— 判的那个入口必须接得住。
-                            import tools as _gate_tools
-                            _gate_method = ('chat' if _gate_tools.schema_needed(_in_text)
-                                            else 'stream_chat')
+                            # Match the image check to the already selected
+                            # execution entry; schema availability alone no
+                            # longer decides whether this request streams.
+                            _gate_method = ('stream_chat' if _stream_brain_entry
+                                            else 'chat')
                             _gate_ok = _supports_native_image(brain, _gate_method)
                             _gate_err = ('当前对话模型不支持直接接收图片，'
                                          '这一轮没有把图送进去')
@@ -3291,7 +3390,22 @@ def start_remote_api(brain):
                             _LOCAL['brain'].use_src(_src, _brain_cid)
                             if len(_LOCAL['brain'].hist) <= 1:
                                 _LOCAL['brain'].seed_history(src=_src, conversation_id=_brain_cid)
-                            if _chat_tools.schema_needed(_in_text):
+                            if _stream_brain_entry:
+                                # Ordinary chat and history/RAG retrieval retain
+                                # the original streaming path. stream_chat has
+                                # no function-calling loop, so retrieval uses
+                                # its scoped context injection and cannot invoke
+                                # tools from model-generated arguments.
+                                _stream_kwargs = dict(src=_src,
+                                                      conversation_id=_brain_cid,
+                                                      no_tools=True)
+                                if _native_content is not None:
+                                    _stream_kwargs['native_content'] = _native_content
+                                yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
+                            elif _task_entry == 'retrieval_unavailable':
+                                yield {'type': 'done', 'text':
+                                       '当前没有启用可用的实时查询工具，无法核实这条信息。'}
+                            elif _task_entry == 'brain_tools':
                                 _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
                                 if _native_content is not None:
                                     # 闸门已经确认这一轮走的入口接得住图，
@@ -3306,7 +3420,9 @@ def start_remote_api(brain):
                                 else:
                                     yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
-                                _stream_kwargs = dict(src=_src, conversation_id=_brain_cid)
+                                _stream_kwargs = dict(src=_src,
+                                                      conversation_id=_brain_cid,
+                                                      no_tools=True)
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
