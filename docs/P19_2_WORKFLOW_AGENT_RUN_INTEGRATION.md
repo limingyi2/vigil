@@ -37,7 +37,18 @@ rules do not support a reliable universal four-way classifier.
    Result receipts and real verification results add hashed evidence. The
    Harness's early `verify=completed` plan event is ignored; only successful
    real verification completes the Todo step.
-4. P18 checkpoint writes and their Agent Run event projections share the Run
+4. After dispatch is recorded, the Harness rechecks pause/cancel and the live
+   trusted workspace Scope immediately before each operation and verification
+   command. A stopped or revoked scope prevents the next effect; an already
+   dispatched attempt is conservatively left for review if its result cannot
+   be settled.
+5. The per-run Harness event sequence cursor is persisted with every accepted
+   receipt. The recent 512-ID set is only a fast duplicate cache; older
+   duplicate events are rejected by the monotonic cursor. Operation receipts
+   also mark the Coding plan step complete in the same Run transaction, so a
+   restart between receipt persistence and the next Harness step event cannot
+   replay the completed edit.
+6. P18 checkpoint writes and their Agent Run event projections share the Run
    transaction. The existing task card renders the Todo state and progress from
    the Run snapshot/SSE stream.
 

@@ -697,6 +697,7 @@ class CodingHarness:
                  repairer: Callable[..., Any] | None = None,
                  replanner: Callable[..., Any] | None = None,
                  stop_check: Callable[[], bool] | None = None,
+                 pre_effect_check: Callable[[], None] | None = None,
                  event_sink: Callable[[str, Mapping[str, Any]], None] | None = None,
                  resume_state: Mapping[str, Any] | None = None):
         self.guard = WorkspaceGuard(workspace_root, run_id)
@@ -712,11 +713,14 @@ class CodingHarness:
         self.repairer = repairer
         self.replanner = replanner
         self.stop_check = stop_check
+        self.pre_effect_check = pre_effect_check
         self.event_sink = event_sink
         self.resume_state = dict(resume_state or {})
         self.phase = "PLAN"
         self.events: list[dict[str, Any]] = []
-        self.event_seq = 0
+        cursor = self.resume_state.get("harness_event_cursor") or {}
+        self.event_seq = (int(cursor.get("seq") or 0)
+                          if cursor.get("run_id") == self.guard.run_id else 0)
         self.plan: Plan | None = None
         self.snapshot: ProjectSnapshot | None = None
         self.verification: list[dict[str, Any]] = []
@@ -744,6 +748,15 @@ class CodingHarness:
             raise CodingHarnessError("任务已被暂停或取消")
         if time.monotonic() - self.started > self.max_seconds:
             raise BudgetExceeded("Coding Agent 执行预算已用尽")
+
+    def _pre_effect(self) -> None:
+        """Recheck stop state and trusted workspace scope immediately before effects."""
+        # Keep the existing low-level helper contract used by offline tests and
+        # internal callers that exercise an operation batch before ``run()``.
+        if self.started or self.stop_check:
+            self._budget()
+        if self.pre_effect_check:
+            self.pre_effect_check()
 
     def _default_plan(self, request: str, snapshot: ProjectSnapshot, complexity: str, rationale: str) -> Plan:
         commands = list(self.verify_commands)
@@ -845,6 +858,7 @@ class CodingHarness:
                 if not isinstance(op, dict):
                     raise CodingHarnessError("实现操作必须是对象")
                 kind = str(op.get("op") or op.get("type") or "").lower()
+                self._pre_effect()
                 if kind in ("write", "create", "replace"):
                     receipts.append(self.patches.write(str(op.get("path") or ""), str(op.get("content", op.get("text", ""))),
                                                       op.get("expected_sha256")))
@@ -934,6 +948,7 @@ class CodingHarness:
             self._budget()
             self.emit("coding_test_started", {"command": command,
                                                "test_index": command_index})
+            self._pre_effect()
             result = self.tests.run(command)
             data = result.as_dict()
             results.append(data)
@@ -1052,8 +1067,19 @@ class CodingHarness:
                     if self.replanner:
                         replanned = self._call(self.replanner, self.plan.as_dict(), diagnosis)
                         if replanned is not None:
-                            self.plan = self._normalize_plan(replanned, request, self.plan.complexity,
-                                                            "根据验证失败动态调整计划")
+                            completed = {step.id: step for step in self.plan.steps
+                                         if step.status == "completed"}
+                            revised = self._normalize_plan(replanned, request, self.plan.complexity,
+                                                           "根据验证失败动态调整计划")
+                            for step in revised.steps:
+                                prior = completed.get(step.id)
+                                if prior is not None:
+                                    # A replan must not erase durable completion
+                                    # evidence and cause a resumed Run to replay edits.
+                                    step.status = "completed"
+                                    step.attempts = max(step.attempts, prior.attempts)
+                                    step.evidence = copy.deepcopy(prior.evidence)
+                            self.plan = revised
                             self.plan.version += 1
                             self.emit("coding_plan_updated", self.plan.as_dict())
                     self.transition("VERIFY")

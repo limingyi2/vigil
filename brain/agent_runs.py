@@ -1139,6 +1139,10 @@ def _workflow_project_event(db, item, scope, kind, payload):
         status = payload.get('status')
         if workflow_step == verify_step and status == 'completed':
             return  # Harness reports this before it runs the real test commands.
+        if status == 'completed' and any(
+                step.get('step_id') == workflow_step and step.get('status') == 'completed'
+                for step in coding.get('workflow_steps', [])):
+            return  # coding_operations_completed already committed the evidence.
         if status == 'running':
             _workflow_checkpoint(db, item, scope, 'step_running', [workflow_step, status],
                                   step_change(workflow_step, 'running'))
@@ -1201,6 +1205,13 @@ def _workflow_project_event(db, item, scope, kind, payload):
             lambda tasks, request, rev: tasks.attempt_status(
                 scope, wid, request, rev, aid, 'returned',
                 result_ref=ev['ref'], evidence=ev, connection=db))
+        if (kind == 'coding_operations_completed'
+                and workflow_step in coding.get('workflow_plan', [])
+                and workflow_step != verify_step):
+            step_ev = evidence('agent-run://%s/coding-step/%s/%s' %
+                (item['run_id'], workflow_step, payload.get('attempt', 0)), payload)
+            _workflow_checkpoint(db, item, scope, 'step_completed', [workflow_step, step_ev],
+                step_change(workflow_step, 'completed', step_ev))
         return
 
     if kind == 'coding_test':
@@ -2035,10 +2046,19 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
                 if not current or current.get('status') != 'running':
                     return
                 event_id = str(payload.get('_harness_event_id') or '')
-                seen_ids = current.setdefault('coding', {}).setdefault('workflow_seen_event_ids', [])
-                if event_id and event_id in seen_ids:
-                    return
                 coding = current.setdefault('coding', {})
+                seen_ids = coding.setdefault('workflow_seen_event_ids', [])
+                event_seq = None
+                prefix = rid + ':'
+                if event_id.startswith(prefix):
+                    raw_seq = event_id[len(prefix):]
+                    if raw_seq.isdigit() and int(raw_seq) > 0:
+                        event_seq = int(raw_seq)
+                cursor = coding.get('harness_event_cursor') or {}
+                if (event_id and (event_id in seen_ids
+                        or (event_seq is not None and cursor.get('run_id') == rid
+                            and event_seq <= int(cursor.get('seq') or 0)))):
+                    return
                 coding['phase'] = payload.get('phase') or coding.get('phase')
                 if kind in ('coding_plan', 'coding_plan_updated'):
                     coding['plan'] = payload
@@ -2061,6 +2081,15 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
                     coding.setdefault('files', []).append(copy.deepcopy(payload.get('path')))
                 elif kind == 'coding_repair':
                     coding['repair_count'] = payload.get('repair_count', coding.get('repair_count', 0))
+                elif kind == 'coding_operations_completed':
+                    plan = coding.setdefault('plan', {'steps': []})
+                    steps = plan.setdefault('steps', [])
+                    step_id = str(payload.get('step_id') or '')
+                    step = next((s for s in steps if s.get('id') == step_id), None)
+                    if step is not None:
+                        step['status'] = 'completed'
+                        receipts = payload.get('receipts') if isinstance(payload.get('receipts'), list) else []
+                        step.setdefault('evidence', []).extend(copy.deepcopy(receipts))
                 elif kind in ('coding_diagnosis', 'coding_failed'):
                     coding.setdefault('diagnostics', []).append(copy.deepcopy(payload))
                 current['stage'] = coding.get('phase') or kind
@@ -2070,9 +2099,11 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
                 if current.get('coding', {}).get('task_workflow_id') and (
                         current['coding'].get('workflow_revision') != before_revision):
                     _workflow_event(db, current)
-                if event_id and current.get('coding', {}).get('task_workflow_id'):
+                if event_id:
                     seen_ids.append(event_id)
                     del seen_ids[:-512]
+                    if event_seq is not None:
+                        coding['harness_event_cursor'] = {'run_id': rid, 'seq': event_seq}
                 _save(db, current)
 
         def ask(role, instruction, context):
@@ -2147,6 +2178,19 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
             return ask('重规划器', '验证失败后调整后续计划。返回完整 steps 数组；保留已经完成的步骤，新增修复和重验步骤。',
                        {'plan': plan, 'diagnosis': diagnosis})
 
+        def pre_effect_check():
+            if not workflow_scope:
+                return
+            current = snapshot(rid, owner)
+            if not current or current.get('status') != 'running':
+                raise coding_harness.CodingHarnessError('任务已暂停或取消，拒绝开始新操作')
+            workflow_id = (current.get('coding') or {}).get('task_workflow_id')
+            if workflow_id:
+                # Re-read the persisted owner/conversation/workspace binding at
+                # the last Harness boundary before each individual effect.
+                import task_workflows
+                task_workflows.get(workflow_scope, workflow_id)
+
         harness = coding_harness.CodingHarness(
             root, run_id=rid, max_repairs=max_repairs, max_seconds=max_seconds,
             verify_commands=coding_cfg.get('verify_commands') or [],
@@ -2154,6 +2198,7 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
             diagnostician=diagnostician, repairer=repairer, replanner=replanner,
             stop_check=lambda: (agent_runs_snapshot := snapshot(rid, owner)) is None
             or agent_runs_snapshot.get('status') != 'running',
+            pre_effect_check=pre_effect_check,
             event_sink=persist,
             resume_state=(coding_cfg if item.get('resume_from') else None))
         result = harness.run(item['intent'])

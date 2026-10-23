@@ -108,6 +108,24 @@ def test_multiple_real_verification_commands_get_distinct_attempts(env):
     assert all(attempt['state'] == 'returned' for attempt in flow['attempts'])
 
 
+def test_case_variant_verify_step_still_requires_real_verification(env):
+    scope, root = env
+    plan = {'complexity': 'complex', 'rationale': 'structured plan', 'steps': [
+        {'id': 'analyze', 'title': 'Analyze'},
+        {'id': 'implement', 'title': 'Implement', 'dependencies': ['analyze']},
+        {'id': 'Verify', 'title': 'Verify', 'dependencies': ['implement'],
+         'verification': ['python -m pytest -q test_ok.py']}]}
+    provider = Provider([plan,
+        {'operations': [{'op': 'noop', 'text': 'implementation complete'}]},
+        {'operations': [{'op': 'noop', 'text': 'verification stage'}]}])
+    result = _run(scope, root, 'p19_verify_case_0001', provider)
+    assert result['status'] == 'succeeded', result.get('coding')
+    flow = task_workflows.get(scope, result['coding']['task_workflow_id'])
+    verify = next(s for s in flow['steps'] if s['step_id'] == 'Verify')
+    assert verify['status'] == 'completed'
+    assert any(e['verified_by'] == 'coding_harness' for e in verify['evidence'])
+
+
 def test_duplicate_harness_receipt_is_idempotent(env, monkeypatch):
     import coding_harness
     original_emit = coding_harness.CodingHarness.emit
@@ -125,6 +143,42 @@ def test_duplicate_harness_receipt_is_idempotent(env, monkeypatch):
     assert len(flow['attempts']) == 2  # one implementation batch and one real test command
     persisted = agent_runs.events(result['run_id'], scope.run_owner)['events']
     assert sum(e['type'] == 'coding_test' for e in persisted) == 1
+
+
+def test_harness_event_duplicate_after_512_new_events_is_idempotent(env, monkeypatch):
+    import coding_harness
+    original_emit = coding_harness.CodingHarness.emit
+    replayed = {'done': False}
+
+    def replay_aged_completion(self, kind, payload=None):
+        result = original_emit(self, kind, payload)
+        if (kind == 'coding_step' and payload.get('id') == 'analyze'
+                and payload.get('status') == 'completed' and not replayed['done']):
+            stale = dict(self.events[-1]['payload'])
+            replayed['done'] = True
+            for index in range(520):
+                original_emit(self, 'coding_noise', {'index': index})
+            self.event_sink('coding_step', stale)
+        return result
+
+    monkeypatch.setattr(coding_harness.CodingHarness, 'emit', replay_aged_completion)
+    scope, root = env
+    result = _run(scope, root, 'p19_aged_receipt_0001', _complex_provider())
+    assert replayed['done']
+    assert result['status'] == 'succeeded', result.get('coding')
+    assert result['coding']['harness_event_cursor']['seq'] >= 520
+    flow = task_workflows.get(scope, result['coding']['task_workflow_id'])
+    assert flow['status'] == 'completed'
+    assert sum(step['status'] == 'completed' for step in flow['steps']) == 3
+
+
+def test_harness_event_sequence_continues_after_same_run_restart(env):
+    import coding_harness
+    _, root = env
+    harness = coding_harness.CodingHarness(str(root), run_id='restart-run',
+        resume_state={'harness_event_cursor': {'run_id': 'restart-run', 'seq': 12}})
+    harness.emit('coding_phase', {'phase': 'IMPLEMENT'})
+    assert harness.events[-1]['payload']['_harness_event_id'] == 'restart-run:13'
 
 
 def test_unknown_coding_dispatch_becomes_review_and_blocks_resume(env, monkeypatch):
@@ -165,6 +219,221 @@ def test_unknown_coding_dispatch_becomes_review_and_blocks_resume(env, monkeypat
         with pytest.raises(ValueError, match='人工核对'):
             agent_runs.resume(run['run_id'], scope.run_owner, {},
                 {'request_id': 'p19_resume_review_1'}, start=False, workflow_scope=scope)
+
+
+def test_pause_after_dispatch_before_apply_blocks_side_effect(env, monkeypatch):
+    import threading
+    import coding_harness
+    scope, root = env
+    provider = Provider([
+        {'complexity': 'complex', 'rationale': 'one operation', 'steps': [
+            {'id': 'analyze', 'title': 'Analyze'},
+            {'id': 'implement', 'title': 'Implement', 'dependencies': ['analyze']},
+            {'id': 'verify', 'title': 'Verify', 'dependencies': ['implement'],
+             'verification': ['python -m pytest -q test_ok.py']}]},
+        {'operations': [{'op': 'write', 'path': 'must_not_start.txt', 'content': 'denied'}]},
+    ])
+    entered, release = threading.Event(), threading.Event()
+    original_emit = coding_harness.CodingHarness.emit
+    paused_dispatch = {'done': False}
+
+    def stop_between_dispatch_and_apply(self, kind, payload=None):
+        result = original_emit(self, kind, payload)
+        if kind == 'coding_operations_started' and not paused_dispatch['done']:
+            paused_dispatch['done'] = True
+            entered.set()
+            assert release.wait(10)
+        return result
+
+    monkeypatch.setattr(coding_harness.CodingHarness, 'emit', stop_between_dispatch_and_apply)
+    env_path = str(Path(sys.executable).parent)
+    with patch.dict(os.environ, {'PATH': env_path + os.pathsep + os.environ.get('PATH', '')}), \
+         patch.object(agent_runs, 'get_provider', return_value=provider):
+        body = {'request_id': 'p19_dispatch_pause_1',
+            'intent': 'refactor two modules and verify the changes', 'kind': 'coding',
+            'workspace_root': str(root), 'conversation_id': scope.conversation_id, 'src': 'pc',
+            'coding': {'max_repairs': 0, 'verify_commands': ['python -m pytest -q test_ok.py']}}
+        run = agent_runs.create(body, {}, scope.run_owner, start=False, workflow_scope=scope)
+        worker = threading.Thread(target=agent_runs._run,
+            args=(run['run_id'], scope.run_owner, {}), kwargs={'workflow_scope': scope})
+        worker.start()
+        assert entered.wait(10)
+        paused = agent_runs.pause(run['run_id'], scope.run_owner, workflow_scope=scope)
+        release.set()
+        worker.join(10)
+        assert not worker.is_alive()
+        assert paused['status'] == 'paused'
+        assert not (root / 'must_not_start.txt').exists()
+        flow = task_workflows.get(scope, paused['coding']['task_workflow_id'])
+        assert flow['status'] == 'needs_review'
+        assert any(attempt['state'] == 'unknown' for attempt in flow['attempts'])
+        with pytest.raises(ValueError, match='人工核对'):
+            agent_runs.resume(run['run_id'], scope.run_owner, {},
+                {'request_id': 'p19_resume_dispatch_pause_1'}, start=False, workflow_scope=scope)
+
+
+def test_partial_operation_batch_stays_unknown_after_pause_and_cannot_resume(env, monkeypatch):
+    import threading
+    import coding_harness
+    scope, root = env
+    provider = Provider([
+        {'complexity': 'complex', 'rationale': 'two operations', 'steps': [
+            {'id': 'analyze', 'title': 'Analyze'},
+            {'id': 'implement', 'title': 'Implement', 'dependencies': ['analyze']},
+            {'id': 'verify', 'title': 'Verify', 'dependencies': ['implement'],
+             'verification': ['python -m pytest -q test_ok.py']}]},
+        {'operations': [
+            {'op': 'write', 'path': 'first.txt', 'content': 'applied'},
+            {'op': 'write', 'path': 'second.txt', 'content': 'same dispatched batch'}]},
+    ])
+    entered, release = threading.Event(), threading.Event()
+    original_write = coding_harness.PatchEngine.write
+    first_write = {'done': False}
+
+    def pause_after_first_effect(self, *args, **kwargs):
+        receipt = original_write(self, *args, **kwargs)
+        if not first_write['done']:
+            first_write['done'] = True
+            entered.set()
+            assert release.wait(10)
+        return receipt
+
+    monkeypatch.setattr(coding_harness.PatchEngine, 'write', pause_after_first_effect)
+    env_path = str(Path(sys.executable).parent)
+    with patch.dict(os.environ, {'PATH': env_path + os.pathsep + os.environ.get('PATH', '')}), \
+         patch.object(agent_runs, 'get_provider', return_value=provider):
+        body = {'request_id': 'p19_partial_batch_1',
+            'intent': 'refactor two modules and verify the changes', 'kind': 'coding',
+            'workspace_root': str(root), 'conversation_id': scope.conversation_id, 'src': 'pc',
+            'coding': {'max_repairs': 0, 'verify_commands': ['python -m pytest -q test_ok.py']}}
+        run = agent_runs.create(body, {}, scope.run_owner, start=False, workflow_scope=scope)
+        worker = threading.Thread(target=agent_runs._run,
+            args=(run['run_id'], scope.run_owner, {}), kwargs={'workflow_scope': scope})
+        worker.start()
+        assert entered.wait(10)
+        assert (root / 'first.txt').read_text(encoding='utf-8') == 'applied'
+        paused = agent_runs.pause(run['run_id'], scope.run_owner, workflow_scope=scope)
+        release.set()
+        worker.join(10)
+        assert not worker.is_alive()
+        assert paused['status'] == 'paused'
+        flow = task_workflows.get(scope, paused['coding']['task_workflow_id'])
+        assert flow['status'] == 'needs_review'
+        assert any(attempt['state'] == 'unknown' for attempt in flow['attempts'])
+        assert not (root / 'first.txt').exists()  # the Harness rolls back the interrupted batch
+        assert not (root / 'second.txt').exists()  # the next effect is gated after stop
+        with pytest.raises(ValueError, match='人工核对'):
+            agent_runs.resume(run['run_id'], scope.run_owner, {},
+                {'request_id': 'p19_resume_partial_batch_1'}, start=False, workflow_scope=scope)
+
+
+def test_effect_completed_before_receipt_persistence_becomes_unknown(env, monkeypatch):
+    import threading
+    import coding_harness
+    scope, root = env
+    provider = Provider([
+        {'complexity': 'complex', 'rationale': 'one operation', 'steps': [
+            {'id': 'analyze', 'title': 'Analyze'},
+            {'id': 'implement', 'title': 'Implement', 'dependencies': ['analyze']},
+            {'id': 'verify', 'title': 'Verify', 'dependencies': ['implement'],
+             'verification': ['python -m pytest -q test_ok.py']}]},
+        {'operations': [{'op': 'write', 'path': 'receipt_gap.txt', 'content': 'done'}]},
+    ])
+    entered, release = threading.Event(), threading.Event()
+    original_emit = coding_harness.CodingHarness.emit
+
+    def delay_receipt(self, kind, payload=None):
+        if kind == 'coding_operations_completed':
+            entered.set()
+            assert release.wait(10)
+        return original_emit(self, kind, payload)
+
+    monkeypatch.setattr(coding_harness.CodingHarness, 'emit', delay_receipt)
+    env_path = str(Path(sys.executable).parent)
+    with patch.dict(os.environ, {'PATH': env_path + os.pathsep + os.environ.get('PATH', '')}), \
+         patch.object(agent_runs, 'get_provider', return_value=provider):
+        body = {'request_id': 'p19_receipt_gap_1',
+            'intent': 'refactor two modules and verify the changes', 'kind': 'coding',
+            'workspace_root': str(root), 'conversation_id': scope.conversation_id, 'src': 'pc',
+            'coding': {'max_repairs': 0, 'verify_commands': ['python -m pytest -q test_ok.py']}}
+        run = agent_runs.create(body, {}, scope.run_owner, start=False, workflow_scope=scope)
+        worker = threading.Thread(target=agent_runs._run,
+            args=(run['run_id'], scope.run_owner, {}), kwargs={'workflow_scope': scope})
+        worker.start()
+        assert entered.wait(10)
+        assert (root / 'receipt_gap.txt').read_text(encoding='utf-8') == 'done'
+        paused = agent_runs.pause(run['run_id'], scope.run_owner, workflow_scope=scope)
+        release.set()
+        worker.join(10)
+        assert not worker.is_alive()
+        flow = task_workflows.get(scope, paused['coding']['task_workflow_id'])
+        assert paused['status'] == 'paused'
+        assert flow['status'] == 'needs_review'
+        assert any(attempt['state'] == 'unknown' for attempt in flow['attempts'])
+        with pytest.raises(ValueError, match='人工核对'):
+            agent_runs.resume(run['run_id'], scope.run_owner, {},
+                {'request_id': 'p19_resume_receipt_gap_1'}, start=False, workflow_scope=scope)
+
+
+def test_persisted_operation_receipt_prevents_replay_after_restart(env, monkeypatch):
+    import threading
+    import coding_harness
+    scope, root = env
+    provider = Provider([
+        {'complexity': 'complex', 'rationale': 'one operation', 'steps': [
+            {'id': 'analyze', 'title': 'Analyze'},
+            {'id': 'implement', 'title': 'Implement', 'dependencies': ['analyze']},
+            {'id': 'verify', 'title': 'Verify', 'dependencies': ['implement'],
+             'verification': ['python -m pytest -q test_ok.py']}]},
+        {'operations': [{'op': 'write', 'path': 'persisted_receipt.txt', 'content': 'once'}]},
+    ])
+    entered, release = threading.Event(), threading.Event()
+    original_emit = coding_harness.CodingHarness.emit
+    simulated = {'done': False}
+
+    def restart_after_operation_receipt(self, kind, payload=None):
+        result = original_emit(self, kind, payload)
+        if kind == 'coding_operations_completed' and not simulated['done']:
+            simulated['done'] = True
+            entered.set()
+            assert release.wait(10)
+        return result
+
+    monkeypatch.setattr(coding_harness.CodingHarness, 'emit', restart_after_operation_receipt)
+    env_path = str(Path(sys.executable).parent)
+    with patch.dict(os.environ, {'PATH': env_path + os.pathsep + os.environ.get('PATH', '')}), \
+         patch.object(agent_runs, 'get_provider', return_value=provider):
+        body = {'request_id': 'p19_receipt_recovery_1',
+            'intent': 'refactor two modules and verify the changes', 'kind': 'coding',
+            'workspace_root': str(root), 'conversation_id': scope.conversation_id, 'src': 'pc',
+            'coding': {'max_repairs': 0, 'verify_commands': ['python -m pytest -q test_ok.py']}}
+        run = agent_runs.create(body, {}, scope.run_owner, start=False, workflow_scope=scope)
+        worker = threading.Thread(target=agent_runs._run,
+            args=(run['run_id'], scope.run_owner, {}), kwargs={'workflow_scope': scope})
+        worker.start()
+        assert entered.wait(10)
+        assert (root / 'persisted_receipt.txt').read_text(encoding='utf-8') == 'once'
+        agent_runs.INITIALIZED.clear()
+        with agent_runs._db():
+            pass  # Startup interruption after the operation receipt committed.
+        release.set()
+        worker.join(10)
+        assert not worker.is_alive()
+        parent = agent_runs.snapshot(run['run_id'], scope.run_owner)
+        assert parent['status'] == 'interrupted'
+        assert next(s for s in parent['coding']['plan']['steps']
+                    if s['id'] == 'implement')['status'] == 'completed'
+
+        child = agent_runs.resume(run['run_id'], scope.run_owner, {},
+            {'request_id': 'p19_resume_receipt_recovery_1'}, start=False, workflow_scope=scope)
+        agent_runs._run(child['run_id'], scope.run_owner, {}, workflow_scope=scope)
+        resumed = agent_runs.snapshot(child['run_id'], scope.run_owner)
+        assert resumed['status'] == 'succeeded', resumed.get('coding')
+        assert (root / 'persisted_receipt.txt').read_text(encoding='utf-8') == 'once'
+        parent_events = agent_runs.events(run['run_id'], scope.run_owner)['events']
+        child_events = agent_runs.events(child['run_id'], scope.run_owner)['events']
+        assert sum(e['type'] == 'coding_operations_started' for e in parent_events) == 1
+        assert sum(e['type'] == 'coding_operations_started' for e in child_events) == 0
 
 
 def test_restart_reconciles_dispatched_work_as_unknown_without_replay(env, monkeypatch):
@@ -353,6 +622,7 @@ def test_harness_diagnose_repair_reverify_keeps_one_workflow_truth(env):
     assert result['coding']['repair_count'] == 1
     assert flow['status'] == 'completed'
     assert all(step['status'] == 'completed' for step in flow['steps'])
+    assert all(step['status'] == 'completed' for step in result['coding']['plan']['steps'])
     assert len(flow['attempts']) == 4  # implementation, failed test, repair, passing test
     assert all(attempt['state'] == 'returned' for attempt in flow['attempts'])
 
@@ -429,3 +699,61 @@ def test_workspace_scope_change_before_dispatch_blocks_file_operation(env):
         attempts = conn.execute('SELECT COUNT(*) FROM task_attempts WHERE workflow_id=?',
                                 (flow['workflow_id'],)).fetchone()[0]
     assert attempts == 0
+
+
+def test_workspace_scope_revoked_after_dispatch_blocks_pre_effect(env, monkeypatch):
+    import threading
+    import coding_harness
+    scope, root = env
+    original_normalize = workspaces.normalize_path
+    revoked = {'value': False}
+
+    def normalize_with_revocation(path):
+        if revoked['value']:
+            return original_normalize(str(root.parent / 'revoked-workspace'))
+        return original_normalize(path)
+
+    monkeypatch.setattr(workspaces, 'normalize_path', normalize_with_revocation)
+    provider = Provider([
+        {'complexity': 'complex', 'rationale': 'one operation', 'steps': [
+            {'id': 'analyze', 'title': 'Analyze'},
+            {'id': 'implement', 'title': 'Implement', 'dependencies': ['analyze']},
+            {'id': 'verify', 'title': 'Verify', 'dependencies': ['implement'],
+             'verification': ['python -m pytest -q test_ok.py']}]},
+        {'operations': [{'op': 'write', 'path': 'revoked_write.txt', 'content': 'denied'}]},
+    ])
+    entered = threading.Event()
+    original_emit = coding_harness.CodingHarness.emit
+    revoked_once = {'done': False}
+
+    def revoke_after_dispatch(self, kind, payload=None):
+        result = original_emit(self, kind, payload)
+        if kind == 'coding_operations_started' and not revoked_once['done']:
+            revoked_once['done'] = True
+            revoked['value'] = True
+            entered.set()
+        return result
+
+    monkeypatch.setattr(coding_harness.CodingHarness, 'emit', revoke_after_dispatch)
+    env_path = str(Path(sys.executable).parent)
+    with patch.dict(os.environ, {'PATH': env_path + os.pathsep + os.environ.get('PATH', '')}), \
+         patch.object(agent_runs, 'get_provider', return_value=provider):
+        body = {'request_id': 'p19_scope_race_1',
+            'intent': 'refactor two modules and verify the changes', 'kind': 'coding',
+            'workspace_root': str(root), 'conversation_id': scope.conversation_id, 'src': 'pc',
+            'coding': {'max_repairs': 0, 'verify_commands': ['python -m pytest -q test_ok.py']}}
+        run = agent_runs.create(body, {}, scope.run_owner, start=False, workflow_scope=scope)
+        agent_runs._run(run['run_id'], scope.run_owner, {}, workflow_scope=scope)
+        result = agent_runs.snapshot(run['run_id'], scope.run_owner)
+        assert entered.is_set()
+        assert result['status'] == 'failed'
+        assert result['coding'].get('workflow_sync_error') == 'scope_or_projection_unavailable'
+        assert not (root / 'revoked_write.txt').exists()
+
+    revoked['value'] = False
+    with pytest.raises(ValueError, match='人工核对'):
+        agent_runs.resume(run['run_id'], scope.run_owner, {},
+            {'request_id': 'p19_resume_scope_race_1'}, start=False, workflow_scope=scope)
+    flow = task_workflows.get(scope, result['coding']['task_workflow_id'])
+    assert flow['status'] == 'needs_review'
+    assert any(attempt['state'] == 'unknown' for attempt in flow['attempts'])
