@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 require('./test-video-workbench-lifecycle.js');
 require('./test-plugin-market-lifecycle.js');
+require('./test-data-page-lifecycle.js');
 const vm = require('node:vm');
 const {EventEmitter} = require('node:events');
 const client = path.resolve(__dirname, '..');
