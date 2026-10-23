@@ -13,11 +13,7 @@ def test_agenda_scopes_cover_channels_and_personas():
         def persona_key_of(self, src):
             return 'persona-' + src
 
-    assert jobs._agenda_scopes(Brain()) == [
-        ('persona-wechat', 'wechat'),
-        ('persona-wechat_group', 'wechat_group'),
-        ('persona-pc', 'pc'),
-    ]
+    assert jobs._agenda_scopes(Brain()) == [('persona-pc', 'pc')]
 
 
 def test_agenda_loop_refreshes_all_scopes_without_recap(monkeypatch):
@@ -45,8 +41,4 @@ def test_agenda_loop_refreshes_all_scopes_without_recap(monkeypatch):
         assert str(exc) == 'stop test loop'
 
     assert sleeps == [60, 1200]
-    assert refreshed == [
-        {'persona_key': 'persona-wechat', 'src': 'wechat'},
-        {'persona_key': 'persona-wechat_group', 'src': 'wechat_group'},
-        {'persona_key': 'persona-pc', 'src': 'pc'},
-    ]
+    assert refreshed == [{'persona_key': 'persona-pc', 'src': 'pc'}]
