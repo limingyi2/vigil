@@ -289,6 +289,81 @@ def test_deleting_recovered_workspace_detaches_old_and_new_sessions(core, monkey
     create_run.assert_not_called()
 
 
+def test_plugin_http_lifecycle_and_both_management_views_share_state(core, monkeypatch, tmp_path):
+    b, request, data, cfg = core
+    import plugin_host, plugin_ops, plugin_manager, types
+
+    installed = tmp_path / 'installed_plugins'
+    installed.mkdir()
+    package = installed / 'lifecycle_probe'
+    package.mkdir()
+    entry = package / '__init__.py'
+    entry.write_text('# isolated plugin fixture', encoding='utf-8')
+    registry = installed / '_registry.json'
+    registry.write_text(json.dumps({'version': 1, 'plugins': {
+        'lifecycle_probe': {'enabled': True, 'version': '1.0.0'}}}), encoding='utf-8')
+    called = []
+    mod = types.ModuleType('lifecycle_probe_fixture')
+    mod.NAME = 'lifecycle_probe'
+    mod.DESC = 'isolated lifecycle fixture'
+    mod.FEATURE = ''
+    mod.TOOLS = {'lifecycle_probe_tool': lambda arg: called.append(arg) or 'ok'}
+    mod.ROUTES = [('GET', '/api/plugin/lifecycle-probe',
+                   lambda body, query: {'ok': True, 'result': 'reached'})]
+    fake = plugin_host.Plugin(mod, str(entry))
+    market = plugin_host._load_one(str(Path(__file__).resolve().parents[1] / 'brain' / 'plugins' / 'plugin_market.py'))
+    assert market is not None
+    old_plugins = plugin_host._registry
+    plugin_host._registry = {'lifecycle_probe': fake, 'plugin_market': market}
+    plugin_host._reindex_tools()
+
+    def reload_target(name=None, brain=None, allow_missing=False):
+        if allow_missing:
+            plugin_host._registry.pop(name, None)
+            plugin_host._reindex_tools()
+        return True
+
+    try:
+        monkeypatch.setattr(plugin_host, '_INSTALLED_DIR', str(installed))
+        monkeypatch.setattr(plugin_host, '_DIR', str(Path(__file__).resolve().parents[1] / 'brain' / 'plugins'))
+        monkeypatch.setattr(plugin_ops, '_PLUG_DIR', str(installed))
+        monkeypatch.setattr(plugin_ops, 'REGISTRY', str(registry))
+        monkeypatch.setattr(plugin_manager, '_reload', reload_target)
+        monkeypatch.setattr(market.mod, '_read_market', lambda: {
+            'state': 'ready', 'plugins': [], 'version': 'fixture'})
+
+        assert request('/api/plugin/lifecycle-probe')[0] == 200
+        code, disabled = request('/api/plugins/lifecycle', {
+            'name': 'lifecycle_probe', 'action': 'disable'})
+        assert code == 200 and disabled['ok'] and disabled['enabled'] is False
+        assert request('/api/plugin/lifecycle-probe')[0] == 403
+        assert all(row['name'] != 'lifecycle_probe' for row in
+                   request('/api/plugins/frontend')[1]['plugins'])
+        old_view = request('/api/plugins')[1]['manage']['items']
+        market_view = request('/api/market/list')[1]['plugins']
+        old_item = next(row for row in old_view if row['name'] == 'lifecycle_probe')
+        market_item = next(row for row in market_view if row['name'] == 'lifecycle_probe')
+        assert old_item['enabled'] is market_item['enabled'] is False
+        assert old_item['state'] == market_item['state'] == 'disabled'
+        assert old_item['removable'] and market_item['removable']
+
+        code, enabled = request('/api/plugins/lifecycle', {
+            'name': 'lifecycle_probe', 'action': 'enable'})
+        assert code == 200 and enabled['enabled'] is True
+        assert request('/api/plugin/lifecycle-probe')[0] == 200
+        code, removed = request('/api/plugins/uninstall', {
+            'name': 'lifecycle_probe', 'purge_data': False})
+        assert code == 200 and removed['ok']
+        assert not package.exists()
+        assert all(row['name'] != 'lifecycle_probe' for row in
+                   request('/api/plugins')[1]['manage']['items'])
+        assert all(row['name'] != 'lifecycle_probe' for row in
+                   request('/api/market/list')[1]['plugins'])
+    finally:
+        plugin_host._registry = old_plugins
+        plugin_host._reindex_tools()
+
+
 def test_ambiguous_legacy_id_never_shares_display_records(core):
     b, request, data, cfg = core
     import conversations, display_turns

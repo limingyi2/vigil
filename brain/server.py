@@ -1362,6 +1362,41 @@ def start_remote_api(brain):
             except Exception:
                 chans = ["pc"]
 
+            def _management_items():
+                """One lifecycle view shared by the legacy and market pages."""
+                items = _po.overview(chans)
+                by_name = {str(item.get("name") or ""): item for item in items}
+                try:
+                    import plugin_host as _ph
+                    runtime = {str(item.get("name") or ""): item
+                               for item in _ph.listing()}
+                    import plugin_manager as _pm
+                    statuses = _pm.list_plugins()
+                except Exception:
+                    return items
+                for status in statuses:
+                    name = str(status.get("name") or "")
+                    row = by_name.get(name)
+                    info = runtime.get(name) or {}
+                    if row is None:
+                        feature = str(info.get("feature") or
+                                      (status.get("manifest") or {}).get("feature") or "")
+                        row = {
+                            "name": name, "desc": info.get("desc", ""),
+                            "feature": feature, "tools": info.get("tools", []),
+                            "routes": info.get("routes", []), "hooks": info.get("hooks", []),
+                            "file": info.get("file", ""), "err": info.get("err", ""),
+                            "channels": _po.channels_of(feature, chans),
+                            "channelable": bool(feature), "meta": _po._meta_of(name),
+                        }
+                        items.append(row)
+                        by_name[name] = row
+                    for key in ("state", "enabled", "source_kind", "builtin",
+                                "removable", "runtime_state", "version",
+                                "update_state", "diagnostic"):
+                        row[key] = status.get(key)
+                return sorted(items, key=lambda item: str(item.get("name") or ""))
+
             if method == "GET":
                 # /api/plugins 已经被微信桥接和 VM 启动器当"大脑活着吗"
                 # 的探针（只看 200），plugins 键保持原样别动。
@@ -1375,7 +1410,7 @@ def start_remote_api(brain):
                             "plugins": _ph.listing(),
                             "manage": {
                                 "channels": chans,
-                                "items": _po.overview(chans),
+                                "items": _management_items(),
                             },
                             # 持久的"待重启"判据（磁盘改动时刻 vs 本进程启动时刻）。
                             # 界面刷新后靠它认出待重启态 —— 不是靠 toast 记忆。
@@ -1425,31 +1460,34 @@ def start_remote_api(brain):
                 try:
                     with os.fdopen(fd, "wb") as f:
                         f.write(blob)
-                    ok, res = _po.install(fp, note=str(body.get("source") or "")[:40])
+                    import plugin_manager as _pm
+                    ok, res = _pm.install_archive(
+                        fp, source=str(body.get("source") or "客户端")[:40], reload=False)
                 finally:
                     try:
                         os.remove(fp)
                     except OSError:
                         pass
                 if not ok:
-                    self._json(400, {"ok": False, "err": res.get("err") or "装不上"})
+                    self._json(400, dict(res, ok=False))
                     return True
                 # Installing files must not execute newly supplied code.
                 # Explicit restart performs activation outside the transaction.
-                import plugin_host as _ph
                 self._json(200, {"ok": True, "installed": res,
-                                 "count": len(_ph.all_plugins()), "restart_needed": True,
+                                 "count": len(_management_items()), "restart_needed": True,
                                  "manage": {"channels": chans,
-                                            "items": _po.overview(chans)}})
+                                            "items": _management_items()}})
                 return True
 
             if path == "/api/plugins/uninstall":
-                ok, res = _po.uninstall(str(body.get("name") or ""),
+                import plugin_manager as _pm
+                ok, res = _pm.uninstall(str(body.get("name") or ""),
                                         purge_data=bool(body.get("purge_data")))
                 if not ok:
-                    self._json(400, {"ok": False, "err": res.get("err") or "卸不掉"})
+                    self._json(409 if res.get("state") == "restart_required" else 400,
+                               dict(res, ok=False))
                     return True
-                n, need = self._plugin_reload_now()
+                n = len(_management_items())
                 # restart_needed **只认刚卸掉的那个插件**（plugin_ops 在删
                 # 文件前查过它的 start 钩子，信息只有那一刻拿得到）。
                 # 曾经把重载返回的"剩下的插件里有带的"也 OR 进来，理由是
@@ -1461,7 +1499,27 @@ def start_remote_api(brain):
                 self._json(200, {"ok": True, "uninstalled": res,
                                  "count": n, "restart_needed": need,
                                  "manage": {"channels": chans,
-                                            "items": _po.overview(chans)}})
+                                            "items": _management_items()}})
+                return True
+
+            if path == "/api/plugins/lifecycle":
+                import plugin_manager as _pm
+                name = str(body.get("name") or "").strip()
+                action = str(body.get("action") or "").strip().lower()
+                if action == "enable":
+                    ok, result = _pm.enable(name)
+                elif action == "disable":
+                    ok, result = _pm.disable(name)
+                elif action == "reload":
+                    result = _pm.reload(name or None)
+                    ok = bool(result.get("ok"))
+                else:
+                    self._json(400, {"ok": False, "err": "不支持的生命周期操作"})
+                    return True
+                result["ok"] = bool(ok)
+                result["manage"] = {"channels": chans, "items": _management_items()}
+                code = 200 if ok else (409 if result.get("state") == "restart_required" else 400)
+                self._json(code, result)
                 return True
 
             if path == "/api/plugins/channels":
@@ -1500,19 +1558,16 @@ def start_remote_api(brain):
                 self._json(200, {"ok": True, "feature": feat,
                                  "channels": _po.channels_of(feat, chans),
                                  "manage": {"channels": chans,
-                                            "items": _po.overview(chans)}})
+                                            "items": _management_items()}})
                 return True
 
             if path == "/api/plugins/reload":
-                n, need = self._plugin_reload_now()
-                try:
-                    import plugin_host as _ph
-                    listing = _ph.listing()
-                except Exception:
-                    listing = []
-                self._json(200, {"ok": True, "count": n,
-                                 "restart_needed": need,
-                                 "plugins": listing})
+                import plugin_manager as _pm
+                result = _pm.reload()
+                result["manage"] = {"channels": chans, "items": _management_items()}
+                code = 200 if result.get("ok") else (
+                    409 if result.get("state") == "restart_required" else 500)
+                self._json(code, result)
                 return True
 
             return False
@@ -2148,19 +2203,27 @@ def start_remote_api(brain):
                 tbl = plugin_host.route_table()
             except Exception:
                 return False
+            try:
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                q = {k: (v[0] if v else "") for k, v in q.items()}
+            except Exception:
+                q = {}
+            raw_src = (body or {}).get("src") or q.get("src")
+            route_src = _norm_src(raw_src) if raw_src else None
             # 受限设备只能打 remote 插件那几条（在设备权限矩阵里），
             # 其余插件路由一律视为管理面：防止低权限凭据借插件路由越权。
-            if not self._is_admin() and not _device_path_allowed(method, path):
-                self._json(403, {"ok": False,
-                                 "err": "设备 Token 无权访问这个插件接口"})
-                return True
             for m, p, fn, owner in tbl:
                 if m != method or p != path:
                     continue
+                if not plugin_host.is_enabled(owner, route_src):
+                    self._json(403, {"ok": False, "err": "插件已停用，不能调用它的接口"})
+                    return True
+                if not self._is_admin() and not _device_path_allowed(method, path):
+                    self._json(403, {"ok": False,
+                                     "err": "设备 Token 无权访问这个插件接口"})
+                    return True
                 try:
-                    from urllib.parse import urlparse, parse_qs
-                    q = parse_qs(urlparse(self.path).query)
-                    q = {k: (v[0] if v else "") for k, v in q.items()}
                     # 已认证身份按请求注入（ContextVar），handler 据此做
                     # 设备归属校验；handler 签名保持 (body, query) 不变。
                     with plugin_host.use_principal(

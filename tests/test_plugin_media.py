@@ -65,7 +65,7 @@ class TestPluginResource(unittest.TestCase):
             self.assertNotEqual(first, plugin_host.frontend_assets()['version'])
             plugin.feature = 'x'
             with patch('features.all_features', return_value={'x': False}):
-                self.assertFalse(plugin_host.frontend_assets()['plugins'][0]['enabled'])
+                self.assertEqual(plugin_host.frontend_assets()['plugins'], [])
                 self.assertNotEqual(first, plugin_host.frontend_assets()['version'])
 
     def test_seed_directory_plugin_into_existing_home_without_overwriting(self):

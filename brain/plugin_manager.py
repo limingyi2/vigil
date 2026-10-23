@@ -64,6 +64,71 @@ def _set_state(name, **patch):
     return item
 
 
+def _source(name, runtime=None):
+    """Classify the code currently selected by plugin_host.
+
+    An installed plugin may intentionally override a core plugin with the same
+    name. Resolve the loaded path first so that only the user copy is removable.
+    """
+    try:
+        import plugin_host
+        runtime = runtime or plugin_host.get(name)
+        path = getattr(runtime, "path", "") if runtime else ""
+        if not path:
+            path = plugin_host._plugin_entry_path(name)
+        if not path:
+            return ""
+        path = os.path.normcase(os.path.realpath(path))
+        roots = (
+            ("user", getattr(plugin_host, "_INSTALLED_DIR", "")),
+            ("builtin", getattr(plugin_host, "_DIR", "")),
+        )
+        matches = []
+        for kind, root in roots:
+            if not root:
+                continue
+            root = os.path.normcase(os.path.realpath(root))
+            try:
+                if os.path.commonpath((root, path)) == root:
+                    matches.append((len(root), kind))
+            except ValueError:
+                continue
+        # Prefer the deepest matching root (installed overlays live beneath a
+        # broader application root); on identical roots, default to protected
+        # builtin ownership.
+        if matches:
+            return sorted(matches, key=lambda item: (item[0], item[1] == "builtin"),
+                           reverse=True)[0][1]
+    except Exception:
+        pass
+    return ""
+
+
+def _known(name):
+    return _source(name) in ("builtin", "user")
+
+
+def _feature(name, item):
+    feature = str((item.get("manifest") or {}).get("feature") or "")
+    if feature:
+        return feature
+    try:
+        import plugin_host
+        plugin = plugin_host.get(name)
+        return str(getattr(plugin, "feature", "") or "")
+    except Exception:
+        return ""
+
+
+def _note_pending_restart(name, reason):
+    try:
+        import restart_state
+        restart_state.note_change("plugin", _ops()._PLUG_DIR,
+                                  "停用插件 %s：%s" % (name, reason))
+    except Exception:
+        pass
+
+
 def _stop(name):
     """Call the optional stop/shutdown hook before replacing or deleting code."""
     try:
@@ -281,6 +346,9 @@ def install_archive(path, *, source="zip", replace=False, reload=True, manifest_
         if manifest_error:
             return False, {"ok": False, "err": manifest_error, "state": "error"}
         package_name = str((incoming or {}).get("name") or "")
+        if package_name and _source(package_name) == "builtin":
+            return False, {"ok": False, "name": package_name, "state": "builtin",
+                           "err": "这是随程序发布的内置插件，不能作为用户插件覆盖安装"}
         if package_name and not replace and _meta(_registry(), package_name):
             return False, {"ok": False, "name": package_name,
                            "err": "插件已安装，请使用更新操作", "state": "already_installed"}
@@ -331,6 +399,9 @@ def install(name, archive_path, **kwargs):
 
 def update(name, archive_path, *, source="market", reload=True, manifest=None):
     """Replace an existing plugin atomically; plugin_ops keeps its backup until commit."""
+    if _source(name) == "builtin":
+        return False, {"ok": False, "name": name, "state": "builtin",
+                       "err": "内置插件不能更新或覆盖；请更新 Vigil 程序"}
     reg = _registry()
     if not _meta(reg, name):
         return False, {"ok": False, "err": "插件尚未安装", "state": "not_installed"}
@@ -396,12 +467,15 @@ def enable(name):
     if not _valid_name(name):
         return False, {"ok": False, "err": "插件名不合法"}
     reg = _registry()
-    if not _meta(reg, name):
-        return False, {"ok": False, "err": "插件尚未安装"}
-    item = _set_state(name, enabled=True, state="enabled", last_error="")
+    if not _meta(reg, name) and not _known(name):
+        return False, {"ok": False, "err": "插件尚未安装或未随程序提供"}
+    state_patch = {"enabled": True, "state": "enabled", "last_error": ""}
+    if _source(name) == "builtin":
+        state_patch["source_kind"] = "builtin"
+    item = _set_state(name, **state_patch)
     try:
         import features
-        feature = (item.get("manifest") or {}).get("feature")
+        feature = _feature(name, item)
         if feature:
             features.set_features({feature: True})
         if not _reload(name):
@@ -418,20 +492,25 @@ def disable(name):
     if not _valid_name(name):
         return False, {"ok": False, "err": "插件名不合法"}
     reg = _registry()
-    if not _meta(reg, name):
-        return False, {"ok": False, "err": "插件尚未安装"}
-    item = _set_state(name, enabled=False, state="disabled", last_error="")
+    if not _meta(reg, name) and not _known(name):
+        return False, {"ok": False, "err": "插件尚未安装或未随程序提供"}
+    state_patch = {"enabled": False, "state": "disabled", "last_error": ""}
+    if _source(name) == "builtin":
+        state_patch["source_kind"] = "builtin"
+    item = _set_state(name, **state_patch)
     try:
         import features
-        feature = (item.get("manifest") or {}).get("feature")
+        feature = _feature(name, item)
         if feature:
             features.set_features({feature: False})
         stopped, stop_err = _stop(name)
         if not stopped:
             if _needs_restart(stop_err):
                 _set_state(name, state="restart_required", last_error=stop_err)
+                _note_pending_restart(name, stop_err)
                 return False, {"ok": False, "name": name, "state": "restart_required",
-                               "restart_needed": True, "err": stop_err}
+                               "enabled": False, "restart_needed": True,
+                               "err": stop_err}
             raise RuntimeError(stop_err)
         if not _reload(name):
             raise RuntimeError("插件已禁用，但运行中的 Brain 不可用；请重启后完成重载")
@@ -444,6 +523,10 @@ def disable(name):
 def uninstall(name, *, purge_data=False):
     if not _valid_name(name):
         return False, {"ok": False, "err": "插件名不合法"}
+    source = _source(name)
+    if source == "builtin":
+        return False, {"ok": False, "name": name, "state": "builtin",
+                       "err": "这是随程序发布的内置插件，不能卸载；可以停用它"}
     ok, detail = _stop(name)
     if not ok:
         state = "restart_required" if _needs_restart(detail) else "error"
@@ -488,23 +571,34 @@ def reload(name=None, brain=None):
 def status(name, latest_version=""):
     reg = _registry()
     item = dict(_meta(reg, name))
-    installed = bool(item)
+    source_kind = _source(name)
+    installed = bool(item) or source_kind in ("builtin", "user")
     version = item.get("version", "")
     try:
         import plugin_host
         runtime = plugin_host.get(name)
-        runtime_state = "loaded" if runtime else ("disabled" if item.get("enabled") is False else "not_loaded")
+        # A disable request for a running start-only plugin remains pending until
+        # a new Brain process has actually skipped its start hook.
+        if (runtime and item.get("state") == "restart_required"
+                and item.get("enabled") is False
+                and not plugin_host.is_started(name)):
+            item = _set_state(name, state="disabled", last_error="")
+        enabled = bool(item.get("enabled", True)) if installed else False
+        runtime_state = ("disabled" if not enabled else
+                         ("loaded" if runtime else "not_loaded"))
         diagnostic = runtime.err if runtime and runtime.err else item.get("last_error", "")
     except Exception:
+        enabled = bool(item.get("enabled", True)) if installed else False
         runtime_state, diagnostic = "unknown", item.get("last_error", "")
     update_state = "not_installed" if not installed else "current"
-    if installed and latest_version:
+    if installed and latest_version and source_kind != "builtin":
         cmp = compare_versions(version, latest_version)
         update_state = "update_available" if cmp < 0 else ("ahead" if cmp > 0 else "current")
     return {"name": name, "installed": installed, "version": version,
             "latest_version": latest_version, "update_state": update_state,
             "state": item.get("state", "installed" if installed else "not_installed"),
-            "enabled": item.get("enabled", True) if installed else False,
+            "enabled": enabled, "source_kind": source_kind or item.get("source_kind", "user"),
+            "builtin": source_kind == "builtin", "removable": source_kind == "user",
             "runtime_state": runtime_state, "dependencies": item.get("dependencies", {}),
             "permissions": item.get("permissions", []), "diagnostic": diagnostic,
             "manifest": item.get("manifest", {})}
@@ -513,6 +607,11 @@ def status(name, latest_version=""):
 def list_plugins(market=None):
     market = market or []
     latest = {str(x.get("name")): x for x in market if isinstance(x, dict) and x.get("name")}
-    names = set((_registry().get("plugins") or {}).keys()) | set(latest)
+    try:
+        import plugin_host
+        runtime_names = set(plugin_host.all_plugins())
+    except Exception:
+        runtime_names = set()
+    names = set((_registry().get("plugins") or {}).keys()) | set(latest) | runtime_names
     return [dict(status(name, (latest.get(name) or {}).get("version", "")),
                  market=latest.get(name)) for name in sorted(names)]
