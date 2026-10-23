@@ -1,9 +1,14 @@
 @echo off
 setlocal
 set "ROOT=%~dp0"
-set "VSROOT=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools"
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VSROOT="
+if exist "%VSWHERE%" (
+  for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSROOT=%%i"
+)
+if not defined VSROOT set "VSROOT=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools"
 if not exist "%VSROOT%\Common7\Tools\VsDevCmd.bat" (
-  echo Visual Studio 2022 Build Tools were not found. 1>&2
+  echo Visual Studio 2022 with the MSVC x64 C++ tools was not found. 1>&2
   exit /b 2
 )
 if not exist "%ROOT%build\Release" mkdir "%ROOT%build\Release"

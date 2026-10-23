@@ -50,7 +50,9 @@ async function start() {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.VIGIL_CLOUD_TOKEN;
   delete env.VIGIL_CLOUD_URL;
-  app = spawn(path.join(install, 'Vigil.exe'), ['--remote-debugging-port=0'], { env, windowsHide: true, stdio: 'ignore' });
+  const executable = fs.readdirSync(install).find(name => /\.exe$/i.test(name) && !/^uninstall/i.test(name));
+  assert.ok(executable, 'Installed Electron executable was not found');
+  app = spawn(path.join(install, executable), ['--remote-debugging-port=0'], { env, windowsHide: true, stdio: 'ignore' });
   let connected = false;
   for (let i = 0; i < 360; i++) {
     if (app.exitCode != null) throw Error(`Installed Electron exited ${app.exitCode}`);
@@ -112,6 +114,69 @@ async function start() {
     await sleep(100);
   }
   assert.ok(clientBrainConnected, 'Electron renderer did not finish connecting to its bundled Brain');
+
+  const selectPage = async (id, readyExpression) => {
+    const clicked = await evaluate("(()=>{const button=document.querySelector('.gbtn[data-page=\""+id+"\"]');if(!button)return false;button.click();return true})()");
+    assert.ok(clicked, `Navigation button missing for ${id}`);
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      ready = await evaluate(readyExpression);
+      if (ready) break;
+      await sleep(100);
+    }
+    assert.ok(ready, `Installed page failed to render: ${id}`);
+  };
+  const rendererCount = await evaluate("window.PAGES.filter(page=>page.id==='video-workbench'||page.id==='market'||page.id==='data').length");
+  assert.equal(rendererCount, 3, 'Modular pages were not registered exactly once');
+  await selectPage('video-workbench', "Boolean(document.querySelector('#videoHostSlot'))");
+  await selectPage('market', "Boolean(document.querySelector('#pmGrid'))");
+  await selectPage('data', "Boolean(document.querySelector('#dView'))");
+  const chartWorks = await evaluate("(()=>{if(typeof U.lineChart!=='function')return false;const el=document.createElement('div');document.body.appendChild(el);U.lineChart(el,{series:[{name:'fixture',points:[{x:1,y:1},{x:2,y:2}]}]});const ok=Boolean(el.querySelector('svg'));el.remove();return ok})()");
+  assert.ok(chartWorks, 'Installed client chart dependency did not render an SVG');
+  for (const [key, label, marker] of [
+    ['tok', 'Token 分析', '#tokChart'],
+    ['tr', '对话 Trace', null],
+    ['hi', '聊天历史', '#hcList'],
+    ['lg', '日志', null],
+  ]) {
+    const clicked = await evaluate("(()=>{const item=document.querySelector('.plist .li[data-k=\""+key+"\"]');if(!item)return false;item.click();return true})()");
+    assert.ok(clicked, `Data page section is missing: ${key}`);
+    let loaded = false;
+    for (let i = 0; i < 100; i++) {
+      loaded = await evaluate("document.querySelector('#topbar h1')?.textContent.includes("+JSON.stringify(label)+")"+
+        (marker ? "&&Boolean(document.querySelector("+JSON.stringify(marker)+"))" : ''));
+      if (loaded) break;
+      await sleep(100);
+    }
+    assert.ok(loaded, `Installed data section failed to load: ${key}`);
+  }
+  await selectPage('chat', "Boolean(document.querySelector('#ta'))");
+  await evaluate("window.__chatSurfaceForPageSmoke=document.querySelector('#msgs');true");
+  await selectPage('market', "Boolean(document.querySelector('#pmGrid'))");
+  await selectPage('chat', "Boolean(document.querySelector('#ta'))");
+  const chatRestored = await evaluate("Boolean(window.__chatSurfaceForPageSmoke&&document.querySelector('#msgs')===window.__chatSurfaceForPageSmoke)");
+  assert.ok(chatRestored, 'Chat surfaces were not restored after installed market navigation');
+  if (mode === 'first') {
+    const nativeHelper = path.join(install, 'resources', 'native-window-host', 'native-window-host.exe');
+    assert.ok(fs.existsSync(nativeHelper), 'Installed native window host executable is missing');
+    const testExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'notepad.exe');
+    assert.ok(fs.existsSync(testExe), 'Windows Notepad fixture is unavailable for native-host initialization');
+    const started = await evaluate(`vigil.videoWindow.start(${JSON.stringify({ id: 'release-smoke', name: 'Vigil native host smoke', exePath: testExe, args: '' })},{x:0,y:0,width:320,height:200,dpr:1})`);
+    assert.ok(started?.ok, 'Native window host did not start: '+(started?.detail || started?.error || 'unknown error'));
+    const eventFile = path.join(process.env.VIGIL_USER_DATA, 'native-window-host-events.jsonl');
+    let readyEvent = false;
+    for (let i = 0; i < 100; i++) {
+      if (fs.existsSync(eventFile)) {
+        readyEvent = fs.readFileSync(eventFile, 'utf8').split(/\r?\n/).some(line => {
+          try { return JSON.parse(line).type === 'ready'; } catch (_) { return false; }
+        });
+      }
+      if (readyEvent) break;
+      await sleep(100);
+    }
+    assert.ok(readyEvent, 'Native window host did not initialize its HWND container');
+    await evaluate("vigil.videoWindow.action('CLOSE_APP');true");
+  }
 
   let conversationId;
   if (mode === 'first') {

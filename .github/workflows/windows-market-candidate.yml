@@ -14,6 +14,19 @@ on:
       - 'scripts/build_release.py'
       - 'docs/04-插件市场使用指南.md'
       - 'docs/USER_GUIDE.md'
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/windows-market-candidate.yml'
+      - 'brain/**'
+      - 'client/**'
+      - 'tests/**'
+      - 'market.json'
+      - 'market/**'
+      - 'deploy/brain/vigil-brain.spec'
+      - 'scripts/build_release.py'
+      - 'docs/04-插件市场使用指南.md'
+      - 'docs/USER_GUIDE.md'
   workflow_dispatch:
 
 permissions:
@@ -21,7 +34,7 @@ permissions:
 
 jobs:
   build-candidate:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +65,21 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne ([string]$manifest.sha256).ToLowerInvariant()) { throw 'Installer SHA-256 does not match release-manifest.json' }
           Write-Output "Verified $($manifest.setup_file) ($($file.Length) bytes, SHA-256 $hash)"
+      - name: Install and smoke-test the exact candidate
+        run: >-
+          python scripts/test_windows_candidate_lifecycle.py
+          "client/dist-release/$((Get-Content client/dist-release/release-manifest.json -Raw | ConvertFrom-Json).setup_file)"
+          --expected-source-commit "${{ github.sha }}"
+          --output "$env:RUNNER_TEMP\vigil-candidate-lifecycle.json"
+      - name: Preserve candidate lifecycle report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-windows-lifecycle-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vigil-candidate-lifecycle.json
+            ${{ runner.temp }}/vigil-candidate-lifecycle-logs/**
+          if-no-files-found: ignore
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

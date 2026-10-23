@@ -59,6 +59,16 @@ def verify_release_manifest(installer, manifest_path, build):
     return manifest
 
 
+def build_native_window_host():
+    if os.name != 'nt':
+        raise RuntimeError('Windows release requires the native window host and a Visual Studio C++ toolchain')
+    script = ROOT / 'client/native-window-host/build.cmd'
+    helper = ROOT / 'client/native-window-host/build/Release/native-window-host.exe'
+    subprocess.run(['cmd', '/c', str(script)], cwd=ROOT / 'client', check=True)
+    if not helper.is_file():
+        raise RuntimeError('Native window host build completed without producing native-window-host.exe')
+
+
 def verify(candidate=False):
     build = json.loads((ROOT / 'client/build-info.json').read_text(encoding='utf-8'))
     manifest = json.loads((OUT / 'brain-manifest.json').read_text(encoding='utf-8'))
@@ -97,6 +107,8 @@ def build(candidate=False, brain_only=False):
                 source_digest=digest(), protocol=1, capabilities=CAPS, candidate=candidate)
     for rel in ['brain/build-info.json', 'client/build-info.json']:
         (ROOT / rel).write_text(json.dumps(info, indent=2), encoding='utf-8')
+    if not brain_only:
+        build_native_window_host()
     if OUT.exists():
         assert OUT.resolve() == (ROOT / 'dist/brain-release/vigil-brain').resolve() and ROOT in OUT.resolve().parents
         shutil.rmtree(OUT)
@@ -155,7 +167,8 @@ def build(candidate=False, brain_only=False):
         manifest_path.write_text(json.dumps(release, indent=2), encoding='utf-8')
         verify_release_manifest(installer, manifest_path, info)
         contents = {rel: filehash(CLIENT_DIST / 'win-unpacked' / rel) for rel in
-            ['resources/app.asar', 'resources/vigil-brain/vigil-brain.exe', 'resources/vigil-brain/brain-manifest.json']}
+            ['resources/app.asar', 'resources/vigil-brain/vigil-brain.exe', 'resources/vigil-brain/brain-manifest.json',
+             'resources/native-window-host/native-window-host.exe']}
         installer.with_suffix('.contents.json').write_text(json.dumps(contents, indent=2), encoding='utf-8')
 
 
