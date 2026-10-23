@@ -1,9 +1,11 @@
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
 
 PLUGIN = Path(__file__).resolve().parents[1] / 'market/plugins/wallpaper/__init__.py'
+PLUGIN_DIR = PLUGIN.parent
 spec = importlib.util.spec_from_file_location('wallpaper_v4_test', PLUGIN)
 wallpaper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wallpaper)
@@ -17,6 +19,20 @@ def _fixture(root: Path):
     (item / 'preview.jpg').write_bytes(b'jpg')
     (item / 'secret.txt').write_text('secret', encoding='utf-8')
     return item
+
+
+def test_market_manifest_versions_and_hashes_match_installed_assets():
+    manifest = json.loads((PLUGIN_DIR / 'manifest.json').read_text(encoding='utf-8'))
+    version = json.loads((PLUGIN_DIR / 'version.json').read_text(encoding='utf-8'))
+    assert manifest['name'] == 'wallpaper'
+    assert manifest['version'] == version['version'] == '4.0.1'
+    assert manifest['frontend'] == {'script': 'frontend.js', 'style': 'frontend.css'}
+    declared = {entry['path']: entry['sha256'] for entry in manifest['files']}
+    assert set(declared) == {path.name for path in PLUGIN_DIR.iterdir() if path.is_file() and path.name != 'manifest.json'}
+    for relative, expected in declared.items():
+        payload = (PLUGIN_DIR / relative).read_bytes().replace(b'\r\n', b'\n')
+        actual = hashlib.sha256(payload).hexdigest()
+        assert actual == expected, f'Manifest hash mismatch: {relative}'
 
 
 def test_scene_type_normalized_and_library_cache(tmp_path):
