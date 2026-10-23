@@ -1460,7 +1460,8 @@ class Brain:
     #
     # **当前没有被 chat() 调用**（线上走 draft_native）。保留是因为它省 token
     # --- 流式聊天：实时产出思考过程和正文 ---
-    def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None):
+    def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None,
+                    no_tools=False):
         """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
         产出的事件格式：
@@ -1484,12 +1485,13 @@ class Brain:
 
         # 复用 draft_native 的 system prompt 构建逻辑
         parts, life = self._build_system_parts(user_text, "")
-        parts.append(
-            "\n## 工具\n"
-            "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
-            "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
-            "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
-            "原样倒给他；查不到就照实说查不到。")
+        if not no_tools:
+            parts.append(
+                "\n## 工具\n"
+                "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
+                "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
+                "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
+                "原样倒给他；查不到就照实说查不到。")
         if life:
             parts.append("\n" + LIFE_RULES)
 

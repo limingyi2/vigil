@@ -31,6 +31,18 @@ CASES = [
     ("请搜索网页上的最新发布说明", "retrieval"),
     ("列出这个工作区里的文件", "simple_execution"),
     ("帮我查找之前的 RAG 讨论记录", "retrieval"),
+    # Mixed intents and explanatory wording must not leak into file or agent actions.
+    ("解释一下修改配置文件的风险", "chat"),
+    ("说明整个项目里的装饰器如何工作", "chat"),
+    ("解释这个模块的问题，并告诉我怎么修", "chat"),
+    ("先讲讲这个配置的作用，再帮我修改它", "chat"),  # unresolved reference: ask, do not edit
+    # Follow-up messages without a recoverable scope stay non-executing.
+    ("继续", "chat"),
+    ("继续处理刚才那个文件", "chat"),
+    ("把它改成之前说的样子", "chat"),
+    ("针对上面的方案，有哪些风险？", "chat"),
+    # Explicit, fully scoped requests still use the existing execution gate.
+    ("请把工作区的 settings.json 改成调试模式", "simple_execution"),
 ]
 
 
@@ -42,7 +54,7 @@ def test_task_category_acceptance_matrix_and_confusion_counts():
         matrix[expected][observed] += 1
     assert actual == [expected for _, expected in CASES]
     assert {label: sum(matrix[label].values()) for label in labels} == {
-        "chat": 6, "retrieval": 5, "simple_execution": 5, "complex_execution": 3}
+        "chat": 14, "retrieval": 5, "simple_execution": 6, "complex_execution": 3}
 
 
 def test_route_dimensions_and_execution_target_are_separate():
@@ -96,6 +108,19 @@ def test_uncertain_reference_is_non_executing_and_deterministic():
     assert first["fallback_reason"] == "ambiguous_reference"
 
 
+def test_mixed_explanation_and_ambiguous_followups_never_select_coding_agent():
+    for text in (
+        "解释这个模块的问题，并告诉我怎么修",
+        "先讲讲这个配置的作用，再帮我修改它",
+        "继续处理刚才那个文件",
+        "把它改成之前说的样子",
+    ):
+        decision = task_intent.classify(text, workspace_authorized=True)
+        assert decision["task_category"] == "chat", text
+        assert decision["target_entry"] == "chat_no_tools", text
+        assert task_intent.select_entry(decision, agent_allowed=True) == "chat_no_tools", text
+
+
 def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools():
     import server
     import delegation.bridge as bridge
@@ -122,6 +147,7 @@ def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools(
     for text, expected_category, expected_no_tools in (
         ("解释一下 Python 装饰器", "chat", True),
         ("帮我找出之前讨论的 RAG 方案", "retrieval", False),
+        ("修改启动配置并验证", "simple_execution", True),
         ("全面调整我的日程，协调所有安排并逐项确认", "complex_execution", True),
     ):
         brain = FakeBrain()
@@ -135,3 +161,5 @@ def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools(
         assert len(brain.calls) == 1
         assert brain.calls[0][1]["no_tools"] is expected_no_tools
         assert trace["task_decision"]["task_category"] == expected_category
+        if expected_category == "simple_execution":
+            assert trace["task_decision"]["fallback_reason"] == "workspace_not_authorized"

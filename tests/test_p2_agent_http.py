@@ -36,11 +36,16 @@ class HTTPTests(unittest.TestCase):
         names = {'start_remote_api', '_auth_ok', '_is_loopback', '_device_path_allowed', '_query_param', '_norm_src'}
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
         constants = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith('DEVICE_') for t in n.targets)]
+        trace_rows = []
         ns = dict(http=http, os=os, json=json, hmac=hmac, threading=threading, time=time,
             api_config={'bind_host': '127.0.0.1'}, MOB_CFG={}, BRAIN_TOKEN='p2-fixture-token',
-            MAX_BODY=1024*1024, API_CFG={}, note_client_ip=lambda ip: None,
-            _cloud_history=lambda *a: [], _device_role=lambda _: 'device')
+            MAX_BODY=1024*1024, API_CFG={}, _LOCAL={'brain': None},
+            _chat_lock=contextlib.nullcontext,
+            _trace_write=trace_rows.append, note_client_ip=lambda ip: None,
+            _cloud_history=lambda *a: [], _device_role=lambda _: 'device',
+            _persona_for_src=lambda *_: 'default')
         cls.ns = ns
+        cls.trace_rows = trace_rows
         exec(compile(ast.Module(body=constants+nodes, type_ignores=[]), str(source), 'exec'), ns)
         with patch.dict(os.environ, {'VIGIL_PORT': '0'}), contextlib.redirect_stdout(io.StringIO()):
             cls.server = ns['start_remote_api'](None)
@@ -108,6 +113,60 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(repeated[0]['run_id'], events[0]['run_id'])
             self.assertEqual(tool.call_count, 1)
             self.assertEqual(len(provider.payloads), 2)
+
+    def test_z_chat_and_history_retrieval_keep_incremental_sse(self):
+        class StreamingBrain:
+            def __init__(self):
+                self.hist = []
+                self.calls = []
+
+            def use_src(self, *args):
+                pass
+
+            def seed_history(self, **kwargs):
+                self.hist = [{'role': 'system', 'content': 'fixture'}]
+
+            def stream_chat(self, text, **kwargs):
+                self.calls.append((text, kwargs))
+                yield {'type': 'text', 'text': 'incremental '}
+                yield {'type': 'text', 'text': 'answer'}
+                yield {'type': 'done', 'text': 'incremental answer'}
+
+            def chat(self, *_args, **_kwargs):
+                raise AssertionError('chat() collapses the SSE response')
+
+        brain = StreamingBrain()
+        with patch.dict(self.ns['_LOCAL'], {'brain': brain}, clear=True), \
+             patch.dict(self.ns['API_CFG'], {'agent_execution': {'enabled': True}}):
+            for request_id, text, category in (
+                ('p19_stream_chat_route', '你好，今天怎么样？', 'chat'),
+                ('p19_stream_retrieval_route', '帮我找出之前讨论的 RAG 方案', 'retrieval'),
+                ('p19_stream_unauthorized_edit', '修改启动配置并验证', 'simple_execution'),
+            ):
+                code, events = self.request('POST', '/api/chat/stream',
+                    {'request_id': request_id, 'text': text, 'src': 'pc'}, sse=True)
+                self.assertEqual(code, 200, events)
+                self.assertEqual([event['type'] for event in events if event['type'] in ('text', 'done')],
+                                 ['text', 'text', 'done'])
+                self.assertEqual(events[-1]['text'], 'incremental answer')
+                self.assertEqual(brain.calls[-1][0], text)
+                self.assertTrue(brain.calls[-1][1]['no_tools'])
+                task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
+                self.assertEqual(task_traces[-1]['task_category'], category)
+                self.assertEqual(task_traces[-1]['target_entry'], 'chat_no_tools'
+                                 if category in ('chat', 'simple_execution') else 'brain_tools')
+                if category == 'simple_execution':
+                    self.assertEqual(task_traces[-1]['fallback_reason'],
+                                     'workspace_not_authorized')
+            import task_intent
+            with patch.object(task_intent, 'classify', side_effect=RuntimeError('fixture')):
+                code, events = self.request('POST', '/api/chat/stream', {
+                    'request_id': 'p19_stream_classify_fallback',
+                    'text': '修改启动配置并验证', 'src': 'pc'}, sse=True)
+            self.assertEqual(code, 200, events)
+            self.assertEqual(events[-1]['type'], 'done')
+            self.assertTrue(brain.calls[-1][1]['no_tools'])
+            self.assertEqual(self.trace_rows[-1]['fallback_reason'], 'classification_error')
 
     def test_legacy_request_is_not_migrated_and_executed_again(self):
         body = dict(request_id='p2_legacy_tombstone', text='帮我整理文件', src='pc')

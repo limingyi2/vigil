@@ -3251,6 +3251,9 @@ def start_remote_api(brain):
                             "reason": "分类异常回退", "target_entry": "chat_no_tools",
                             "fallback_reason": "classification_error"}
                         _task_entry = "agent_run" if (_existing_run and _admin_pc) else "chat_no_tools"
+                    _stream_brain_entry = bool(
+                        _task_entry in ('chat_no_tools', 'brain_chat')
+                        or _task_decision.get('task_category') == 'retrieval')
                     # Agent Run is one execution location. The P19.1 model
                     # location route stays in route_decision and is not used as
                     # the task category.
@@ -3293,11 +3296,11 @@ def start_remote_api(brain):
                             _gate_err = ('当前对话模型不支持在任务中直接接收图片，'
                                          '这一轮没有把图送进去')
                         else:
-                            # 普通聊天这一轮走 chat 还是 stream_chat，由
-                            # schema_needed 决定 —— 判的那个入口必须接得住。
-                            import tools as _gate_tools
-                            _gate_method = ('chat' if _gate_tools.schema_needed(_in_text)
-                                            else 'stream_chat')
+                            # Match the image check to the already selected
+                            # execution entry; schema availability alone no
+                            # longer decides whether this request streams.
+                            _gate_method = ('stream_chat' if _stream_brain_entry
+                                            else 'chat')
                             _gate_ok = _supports_native_image(brain, _gate_method)
                             _gate_err = ('当前对话模型不支持直接接收图片，'
                                          '这一轮没有把图送进去')
@@ -3361,17 +3364,18 @@ def start_remote_api(brain):
                             _LOCAL['brain'].use_src(_src, _brain_cid)
                             if len(_LOCAL['brain'].hist) <= 1:
                                 _LOCAL['brain'].seed_history(src=_src, conversation_id=_brain_cid)
-                            if _task_entry == 'chat_no_tools':
-                                _chat_kwargs = dict(src=_src, conversation_id=_brain_cid,
-                                                    no_tools=True)
+                            if _stream_brain_entry:
+                                # Ordinary chat and history/RAG retrieval retain
+                                # the original streaming path. stream_chat has
+                                # no function-calling loop, so retrieval uses
+                                # its scoped context injection and cannot invoke
+                                # tools from model-generated arguments.
+                                _stream_kwargs = dict(src=_src,
+                                                      conversation_id=_brain_cid,
+                                                      no_tools=True)
                                 if _native_content is not None:
-                                    _chat_kwargs['native_content'] = _native_content
-                                _ans, _mode = _LOCAL['brain'].chat(_in_text, **_chat_kwargs)
-                                if getattr(_LOCAL['brain'], 'last_err', ''):
-                                    yield {'type': 'error', 'class': 'service_error',
-                                           'msg': str(getattr(_LOCAL['brain'], 'last_err', ''))[:300]}
-                                else:
-                                    yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
+                                    _stream_kwargs['native_content'] = _native_content
+                                yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
                             elif _task_entry == 'brain_tools':
                                 _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
                                 if _native_content is not None:
@@ -3387,7 +3391,9 @@ def start_remote_api(brain):
                                 else:
                                     yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
-                                _stream_kwargs = dict(src=_src, conversation_id=_brain_cid)
+                                _stream_kwargs = dict(src=_src,
+                                                      conversation_id=_brain_cid,
+                                                      no_tools=True)
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
