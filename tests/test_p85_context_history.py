@@ -258,6 +258,47 @@ def test_scope_isolation_and_clear(setup, monkeypatch):
     assert not state_for(b)['summary']
 
 
+def test_actual_model_request_isolated_after_other_session_is_summarized(setup):
+    b, provider = setup
+    cid_a, cid_b = str(uuid.uuid4()), str(uuid.uuid4())
+    marker = 'SESSION_A_ONLY_MARKER_7f4c2b'
+
+    b.use_src('pc', cid_a)
+    feed(b, 40, facts={0: marker})
+    hist_a, info_a = build(b, '压缩 A', force_compact=True)
+    assert info_a.get('compacted'), info_a
+    assert marker in json.dumps(hist_a, ensure_ascii=False)
+    assert provider.calls, 'A 的摘要必须经过模拟模型'
+
+    provider.calls.clear()
+    b.use_src('pc', cid_b)
+    list(b.stream_chat('B_SESSION_FIRST_MESSAGE', src='pc', conversation_id=cid_b))
+    assert provider.calls, 'B 的实际聊天请求没有到达模拟模型'
+    serialized_requests = json.dumps(provider.calls, ensure_ascii=False)
+    assert marker not in serialized_requests
+    assert 'B_SESSION_FIRST_MESSAGE' in serialized_requests
+
+
+def test_retired_summary_files_are_ignored_and_preserved(setup, tmp_path):
+    import hashlib
+
+    b, provider = setup
+    marker = 'RETIRED_RECAP_MUST_NOT_ENTER_PROMPT_1a92'
+    old_summary_dir = tmp_path / 'data' / 'summary'
+    old_summary_dir.mkdir(parents=True)
+    old_summary = old_summary_dir / '2026-10-23.md'
+    old_summary.write_text(marker, encoding='utf-8')
+    before = hashlib.sha256(old_summary.read_bytes()).hexdigest()
+
+    list(b.stream_chat('A_NEW_SESSION_MESSAGE', src='pc',
+                       conversation_id=b._cur_conversation))
+
+    assert provider.calls, '聊天请求没有到达模拟模型'
+    assert marker not in json.dumps(provider.calls, ensure_ascii=False)
+    assert hashlib.sha256(old_summary.read_bytes()).hexdigest() == before
+    assert old_summary.read_text(encoding='utf-8') == marker
+
+
 @pytest.mark.parametrize('failure', ['json', 'missing', 'source', 'quote', 'timeout', 'disk'])
 def test_summary_transaction_failure_preserves_old_and_pending(setup, monkeypatch, failure):
     b, p = setup

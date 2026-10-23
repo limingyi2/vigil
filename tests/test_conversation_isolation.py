@@ -25,8 +25,13 @@ class ConversationIsolationTests(unittest.TestCase):
         self.data.mkdir()
         self.patch = patch.object(paths, 'DATA_DIR', str(self.data))
         self.patch.start()
+        self.config_path = self.data / 'config.json'
+        self.config_path.write_text('{}', encoding='utf-8')
+        self.config_patch = patch.object(paths, 'CONFIG_PATH', str(self.config_path))
+        self.config_patch.start()
 
     def tearDown(self):
+        self.config_patch.stop()
         self.patch.stop()
         self.tmp.cleanup()
 
@@ -199,8 +204,7 @@ class ConversationIsolationTests(unittest.TestCase):
         self.assertEqual(brain._cur_src, 'wechat')
 
     def test_history_clear_http_cleans_matching_indexes_and_display_rows_only(self):
-        config_path = self.data / 'config.json'
-        config_path.write_text('{}', encoding='utf-8')
+        config_path = self.config_path
         brain = Brain(None, {'persona_file':'default'}, mode='api')
         identity = ('brain', '')
         import display_turns
@@ -236,7 +240,6 @@ class ConversationIsolationTests(unittest.TestCase):
         server._LOCAL['brain'] = brain
         try:
             with patch.object(server, 'BRAIN_TOKEN', 'history-clear-test-token'), \
-                 patch.object(paths, 'CONFIG_PATH', str(config_path)), \
                  patch.dict(os.environ, {'VIGIL_PORT':str(port), 'VIGIL_BIND_HOST':'127.0.0.1'}):
                 httpd = server.start_remote_api(brain)
                 try:

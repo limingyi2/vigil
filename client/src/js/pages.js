@@ -4121,7 +4121,7 @@
         '<div class="card kpi"><div class="lb">降级</div><div class="v">' + esc(fmtNum(s.fallback || 0)) + '</div></div>' +
         '</div>' +
         '<div class="grid g3"><div class="card" style="grid-column:span 2"><b style="font-size:13.5px">上下文块分布</b>' +
-        '<div class="muted" style="font-size:12px;margin-top:8px">每轮的上下文由风格约束 / 历史摘要 / 人设 / 约定账本 / 长期记忆拼成，具体字数看 Trace 里的 blocks。</div></div>' +
+        '<div class="muted" style="font-size:12px;margin-top:8px">每轮上下文由会话历史与压缩摘要、风格约束、人设、约定账本和长期记忆组成；会话摘要按 conversation_id 隔离。</div></div>' +
         '<div class="card"><b style="font-size:13.5px">系统状态</b>' +
         '<div class="kv" style="margin-top:8px"><span>模型</span><b>' + esc(s.model || '—') + '</b></div>' +
         '<div class="kv"><span>语音</span><b>' + esc(s.voice || '未启用') + '</b></div>' +
