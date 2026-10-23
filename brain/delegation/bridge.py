@@ -15,7 +15,7 @@ from .contracts import (validate_contract, load_delegation_config,
 from .dispatcher import run_delegation
 
 # 只接受现役渠道发起的委派，拼不出来的身份默认拒绝。
-_TRUSTED_SRC = ("wechat", "wechat_group", "pc", "")
+_TRUSTED_SRC = ("pc", "")
 
 # D2 路由锁（请求级，线程隔离）：PC 在线且本轮目标是**客户端可达、沙箱
 # 授权根外**的路径时，server 在进 FC 之前上锁。锁着的这一轮：

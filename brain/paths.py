@@ -91,35 +91,13 @@ CHAT_LOG = os.path.join(DATA_DIR, "chat_history.jsonl")
 # persona×src×conversation 分文件
 CONTEXT_COMPACTION_DIR = os.path.join(DATA_DIR, "context_compactions")
 
-# --- 渠道隔离 ---
-# 她同时在手机 App 和微信上跟同一个人说话，两边要是共用一份历史，
-# 在 App 里说的"我在宿舍"会顺着微信那头的上下文往下编。
-# 每个渠道一份聊天存档，互不读取。渠道名同时用于记忆库分区（见 memory_store_v2）。
-# 生活流不分区 —— 她过的是同一种日子，分开反而不一致。
-# wechat / wechat_group：微信私聊 / 群聊（微信是主人现在的主渠道，沿用
-# 老的基础存档文件名）；pc：桌面 Electron 客户端。
-# 「app」渠道已随手机 App 退役（桌面端改发 pc、微信桥接显式发 wechat），
-# 不在名单里 —— 但为了数据安全，认不出来的渠道名仍会被 _norm_src 归一化成
-# wechat（见 server.py），绝不会原样拼进文件路径。
-# 这是渠道名的**唯一真源**，服务端和面板都从这里取。
-CHANNELS = ("wechat", "wechat_group", "pc")
+# Core runs only PC. Explicit archival path helpers retain old channel filenames.
+CHANNELS = ("pc",)
 
 
-def chat_log_for(src="wechat"):
-    """按渠道取聊天存档路径。wechat 沿用老文件名，老数据不用搬。
-
-    🔴 渠道名**不在这份白名单里也要照样分一份存档**（2026-10-08）。
-    原来这里 `if src not in CHANNELS: src = "app"` —— 认不出的渠道一律
-    并进 app，于是：
-      · 微信群（src=wechat_group）的对话被写进 chat_history.jsonl，
-        也就是**手机 App 那一份**。手机上打开聊天记录会看到群里的对话，
-        而群和私聊的记忆、摘要也搅在一起（她会把群里的反应拿去回答私聊）。
-      · 拼错一个字符的后果不是"多一份空历史"，而是**静默污染主渠道**。
-    CHANNELS 留着（给 recap 遍历等按名单轮询的地方用），但存档路径不再
-    拿它当准入 —— `scope_name` 那边本来也是只做字符过滤、不看白名单，
-    两处不一致才让"分区名算对了、文件却写错地方"这种问题反复出现。
-    """
-    src = (src or "wechat").strip().lower() or "wechat"
+def chat_log_for(src="pc"):
+    """Storage compatibility only: explicit wechat keeps its archived base path."""
+    src = (src or "pc").strip().lower() or "pc"
     if src == "wechat":
         return CHAT_LOG
     return os.path.join(DATA_DIR, "chat_history.%s.jsonl" % src)
@@ -135,10 +113,10 @@ def chat_log_for(src="wechat"):
 #
 # 生活流也分区：换了人设就是换了个人，她过去那阵子过的是
 # 另一个人的日子。只有"当前人设的日常"会继续往前长。
-def scope_name(persona_key="", src="wechat"):
+def scope_name(persona_key="", src="pc"):
     """算出一个人设+渠道的数据分区名。默认人设返回 ""（沿用老路径，老数据不用搬）。"""
     p = _safe(persona_key)
-    s = _safe(src) or "wechat"
+    s = _safe(src) or "pc"
     if not p or p == "default":
         return "" if s == "wechat" else s
     return "%s.%s" % (p, s)
@@ -160,7 +138,7 @@ def _safe(v):
     return "".join(out)[:40].strip("._-")
 
 
-def scoped(path, persona_key="", src="wechat"):
+def scoped(path, persona_key="", src="pc"):
     """给一个 data/ 下的路径加上人设+渠道分区。
 
     scope 为空（默认人设 + wechat）时原样返回，老数据不用搬。

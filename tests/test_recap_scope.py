@@ -217,9 +217,7 @@ class TestJobScopeDiscovery(unittest.TestCase):
                 return "key_" + src
 
         out = jobs._recap_scopes(_B())
-        self.assertEqual(out, [("key_wechat", "wechat"),
-                             ("key_wechat_group", "wechat_group"),
-                             ("key_pc", "pc")])
+        self.assertEqual(out, [("key_pc", "pc")])
 
     def test_a_brain_without_the_method_still_yields_the_channels(self):
         import jobs
@@ -229,7 +227,7 @@ class TestJobScopeDiscovery(unittest.TestCase):
 
         out = jobs._recap_scopes(_Broken())
         self.assertEqual([s for _, s in out],
-                         ["wechat", "wechat_group", "pc"])
+                         ["pc"])
 
 
 class TestTickIsImmuneToConcurrentScopeSwitch(unittest.TestCase):

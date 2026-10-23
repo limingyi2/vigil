@@ -288,7 +288,7 @@ class RunModeHttpTests(unittest.TestCase):
 
     def chat(self, text):
         code, obj = self.brain.post("/api/chat",
-                                    {"text": text, "src": "probe", "dry_run": True},
+                                    {"text": text, "src": "pc", "dry_run": True},
                                     timeout=90)
         self.assertEqual(code, 200, obj)
         return obj

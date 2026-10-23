@@ -98,7 +98,7 @@ class TestRefusalNeverStoredAsHerWords(unittest.TestCase):
     def test_refusal_shown_but_not_logged(self):
         self._stub_refusal()
         b = self._brain()
-        ans, mode = b.chat("你在干嘛呀", log=False, src="app")
+        ans, mode = b.chat("你在干嘛呀", log=False, src="pc")
         # 照旧显示平台的话（用户能看到是谁拦的），不做降级
         self.assertEqual(ans, REFUSAL)
         self.assertEqual(mode, "API直出")
@@ -118,7 +118,7 @@ class TestRefusalNeverStoredAsHerWords(unittest.TestCase):
 
         B.httpx = type("H", (), {"post": staticmethod(_post)})
         b = self._brain()
-        ans, _mode = b.chat("你在干嘛呀", log=False, src="app")
+        ans, _mode = b.chat("你在干嘛呀", log=False, src="pc")
         self.assertEqual(ans, "我在呢，眯会儿")
         joined = " ".join(str(m.get("content") or "")
                           for m in getattr(b, "hist", []))

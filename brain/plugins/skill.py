@@ -331,49 +331,8 @@ def tool_help():
 # --- 调用 -------------------------------------------------------------------
 
 def _tier_for(ctx):
-    """这一轮该不该给技能"被点名"的待遇。
-
-    🔴 **复用 gate.py 的判据，不要在这里重写一遍关键词匹配**。
-    同一个"有人喊她了吗"在两处各写一次，迟早会不一致 ——
-    不一致的表现是"闸门放行了但技能说没被点名"（她想给却给不出），
-    或者反过来（群里乱发运势）。判错的方向不对称：宁可严。
-
-    顺序：私聊 / App 直连一律放行 → 群里有@ 或拍 → 除此之外按没被点名。
-    """
-    src = str(getattr(ctx, "src", "") or "app")
-    if src != "wechat":
-        return "private"
-    msg = str(getattr(ctx, "text", "") or "")
-    # 拍一拍：wxauto 那边转成'[拍一拜]' 或 '拍了拍'。两个都认，
-    # 少认一个就等于"被拍了却不给"，是那种一眼就看出来的不对。
-    if ("[拍" in msg) or ("拍了拍" in msg):
-        return "mentioned"
-    # @ 全体成员。**放在最前面判**，且不依赖任何配置 ——
-    # 万一昵称列表读空了，这一条仍能兜住最常见的那种点名。
-    if ("@全体成员" in msg) or ("@所有人" in msg) or ("@all" in msg.lower()):
-        return "mentioned"
-    try:
-        import gate as _g
-        if callable(getattr(_g, "_called_by_name", None)) and _g._called_by_name(ctx, msg):
-            return "mentioned"
-    except Exception:
-        pass
-    #最后一层兜底：**从消息里直接找 @ 开头的名字**。
-    # 为什么需要：上面那条判据依赖 gate 读人设昵称，而人设有多个来源
-    # （配置 / persona.nicknames / 换过的人设），任何一环读空都会让它返回
-    # "没人喊她"。已知问题：ctx.brain 为空时昵称列表是空的，
-    # 于是 "@知夏" 明明在场也被判成"没被点名" —— 表现是"她被点名了却不理我"。
-    # 群里被@ 是明摆着的事，从文本里直接看最可靠，也不需要任何配置。
-    try:
-        import re as _re
-        for m in _re.findall(r"@([^\s@:：,，]{1,20})", msg):
-            n = str(m or "").strip()
-            # 单字太容易误命中（"@我" "@你"），要求 2 字以上。
-            if len(n) >= 2:
-                return "mentioned"
-    except Exception:
-        pass
-    return "group"
+    """PC conversations can invoke skills directly."""
+    return "private"
 
 
 def call(name, args, ctx=None):
@@ -400,7 +359,7 @@ def call(name, args, ctx=None):
         if name in _all and not _skill_on(_all[name].get("skill"), _cur):
             return {"ok": False,
                     "content": "这个技能在%s里不开放，当没这件事就行。"
-                               % ("微信" if _cur == "wechat" else "App")}
+                               % "本机 PC"}
         return {"ok": False, "content": "没有这个技能工具：%s" % name}
     # 拿她的名字**不能写 getattr(brain, 'bot_name', ...)**：Brain 上没有这个
     # 属性（只有 persona 里的 nicknames），getattr 恒返回默认值 —— 于是技能
@@ -1295,9 +1254,9 @@ def _r_status(body, query):
     # 「运行时真正问的那个值」，前端只负责显示和改。
     try:
         import paths
-        srcs = list(getattr(paths, "CHANNELS", None) or ["app", "wechat"])
+        srcs = list(getattr(paths, "CHANNELS", None) or ["pc"])
     except Exception:
-        srcs = ["app", "wechat"]
+        srcs = ["pc"]
     for s in sk:
         s["channels"] = channels_of(s.get("id") or "", srcs)
         s["channelable"] = True      # 技能一律可按渠道关（通道在 Node 里，不靠 FEATURE）
@@ -1345,9 +1304,9 @@ def _r_channels(body, query):
         return {"ok": False, "err": "没说要改哪个（要 skill 字段）"}
     try:
         import paths
-        srcs = list(getattr(paths, "CHANNELS", None) or ["app", "wechat"])
+        srcs = list(getattr(paths, "CHANNELS", None) or ["pc"])
     except Exception:
-        srcs = ["app", "wechat"]
+        srcs = ["pc"]
     bad = [s for s in want if s not in srcs]
     if bad:
         return {"ok": False, "err": "不认识的渠道：%s" % ",".join(bad)[:60]}

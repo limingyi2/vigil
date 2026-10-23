@@ -40,7 +40,7 @@ class TestFeaturesContext(unittest.TestCase):
         t = threading.Thread(target=child)
         t.start()
         t.join(2)
-        self.assertEqual(seen["default"], "wechat")
+        self.assertEqual(seen["default"], "pc")
         self.assertEqual(seen["after_set"], "wechat_group")
         # 子线程怎么改，主线程都不受影响
         self.assertEqual(features.current_src(), "pc")

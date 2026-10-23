@@ -1058,7 +1058,7 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
             or not text.strip() or len(text) > 16000 or kind not in ('chat', 'coding')):
         raise ValueError('request_id 或任务内容无效')
     src = str(body.get('src') or 'pc')
-    if src not in ('pc', 'wechat', 'wechat_group'):
+    if src != 'pc':
         raise ValueError('渠道无效')
     workspace_root = str(body.get('workspace_root') or '').strip()
     if kind == 'coding' and not workspace_root:

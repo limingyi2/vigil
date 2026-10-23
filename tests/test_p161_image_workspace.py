@@ -289,7 +289,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
-        self.owner = display_turns.owner(('brain', ''), 'pc', 'main')
+        self.owner = display_turns.owner(('brain', ''), 'pc', 'default:main')
 
     def post(self, path, body):
         conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=20)
@@ -340,7 +340,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(code, 200, raw)
 
         # run 的 owner 带会话维度（_display_owner），不是 'main'
-        run_owner = display_turns.owner(('brain', ''), 'pc', conversation['id'])
+        run_owner = display_turns.owner(('brain', ''), 'pc', 'default:' + conversation['id'])
         item = agent_runs.find_request(request_id, run_owner)
         self.assertIsNotNone(item, '带工作区的会话必须能建 Agent run')
         self.assertEqual(item['conversation_id'], conversation['id'])

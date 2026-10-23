@@ -33,13 +33,10 @@ def start(brain):
 
 
 def _scope():
-    """现在该用哪个分区。拿不到 brain 就退回默认人设 + app。"""
-    try:
-        src = getattr(_brain, "_cur_src", "app") or "app"
-        key = _brain.persona_key_of(src) if hasattr(_brain, "persona_key_of") else ""
-        return key, src
-    except Exception:
-        return "", "app"
+    """Use the same effective PC persona as Core, including before plugin start."""
+    from pc_context import runtime_persona_key
+    key = _brain.persona_key_of('pc') if hasattr(_brain, 'persona_key_of') else runtime_persona_key()
+    return key, 'pc'
 
 
 # ---------------- 工具 ----------------
@@ -124,7 +121,7 @@ def on_turn_in(ctx):
         return ""
     try:
         brain = getattr(ctx, "brain", None) or _brain
-        src = getattr(ctx, "src", "app") or "app"
+        src = getattr(ctx, "src", "pc") or "pc"
         key = brain.persona_key_of(src) if brain is not None and hasattr(brain, "persona_key_of") else ""
         rows = kb.search(text, persona_key=key, src=src, top_k=cfg["top_k"])
         block = kb.format_block(rows, cfg["max_chars"])
@@ -215,7 +212,7 @@ def _demo():
         cd brain && python plugins/kb.py 文档.md
     """
     import sys
-    key, src = "", "app"
+    key, src = "", "pc"
     if len(sys.argv) > 1:
         p = sys.argv[1]
         print(kb.ingest_path(p, persona_key=key, src=src))

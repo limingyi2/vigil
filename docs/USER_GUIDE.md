@@ -5,7 +5,7 @@
 Vigil 是以桌面端为中心的独立 Agent。Electron 客户端与本地 Brain 组成完整运行端，
 负责对话、工具执行、插件和本地数据；不连接云端 Brain 也可以启动和使用。
 模型可通过 OpenAI 兼容接口接入本机 Ollama 或远程模型服务。
-**云端是可选扩展**，用于跨设备同步、微信 / 手机入口和远程服务。
+Core 运行上下文仅为本机 PC。微信 Bridge 源码仅作归档，未来通过独立扩展接入。
 完全离线对话需要本机模型；断开云端 Brain 与断开模型 API 是两种不同情况。
 
 **人格与项目无关。** 人格是 `brain/config/personas/*.json` 里各自定义的配置，
@@ -110,15 +110,14 @@ python deploy/rebuild_apk.py
 |---|---|
 | 本机对话 / 工具 / 配置 / 记忆 | 本地 Brain；可独立运行 |
 | 跨设备同步数据 | 可选云端同步；现有协议由云端维护同步版本权威 |
-| 微信（私聊/群）谁作答 | 由独立 Bridge 通过 Brain 当前渠道路由配置决定；具体部署状态需按环境核实 |
+| 微信与双 Brain 转发 | Core 已退役，旧请求返回 410；Bridge 源码保留 |
 | 记忆/人设改动怎么上云 | 本地大脑 outbox → `/api/sync/flush`；seq 账本 + 墓碑 + 幂等 upsert |
 | 主人鉴权 | 工具按风险三档分级；私聊主人全放、群聊只放 safe 级 |
 
 - **同步凭据是两把钥匙**：客户端的设备 token 连本机大脑；云端路由 / 数据页
   云端视角用的是云端同步凭据（`sync.cloud_url` + `sync.cloud_token`）。
   配置在客户端「设置 → 云端同步」。
-- **双 Brain 转发**由 Brain 侧可选的 `ws_forward` 提供；Electron 中的
-  `client/electron/forward.js` 当前未由 `main.js` 启动。不可将其等同于独立微信桥接服务。
+- **双 Brain 转发已退役**：`/api/route`、`/ws/brain` 返回 410，原模块在 `wechat-bridge/archive/core-forward/` 归档。Core 不隐式连接微信。
 - **记忆管理**在客户端「人格与人格 → 记忆与约定」：分区浏览、行内改删，
   走 `/api/memory/*`，改动立即进同步账本。
 
@@ -188,9 +187,8 @@ PROVIDERS = {
 `client/`，Electron。功能面：
 
 - **工作台**：聊天（流式）、聊天输入框旁的盾牌面板管本地操控授权
-- **数据**：云端/本机两个视角切换 —— 微信渠道的账在云端，本机只有
-  PC 控制台自己的账，全 0 不是 bug 是口径
-- **人格与记忆**：记忆分区管理与知识库导入；当前部分人设编辑/切换接口仍面向云端，断连时存在限制
+- **数据**：仅查看本机 PC 的历史、长期记忆与知识库。旧微信数据保留，不自动读入或覆盖。
+- **人格与记忆**：本机人设编辑与切换、记忆分区管理、知识库导入，无需云端 Brain。
 - **能力与扩展**：功能开关（滑条按渠道）、本地操控（她在你这台电脑上干活，
   全程确认气泡 + 操作日志 + 撤销）、生活面板、Brain Python 插件管理。
   现有 Python 插件机制不是 Electron 桌面扩展安装器，也不提供远程 Bridge 生命周期管理。
@@ -388,13 +386,11 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 - `nicknames` 群里 @ 她、或者直接叫名字时，靠这个判断是不是在叫她
 - `notes` 整份人设正文，粘进去就行
 
-本地 Brain 读取本机的人设配置。当前客户端人设编辑/切换页面仍优先使用云端接口，
-断开云端后该页面的编辑能力受限；这项限制不影响本地 Agent 的启动与普通对话。
+本地 Brain 与客户端共同使用本机人设配置，编辑与切换在本机立即生效。
 
 ### 按渠道绑不同人设
 
-`persona_by_src` 指定每个渠道用哪份人设（App / 微信私聊 / 微信群 / 本机可以
-各是不同的人）。换人设会换记忆分区：
+PC 默认使用 `persona_file`；兼容已有 `persona_by_src.pc` 覆盖。人设页面只管理 PC，“应用”会更新 `persona_file` 并取消旧 PC 覆盖，其他渠道配置原样保留。换人设会换记忆分区：
 
 🔴 记忆、摘要、存档都按 `人设key.渠道` 算。换成另一个 key 就是**一片空白**
 ——旧记忆还在，只是不会再被检索到。所以换人格前想清楚。
@@ -423,7 +419,7 @@ curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
 | `brain/model_hub.py` | 服务商表、密钥按家存、模型清单拉取与分组 |
 | `brain/planner.py` | 多步规划：判是否需要规划、逐步执行、结果核对 |
 | `brain/chatty.py` | 话痨度（1~10），按渠道各一份 |
-| `brain/ws_forward.py` | 微信双大脑路由的 WebSocket 转发（最小 RFC6455 实现） |
+| `wechat-bridge/archive/core-forward/` | 已退役的双大脑转发源码，仅供历史参考 |
 | `brain/sync_client.py` / `sync_outbox.py` | 本地 → 云端的记忆/人设同步 |
 | `brain/paths.py` | 分区路径：记忆 / 摘要 / 存档按「人设 × 渠道」算 |
 | `brain/life_engine.py` | 她的生活推演与日记 |
@@ -492,3 +488,5 @@ P9 拆分方案见 [扩展通信契约](P9_extension_protocol.md) 与 [数据迁
 ## 许可
 
 MIT，见 [LICENSE](../LICENSE)。
+
+PC Core 的完整数据保留与兼容规则见 [微信遗留清理](PC_CORE_LEGACY_WECHAT_CLEANUP.md)。

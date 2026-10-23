@@ -244,7 +244,7 @@ def test_scope_isolation_and_clear(setup, monkeypatch):
     a, _ = build(b, '之前 SECRET_A')
     assert 'SECRET_A' in str(a)
     for src, cid, persona in [('pc', str(uuid.uuid4()), 'default'),
-                              ('wechat', original, 'default'), ('pc', original, 'other')]:
+                              ('pc', original, 'other')]:
         b.use_src(src, cid)
         with monkeypatch.context() as m:
             if persona == 'other':
@@ -456,13 +456,13 @@ def test_identical_messages_advance_distinct_source_lines(setup):
     assert not state_for(b)['pending']
 
 
-def test_wechat_split_archive_reply_is_one_pending_message(setup):
+def test_pc_multiline_archive_reply_is_one_pending_message(setup):
     b, p = setup
-    b.use_src('wechat', b._cur_conversation)
+    b.use_src('pc', b._cur_conversation)
     for i in range(20):
         b._commit_turn('确认实验 %d' % i, '第一条回复 %d。\n第二条含端口 18787。' % i,
-                       src='wechat', conversation_id=b._cur_conversation, life=False)
-    archive = Path(b._log_for('wechat', b._cur_conversation))
+                       src='pc', conversation_id=b._cur_conversation, life=False)
+    archive = Path(b._log_for('pc', b._cur_conversation))
     raw = archive.read_bytes()
     before = len(state_for(b)['pending'])
     _, info = build(b)

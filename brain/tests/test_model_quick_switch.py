@@ -523,7 +523,7 @@ class QuickSwitchHttpTests(unittest.TestCase):
         self.assertEqual(obj["current"]["chat"], "shared-model")
 
         code, res = self.h.post("/api/chat",
-                                {"text": "在吗", "src": "probe", "dry_run": True},
+                                {"text": "在吗", "src": "pc", "dry_run": True},
                                 timeout=60)
         self.assertEqual(code, 200, res)
         # 名字叫得响没用：看"这句问话"到底打到了哪家、模型名对不对
@@ -541,7 +541,7 @@ class QuickSwitchHttpTests(unittest.TestCase):
         self.assertEqual(obj["current"]["api_base"], self.B.base)
 
         code, res = self.h.post("/api/chat",
-                                {"text": "还在吗", "src": "probe", "dry_run": True},
+                                {"text": "还在吗", "src": "pc", "dry_run": True},
                                 timeout=60)
         self.assertEqual(code, 200, res)
         hit_b = [c for c in self.B.chats if "还在吗" in c["text"]]
@@ -645,7 +645,7 @@ class QuickSwitchHttpTests(unittest.TestCase):
         self.assertEqual(obj["current"]["chat"], "a-only")
         self.assertEqual(obj["current"]["api_base"], self.A.base)
         code, res = self.h.post("/api/chat", {
-            "text": "ZXFIX_MODEL_SETTINGS_PERSIST", "src": "probe", "dry_run": True,
+            "text": "ZXFIX_MODEL_SETTINGS_PERSIST", "src": "pc", "dry_run": True,
         }, timeout=60)
         self.assertEqual(code, 200, res)
         hit = [c for c in self.A.chats if "ZXFIX_MODEL_SETTINGS_PERSIST" in c["text"]]
@@ -730,7 +730,7 @@ class QuickSwitchEdgeHttpTests(unittest.TestCase):
         def do_chat():
             try:
                 box["r"] = self.h.post("/api/chat",
-                                       {"text": "慢一点答", "src": "probe",
+                                       {"text": "慢一点答", "src": "pc",
                                         "dry_run": True}, timeout=60)
             except Exception as e:            # pragma: no cover
                 box["err"] = repr(e)
