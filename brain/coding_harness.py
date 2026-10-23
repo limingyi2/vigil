@@ -656,6 +656,22 @@ def _complexity(request: str) -> tuple[str, str]:
     markers = ("并且", "同时", "多个", "重构", "测试", "修复", "实现", "修改", "文件",
                "bug", "bugfix", "refactor", "test", "build", "依赖", "模块")
     score = len(text.split()) + sum(2 for marker in markers if marker.lower() in text.lower())
+    # Chinese requests often have no spaces, so token count alone misses a
+    # project-wide task that names several distinct operations. Reuse this
+    # structural signal in both the task category and Harness planner choice.
+    project_wide = any(marker in text.lower() for marker in (
+        "整个项目", "代码库", "仓库", "全仓", "多个模块", "多个子系统",
+        "所有模块", "各个模块", "整个代码库"))
+    operation_groups = (
+        ("检查", "审查", "分析", "inspect", "review", "analyze", "analyse"),
+        ("修复", "修好", "修缺陷", "fix", "repair"),
+        ("修改", "编辑", "实现", "重构", "modify", "edit", "implement", "refactor"),
+        ("运行", "执行", "测试", "验证", "构建", "编译", "run", "test", "verify", "build", "compile"),
+    )
+    distinct_operations = sum(any(marker in text.lower() for marker in group)
+                              for group in operation_groups)
+    if project_wide and distinct_operations >= 2:
+        return "complex", "项目级范围包含多个不同工程操作"
     if score >= 14 or len(text) >= 160:
         return "complex", "任务包含多个工程动作或验收目标"
     if score >= 6:

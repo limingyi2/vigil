@@ -144,8 +144,10 @@ def test_p19_hybrid_route_keeps_coding_request_on_agent_run_path(env, monkeypatc
         assert body['kind'] == 'coding'
         assert body['workspace_root'] == str(root)
         item = create(body, cfg, owner, start=False, **kwargs)
-        agent_runs._run(item['run_id'], owner, cfg,
-                        workflow_scope=kwargs.get('workflow_scope'))
+        env_path = str(Path(sys.executable).parent)
+        with patch.dict(os.environ, {'PATH': env_path + os.pathsep + os.environ.get('PATH', '')}):
+            agent_runs._run(item['run_id'], owner, cfg,
+                            workflow_scope=kwargs.get('workflow_scope'))
         return agent_runs.snapshot(item['run_id'], owner)
 
     with patch.object(workspace_store, 'get', return_value={
