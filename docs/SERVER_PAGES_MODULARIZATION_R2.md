@@ -43,7 +43,7 @@ index.html: ui.js / api.js / agent state & view
 - 新页面生命周期测试单独运行：**3 passed、0 failed**；覆盖 PAGES 唯一注册、脚本加载顺序、聊天页到视频页的真实 `app.go()` 清理顺序、视频页返回其他页、重复进入、Resize/IntersectionObserver 与窗口/API 监听销毁、能力事件 URL/body。
 - Python `compileall -q brain pet`、`node --check`（`pages.js`、新页面脚本、`app.js`）和 `git diff --check` 均通过。
 - 额外尝试直接运行整个 `client/tools/test-*.js` 目录时，15 个脚本因工作树没有安装 `client/node_modules` 依赖而无法启动；仓库 CI 实际使用的 Node 测试集合通过。
-- GitHub Actions 使用的 Node 命令直接运行通过，Python workflow 与 compileall 在本地等价命令通过；PR 创建后补记远端 workflow 的实际结果。
+- GitHub Actions run **507** on implementation commit `8a00cc6cfe757c38ef6a82affe32febb3236dfb2` passed all jobs: Python 3.12 unit tests, full `brain/` + `pet/` syntax check, existing Node CI command (including the video lifecycle harness), and real FAISS RAG acceptance.
 
 ## 页面生命周期验证记录
 
@@ -58,6 +58,8 @@ index.html: ui.js / api.js / agent state & view
 
 ## 未验证事项与 PR 状态
 
-完整 Windows Electron 安装器和最终 asar 内容未在本地构建。GitHub Actions 的 workflow 状态将在 Draft PR 创建并触发后补记。该提交仅实现 R2，不开始 R3。
+完整 Windows Electron 安装器和最终 asar 内容未在本地构建。该提交仅实现 R2，不开始 R3。
 
-PR：创建后填入。代码与测试迁移提交 SHA、PR head SHA 由最终 PR 记录确认。
+Draft PR：[limingyi2/vigil#37](https://github.com/limingyi2/vigil/pull/37)，目标 `dev`，OPEN、未合并。
+
+代码与测试迁移提交 SHA：`8a00cc6cfe757c38ef6a82affe32febb3236dfb2`。报告更新后的最新 PR head SHA 由 PR #37 显示。
