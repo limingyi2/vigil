@@ -1023,7 +1023,7 @@ class Brain:
     #   * 它们的提示词还在教 `[tool:...]` 标签，和 tools schema 打架。
     # 一个决策点只留一条路，这类"改一处漏一处"才不会重演。
     def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None,
-                     native_content=None):
+                     native_content=None, route_decision=None):
         """原生 FC 出草稿：工具调用走结构化 tool_calls，时序仍是 ReAct。
 
         和 draft 的区别只在"工具怎么传"：工具表挂在请求的 tools 字段，模型在
@@ -1052,7 +1052,8 @@ class Brain:
             try:
                 from delegation import bridge as _dbridge
                 _direct = _dbridge.run_local_direct(user_text,
-                                                    src=ctx_src or self._cur_src)
+                                                    src=ctx_src or self._cur_src,
+                                                    decision=route_decision)
                 self.last_route = _direct.get("decision") or {
                     "route": "cloud_direct", "reason": _direct.get("reason", "")}
                 if _direct.get("ok"):
@@ -1628,7 +1629,8 @@ class Brain:
 
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,
-             no_tools=False, conversation_id=None, native_content=None):
+             no_tools=False, conversation_id=None, native_content=None,
+             route_decision=None):
         """返回 (她说的话, 模式标签)。模式标签用于排查到底走的哪条路
 
         img：这一轮带的图片路径（有的话会记进聊天存档，手机/App 那边好显示）。
@@ -1697,6 +1699,8 @@ class Brain:
             # 主动搭话的 user_text 是"说/无"那个决策提示词，不是用户的话 ——
             # 那种轮次不会有工具需求，挂上去纯属白花钱。
             _draft_kwargs = dict(no_tools=no_tools or proactive, ctx_src=self._cur_src)
+            if route_decision is not None:
+                _draft_kwargs['route_decision'] = route_decision
             if native_content is not None:
                 _draft_kwargs['native_content'] = native_content
             draft = self.draft_native(user_text, memory_block, **_draft_kwargs)
