@@ -1030,11 +1030,277 @@ def _finish(db, item, status, reason=None, detail=None):
         _WAKE.notify_all()
 
 
-def cancel(rid, owner):
+def _workflow_checkpoint(db, item, scope, operation, payload, change):
+    """Apply one P18 projection in the caller's Run transaction."""
+    coding = item.setdefault('coding', {})
+    if not scope or not coding.get('task_workflow_id'):
+        return None
+    import task_workflows
+    coding['workflow_event_seq'] = int(coding.get('workflow_event_seq') or 0) + 1
+    request_id = 'p19_%s_%d' % (item['run_id'][-16:], coding['workflow_event_seq'])
+    cp = change(task_workflows, request_id, int(coding.get('workflow_revision') or 1))
+    coding['workflow_revision'] = cp['revision']
+    coding['workflow_status'] = cp['snapshot']['status']
+    coding['workflow_progress'] = cp['snapshot']['progress']
+    coding['workflow_steps'] = cp['snapshot']['steps']
+    coding['workflow_requires_review'] = cp['snapshot']['requires_review']
+    coding['workflow_attempts'] = cp['snapshot']['attempts']
+    return cp
+
+
+def _workflow_event(db, item):
+    coding = item.get('coding') or {}
+    if not coding.get('task_workflow_id'):
+        return
+    _event(db, item, 'coding_workflow', {
+        'workflow_id': coding['task_workflow_id'],
+        'status': coding.get('workflow_status'),
+        'progress': coding.get('workflow_progress'),
+        'steps': [{'step_id': s.get('step_id'), 'title': s.get('title'),
+                   'status': s.get('status')} for s in coding.get('workflow_steps', [])],
+        'requires_review': bool(coding.get('workflow_requires_review'))})
+
+
+def _workflow_project_event(db, item, scope, kind, payload):
+    """Mirror only verified CodingHarness plan/dispatch/result events into P18."""
+    if not scope:
+        return
+    import hashlib
+    import task_workflows
+
+    def digest(value):
+        return hashlib.sha256(_json(value).encode('utf-8')).hexdigest()
+
+    coding = item.setdefault('coding', {})
+    if kind == 'coding_plan' and not coding.get('task_workflow_id'):
+        plan = payload if isinstance(payload, dict) else {}
+        raw_steps = plan.get('steps') if isinstance(plan.get('steps'), list) else []
+        # A structured Harness plan is the only complexity signal used here.
+        # Do not run another classifier or promote simple/default plans.
+        if (str(plan.get('complexity') or '').lower() != 'complex' or len(raw_steps) < 2):
+            return
+        if not scope:
+            raise ValueError('complex coding plan requires an authenticated conversation scope')
+        steps = []
+        for step in raw_steps:
+            if not isinstance(step, dict):
+                raise ValueError('complex coding plan contains an invalid step')
+            sid = str(step.get('id') or '').strip()
+            title = str(step.get('title') or sid).strip()
+            if not sid or not title:
+                raise ValueError('complex coding plan contains an unnamed step')
+            acceptance = step.get('acceptance') if isinstance(step.get('acceptance'), list) else []
+            steps.append(dict(step_id=sid, title=title,
+                kind='model', depends_on=step.get('depends_on') or [],
+                completion_condition='; '.join(str(v) for v in acceptance if str(v).strip())
+                    or 'Coding Harness reports completion with evidence'))
+        # Verification is explicit even when a planner omitted a named verify step.
+        if not any(s['step_id'].lower() in {'verify', 'verification', 'test'} for s in steps):
+            steps.append(dict(step_id='p19_verify', title='验证修改', kind='model',
+                depends_on=[s['step_id'] for s in steps],
+                completion_condition='Coding Harness real verification commands all pass'))
+        verify_sid = next((str(s.get('id')) for s in raw_steps if isinstance(s, dict)
+            and str(s.get('id') or '').lower() in {'verify', 'verification', 'test'}), None)
+        if verify_sid:
+            verify_index = next(i for i, s in enumerate(steps) if s['step_id'] == verify_sid)
+            verify = steps[verify_index]
+            if not verify['depends_on']:
+                verify['depends_on'] = [s['step_id'] for s in steps[:verify_index]]
+        cp = task_workflows.create_linked(scope,
+            'p19_%s_create' % item['run_id'][-16:], item['intent'], steps,
+            item['run_id'], connection=db)
+        coding.update(task_workflow_id=cp['workflow_id'], workflow_revision=cp['revision'],
+                      workflow_status=cp['snapshot']['status'],
+                      workflow_event_seq=0, workflow_progress=cp['snapshot']['progress'],
+                      workflow_steps=cp['snapshot']['steps'], workflow_requires_review=False)
+        _workflow_checkpoint(db, item, scope, 'activate', 'active',
+            lambda tasks, request, rev: tasks.transition(scope, cp['workflow_id'], request,
+                                                         rev, 'active', connection=db))
+        coding['workflow_plan'] = [s['step_id'] for s in steps]
+        coding['workflow_verify_step'] = next((s['step_id'] for s in steps
+            if s['step_id'].lower() in {'verify', 'verification', 'test'}), 'p19_verify')
+        return
+
+    wid = coding.get('task_workflow_id')
+    if not wid:
+        return
+    revision = int(coding.get('workflow_revision') or 1)
+    workflow_step = str(payload.get('step_id') or payload.get('id') or '')
+    verify_step = coding.get('workflow_verify_step')
+
+    def step_change(step_id, status, evidence=None):
+        return lambda tasks, request, rev: tasks.step_status(
+            scope, wid, request, rev, step_id, status, evidence=evidence, connection=db)
+
+    def evidence(ref, value):
+        return dict(ref=ref, digest=digest(value), verified_by='coding_harness')
+
+    if kind == 'coding_step' and workflow_step in coding.get('workflow_plan', []):
+        status = payload.get('status')
+        if workflow_step == verify_step and status == 'completed':
+            return  # Harness reports this before it runs the real test commands.
+        if status == 'running':
+            _workflow_checkpoint(db, item, scope, 'step_running', [workflow_step, status],
+                                  step_change(workflow_step, 'running'))
+        elif status == 'completed':
+            ev = evidence('agent-run://%s/coding-step/%s/%s' %
+                          (item['run_id'], workflow_step, payload.get('attempts', 0)), payload)
+            _workflow_checkpoint(db, item, scope, 'step_completed', [workflow_step, ev],
+                                  step_change(workflow_step, 'completed', ev))
+        elif status == 'failed':
+            _workflow_checkpoint(db, item, scope, 'step_failed', [workflow_step, status],
+                                  step_change(workflow_step, 'failed'))
+        return
+
+    if kind in ('coding_operations_started', 'coding_repair_started', 'coding_test_started'):
+        sid = verify_step if kind in ('coding_repair_started', 'coding_test_started') else str(payload.get('step_id') or '')
+        if not sid:
+            return
+        state = coding.get('workflow_steps') or []
+        item_step = next((s for s in state if s['step_id'] == sid), None)
+        if kind == 'coding_repair_started' and item_step and item_step['status'] == 'failed':
+            _workflow_checkpoint(db, item, scope, 'verification_retry', sid,
+                                  step_change(sid, 'pending'))
+            item_step = next((s for s in coding.get('workflow_steps', []) if s['step_id'] == sid), None)
+        if item_step and item_step['status'] == 'pending':
+            _workflow_checkpoint(db, item, scope, 'step_running', [sid, 'running'],
+                                  step_change(sid, 'running'))
+        attempt_key = '%s:%s:%s:%s:%s' % (item['run_id'], sid, kind,
+            payload.get('attempt', payload.get('test_index', '')),
+            payload.get('repair_count', coding.get('repair_count', 0)))
+        tool = 'coding_test' if kind == 'coding_test_started' else 'coding_operations'
+        # A model operation batch may contain file edits, deletes, or an
+        # approved test command; its precise effects are not persisted here.
+        # Keep the P18 attempt conservative and observational.
+        effect = 'command' if kind == 'coding_test_started' else 'other'
+        _workflow_checkpoint(db, item, scope, 'attempt_prepared',
+            [sid, attempt_key, tool], lambda tasks, request, rev: tasks.prepare_attempt(
+                scope, wid, request, rev, sid, item['run_id'], tool, effect, attempt_key,
+                connection=db))
+        attempt = (coding.get('workflow_attempts') or [])[-1:]
+        attempt = attempt[0] if attempt else None
+        if not attempt:
+            raise ValueError('P18 did not persist coding dispatch intent')
+        coding['workflow_active_attempt'] = attempt['attempt_id']
+        _workflow_checkpoint(db, item, scope, 'attempt_dispatched', attempt['attempt_id'],
+            lambda tasks, request, rev: tasks.attempt_status(
+                scope, wid, request, rev, attempt['attempt_id'], 'dispatched', connection=db))
+        return
+
+    if kind == 'coding_repair':
+        state = coding.get('workflow_steps') or []
+        item_step = next((s for s in state if s['step_id'] == verify_step), None)
+        if item_step and item_step['status'] == 'failed':
+            _workflow_checkpoint(db, item, scope, 'verification_retry', verify_step,
+                                  step_change(verify_step, 'pending'))
+
+    if kind in ('coding_operations_completed', 'coding_repair') and coding.get('workflow_active_attempt'):
+        aid = coding.pop('workflow_active_attempt')
+        ev = evidence('agent-run://%s/coding-attempt/%s' % (item['run_id'], aid), payload)
+        _workflow_checkpoint(db, item, scope, 'attempt_returned', [aid, ev],
+            lambda tasks, request, rev: tasks.attempt_status(
+                scope, wid, request, rev, aid, 'returned',
+                result_ref=ev['ref'], evidence=ev, connection=db))
+        return
+
+    if kind == 'coding_test':
+        aid = coding.pop('workflow_active_attempt', None)
+        if aid:
+            ev = evidence('agent-run://%s/coding-test/%s' % (item['run_id'], aid), payload)
+            _workflow_checkpoint(db, item, scope, 'attempt_returned', [aid, ev],
+                lambda tasks, request, rev: tasks.attempt_status(
+                    scope, wid, request, rev, aid, 'returned',
+                    result_ref=ev['ref'], evidence=ev, connection=db))
+        return
+
+    if kind == 'coding_verification':
+        status = 'completed' if payload.get('passed') and payload.get('count', 0) else 'failed'
+        ev = evidence('agent-run://%s/verification/%s' % (item['run_id'], coding.get('repair_count', 0)), payload)
+        verify_state = next((s.get('status') for s in coding.get('workflow_steps', [])
+                             if s.get('step_id') == verify_step), None)
+        if verify_state == 'pending':
+            _workflow_checkpoint(db, item, scope, 'step_running', [verify_step, 'running'],
+                                  step_change(verify_step, 'running'))
+        _workflow_checkpoint(db, item, scope, 'verification_' + status,
+                              [verify_step, status, ev], step_change(verify_step, status,
+                                  ev if status == 'completed' else None))
+        return
+
+
+def _workflow_finish(db, item, scope, run_status):
+    """Close the linked P18 workflow in the Agent Run transaction, fail closed."""
+    coding = item.get('coding') or {}
+    wid = coding.get('task_workflow_id')
+    if not wid or not scope:
+        return
+    import task_workflows
+    attempts = coding.get('workflow_attempts') or []
+    unsettled = False
+    for attempt in attempts:
+        state = attempt.get('state')
+        if state not in {'prepared', 'dispatched'}:
+            continue
+        unsettled = True
+        target = 'not_dispatched' if state == 'prepared' else 'unknown'
+        _workflow_checkpoint(db, item, scope, 'attempt_' + target, attempt['attempt_id'],
+            lambda tasks, request, rev, attempt_id=attempt['attempt_id'], target=target:
+                tasks.attempt_status(scope, wid, request, rev, attempt_id, target,
+                                     connection=db))
+    status = (coding.get('workflow_status') or 'active')
+    if unsettled and any(a.get('state') == 'dispatched' for a in attempts):
+        # P18 attempt_status(unknown) has already moved the task to needs_review.
+        _workflow_event(db, item)
+        return
+    if run_status == 'succeeded':
+        steps = coding.get('workflow_steps') or []
+        if not steps or not all(s.get('status') == 'completed' for s in steps):
+            raise ValueError('complex workflow lacks verified completed Todo evidence')
+        _workflow_checkpoint(db, item, scope, 'workflow_completed', wid,
+            lambda tasks, request, rev: tasks.transition(scope, wid, request, rev,
+                                                          'completed', connection=db))
+        _workflow_event(db, item)
+        return
+    target = {'failed': 'failed', 'cancelled': 'cancelled', 'paused': 'paused'}
+    workflow_target = target.get(run_status)
+    if not workflow_target or status in {'completed', 'cancelled', 'needs_review'}:
+        return
+    for step in list(coding.get('workflow_steps') or []):
+        current = step.get('status')
+        next_status = workflow_target if current == 'running' else None
+        if next_status:
+            _workflow_checkpoint(db, item, scope, 'step_' + next_status,
+                                  [step['step_id'], next_status],
+                lambda tasks, request, rev, sid=step['step_id'], state=next_status:
+                    tasks.step_status(scope, wid, request, rev, sid, state, connection=db))
+    _workflow_checkpoint(db, item, scope, 'workflow_' + workflow_target, wid,
+        lambda tasks, request, rev: tasks.transition(scope, wid, request, rev,
+                                                      workflow_target, connection=db))
+    _workflow_event(db, item)
+
+
+def _workflow_finish_safe(db, item, scope, run_status):
+    """Keep the Run stop path available if P18 scope changed or projection fails."""
+    savepoint = 'p19wf_' + uuid.uuid4().hex
+    db.execute('SAVEPOINT ' + savepoint)
+    try:
+        _workflow_finish(db, item, scope, run_status)
+    except Exception:
+        db.execute('ROLLBACK TO ' + savepoint)
+        item.setdefault('coding', {})['workflow_sync_error'] = 'scope_or_projection_unavailable'
+        db.execute('RELEASE ' + savepoint)
+        return False
+    db.execute('RELEASE ' + savepoint)
+    item.setdefault('coding', {}).pop('workflow_sync_error', None)
+    return True
+
+
+
+def cancel(rid, owner, workflow_scope=None):
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         if item:
             if item['status'] not in TERMINAL:
+                _workflow_finish_safe(db, item, workflow_scope, 'cancelled')
                 for step in item['steps']:
                     if step['kind'] == 'model' and step['status'] == 'running':
                         step.update(status='cancelled', finished_at=time.time())
@@ -1042,7 +1308,7 @@ def cancel(rid, owner):
         return item
 
 
-def pause(rid, owner):
+def pause(rid, owner, workflow_scope=None):
     """用户主动暂停：与 cancel 的区别是语义 —— 这是"停一下，稍后继续"。
 
     paused 与 paused_budget 一样属于 STOPPED，进程重启不会被改写成
@@ -1051,6 +1317,7 @@ def pause(rid, owner):
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         if item and item['status'] == 'running':
+            _workflow_finish_safe(db, item, workflow_scope, 'paused')
             _finish(db, item, 'paused', 'paused_by_user')
         return item
 
@@ -1083,7 +1350,7 @@ def _budget(body, cfg):
 
 
 def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=None,
-           replan=False):
+           replan=False, workflow_scope=None):
     request = str(body.get('request_id') or '')
     text = body.get('intent', body.get('text'))
     kind = str(body.get('kind') or 'chat').strip().lower()
@@ -1115,6 +1382,16 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
             model_snapshot={'provider': cfg.get('provider') or cfg.get('model_mode') or 'cloud',
                 'model': cfg.get('model') or (cfg.get('ollama') or {}).get('model')})
         db.execute('INSERT INTO runs VALUES (?,?,?,?,?)', (item['run_id'], owner, request, fingerprint, _json(item)))
+        if resume_from and workflow_scope and item.get('coding', {}).get('task_workflow_id'):
+            import task_workflows
+            workflow_id = item['coding']['task_workflow_id']
+            cp = task_workflows.reactivate_linked_run(workflow_scope, workflow_id,
+                item['run_id'], 'p19act_%s' % item['run_id'][-16:], connection=db)
+            task_state = cp['snapshot']
+            item['coding'].update(workflow_revision=cp['revision'],
+                workflow_status=task_state['status'], workflow_progress=task_state['progress'],
+                workflow_steps=task_state['steps'], workflow_attempts=task_state['attempts'],
+                workflow_requires_review=task_state['requires_review'])
         if resume_from:
             # 插话/续跑的新 run 继承父 run **已完成写操作**的派发键。摘要会
             # 告诉模型"这步做过了"，但它仍可能原样再调一次；有副作用的操作
@@ -1140,11 +1417,11 @@ def create(body, cfg, owner, brain=None, start=True, messages=None, resume_from=
         # Keep request-scoped feature/delegation context when leaving HTTP thread.
         context = contextvars.copy_context()
         threading.Thread(target=context.run, args=(_run, item['run_id'], owner, copy.deepcopy(cfg), brain,
-            str(body.get('sender_id') or ''), copy.deepcopy(messages)), daemon=True).start()
+            str(body.get('sender_id') or ''), copy.deepcopy(messages), workflow_scope), daemon=True).start()
     return item
 
 
-def resume(rid, owner, cfg, body=None, brain=None, start=True):
+def resume(rid, owner, cfg, body=None, brain=None, start=True, workflow_scope=None):
     """从一份已停止的 run 派生新 run 继续执行。
 
     这里只负责建新 run 并在 resume_from 里指回父 run；种子消息由 _run 启动时
@@ -1152,16 +1429,46 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
     进程在 create 与执行之间重启也能续。新 run 是全新预算、全新历史。
     """
     body = body if isinstance(body, dict) else {}
+    resume_request = str(body.get('request_id') or '')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', resume_request):
+        resume_request = 'res_' + uuid.uuid4().hex[:16]
+    body = dict(body, request_id=resume_request)
+    blocked_review = False
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         if not item:
             raise ValueError('任务不存在')
         if item['status'] not in STOPPED:
             raise ValueError('任务仍在执行中，不能续跑')
-        _event(db, item, 'resumed', dict(status=item['status']))
-        _save(db, item)
-        intent, src = item['intent'], item['src']
+        workflow_id = (item.get('coding') or {}).get('task_workflow_id')
+        if workflow_id:
+            if not workflow_scope:
+                blocked_review = True
+            else:
+                import task_workflows
+                recovery_id = 'p19rec_' + hashlib.sha256(
+                    (rid + ':' + resume_request).encode('utf-8')).hexdigest()[:24]
+                cp = task_workflows.recover_linked_run(workflow_scope, workflow_id,
+                    recovery_id, connection=db)
+                state = cp['snapshot']
+                item['coding'].update(workflow_revision=cp['revision'],
+                    workflow_status=state['status'], workflow_progress=state['progress'],
+                    workflow_steps=state['steps'], workflow_attempts=state['attempts'],
+                    workflow_requires_review=state['requires_review'])
+                blocked_review = bool(state['requires_review'] or
+                    state['status'] in {'completed', 'cancelled', 'needs_review'})
+                if blocked_review:
+                    _save(db, item)
+        if blocked_review:
+            intent, src = item['intent'], item['src']
+            parent_conversation = str(item.get('conversation_id') or '')
+        else:
+            _event(db, item, 'resumed', dict(status=item['status']))
+            _save(db, item)
+            intent, src = item['intent'], item['src']
     parent_conversation = str(item.get('conversation_id') or '')
+    if blocked_review:
+        raise ValueError('任务含有未确认的工作区操作，需要人工核对后再创建新任务')
     if parent_conversation and body.get('conversation_id') not in (None, '', parent_conversation):
         raise ValueError('续跑不能改变会话归属')
     derived = dict(body, intent=intent, src=src,
@@ -1170,12 +1477,12 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True):
                    conversation_id=parent_conversation or str(body.get('conversation_id') or ''))
     # 客户端续跑时会带来自己的 request_id（用于把事件绑回会话气泡）；
     # 没带或格式不对就生成一个。合法且未被用过 → 原样使用（create 幂等）。
-    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', str(derived.get('request_id') or '')):
-        derived['request_id'] = 'res_' + uuid.uuid4().hex[:16]
-    return create(derived, cfg, owner, brain=brain, start=start, resume_from=rid)
+    derived['request_id'] = resume_request
+    return create(derived, cfg, owner, brain=brain, start=start, resume_from=rid,
+                  workflow_scope=workflow_scope)
 
 
-def interject(rid, owner, cfg, body=None, brain=None, start=True):
+def interject(rid, owner, cfg, body=None, brain=None, start=True, workflow_scope=None):
     """用户在执行途中插话：停掉后续调度，带着当前进度重新规划。
 
     与另外三种动作的差别（界面和台账都要能分开）：
@@ -1201,6 +1508,7 @@ def interject(rid, owner, cfg, body=None, brain=None, start=True):
     want_request = str(body.get('request_id') or '')
     if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', want_request):
         want_request = 'intj_' + rid
+    workflow_review = False
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
         if not item:
@@ -1227,14 +1535,31 @@ def interject(rid, owner, cfg, body=None, brain=None, start=True):
         _event(db, item, 'interjected', dict(intent=note[:200], status=parent_status))
         item['interjected'] = True
         if parent_status != 'paused':
+            replacing_workflow = bool((item.get('coding') or {}).get('task_workflow_id'))
+            synced = _workflow_finish_safe(db, item, workflow_scope,
+                                           'cancelled' if replacing_workflow else 'paused')
+            workflow_review = (not synced or bool((item.get('coding') or {}).get(
+                'workflow_requires_review')))
             _finish(db, item, 'paused', 'interjected')
+        elif (item.get('coding') or {}).get('task_workflow_id'):
+            synced = _workflow_finish_safe(db, item, workflow_scope, 'cancelled')
+            workflow_review = (not synced or bool((item.get('coding') or {}).get(
+                'workflow_requires_review')))
         _save(db, item)
+    if workflow_review:
+        raise ValueError('复杂任务包含未确认的操作，需要人工核对后再开始新计划')
+    coding_state = copy.deepcopy(item.get('coding') or {})
+    if coding_state.get('task_workflow_id'):
+        # A changed user goal gets a fresh Harness plan and a separate P18
+        # workflow; completed work on the original goal stays historical.
+        coding_state = {key: coding_state[key] for key in
+            ('max_repairs', 'max_seconds', 'verify_commands') if key in coding_state}
     derived = dict(body, intent=merged, src=src, kind=item.get('kind', 'chat'),
-                   workspace_root=item.get('workspace_root'), coding=copy.deepcopy(item.get('coding') or {}),
+                   workspace_root=item.get('workspace_root'), coding=coding_state,
                    conversation_id=conversation, request_id=want_request)
     try:
         child = create(derived, cfg, owner, brain=brain, start=start,
-                       resume_from=rid, replan=True)
+                       resume_from=rid, replan=True, workflow_scope=workflow_scope)
     except Exception:
         # 建 child 失败（预算/参数）时回滚标记，否则这个父任务既没重规划
         # 也不再接受插话，用户被卡住。
@@ -1676,7 +2001,7 @@ def _coding_json_completion(provider, cfg, messages, strategy='balanced'):
     raise ValueError('coding model output is not valid JSON')
 
 
-def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
+def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
     """Run a provider backed CodingHarness and persist its evidence in the ledger."""
     import coding_harness
     started = time.monotonic()
@@ -1709,6 +2034,10 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
                 current = _get(db, rid, owner)
                 if not current or current.get('status') != 'running':
                     return
+                event_id = str(payload.get('_harness_event_id') or '')
+                seen_ids = current.setdefault('coding', {}).setdefault('workflow_seen_event_ids', [])
+                if event_id and event_id in seen_ids:
+                    return
                 coding = current.setdefault('coding', {})
                 coding['phase'] = payload.get('phase') or coding.get('phase')
                 if kind in ('coding_plan', 'coding_plan_updated'):
@@ -1735,7 +2064,15 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
                 elif kind in ('coding_diagnosis', 'coding_failed'):
                     coding.setdefault('diagnostics', []).append(copy.deepcopy(payload))
                 current['stage'] = coding.get('phase') or kind
+                before_revision = coding.get('workflow_revision')
+                _workflow_project_event(db, current, workflow_scope, kind, payload)
                 _event(db, current, kind, _safe_event_value(payload))
+                if current.get('coding', {}).get('task_workflow_id') and (
+                        current['coding'].get('workflow_revision') != before_revision):
+                    _workflow_event(db, current)
+                if event_id and current.get('coding', {}).get('task_workflow_id'):
+                    seen_ids.append(event_id)
+                    del seen_ids[:-512]
                 _save(db, current)
 
         def ask(role, instruction, context):
@@ -1825,15 +2162,23 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
             if not current or current.get('status') != 'running':
                 return
             current['result'] = result
-            current['content'] = ('Coding Agent 已完成验证。修改文件：%s；自动修复 %d 次。' %
+            current['content'] = ('Coding Agent 已结束。修改文件：%s；自动修复 %d 次。' %
                                   (', '.join(result.get('changed_files') or []) or '无',
                                    int(result.get('repair_count') or 0)))
             current.setdefault('coding', {}).update(result)
             current['budget']['consumed']['seconds'] = round(time.monotonic() - started, 3)
             if result.get('status') == 'succeeded':
-                _finish(db, current, 'succeeded')
+                if not _workflow_finish_safe(db, current, workflow_scope, 'succeeded'):
+                    result['status'] = 'failed'
+                    result['error'] = 'P18 workflow could not verify completion in its current scope'
+                    current['coding']['status'] = 'failed'
+                    _workflow_finish_safe(db, current, workflow_scope, 'failed')
+                    _finish(db, current, 'failed', 'coding_failed', result['error'])
+                else:
+                    _finish(db, current, 'succeeded')
             else:
                 detail = result.get('error') or (result.get('diagnostics') or [{}])[-1].get('summary')
+                _workflow_finish_safe(db, current, workflow_scope, 'failed')
                 _finish(db, current, 'failed', 'coding_failed', detail)
             _save(db, current)
     except Exception as exc:
@@ -1843,15 +2188,17 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
             if current:
                 current.setdefault('coding', {})['error'] = str(exc)[:500]
                 current['budget']['consumed']['seconds'] = round(time.monotonic() - started, 3)
+                _workflow_finish_safe(db, current, workflow_scope, 'failed')
                 _finish(db, current, 'failed', reason, str(exc))
                 _save(db, current)
 
 
-def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
+def _run(rid, owner, cfg, brain=None, sender_id='', messages=None, workflow_scope=None):
     with LOCK, _db() as db:
         initial = _get(db, rid, owner)
     if initial and initial.get('kind') == 'coding':
-        _run_coding(rid, owner, cfg, brain=brain, sender_id=sender_id)
+        _run_coding(rid, owner, cfg, brain=brain, sender_id=sender_id,
+                    workflow_scope=workflow_scope)
         return
     started = time.monotonic()
     request_diagnostic_logged = False

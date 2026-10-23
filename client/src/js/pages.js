@@ -2642,6 +2642,18 @@
             addStep('coding-diagnosis', '已定位失败原因：' + String(payload.summary || payload.root_cause || ''), 'warn');
           } else if (evt.type === 'coding_repair') {
             addStep('coding-repair', '自动修复第 ' + String(payload.repair_count || 0) + ' 轮', 'ok');
+          } else if (evt.type === 'coding_workflow') {
+            const progress = payload.progress || {};
+            const done = Number(progress.completed || 0), total = Number(progress.total || 0);
+            const current = (payload.steps || []).find(s => s.status === 'running');
+            let label = '已更新';
+            if (payload.requires_review) label = '需要人工核对';
+            else if (payload.status === 'failed') label = '任务失败';
+            else if (payload.status === 'cancelled') label = '已取消';
+            else if (payload.status === 'paused') label = '已暂停';
+            else if (current) label = '正在执行：' + String(current.title || current.step_id || '');
+            else if (total) label = '已完成 ' + done + ' / ' + total + ' 步';
+            addStep('coding-workflow', '复杂任务 · ' + label, payload.requires_review || payload.status === 'failed' ? 'warn' : 'neutral');
           }
         } else if (evt.type === 'stage') {
           if(evt.stage==='generating'){thinkingFinished=false;startThinking();}

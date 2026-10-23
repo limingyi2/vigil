@@ -1821,8 +1821,40 @@ def start_remote_api(brain):
                 _user_content = (_content_builder(text, body.get('_native_content'))
                                  if _content_builder else brain._user_msg_with_rules(text))
                 messages.append({'role': 'user', 'content': _user_content})
-            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body),
-                                     brain=brain, messages=messages)
+            scope_builder = getattr(self, '_workflow_scope', None)
+            workflow_scope = scope_builder(body) if callable(scope_builder) else None
+            options = {'brain': brain, 'messages': messages}
+            if workflow_scope is not None:
+                options['workflow_scope'] = workflow_scope
+            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body), **options)
+
+        def _workflow_scope(self, body=None):
+            """Build P18 scope only from authenticated identity and stored conversation data."""
+            import task_workflows
+            body = body or {}
+            src = _norm_src(body.get('src') or 'pc')
+            cid = str(body.get('conversation_id') or body.get('session_id') or '')
+            if not cid or src != 'pc':
+                return None
+            try:
+                conv, _, _, persona = self._conversation_context(src, cid)
+            except Exception:
+                # Legacy/main sessions do not always have a P18 conversation row.
+                # They continue on the existing Run path without a Workflow scope.
+                return None
+            if not conv or conv.get('legacy'):
+                return None
+            # Todo projections require the same stored workspace identity that
+            # the Coding Harness will guard. A conversation without one keeps
+            # using the existing Run path and cannot mint an unscoped Workflow.
+            if not conv.get('workspace_id'):
+                return None
+            identity = getattr(self, '_who', ('', ''))
+            try:
+                return task_workflows.Scope(tuple(identity), str(persona), str(conv['id']),
+                    str(conv.get('workspace_id') or ''), src)
+            except (TypeError, ValueError):
+                return None
 
         def _agent_api(self, method, path, body=None):
             if path != '/api/agent/runs' and not path.startswith('/api/agent/runs/'):
@@ -1859,19 +1891,27 @@ def start_remote_api(brain):
                     elif method == 'GET' and len(parts) == 4:
                         self._json(200, {'ok': True, **item})
                     elif method == 'POST' and parts[4:] == ['cancel']:
-                        self._json(200, {'ok': True, **agent_runs.cancel(rid, owner)})
+                        self._json(200, {'ok': True, **agent_runs.cancel(rid, owner,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'POST' and parts[4:] == ['pause']:
-                        self._json(200, {'ok': True, **agent_runs.pause(rid, owner)})
+                        self._json(200, {'ok': True, **agent_runs.pause(rid, owner,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'POST' and parts[4:] == ['resume']:
                         import copy as _copy
                         self._json(200, {'ok': True, **agent_runs.resume(
-                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
+                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'POST' and parts[4:] == ['interject']:
                         # 执行中插话：旧 run 停成 paused/interjected，另起一个
                         # run 带检查点重新规划。和 pause/cancel/新消息语义分开。
                         import copy as _copy
                         self._json(200, {'ok': True, **agent_runs.interject(
-                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
+                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'GET' and parts[4:] == ['events']:
                         after = int(_query_param(self.path, 'after') or 0)
                         if after < 0 or after > item['event_cursor']:

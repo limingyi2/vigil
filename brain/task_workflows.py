@@ -320,10 +320,10 @@ def _remember(conn, scope, request_id, fingerprint, checkpoint):
                  scope.values + (request_id, fingerprint, checkpoint['checkpoint_id']))
 
 
-def create(scope, request_id, goal, steps):
+def create(scope, request_id, goal, steps, *, connection=None):
     goal = _text(goal, 'goal', 16000)
     steps = _plan(steps)
-    with _write() as conn:
+    with _transaction(connection) as conn:
         key = _scope(conn, scope)
         fingerprint, replay = _replay(conn, scope, request_id, ['create', goal, steps])
         if replay:
@@ -334,6 +334,130 @@ def create(scope, request_id, goal, steps):
                      (wid,) + scope.values + (key, goal, 'ready', 1, 1, now, now))
         _insert_plan(conn, wid, 1, steps)
         cp = _checkpoint(conn, _workflow(conn, scope, wid), 'created')
+        _remember(conn, scope, request_id, fingerprint, cp)
+        return cp
+
+
+def create_linked(scope, request_id, goal, steps, run_id, *, connection=None):
+    """Create a P18 plan and link its existing Agent Run atomically."""
+    goal = _text(goal, 'goal', 16000)
+    steps = _plan(steps)
+    run_id = _text(run_id, 'run_id', 128)
+    with _transaction(connection) as conn:
+        key = _scope(conn, scope)
+        fingerprint, replay = _replay(
+            conn, scope, request_id, ['create_linked', goal, steps, run_id])
+        if replay:
+            workflow = _workflow(conn, scope, replay['workflow_id'])
+            if not conn.execute('SELECT 1 FROM task_run_links WHERE workflow_id=? AND run_id=?',
+                                (workflow['workflow_id'], run_id)).fetchone():
+                raise Conflict('replayed workflow is not linked to its original run')
+            return replay
+        row = conn.execute('SELECT data FROM runs WHERE id=? AND owner=?',
+                           (run_id, scope.run_owner)).fetchone()
+        if row is None:
+            raise Inaccessible()
+        item = json.loads(row['data'])
+        if (item.get('conversation_id') != scope.conversation_id
+                or item.get('src') != scope.src
+                or workspaces.normalize_path(item.get('workspace_root') or '')[1] != key):
+            raise Inaccessible()
+        existing = conn.execute('SELECT workflow_id FROM task_run_links WHERE run_id=?',
+                                (run_id,)).fetchone()
+        if existing:
+            raise Conflict('run already linked')
+        wid, now = 'wf_' + uuid.uuid4().hex, time.time()
+        conn.execute('INSERT INTO task_workflows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (wid,) + scope.values + (key, goal, 'ready', 1, 1, now, now))
+        _insert_plan(conn, wid, 1, steps)
+        conn.execute('INSERT INTO task_run_links VALUES (?,?,?,?)',
+                     (wid, run_id, scope.run_owner, now))
+        cp = _checkpoint(conn, _workflow(conn, scope, wid), 'created_linked')
+        _remember(conn, scope, request_id, fingerprint, cp)
+        return cp
+
+
+def recover_linked_run(scope, workflow_id, request_id, *, connection=None):
+    """Settle pre-dispatch intents and quarantine dispatched work after interruption."""
+    with _transaction(connection) as conn:
+        workflow = _workflow(conn, scope, workflow_id)
+        fingerprint, replay = _replay(conn, scope, request_id,
+                                      [workflow_id, 'recover_linked_run'])
+        if replay:
+            return replay
+        active_links = [link for link in _snapshot(conn, workflow)['runs']
+                        if link['status'] in {'queued', 'running'}]
+        if active_links:
+            raise Conflict('a linked Agent Run is still active')
+        cp = None
+        for attempt in _attempts(conn, workflow_id):
+            if attempt['state'] not in {'prepared', 'dispatched'}:
+                continue
+            target = 'not_dispatched' if attempt['state'] == 'prepared' else 'unknown'
+            cp = attempt_status(scope, workflow_id,
+                'p18rec_' + attempt['attempt_id'][-16:],
+                workflow['revision'] if cp is None else cp['revision'],
+                attempt['attempt_id'], target, connection=conn)
+        workflow = _workflow(conn, scope, workflow_id)
+        if workflow['status'] == 'active':
+            for step in _steps(conn, workflow_id, workflow['plan_version']):
+                if step['status'] == 'running':
+                    cp = step_status(scope, workflow_id,
+                        'p18rec_' + step['step_id'][-16:],
+                        workflow['revision'] if cp is None else cp['revision'],
+                        step['step_id'], 'paused', connection=conn)
+            workflow = _workflow(conn, scope, workflow_id)
+            if workflow['status'] == 'active':
+                cp = transition(scope, workflow_id, 'p18rec_pause_' + workflow_id[-12:],
+                    workflow['revision'] if cp is None else cp['revision'], 'paused', connection=conn)
+        if cp is None:
+            latest = conn.execute('SELECT * FROM task_checkpoints WHERE workflow_id=? AND revision=?',
+                                  (workflow_id, workflow['revision'])).fetchone()
+            cp = _checkpoint_row(latest) if latest else _checkpoint(conn, workflow, 'recovery_checked')
+        _remember(conn, scope, request_id, fingerprint, cp)
+        return cp
+
+
+def reactivate_linked_run(scope, workflow_id, run_id, request_id, *, connection=None):
+    """Link a resumed run and reopen only safe, settled workflow steps."""
+    run_id = _text(run_id, 'run_id', 128)
+    with _transaction(connection) as conn:
+        workflow = _workflow(conn, scope, workflow_id)
+        fingerprint, replay = _replay(conn, scope, request_id,
+                                      [workflow_id, run_id, 'reactivate_linked_run'])
+        if replay:
+            _workflow(conn, scope, workflow_id)
+            return replay
+        if workflow['status'] in {'needs_review', 'completed', 'cancelled'} or _unsettled(conn, workflow):
+            raise Conflict('workflow requires review or is terminal')
+        _run(conn, scope, workflow, run_id)
+        existing = conn.execute('SELECT workflow_id FROM task_run_links WHERE run_id=?',
+                                 (run_id,)).fetchone()
+        if existing and existing[0] != workflow_id:
+            raise Conflict('run already linked')
+        conn.execute('INSERT OR IGNORE INTO task_run_links VALUES (?,?,?,?)',
+                     (workflow_id, run_id, scope.run_owner, time.time()))
+        active_links = [link for link in _snapshot(conn, workflow)['runs']
+                        if link['run_id'] != run_id and link['status'] in {'queued', 'running'}]
+        if active_links:
+            raise Conflict('a linked Agent Run is still active')
+        cp = None
+        if workflow['status'] in {'paused', 'failed'}:
+            for step in _steps(conn, workflow_id, workflow['plan_version']):
+                if step['status'] in {'paused', 'failed'}:
+                    cp = step_status(scope, workflow_id,
+                        request_id[:96] + '_s_' + step['step_id'][-12:],
+                        workflow['revision'] if cp is None else cp['revision'],
+                        step['step_id'], 'pending', connection=conn)
+            workflow = _workflow(conn, scope, workflow_id)
+            cp = transition(scope, workflow_id, request_id[:96] + '_ready',
+                workflow['revision'] if cp is None else cp['revision'], 'ready', connection=conn)
+            workflow = _workflow(conn, scope, workflow_id)
+        if workflow['status'] == 'ready':
+            cp = transition(scope, workflow_id, request_id[:96] + '_active',
+                workflow['revision'] if cp is None else cp['revision'], 'active', connection=conn)
+        if cp is None:
+            cp = _checkpoint(conn, _workflow(conn, scope, workflow_id), 'run_linked')
         _remember(conn, scope, request_id, fingerprint, cp)
         return cp
 
@@ -421,7 +545,7 @@ def update_plan(scope, workflow_id, request_id, expected_revision, steps):
     return _mutate(scope, workflow_id, request_id, expected_revision, 'plan_updated', steps, change)
 
 
-def transition(scope, workflow_id, request_id, expected_revision, status):
+def transition(scope, workflow_id, request_id, expected_revision, status, *, connection=None):
     def change(conn, workflow):
         if status not in _WORKFLOW_TRANSITIONS.get(workflow['status'], set()):
             raise Conflict('invalid workflow transition')
@@ -436,7 +560,8 @@ def transition(scope, workflow_id, request_id, expected_revision, status):
             raise Conflict('steps incomplete')
         workflow['status'] = status
 
-    return _mutate(scope, workflow_id, request_id, expected_revision, 'workflow_status', status, change)
+    return _mutate(scope, workflow_id, request_id, expected_revision, 'workflow_status', status, change,
+                   connection=connection)
 
 
 def _evidence(value):
@@ -449,7 +574,8 @@ def _evidence(value):
     return dict(value)
 
 
-def step_status(scope, workflow_id, request_id, expected_revision, step_id, status, evidence=None):
+def step_status(scope, workflow_id, request_id, expected_revision, step_id, status, evidence=None,
+                *, connection=None):
     if evidence is not None:
         evidence = _evidence(evidence)
 
@@ -480,10 +606,10 @@ def step_status(scope, workflow_id, request_id, expected_revision, step_id, stat
                      (status, _json(history), workflow_id, workflow['plan_version'], step_id))
 
     return _mutate(scope, workflow_id, request_id, expected_revision, 'step_status',
-                   [step_id, status, evidence], change)
+                   [step_id, status, evidence], change, connection=connection)
 
 
-def link_run(scope, workflow_id, request_id, expected_revision, run_id):
+def link_run(scope, workflow_id, request_id, expected_revision, run_id, *, connection=None):
     def change(conn, workflow):
         if workflow['status'] in {'completed', 'cancelled'}:
             raise Conflict('workflow stopped')
@@ -495,11 +621,12 @@ def link_run(scope, workflow_id, request_id, expected_revision, run_id):
         conn.execute('INSERT OR IGNORE INTO task_run_links VALUES (?,?,?,?)',
                      (workflow_id, run_id, scope.run_owner, time.time()))
 
-    return _mutate(scope, workflow_id, request_id, expected_revision, 'run_linked', run_id, change)
+    return _mutate(scope, workflow_id, request_id, expected_revision, 'run_linked', run_id, change,
+                   connection=connection)
 
 
 def prepare_attempt(scope, workflow_id, request_id, expected_revision, step_id,
-                    run_id, tool, effect, dispatch_key):
+                    run_id, tool, effect, dispatch_key, *, connection=None):
     _text(tool, 'tool')
     _text(dispatch_key, 'dispatch_key')
     if effect not in {'read', 'write', 'delete', 'command', 'other'}:
@@ -524,11 +651,11 @@ def prepare_attempt(scope, workflow_id, request_id, expected_revision, step_id,
                       run_id, tool, effect, dispatch_key, 'prepared', None, '[]', now, now))
 
     return _mutate(scope, workflow_id, request_id, expected_revision, 'attempt_prepared',
-                   [step_id, run_id, tool, effect, dispatch_key], change)
+                   [step_id, run_id, tool, effect, dispatch_key], change, connection=connection)
 
 
 def attempt_status(scope, workflow_id, request_id, expected_revision, attempt_id,
-                   state, result_ref=None, evidence=None, reconcile=False):
+                   state, result_ref=None, evidence=None, reconcile=False, *, connection=None):
     if evidence is not None:
         evidence = _evidence(evidence)
     if result_ref is not None:
@@ -562,7 +689,7 @@ def attempt_status(scope, workflow_id, request_id, expected_revision, attempt_id
         # Late outcomes settle the attempt only; never turn a stopped workflow into success.
 
     return _mutate(scope, workflow_id, request_id, expected_revision, 'attempt_status',
-                   [attempt_id, state, result_ref, evidence, reconcile], change)
+                   [attempt_id, state, result_ref, evidence, reconcile], change, connection=connection)
 
 
 def assess_continuation(scope, workflow_id, permission_check):

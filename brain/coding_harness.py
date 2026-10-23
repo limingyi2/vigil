@@ -716,6 +716,7 @@ class CodingHarness:
         self.resume_state = dict(resume_state or {})
         self.phase = "PLAN"
         self.events: list[dict[str, Any]] = []
+        self.event_seq = 0
         self.plan: Plan | None = None
         self.snapshot: ProjectSnapshot | None = None
         self.verification: list[dict[str, Any]] = []
@@ -724,7 +725,10 @@ class CodingHarness:
         self.started = 0.0
 
     def emit(self, kind: str, payload: Mapping[str, Any] | None = None) -> None:
-        event = {"type": kind, "phase": self.phase, "ts": _now(), "payload": dict(payload or {})}
+        self.event_seq += 1
+        event_payload = dict(payload or {})
+        event_payload.setdefault("_harness_event_id", "%s:%d" % (self.guard.run_id, self.event_seq))
+        event = {"type": kind, "phase": self.phase, "ts": _now(), "payload": event_payload}
         self.events.append(event)
         if self.event_sink:
             self.event_sink(kind, event["payload"])
@@ -866,6 +870,14 @@ class CodingHarness:
             self.emit("coding_file" if receipt.get("path") else "coding_operation", receipt)
         return receipts
 
+    @staticmethod
+    def _operation_count(operations: Any) -> int:
+        """Return only a bounded count for dispatch telemetry; never persist arguments."""
+        raw = _json_object(operations) if isinstance(operations, str) else operations
+        if isinstance(raw, dict):
+            raw = raw.get("operations", raw.get("changes", [raw]))
+        return min(len(raw), 200) if isinstance(raw, list) else 1
+
     def _rollback_since(self, index: int) -> list[str]:
         """把这一批里已经落盘的修改按逆序退回原样。
 
@@ -918,14 +930,18 @@ class CodingHarness:
 
     def _verify(self, commands: Sequence[str]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        for command in commands:
+        for command_index, command in enumerate(commands, 1):
             self._budget()
+            self.emit("coding_test_started", {"command": command,
+                                               "test_index": command_index})
             result = self.tests.run(command)
             data = result.as_dict()
             results.append(data)
             self.emit("coding_test", data)
             if not result.passed:
                 break
+        self.emit("coding_verification", {"count": len(results),
+            "passed": bool(results) and all(item.get("passed") for item in results)})
         return results
 
     def _failure(self, results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -990,7 +1006,15 @@ class CodingHarness:
                     operations = self._call(self.implementer, request, step.as_dict(), self.snapshot.as_dict())
                     if operations is None:
                         raise CodingHarnessError("没有配置实现器，无法修改项目文件")
+                    # A pause/cancel may arrive while the model is generating.
+                    # Re-check before applying its returned side effects.
+                    self._budget()
+                    self.emit("coding_operations_started", {
+                        "step_id": step.id, "attempt": step.attempts,
+                        "operation_count": self._operation_count(operations)})
                     receipts = self._apply_operations(operations)
+                    self.emit("coding_operations_completed", {
+                        "step_id": step.id, "attempt": step.attempts, "receipts": receipts})
                     step.evidence.extend(receipts)
                     step.status = "completed"
                     self.emit("coding_step", step.as_dict())
@@ -1000,6 +1024,8 @@ class CodingHarness:
                     commands.extend(step.verification)
                 commands.extend(command for command in self.verify_commands if command not in commands)
                 self.verification = self._verify(commands) if commands else []
+                if not commands:
+                    self.emit("coding_verification", {"count": 0, "passed": False})
                 while self.verification and not all(item.get("passed") for item in self.verification):
                     self._budget()
                     failure = self._failure(self.verification)
@@ -1017,6 +1043,9 @@ class CodingHarness:
                     self.transition("REPAIR")
                     repair = self._call(self.repairer, request, diagnosis,
                                         self.snapshot.as_dict(), self.patches.changed)
+                    self._budget()
+                    self.emit("coding_repair_started", {"repair_count": self.repair_count + 1,
+                                                          "operation_count": self._operation_count(repair)})
                     receipts = self._apply_operations(repair)
                     self.repair_count += 1
                     self.emit("coding_repair", {"repair_count": self.repair_count, "receipts": receipts})
