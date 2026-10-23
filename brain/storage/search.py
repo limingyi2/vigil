@@ -61,6 +61,9 @@ DEFAULT_CANDIDATES = 60
 # 查询向量缓存：相同 query 不重复向量化，省 30ms/次
 _QUERY_CACHE = {}
 _QUERY_CACHE_LOCK = threading.Lock()
+# A cursor must finish fetching before another thread reuses a prepared statement
+# on the existing shared SQLite connection (not merely serialize execute()).
+_SQL_READ_LOCK = threading.RLock()
 QUERY_CACHE_TTL = 3600  # 1小时
 QUERY_CACHE_MAX = 1000  # 最多缓存1000条，防止内存膨胀
 
@@ -258,10 +261,11 @@ def _heal_fts_if_needed():
     """
     conn = db.connection("main")
     try:
-        docs = conn.execute("SELECT COUNT(*) FROM search_docs").fetchone()[0]
-        if not docs:
-            return 0
-        indexed = conn.execute("SELECT COUNT(*) FROM search_fts").fetchone()[0]
+        with _SQL_READ_LOCK:
+            docs = conn.execute("SELECT COUNT(*) FROM search_docs").fetchone()[0]
+            if not docs:
+                return 0
+            indexed = conn.execute("SELECT COUNT(*) FROM search_fts").fetchone()[0]
         if indexed >= docs:
             return 0
     except Exception:
@@ -304,11 +308,14 @@ def _scope_where(scope, kinds):
             clauses.append("%s=?" % key)
             args.append(value)
     workspace_ids = (scope or {}).get("workspace_ids")
+    if (scope or {}).get('conversation_id'):
+        clauses.append("(scope_kind!=? OR json_extract(meta,'$.conversation_id')=?)")
+        args.extend([SCOPE_CHAT, scope['conversation_id']])
     if workspace_ids is not None:
         if not workspace_ids:
             # 空工作区授权只排除工作区文件，不影响同一身份可读的聊天、
             # 长期记忆和知识库文档。
-            clauses.append("scope_kind!=?")
+            clauses.append("(scope_kind!=? AND workspace_id='')")
             args.append(SCOPE_WORKSPACE)
         else:
             placeholders = ",".join("?" for _ in workspace_ids)
@@ -342,9 +349,15 @@ def _scope_match(row, scope, kinds):
         if expected is not None and expected != "" and val != expected:
             return False
     ws_ids = s.get("workspace_ids")
+    if scope_kind == SCOPE_CHAT and s.get('conversation_id'):
+        try:
+            if json.loads(row[11] or '{}').get('conversation_id') != s['conversation_id']:
+                return False
+        except (ValueError, TypeError):
+            return False
     if ws_ids is not None:
         if not ws_ids:
-            return scope_kind != SCOPE_WORKSPACE
+            return scope_kind != SCOPE_WORKSPACE and not workspace_id
         if scope_kind == SCOPE_WORKSPACE:
             if workspace_id not in ws_ids:
                 return False
@@ -369,7 +382,8 @@ def bm25_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES):
            "WHERE search_fts MATCH ?" + where +
            " ORDER BY rank LIMIT ?")
     try:
-        rows = conn.execute(sql, [match] + args + [int(limit)]).fetchall()
+        with _SQL_READ_LOCK:
+            rows = conn.execute(sql, [match] + args + [int(limit)]).fetchall()
     except Exception:
         return []
     # bm25() 越小越相关，取负号当"越大越好"的分数
@@ -402,10 +416,11 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
     qv = vectors[0]
     dim = len(qv)
     # 只取同模型同维度的向量 —— 混用会算出无意义的相似度
-    rows = conn.execute(
-        "SELECT e.doc_id, e.model, e.dim, e.vector FROM embeddings e "
-        "JOIN search_docs d ON d.id = e.doc_id WHERE 1=1" + where,
-        args).fetchall()
+    with _SQL_READ_LOCK:
+        rows = conn.execute(
+            "SELECT e.doc_id, e.model, e.dim, e.vector FROM embeddings e "
+            "JOIN search_docs d ON d.id = e.doc_id WHERE 1=1" + where,
+            args).fetchall()
     if not rows:
         return []
     # 过滤出同模型同维度的向量
@@ -477,7 +492,7 @@ def rrf(rankings, k=RRF_K):
 
 
 def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
-           candidates=DEFAULT_CANDIDATES, backend=None, budget_chars=None):
+           candidates=DEFAULT_CANDIDATES, backend=None, budget_chars=None, resolution=None):
     """统一检索入口。
 
     返回 (results, info)。`results` 是 SearchResult 列表，`info` 是诊断信息。
@@ -493,6 +508,11 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
             "vector_reason": "", "candidates": 0, "truncated": False}
     text = (query or "").strip()
     if not text:
+        return [], info
+    from . import query_resolver as qr
+    resolution = resolution or qr.prepare(text, scope=scope)
+    if resolution.resolution_status == 'ambiguous':
+        info['evidence_status'] = 'ambiguous'
         return [], info
 
     try:
@@ -533,7 +553,7 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
         return [], info
 
     conn = db.connection("main")
-    doc_ids = [d for d, _ in fused][:max(top_k * 3, top_k)]
+    doc_ids = [d for d, _ in fused][:candidates if resolution.guarded else max(top_k * 3, top_k)]
     scores = dict(fused)
     origins = {}
     for d, _ in lexical[:top_k * 3]:
@@ -542,10 +562,15 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
         origins.setdefault(d, set()).add("vector")
 
     placeholders = ",".join("?" for _ in doc_ids)
-    rows = conn.execute(
-        "SELECT id,scope_kind,owner,src,persona,chan,workspace_id,title,body,"
-        "locator,source,meta FROM search_docs WHERE id IN (%s)" % placeholders,
-        doc_ids).fetchall()
+    with _SQL_READ_LOCK:
+        rows = conn.execute(
+            "SELECT id,scope_kind,owner,src,persona,chan,workspace_id,title,body,"
+            "locator,source,meta FROM search_docs WHERE id IN (%s)" % placeholders,
+            doc_ids).fetchall()
+    # SQLite IN does not preserve RRF rank. Filter before the top-k/budget cut.
+    rows = sorted(rows, key=lambda r: (-scores.get(r[0], 0), r[0]))
+    conflicts = qr.conflicting_names(resolution, [(r[8] or '', qr.metadata(r[11])) for r in rows])
+    info['entity_rejected'] = 0
 
     results = []
     used = 0
@@ -558,6 +583,14 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
         if not _scope_match(row, scope, kinds):
             continue
         body = row[8] or ""
+        meta = qr.metadata(row[11])
+        if conflicts:
+            info['entity_rejected'] += 1
+            continue
+        body = qr.guarded_text(resolution, body, meta, ' '.join(str(row[i] or '') for i in (7, 9, 10)))
+        if not body:
+            info['entity_rejected'] += 1
+            continue
         truncated = False
         if len(body) > MAX_SNIPPET:
             body = body[:MAX_SNIPPET]

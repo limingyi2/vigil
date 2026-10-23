@@ -614,11 +614,36 @@ def invoke_spec(name, args, ctx=None):
                 # Agent Run 带着 owner；普通聊天没有 owner，按渠道区分。
                 identity = "owner:%s" % str(getattr(ctx, "owner", "") or getattr(ctx, "src", "") or "local")
                 session = str(getattr(ctx, "conversation_id", "") or "")
-            out = _caps.REGISTRY.invoke(
-                str(args.get("capability") or "").strip(),
-                str(args.get("operation") or "").strip(),
-                op_args, identity=identity, session=session,
-                target=str(getattr(ctx, "capability_target", "") or ""))
+            from storage.query_resolver import bind, for_turn, QueryContext, scope_key
+            retrieval_context = for_turn(ctx)
+            if (str(args.get('capability') or '') in {'unified_search', 'knowledge_base'}
+                    and str(args.get('operation') or '') == 'search'):
+                from pc_context import runtime_persona_key, persona_key
+                bound = dict(retrieval_context.scope) if retrieval_context else {}
+                snapshot = getattr(ctx, 'api_config', None) or {}
+                trusted_persona = (persona_key(snapshot) if snapshot else
+                                   bound.get('persona') or runtime_persona_key())
+                if bound.get('persona') != trusted_persona:
+                    retrieval_context = QueryContext(
+                        str(getattr(ctx, 'conversation_id', '') or ''), (),
+                        user_query=retrieval_context.user_query if retrieval_context else '')
+                    bound = {}
+                trusted_owner = str(getattr(ctx, 'owner', '') or '')
+                if retrieval_context and trusted_owner:
+                    retrieval_context = QueryContext(retrieval_context.conversation_id,
+                        scope_key(dict(bound, owner=trusted_owner)), retrieval_context.history,
+                        retrieval_context.confirmed_entities, retrieval_context.user_query)
+                op_args = dict(op_args, owner=str(getattr(ctx, 'owner', '') or ''),
+                               src=str(getattr(ctx, 'src', '') or 'pc'),
+                               chan=bound.get('chan') or str(getattr(ctx, 'src', '') or 'pc'),
+                               persona=trusted_persona,
+                               workspace_ids=list(bound.get('workspace_ids', ())))
+            with bind(retrieval_context):
+                out = _caps.REGISTRY.invoke(
+                    str(args.get("capability") or "").strip(),
+                    str(args.get("operation") or "").strip(),
+                    op_args, identity=identity, session=session,
+                    target=str(getattr(ctx, "capability_target", "") or ""))
             return json.dumps(out, ensure_ascii=False, sort_keys=True)
         except Exception as exc:
             return "能力调用失败：%s" % str(exc)[:160]
@@ -685,4 +710,8 @@ def invoke_spec(name, args, ctx=None):
     arg = ""
     if arg_param:
         arg = str(args.get(arg_param) or "").strip()
+    if n == 'kb_search':
+        from storage.query_resolver import bind, for_turn
+        with bind(for_turn(ctx)):
+            return run_tool(n, arg, src=_src)
     return run_tool(n, arg, src=_src)

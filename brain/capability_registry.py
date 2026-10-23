@@ -716,6 +716,8 @@ def _unified_search_handler(args):
         "method": info.get("method", "unknown"),
         "hits": info.get("hits", 0),
         "vector_available": info.get("vector_available", False),
+        "resolution": info.get("resolution"),
+        "evidence_status": info.get("evidence_status"),
         "results": [r.to_dict() for r in results],
     }
 
