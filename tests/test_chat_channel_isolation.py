@@ -41,7 +41,7 @@ class ChatChannelIsolationTests(unittest.TestCase):
         ]
         for p in self._patches:
             p.start()
-        self.brain = Brain(None, {"persona_file": "base"}, mode="api")
+        self.brain = Brain(None, {"persona_file": "desktop_persona"}, mode="api")
         self.old_brain = server._LOCAL.get("brain")
         server._LOCAL["brain"] = self.brain
         self.store_paths = {
@@ -83,37 +83,13 @@ class ChatChannelIsolationTests(unittest.TestCase):
             self.brain._mem_for()
         return "reply-" + src, "fixture"
 
-    def test_alternating_desktop_and_group_requests_use_distinct_state(self):
-        with patch.object(server, "_chat_with_tools", side_effect=self._fake_chat):
-            for src, text in (("pc", "desktop-one"), ("wechat_group", "group-one"),
-                              ("pc", "desktop-two"), ("wechat_group", "group-two")):
-                reply, _mode, error = server.ask_with_retry(text, src=src)
-                self.assertFalse(error)
-                self.assertEqual(reply, "reply-" + src)
+    def test_retired_group_is_rejected_before_postprocessing(self):
+        with self.assertRaises(ValueError):
+            server.ask_with_retry("retired", src="wechat_group")
 
-        desktop_hist = self.brain.hist_for("pc")
-        group_hist = self.brain.hist_for("wechat_group")
-        self.assertTrue(any("desktop-one" in m["content"] for m in desktop_hist))
-        self.assertTrue(any("desktop-two" in m["content"] for m in desktop_hist))
-        self.assertFalse(any("group-one" in m["content"] for m in desktop_hist))
-        self.assertFalse(any("group-two" in m["content"] for m in desktop_hist))
-        self.assertTrue(any("group-one" in m["content"] for m in group_hist))
-        self.assertTrue(any("group-two" in m["content"] for m in group_hist))
-        self.assertFalse(any("desktop-one" in m["content"] for m in group_hist))
-        self.assertFalse(any("desktop-two" in m["content"] for m in group_hist))
-
-        desktop_rows = self.brain.read_history(src="pc")
-        group_rows = self.brain.read_history(src="wechat_group")
-        self.assertEqual({r["text"] for r in desktop_rows if r["role"] == "user"},
-                         {"desktop-one", "desktop-two"})
-        self.assertEqual({r["text"] for r in group_rows if r["role"] == "user"},
-                         {"group-one", "group-two"})
-        self.assertEqual(self.brain._persona_key_for("pc"), "desktop_persona")
-        self.assertEqual(self.brain._persona_key_for("wechat_group"), "group_persona")
-        self.assertNotEqual(memory_store_v2.default_store_path("desktop_persona", "pc"),
-                            memory_store_v2.default_store_path("group_persona", "wechat_group"))
-
-    def test_concurrent_postprocessing_cannot_move_desktop_history_to_group(self):
+    def test_concurrent_postprocessing_keeps_pc_sessions_separate(self):
+        import uuid
+        self.cid_a, self.cid_b = str(uuid.uuid4()), str(uuid.uuid4())
         desktop_chat_done = threading.Event()
         group_channel_set = threading.Event()
         errors = []
@@ -126,27 +102,27 @@ class ChatChannelIsolationTests(unittest.TestCase):
                     {"role": "assistant", "content": "reply-" + src},
                 ])
                 self.brain._mem_for()
-                if src == "pc":
+                if conversation_id == self.cid_a:
                     desktop_chat_done.set()
                 else:
                     group_channel_set.set()
-            if src == "pc":
+            if conversation_id == self.cid_a:
                 self.assertTrue(group_channel_set.wait(5))
             return "reply-" + src, "fixture"
 
         def request(src, text):
             try:
-                reply, _mode, error = server.ask_with_retry(text, src=src)
+                reply, _mode, error = server.ask_with_retry(text, src="pc", conversation_id=src)
                 self.assertFalse(error)
-                self.assertEqual(reply, "reply-" + src)
+                self.assertEqual(reply, "reply-pc")
             except Exception as exc:
                 errors.append(exc)
 
         with patch.object(server, "_chat_with_tools", side_effect=interleaved_chat):
-            desktop = threading.Thread(target=request, args=("pc", "concurrent-desktop"))
+            desktop = threading.Thread(target=request, args=(self.cid_a, "concurrent-desktop"))
             desktop.start()
             self.assertTrue(desktop_chat_done.wait(5))
-            group = threading.Thread(target=request, args=("wechat_group", "concurrent-group"))
+            group = threading.Thread(target=request, args=(self.cid_b, "concurrent-group"))
             group.start()
             desktop.join(10)
             group.join(10)
@@ -154,8 +130,8 @@ class ChatChannelIsolationTests(unittest.TestCase):
         self.assertFalse(desktop.is_alive())
         self.assertFalse(group.is_alive())
         self.assertEqual(errors, [])
-        desktop_rows = self.brain.read_history(src="pc")
-        group_rows = self.brain.read_history(src="wechat_group")
+        desktop_rows = self.brain.read_history(src="pc", conversation_id=self.cid_a)
+        group_rows = self.brain.read_history(src="pc", conversation_id=self.cid_b)
         self.assertTrue(any(r.get("text") == "concurrent-desktop" for r in desktop_rows))
         self.assertFalse(any(r.get("text") == "concurrent-desktop" for r in group_rows))
         self.assertTrue(any(r.get("text") == "concurrent-group" for r in group_rows))
@@ -170,13 +146,13 @@ class ChatChannelIsolationTests(unittest.TestCase):
              patch.object(memory_store_v2, "get_default_store",
                           side_effect=OSError("chat body and api_key=secret-value")), \
              redirect_stdout(output):
-            opened = self.brain._mem_for("wechat_group")
+            opened = self.brain._mem_for("pc")
 
         self.assertIsNone(opened)
         self.assertIs(self.brain.mem, fallback)
         log = output.getvalue()
-        self.assertIn("src=wechat_group", log)
-        self.assertIn("persona=group_persona", log)
+        self.assertIn("src=pc", log)
+        self.assertIn("persona=desktop_persona", log)
         self.assertIn("path=" + partition, log)
         self.assertIn("error_code=OSError", log)
         self.assertNotIn("chat body", log)

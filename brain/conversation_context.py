@@ -133,7 +133,7 @@ def _cid_str(conversation_id):
 
 
 def _key_from(persona_key, src, conversation_id):
-    return (str(persona_key or "default"), str(src or "wechat"),
+    return (str(persona_key or "default"), str(src or "pc"),
             _cid_str(conversation_id))
 
 

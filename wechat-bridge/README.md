@@ -111,3 +111,6 @@ vm\zx.cmd
 
 - 云端大脑本体、人设、记忆 → 仓库 `brain/`、`docs/微信群聊接入.md`
 - 插件系统总览 → `docs/插件系统.md`
+# Core 退役说明
+
+本目录保留独立 Bridge 源码与历史部署资料。当前 PC Core 不接收微信渠道，不启动或连接 Bridge；旧 `/api/route`、`/ws/brain` 返回 410。下文部署流程属于历史参考，不能直接作为当前 Core 接入说明。参见 [PC Core 边界](../docs/PC_CORE_LEGACY_WECHAT_CLEANUP.md)。

@@ -1,3 +1,5 @@
+> 当前 PC Core 已退役微信渠道、双 Brain 转发及微信配置接口；下文相关流程属于历史设计。当前边界见 `docs/PC_CORE_LEGACY_WECHAT_CLEANUP.md`，不可据此启用旧 Core 路由。
+
 # Vigil 渠道集成插件设计（MVP-2）
 
 渠道集成插件与 Python Plugin、JS Skill 分开管理。它是一个受 Manifest 描述的外部 Bridge 进程，负责渠道协议适配；Brain 仍负责身份、权限、模型调用和审计。

@@ -53,16 +53,16 @@
     [/^\/api\/features/, () => J({ features: {
       hotboard: true, weather: true, weather_alert: false, package: true,
       meme: true, moment_image: false, tools: true } })],
-    [/^\/api\/chatty/, () => J({ level: 6, levels: { app: 6, wechat: 4 } })],
-    [/^\/api\/plugins/, () => J({ manage: { channels: ['app', 'wechat'], items: [
+    [/^\/api\/chatty/, () => J({ level: 6, levels: { pc: 6 } })],
+    [/^\/api\/plugins/, () => J({ manage: { channels: ['pc'], items: [
       { name: 'weather', desc: '查天气', err: '', channels: ['app'], tools: ['weather'],
         meta: { version: '1.2', author: 'me', installed_at: '2026-10-02' } },
-      { name: 'memo', desc: '记账', err: '', channels: ['app', 'wechat'], tools: ['memo_add', 'memo_list'],
+      { name: 'memo', desc: '记账', err: '', channels: ['pc'], tools: ['memo_add', 'memo_list'],
         meta: { version: '0.9' } },
       { name: 'translate', desc: '翻译', err: 'ImportError: no module named x', channels: [], tools: [] },
     ] } })],
     [/^\/api\/skill\/status/, () => J({ alive: true, host: '127.0.0.1:8790', node: 'v20.11.1',
-      dir: 'brain/skill_host/skills', ext: ['js'], channels: ['app', 'wechat'],
+      dir: 'brain/skill_host/skills', ext: ['js'], channels: ['pc'],
       skills: [ { id: 'qq-music', name: 'qq-music', version: '1.0.0', tools: [{ name: 'search_song' }, { name: 'play' }], channels: ['app'] } ] })],
     [/^\/api\/diary\/list/, () => J({ days: ['2026-10-06', '2026-10-05', '2026-10-04'] })],
     [/^\/api\/diary\/read/, () => J({ body: '下雨前抢着把花搬进来了，有一盆的叶子被风吹折了，有点心疼。' })],
@@ -80,7 +80,7 @@
       // 造三天的量：够「按天」出 3 个点、「按轮次」出一条完整的折线。
       // 幅度公式写死（不是随机），这样 harness 截图每次都一样，好对照。
       const last = Number((url || '').match(/last=(\d+)/) ? RegExp.$1 : 60);
-      const srcs = ['pc', 'app', 'wechat'];
+      const srcs = ['pc'];
       const items = [];
       const days = [3, 2, 1, 0];                       // 往前数几天
       const counts = [14, 21, 26, 18];                 // 每天的轮数

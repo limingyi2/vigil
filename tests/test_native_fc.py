@@ -361,7 +361,7 @@ class TestSpeechRulesReachTheModel(unittest.TestCase):
         br.draft_native("在吗", "")
         payload = self.seen[-1]
         blob = json.dumps(payload, ensure_ascii=False)
-        self.assertIn("你和他是什么关系", blob,
+        self.assertIn("AI Agent", blob,
                       "人设没进提示词 —— 约束删了但她是谁也得留着")
         self.assertNotIn("下面是回话要求", blob)
 

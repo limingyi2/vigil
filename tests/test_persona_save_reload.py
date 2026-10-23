@@ -1,18 +1,5 @@
 # -*- coding: utf-8 -*-
-"""/api/persona/save 的热重载判据必须按渠道算。
-
-这里防的是一个已经上线过、且**症状极像成功**的 bug：
-
-    if key == persona_store.key_from_config(api_config):
-        brain.reload_persona()
-
-`key_from_config` 读的是**全局**那份（= App 的 key），不看 persona_by_src。
-于是编辑微信人设时 key 对不上，被判成"你在编辑别的模板"而**故意**不重载
-（那段守卫的本意是对的）—— 但接口回 ok:true、界面弹"她马上就是这个设定"，
-**只有她不换**。实测：App 存完 prompt 人设段 4549→4672，微信 2113→2113。
-
-判据不启动 HTTP、不碰云端：直接把那段判据的算法抽出来喂各种组合。
-"""
+"""PC persona save/reload and retired channel contracts."""
 import os
 import sys
 import unittest
@@ -56,35 +43,18 @@ class TestPersonaSaveReloadJudgement(unittest.TestCase):
     # 全局（= pc 桌面端/无覆盖渠道）用 preset_group；微信渠道覆盖成 maibot。
     CFG = _Cfg("preset_group", {"wechat": "preset_group_maibot"})
 
-    def test_editing_the_channels_own_persona_reloads(self):
-        # pc 吃全局那份；wechat 吃 persona_by_src.wechat 那份。
+    def test_current_pc_persona_reloads(self):
         self.assertTrue(_should_reload(self.CFG, "preset_group", "pc"))
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", "wechat"))
-
-    def test_editing_another_templates_does_not_reload(self):
-        """守卫的本意要保住：在面板里改一个**没在用**的模板，不该动她。"""
         self.assertFalse(_should_reload(self.CFG, "preset_group_maibot", "pc"))
-        self.assertFalse(_should_reload(self.CFG, "preset_group", "wechat"))
 
-    def test_missing_src_defaults_to_wechat(self):
-        """不带 src / 空白 → 归一到主渠道 wechat（app 已退役）。"""
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", None))
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", ""))
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", "  "))
+    def test_missing_src_defaults_to_pc(self):
+        for src in (None, "", "  ", " PC "):
+            self.assertTrue(_should_reload(self.CFG, "preset_group", src))
 
-    def test_unknown_channel_falls_back_to_wechat(self):
-        """传个认不出来的渠道不能变成"哪个都不匹配"（那等于静默不重载）。"""
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot",
-                                       "../../evil"))
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", "APP"))
-
-    def test_case_and_padding_are_normalised(self):
-        self.assertTrue(_should_reload(self.CFG, "preset_group_maibot", " WeChat "))
-
-    def test_channel_without_its_own_persona_uses_the_global_one(self):
-        cfg = _Cfg("base", {})
-        self.assertTrue(_should_reload(cfg, "base", "wechat"))
-        self.assertFalse(_should_reload(cfg, "base_other", "wechat"))
+    def test_retired_or_unknown_channel_is_rejected(self):
+        for src in ("wechat", "wechat_group", "APP", "../../evil"):
+            with self.assertRaises(ValueError):
+                _should_reload(self.CFG, "preset_group_maibot", src)
 
 
 class TestSaveHandlerReadsSrc(unittest.TestCase):

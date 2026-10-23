@@ -112,14 +112,14 @@ class TestAgendaStateMachine(unittest.TestCase):
     def test_past_promise_is_labelled_as_past_and_must_not_be_rescheduled(self):
         today = datetime.date(2026, 9, 29)
         self._write([{"text": "28号放假", "date": "2026-09-28"}])
-        blk = agenda.block(today=today, use_cache=False)
+        blk = agenda.block(src="wechat", today=today, use_cache=False)
         self.assertIn("已经过完的日子", blk)
         self.assertIn("别把日期改到新日子", blk)
 
     def test_future_promise_is_listed_with_today_inside_the_block(self):
         today = datetime.date(2026, 9, 29)
         self._write([{"text": "10月1日见面", "date": "2026-10-01"}])
-        blk = agenda.block(today=today, use_cache=False)
+        blk = agenda.block(src="wechat", today=today, use_cache=False)
         self.assertIn("还没到的", blk)
         self.assertIn("10月1日见面", blk)
         # 「今天是 X月X日」必须写在块里：只放 system 最前面隔了 4000 多字，注意力早散了
@@ -128,26 +128,26 @@ class TestAgendaStateMachine(unittest.TestCase):
     def test_done_promise_is_not_injected_any_more(self):
         today = datetime.date(2026, 9, 29)
         self._write([{"text": "10月1日见面", "date": "2026-10-01"}])
-        self.assertIn("10月1日见面", agenda.block(today=today, use_cache=False))
+        self.assertIn("10月1日见面", agenda.block(src="wechat", today=today, use_cache=False))
         self.assertEqual(agenda.mark_done("见面"), 1)
-        self.assertEqual(agenda.block(today=today, use_cache=False), "")
+        self.assertEqual(agenda.block(src="wechat", today=today, use_cache=False), "")
 
     def test_done_settle_does_not_touch_it(self):
         today = datetime.date(2026, 9, 29)
         self._write([{"text": "已办成的事", "date": "2026-09-28",
                       "status": agenda.STATUS_DONE}])
         self.assertEqual(agenda.settle(today), 0)
-        self.assertEqual(agenda.block(today=today, use_cache=False), "")
+        self.assertEqual(agenda.block(src="wechat", today=today, use_cache=False), "")
 
     def test_out_of_window_promise_is_not_injected(self):
         today = datetime.date(2026, 9, 29)
         self._write([{"text": "很久以后的事", "date": "2027-06-01"}])
-        self.assertEqual(agenda.block(today=today, use_cache=False), "")
+        self.assertEqual(agenda.block(src="wechat", today=today, use_cache=False), "")
 
     def test_malformed_date_is_dropped_not_crashed(self):
         today = datetime.date(2026, 9, 29)
         self._write([{"text": "没日期", "date": "不是日期"}])
-        self.assertEqual(agenda.block(today=today, use_cache=False), "")
+        self.assertEqual(agenda.block(src="wechat", today=today, use_cache=False), "")
 
     def test_auto_done_requires_explicit_evidence(self):
         """保守到近乎悲观：只是提了一嘴、没有完成词，绝不许标成"办成了"。"""

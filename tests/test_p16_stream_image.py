@@ -183,7 +183,7 @@ class StreamImageTests(unittest.TestCase):
             dict(request_id=rid, text='看看这张图', src='pc',
                  img=base64.b64encode(PNG).decode()))
         self.assertEqual(code, 200)
-        owner = display_turns.owner(('brain', ''), 'pc', 'main')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:main')
         record = [r for r in display_turns.listing(owner) if r['request_id'] == rid]
         self.assertTrue(record)
         # The turn input is what he typed; nothing may accumulate in history
@@ -376,7 +376,7 @@ class InterjectChannelTests(unittest.TestCase):
 
     def _seed_run(self):
         import agent_runs
-        owner = display_turns.owner(('brain', ''), 'pc', 'main')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:main')
         return agent_runs.create({'request_id': 'p16_intj_seed', 'intent': '整理下载目录',
                                   'src': 'pc', 'conversation_id': 'main'}, {}, owner,
                                  start=False)
@@ -403,7 +403,7 @@ class InterjectChannelTests(unittest.TestCase):
         self.assertTrue(payload['replan'])
         self.assertNotEqual(payload['run_id'], item['run_id'])
         import agent_runs
-        owner = display_turns.owner(('brain', ''), 'pc', 'main')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:main')
         self.assertEqual(agent_runs.snapshot(item['run_id'], owner)['status'], 'paused')
 
     def test_unknown_action_is_not_silently_accepted(self):

@@ -178,7 +178,8 @@ def sync_all(owner="", src="", persona="", chan="", include_workspace=True):
         import paths
         # 聊天
         if src:
-            chat_path = paths.chat_log_for(src)
+            chat_path = paths.scoped(os.path.join(paths.DATA_DIR, "chat_history.jsonl"),
+                                     persona or "default", src)
             out["chat"] = indexer.sync_chat(chat_path, owner=owner, src=src,
                                             persona=persona, chan=chan)
         # 记忆
@@ -196,7 +197,7 @@ def sync_all(owner="", src="", persona="", chan="", include_workspace=True):
 def sync_memory(owner, src, persona, chan):
     try:
         import memory_store_v2
-        store = memory_store_v2.get_default_store(persona or None, src or "app")
+        store = memory_store_v2.get_default_store(persona or "default", src or "pc")
         items = store.list_items()
     except Exception:
         return {"indexed": 0}

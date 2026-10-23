@@ -23,18 +23,16 @@ class TestChannelNorm(unittest.TestCase):
         """手机 App 退役后，app 不在合法渠道名单里。"""
         self.assertNotIn("app", paths.CHANNELS)
 
-    def test_现役三个渠道(self):
-        self.assertEqual(set(paths.CHANNELS),
-                         {"wechat", "wechat_group", "pc"})
+    def test_only_pc_is_active(self):
+        self.assertEqual(paths.CHANNELS, ("pc",))
 
-    def test_缺省和未知渠道归一到主渠道wechat(self):
-        """空值/退役的 app/拼错/穿越尝试都安全归一成 wechat（不进文件路径）。"""
-        self.assertEqual(server._norm_src(""), "wechat")
-        self.assertEqual(server._norm_src(None), "wechat")
-        self.assertEqual(server._norm_src("app"), "wechat")
-        self.assertEqual(server._norm_src("wechat_group"), "wechat_group")
+    def test_default_pc_and_explicit_rejection(self):
+        self.assertEqual(server._norm_src(""), "pc")
+        self.assertEqual(server._norm_src(None), "pc")
         self.assertEqual(server._norm_src("PC"), "pc")
-        self.assertEqual(server._norm_src("../../evil"), "wechat")
+        for src in ("app", "wechat", "wechat_group", "../../evil"):
+            with self.assertRaises(ValueError):
+                server._norm_src(src)
 
 
 class TestDeviceMatrix(unittest.TestCase):

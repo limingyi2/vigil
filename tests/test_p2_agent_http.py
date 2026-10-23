@@ -111,7 +111,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_legacy_request_is_not_migrated_and_executed_again(self):
         body = dict(request_id='p2_legacy_tombstone', text='帮我整理文件', src='pc')
-        owner = display_turns.owner(('brain', ''), 'pc', 'main')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:main')
         display_turns.begin(owner, body['request_id'], body['text'])
         display_turns.update(owner, body['request_id'], status='succeeded', content='already done')
         with patch.object(runs, 'get_provider') as provider:
@@ -126,7 +126,7 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.request('GET', '/api/agent/runs', token='dt_fixture')[0], 403)
         self.assertEqual(self.request('POST', '/api/agent/runs', [1])[0], 400)
         self.assertEqual(self.request('POST', '/api/agent/runs', {'text': 'missing ID'})[0], 400)
-        owner = display_turns.owner(('brain', ''), 'pc', 'private_session')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:private_session')
         item = runs.create({'request_id': 'http_session_001', 'intent': 'private', 'src': 'pc'}, {}, owner, start=False)
         path = '/api/agent/runs/'+item['run_id']
         self.assertEqual(self.request('GET', path+'?src=pc')[0], 404)
@@ -136,7 +136,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('POST', path+'/cancel', {'src': 'pc'})[0], 404)
         self.assertEqual(self.request('POST', path+'/cancel', {'src': 'pc', 'session_id': 'private_session'})[1]['status'], 'cancelled')
 
-        conversation_owner = display_turns.owner(('brain', ''), 'pc', 'conversation_owned')
+        conversation_owner = display_turns.owner(('brain', ''), 'pc', 'default:conversation_owned')
         conversation_run = runs.create({'request_id': 'http_conversation_cancel', 'intent': 'cancel me', 'src': 'pc'},
             {}, conversation_owner, start=False)
         conversation_path = '/api/agent/runs/' + conversation_run['run_id'] + '/cancel'

@@ -71,7 +71,7 @@ def _agenda_scopes(b):
         import paths
         srcs = list(paths.CHANNELS)
     except Exception:
-        srcs = ["wechat", "wechat_group"]
+        srcs = ["pc"]
     out = []
     for s in srcs:
         try:
@@ -196,12 +196,10 @@ def _reminder_loop(b):
     静默时段照躲：快递到了也不凌晨轰炸，睡醒那轮补说。"""
 
     def _say(prompt):
-        # 事件提醒是**私聊**内容：天气变化、快递到货都是跟你一个人的事，
-        # 发到群里会出戏（"该加衣服了"当着另外三个人说）。所以显式按微信私聊
-        # 走，别让后台线程落在上一个处理过的渠道上。
-        with _feat_channel("wechat"):
+        # Background reminders belong to the local PC Agent.
+        with _feat_channel("pc"):
             with _LOCAL["lock"]:
-                ans, _m = b.chat(prompt, proactive=True, log=False, src="wechat")
+                ans, _m = b.chat(prompt, proactive=True, log=False, src="pc")
             text = strip_say_marker((ans or "").strip())
             if not text or text == "无":
                 _trace_loop("reminder", sent=0, reason="她自己不想说")

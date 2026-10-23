@@ -3360,15 +3360,11 @@
   }
 
   // ═══ 2. 人设 ═══════════════════════════════════════════════
-  // 卡片式：选一个渠道（App / 微信私聊 / 微信群），点卡片上的「应用」把她在那边换掉。
-  // 本机控制台不参与 —— 控制台是干活的工具，不扮演角色（走全局默认）。
-  // 账本只有本机 Brain 这一份：读写的都是随包内核里的人设文件。
+  // PC persona selection edits the local Core's persona_file.
   async function renderPersona(ctx) {
     ctx.view.classList.add('persona-view');
-    const CHANS = [['app', 'App', '全局默认（没单独设置的渠道都跟它）'],
-                   ['wechat', '微信私聊', '私聊那一个'],
-                   ['wechat_group', '微信群', '群里那一个（@ 她 / 她搭话的）']];
-    let curChan = 'wechat_group';
+    const CHANS = [['pc', '本机 PC', '本机默认人设']];
+    let curChan = 'pc';
     const r = pick(await get('/api/persona'));
     const list = r.templates || r.personas || r.presets || [];
     const per = {};
@@ -3381,11 +3377,9 @@
     ctx.topbar.innerHTML = topbar('人格与语气', '存在本机 Brain · 应用/编辑立即生效，下一句话就是新人设',
       '<button class="btn oline" id="reloadP">' + icon('refresh', 'sm') + '重载人格</button>');
     ctx.panel.innerHTML = '<div class="phead"><h2>人设</h2></div>' +
-      '<div class="pseg"><button data-sub="wechat_group"' + (curChan === 'wechat_group' ? ' class="on"' : '') + '>微信群</button>' +
-      '<button data-sub="wechat"' + (curChan === 'wechat' ? ' class="on"' : '') + '>微信私聊</button>' +
-      '<button data-sub="app"' + (curChan === 'app' ? ' class="on"' : '') + '>App</button></div>' +
+      '<div class="pseg"><button data-sub="pc" class="on">本机 PC</button></div>' +
       '<div class="plist"><div class="empty" style="text-align:left;padding:14px 10px">' +
-      '在左边选渠道，点卡片上的「应用」。<br>本机控制台不设人设。</div></div>';
+      '点卡片上的「应用」切换本机人设。历史与记忆按人设隔离。</div></div>';
 
     const cardOf = (p) => {
       const k = p.key || p;
@@ -3826,7 +3820,7 @@
       return Object.keys(cur || {}).filter((k) => cur[k]);
     }
     function chanChips(chans, cur, name, dis) {
-      const CN = { app: 'App', wechat: '微信', wechat_group: '微信群', pc: '本机' };
+      const CN = { pc: '本机' };
       return '<div class="pkg-ch"><span class="muted">生效于</span>' +
         (chans || []).map((c) =>
           '<button class="chip' + (chanOn(cur, c) ? ' on' : '') + (dis ? ' dis' : '') +
@@ -3858,7 +3852,7 @@
     async function plugins() {
       const r = pick(await get('/api/plugins'));
       const m = r.manage || {};
-      const chans = m.channels || ['app', 'wechat', 'wechat_group', 'pc'];
+      const chans = m.channels || ['pc'];
       const items = m.items || [];
       v.__items = items;
       // C3：持久的"待重启"提示。判据是服务端磁盘上的两个时间戳
@@ -4027,7 +4021,7 @@
         Object.keys(feats).map((k) => '<tr><td>' + esc(NAMES[k] || k) + '</td>' +
           '<td class="c"><button class="sw ' + (feats[k] ? 'on' : '') + '" data-f="' + esc(k) + '"></button></td></tr>').join('') +
         '</table></div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">这里是本机控制台（pc）的开关，改完即时生效。App 与微信各自那份在它们自己的设置里。</div>';
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">这里是本机控制台（pc）的开关，改完即时生效。所有设置仅作用于本机 PC。</div>';
 
       const range = v.querySelector('#chattyRange');
       const valEl = v.querySelector('#chattyVal');
@@ -4281,7 +4275,7 @@
       ctx.topbar.querySelector('h1').textContent = '聊天历史';
       // 控制台视角：本机是自己的会话，App / 微信的往来在这儿只读查看
       // （微信群聊的账在 wechat_group 分区，切分区也能看）
-      const CHANS = [['pc', '本机'], ['app', 'App'], ['wechat', '微信'], ['wechat_group', '微信群']];
+      const CHANS = [['pc', '本机']];
       v.innerHTML = '<div class="seg" style="margin-bottom:12px">' +
         CHANS.map(([c, n], i) => '<button data-hc="' + c + '"' + (i === 0 ? ' class="on"' : '') + '>' + n + '</button>').join('') +
         '</div><div id="hcList"></div>';
@@ -4374,7 +4368,7 @@
         '<div class="card">' +
         '<div class="kv"><span>连接</span><b id="cConn">' + (state.conn.ok ? '正常 ' + state.conn.ms + ' ms' : '不通') + '</b></div>' +
         '<div class="kv"><span>地址</span><b class="mono" id="cBase">' + esc(state.base || '—') + '</b></div>' +
-        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
+        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机 PC Agent）</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
         '<button class="btn fill" id="cRetry">重试连接</button>' +
         '<button class="btn oline" id="cRestart">重启内核</button>' +
@@ -5027,7 +5021,7 @@
         '<div class="kv"><span>客户端</span><b>v0.1.0（code <span id="abCode">…</span>）</b></div>' +
         '<div class="kv"><span>桌面框架</span><b>Electron ' + esc(String((global.process && process.versions && process.versions.electron) || '')) + '</b></div>' +
         '<div class="kv"><span>Brain 地址</span><b class="mono">' + esc(state.base || '—') + '</b></div>' +
-        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
+        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机 PC Agent）</b></div>' +
         '<div class="kv"><span>凭据</span><b>本机 Brain 自己的 token（不出机器）</b></div>' +
         '<div class="kv"><span>更新来源</span><b>GitHub Releases</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +

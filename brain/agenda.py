@@ -29,7 +29,7 @@ except Exception:                       # 单独跑这个文件时的兜底
     DEFAULT_MEM = os.path.join(_HERE, "data", "memory", "memory.json")
 
 
-def _path_for(persona_key="", src="wechat"):
+def _path_for(persona_key="", src="pc"):
     """按人设+渠道取约定账本路径。默认人设+wechat 沿用老路径，老数据不用搬。"""
     try:
         import paths
@@ -310,7 +310,7 @@ def _mark_one(ag, path=None):
 
 # --- 主流程 ---
 
-def refresh(persona_key="", src="wechat", mem_path=None, verbose=False):
+def refresh(persona_key="", src="pc", mem_path=None, verbose=False):
     """扫记忆库的 events，把能解析出日期的写进对应渠道的约定账本。幂等。
 
     只读 memory.json、绝不改它 —— 解析错了最多是这个账本多一条废话，删掉文件就干净。
@@ -401,7 +401,7 @@ def _label(d, today):
     return "%d月%d日（%d 天后）" % (d.month, d.day, diff)
 
 
-def block(persona_key="", src="wechat", cap=BLOCK_CAP, today=None, use_cache=True):
+def block(persona_key="", src="pc", cap=BLOCK_CAP, today=None, use_cache=True):
     """拼成注入块。窗口内没有约定就返回 ""。按 persona+src 分区，互不串台。"""
     path = _path_for(persona_key, src)
     ck = (persona_key, src)

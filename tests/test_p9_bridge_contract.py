@@ -63,7 +63,10 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn("历史兼容参考", readme)
         self.assertIn("`brain/wechat_bot/`。", readme)
         self.assertIn("不存在", readme)
-        self.assertFalse((ROOT / "brain/wechat_bot").exists())
+        # Local archived config files may remain; no tracked bot runtime is shipped.
+        import subprocess
+        tracked = subprocess.check_output(['git', 'ls-files', 'brain/wechat_bot'], cwd=ROOT, text=True)
+        self.assertEqual(tracked.strip(), '')
 
     def test_local_deployment_helpers_use_reviewed_source_and_installed_layout(self):
         deploy = (ROOT / "deploy/wechat/deploy_bridge_m4.py").read_text(encoding="utf-8")
