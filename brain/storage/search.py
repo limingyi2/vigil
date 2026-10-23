@@ -311,9 +311,12 @@ def _scope_where(scope, kinds):
             clauses.append("scope_kind!=?")
             args.append(SCOPE_WORKSPACE)
         else:
-            clauses.append("(workspace_id IN (%s) OR workspace_id='')" %
-                           ",".join("?" for _ in workspace_ids))
-            args.extend(workspace_ids)
+            placeholders = ",".join("?" for _ in workspace_ids)
+            clauses.append("((scope_kind=? AND workspace_id IN (%s)) OR "
+                           "(scope_kind!=? AND (workspace_id='' OR workspace_id IN (%s))))"
+                           % (placeholders, placeholders))
+            args.extend([SCOPE_WORKSPACE] + list(workspace_ids) +
+                        [SCOPE_WORKSPACE] + list(workspace_ids))
     return (" AND " + " AND ".join(clauses)) if clauses else "", args
 
 
@@ -341,8 +344,11 @@ def _scope_match(row, scope, kinds):
     ws_ids = s.get("workspace_ids")
     if ws_ids is not None:
         if not ws_ids:
-            return False  # 明确要求只看工作区但一个都没授权
-        if workspace_id and workspace_id not in ws_ids:
+            return scope_kind != SCOPE_WORKSPACE
+        if scope_kind == SCOPE_WORKSPACE:
+            if workspace_id not in ws_ids:
+                return False
+        elif workspace_id and workspace_id not in ws_ids:
             return False
     return True
 
@@ -541,10 +547,6 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
     used = 0
     limit = int(budget_chars) if budget_chars else None
     for row in rows:
-        # Defense in depth: candidates are already SQL-filtered in both retrieval
-        # channels, but validate the exact same scope before returning any body.
-        if not _scope_row_matches(row[1:7], scope, kinds):
-            continue
         if len(results) >= top_k:
             break
         # 【P0 范围隔离】最终防线：即使上游 BM25/向量/RRF 都已过滤，
@@ -580,25 +582,6 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
     results.sort(key=lambda r: (-r.score, r.doc_id))
     info["hits"] = len(results)
     return results, info
-
-
-def _scope_row_matches(values, scope, kinds):
-    """Python-side equivalent of ``_scope_where`` for final result validation."""
-    kind, owner, src, persona, chan, workspace_id = values
-    if kinds and kind not in kinds:
-        return False
-    for key, actual in (("owner", owner), ("src", src),
-                        ("persona", persona), ("chan", chan)):
-        expected = (scope or {}).get(key)
-        if expected is not None and expected != "" and actual != expected:
-            return False
-    workspace_ids = (scope or {}).get("workspace_ids")
-    if workspace_ids is not None:
-        if kind == SCOPE_WORKSPACE:
-            return workspace_id in workspace_ids
-        if workspace_ids and workspace_id not in ("", None) and workspace_id not in workspace_ids:
-            return False
-    return True
 
 
 def _default_backend():

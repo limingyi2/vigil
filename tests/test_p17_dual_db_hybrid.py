@@ -513,14 +513,14 @@ def test_empty_workspace_list_excludes_only_workspace_docs(store, vector_enabled
     from storage import vector
     scope = {"owner": "u", "src": "pc", "persona": "p", "workspace_ids": []}
     docs = [
-        ("chat-current", "chat", "空授权隔离探针 当前会话聊天", "u", "pc", "p", ""),
-        ("memory-current", "memory", "空授权隔离探针 长期记忆", "u", "pc", "p", ""),
-        ("kb-current", "kb", "空授权隔离探针 知识库", "u", "pc", "p", ""),
-        ("workspace-ok", "workspace", "空授权隔离探针 已授权工作区", "u", "pc", "p", "ws-ok"),
-        ("workspace-other", "workspace", "空授权隔离探针 其他工作区", "u", "pc", "p", "ws-other"),
-        ("chat-other-persona", "chat", "空授权隔离探针 其他人设", "u", "pc", "other", ""),
-        ("chat-other-user", "chat", "空授权隔离探针 其他用户", "other-user", "pc", "p", ""),
-        ("chat-other-session", "chat", "空授权隔离探针 其他会话", "u", "pc", "p", ""),
+        ("chat-current", "chat", "scope_probe current chat", "u", "pc", "p", ""),
+        ("memory-current", "memory", "scope_probe long term memory", "u", "pc", "p", ""),
+        ("kb-current", "kb", "scope_probe knowledge base", "u", "pc", "p", ""),
+        ("workspace-ok", "workspace", "scope_probe authorized workspace", "u", "pc", "p", "ws-ok"),
+        ("workspace-other", "workspace", "scope_probe other workspace", "u", "pc", "p", "ws-other"),
+        ("chat-other-persona", "chat", "scope_probe other persona", "u", "pc", "other", ""),
+        ("chat-other-user", "chat", "scope_probe other user", "other-user", "pc", "p", ""),
+        ("chat-other-session", "chat", "scope_probe other session", "u", "pc", "p", ""),
     ]
     for doc_id, kind, body, owner, src, persona, workspace_id in docs:
         search.upsert_doc(doc_id, kind, body, owner=owner, src=src,
@@ -535,7 +535,7 @@ def test_empty_workspace_list_excludes_only_workspace_docs(store, vector_enabled
         backend = FakeBackend()
     else:
         backend = vector.EmbeddingBackend(mode="none")
-    results, info = search.search("空授权隔离探针", scope=scope, backend=backend, top_k=20)
+    results, info = search.search("scope_probe", scope=scope, backend=backend, top_k=20)
     ids = {item.doc_id for item in results}
     assert {"chat-current", "memory-current", "kb-current"} <= ids
     assert not {"workspace-ok", "workspace-other", "chat-other-persona", "chat-other-user"} & ids
