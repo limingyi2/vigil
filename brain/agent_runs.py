@@ -1355,16 +1355,22 @@ def _calls(calls, specs):
             try:
                 args = json.loads(args)
             except ValueError as exc:
-                raise ValueError('%s（工具 %s）的 arguments 不是完整 JSON（%s），实际收到 %r'
-                                 % (label, name, exc, args[:160]))
+                position = getattr(exc, 'pos', None)
+                line = getattr(exc, 'lineno', None)
+                column = getattr(exc, 'colno', None)
+                location = ('line %s column %s (position %s)' % (line, column, position)
+                            if position is not None else '位置未知')
+                raise ValueError('%s（工具 %s）的 arguments 不是完整 JSON：解析器报告 %s；'
+                                 '实际参数长度 %d 字符'
+                                 % (label, name, location, len(args)))
         if not isinstance(args, dict):
             raise ValueError('%s（工具 %s）的 arguments 必须是 JSON 对象，实际是 %s'
                              % (label, name, type(args).__name__))
         try:
             _validate(args, advertised[name])
         except ValueError as exc:
-            raise ValueError('%s（工具 %s）的参数不符合 schema（%s）：%s'
-                             % (label, name, exc, _json(args)[:200]))
+            raise ValueError('%s（工具 %s）的参数不符合 schema（%s）'
+                             % (label, name, exc))
         cid = _call_id(call.get('id'), index, ids)
         signature = hashlib.sha256(_json([name, args]).encode()).hexdigest()
         out.append((cid, name, args, signature))
@@ -1998,6 +2004,17 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                                   output_tokens_per_second=round(throughput, 2))
                 model_step = item['steps'][sid-1]
                 model_step['token_usage'] = usage_data
+                # This is intentionally limited to counters and request metadata.
+                # Tool arguments can contain paths, credentials, or user content.
+                diagnostics = completion.get('diagnostics')
+                if isinstance(diagnostics, dict):
+                    model_step['response_diagnostics'] = diagnostics
+                output_params = ('max_tokens', 'max_completion_tokens', 'max_output_tokens')
+                output_parameter = next((key for key in output_params
+                                         if isinstance(prepared_payload.get(key), int)), None)
+                model_step['request_output_limit'] = dict(
+                    parameter=output_parameter,
+                    tokens=prepared_payload.get(output_parameter) if output_parameter else None)
                 totals = item.setdefault('token_usage_totals', dict(input_tokens=0, output_tokens=0,
                     cached_tokens=0, reasoning_tokens=0, estimated=False,
                     estimated_output=False,
@@ -2125,22 +2142,16 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                     # 不对、编了个不存在的工具名）。**这不是执行失败** —— 一次都
                     # 没派发出去，没有副作用，正确做法是把问题回传给它再试一次，
                     # 而不是把整项任务判死。重试有上限，且照样吃预算。
-                    raw = ''
-                    try:
-                        raw = str((completion['tool_calls'][0].get('function') or {}).get('arguments'))[:400]
-                    except Exception:
-                        pass
                     with LOCK, _db() as db:
                         item = _get(db, rid, owner)
                         attempts = int(item.get('invalid_attempts') or 0) + 1
                         item['invalid_attempts'] = attempts
-                        # 留着模型实际发出来的残包：这是判断"供应商截断"还是
-                        # "模型真写错"的唯一证据，也是界面展示失败原因的原料。
-                        # detail/预览一律脱敏 —— 参数值里可能带钥匙。
+                        # Preserve only content-free counters. Parser position is
+                        # not the received argument length; the latter is recorded
+                        # separately in response_diagnostics.
                         item['last_invalid'] = dict(
                             step_id=sid, attempts=attempts, reason='invalid_tool',
                             detail=_redact_error_text(str(exc), 300),
-                            arguments_preview=_redact_error_text(raw, 400),
                             tool=_safe_event_value(
                                 (completion['tool_calls'][0].get('function') or {}).get('name'), 80),
                             at=time.time())
@@ -2150,9 +2161,9 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                             reason='invalid_tool',
                             detail=_redact_error_text(str(exc), 300),
                             hint='模型返回的工具调用不合法，未派发任何工具，已要求其重发')
-                        model_step['invalid_calls'] = [
-                            _redact_error_text(_json(c.get('function') or {}), 300)
-                            for c in (completion['tool_calls'] or [])][:4]
+                        model_step['invalid_calls'] = [dict(index=index,
+                            argument_chars=len(((c.get('function') or {}).get('arguments') or '')))
+                            for index, c in enumerate(completion['tool_calls'] or [])][:4]
                         _save(db, item)
                         give_up = attempts > INVALID_TOOL_RETRIES
                     if give_up:

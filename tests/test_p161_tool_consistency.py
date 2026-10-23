@@ -356,9 +356,10 @@ def test_late_tool_result_never_flips_a_paused_run(tmp_path):
 
 def test_invalid_tool_terminal_error_carries_a_redacted_detail(tmp_path):
     broken = call(text='x')
-    # 截断的 JSON，且参数里带一把钥匙 —— detail 必须留下"哪个工具、哪种
-    # 错误"，但钥匙不许出现在台账里。
-    broken['function']['arguments'] = '{"text": "sk-live-ABCDEFGHIJKLMNOP"'
+    # Truncated JSON contains a credential-like value and a local path.
+    # Diagnostics retain the defect and length without retaining contents.
+    broken['function']['arguments'] = (
+        '{"text": "sk-live-ABCDEFGHIJKLMNOP C:\\Users\\Alice\\秘密.txt')
     provider = StrictProvider([response(calls=[broken])] * 4)
     item = _drive(tmp_path, provider)
     assert item['status'] == 'failed'
@@ -366,11 +367,40 @@ def test_invalid_tool_terminal_error_carries_a_redacted_detail(tmp_path):
     detail = item['error']['detail']
     assert 'write_note' in detail            # 说清楚是哪个工具
     assert 'sk-live-ABCDEFGHIJKLMNOP' not in json.dumps(item, ensure_ascii=False)
+    assert 'C:\\Users\\Alice\\秘密.txt' not in json.dumps(item, ensure_ascii=False)
     assert '已隐藏' in detail or 'sk-live' not in detail
     last_invalid = item.get('last_invalid') or {}
     assert 'sk-live' not in json.dumps(last_invalid, ensure_ascii=False)
+    assert 'arguments_preview' not in last_invalid
     model_error = [s for s in item['steps'] if s['kind'] == 'model' and s.get('error')]
     assert model_error and model_error[0]['error']['category'] == 'invalid_tool'
+    diagnostic = model_error[0]['response_diagnostics']
+    assert diagnostic['tool_arguments'][0]['argument_chars'] == len(
+        broken['function']['arguments'])
+    assert model_error[0]['invalid_calls'] == [dict(index=0,
+        argument_chars=len(broken['function']['arguments']))]
+
+
+def test_incomplete_local_file_read_is_never_dispatched(tmp_path):
+    path = r'C:\Users\Alice\private\秘密.txt'
+    malformed = dict(id='call_file', type='function', function=dict(
+        name='local_file_read',
+        arguments=json.dumps({'path': path}, ensure_ascii=False)[:-6]))
+    spec = [{"type": "function", "function": {"name": "local_file_read",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
+                        "required": ["path"], "additionalProperties": False}}}]
+    dispatched = []
+    provider = StrictProvider([response(calls=[malformed])] * 4)
+    item = _drive(tmp_path, provider,
+                  invoke=lambda *args, **kwargs: dispatched.append(args), rounds_specs=spec)
+    assert item['status'] == 'failed'
+    assert dispatched == []
+    serialized = json.dumps(item, ensure_ascii=False)
+    assert path not in serialized
+    model_error = [s for s in item['steps'] if s['kind'] == 'model' and s.get('error')]
+    assert model_error
+    assert model_error[0]['response_diagnostics']['tool_arguments'][0]['argument_chars'] == len(
+        malformed['function']['arguments'])
 
 
 def test_receipts_in_the_ledger_are_redacted(tmp_path):
