@@ -22,6 +22,7 @@ import traceback
 from runtime import (
     api_config, API_CFG, MOB_CFG, BRAIN_TOKEN,
     _LOCAL, _trace_write, _trace_tail, load_config, config_path, data_file)
+from api.request import query_param
 # 🔴 也把模块本身绑个名：换模型后刷新 API_CFG 要调 runtime.api_cfg_subset()，
 # 而上面是 from...import，只把名字引进来了、模块名没绑。
 # 不绑的话只能再抄一份白名单 —— 而"抄一份少一个键"正是这回的病根
@@ -1004,12 +1005,8 @@ from brain import split_messages
 
 
 def _query_param(path, key):
-    from urllib.parse import urlparse, parse_qs
-    try:
-        q = parse_qs(urlparse(path).query)
-        return (q.get(key) or [""])[0]
-    except Exception:
-        return ""
+    """Compatibility export; request parsing lives in ``brain.api.request``."""
+    return query_param(path, key)
 
 
 def _running_creator_jobs():

@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'brain'))
 import agent_runs as runs
 import display_turns
+from api.request import query_param
 from test_p2_agent_runs import Provider, SPEC, call, response
 
 
@@ -43,7 +44,7 @@ class HTTPTests(unittest.TestCase):
             _chat_lock=contextlib.nullcontext,
             _trace_write=trace_rows.append, note_client_ip=lambda ip: None,
             _cloud_history=lambda *a: [], _device_role=lambda _: 'device',
-            _persona_for_src=lambda *_: 'default')
+            _persona_for_src=lambda *_: 'default', query_param=query_param)
         cls.ns = ns
         cls.trace_rows = trace_rows
         exec(compile(ast.Module(body=constants+nodes, type_ignores=[]), str(source), 'exec'), ns)

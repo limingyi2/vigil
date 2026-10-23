@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+require('./test-video-workbench-lifecycle.js');
 const vm = require('node:vm');
 const {EventEmitter} = require('node:events');
 const client = path.resolve(__dirname, '..');
