@@ -41,6 +41,20 @@ def test_delegation_unknown_or_unauthorized_is_not_local(monkeypatch):
     assert result["reason"] == "no_authorized_path_in_text"
 
 
+def test_delegation_classifier_exception_fails_closed_to_cloud(monkeypatch):
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("workspace lookup unavailable")
+
+    monkeypatch.setattr(delegation_router, "find_authorized_workspace", unavailable)
+    result = delegation_router.classify("请分析项目日志", allowed_roots=["/safe/workspace"])
+    assert result == {
+        "route": "cloud_direct",
+        "reason": "classifier_error:RuntimeError",
+        "workspace": "",
+        "kind": "",
+    }
+
+
 def test_preplan_route_decision_is_reused_for_local_direct(monkeypatch):
     """The same user text is classified once before the local-direct attempt."""
     import runtime

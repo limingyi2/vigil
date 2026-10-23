@@ -1,4 +1,5 @@
 """P19.2 persistence integration at the existing Agent Run/Coding Harness boundary."""
+import ast
 import json
 import os
 import sys
@@ -87,6 +88,121 @@ def test_complex_harness_plan_links_todos_and_completes_only_after_real_verify(e
     assert all(attempt['state'] == 'returned' for attempt in coding['workflow_attempts'])
     flow = task_workflows.get(scope, coding['task_workflow_id'])
     assert flow['runs'][0]['run_id'] == result['run_id']
+
+
+def test_p19_hybrid_route_keeps_coding_request_on_agent_run_path(env, monkeypatch):
+    import coding_harness
+    import delegation.router as route_router
+    import delegation.bridge as route_bridge
+    import tools
+    import workspaces as workspace_store
+
+    scope, root = env
+    intent = '请修复多个模块并运行测试验证 %s' % root
+    decision = route_router.classify(intent, allowed_roots=[str(root)])
+    assert decision['route'] == 'hybrid_delegate'
+    assert tools.schema_needed(intent)
+    assert coding_harness.looks_like_coding_request(intent)
+
+    # Exercise the real server Agent Run entry with an authenticated stored
+    # conversation. The P19.1 execution route remains a hint and does not
+    # redirect this coding request through the standalone delegation path.
+    source = Path(__file__).resolve().parents[1] / 'brain' / 'server.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    entry = next(n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == '_new_agent_run')
+    namespace = {'brain': None, 'API_CFG': {}, '_norm_src': lambda value: value,
+                 '_query_param': lambda *args: None,
+                 '_persona_for_src': lambda src: scope.persona}
+    exec(compile(ast.Module(body=[entry], type_ignores=[]), '<p19-agent-entry>', 'exec'), namespace)
+
+    conversation = {'id': scope.conversation_id, 'workspace_id': scope.workspace_id,
+                    'legacy': False}
+
+    class Handler:
+        path = '/api/agent/runs'
+
+        def _display_owner(self, body):
+            return scope.run_owner
+
+        def _conversation_context(self, src, cid):
+            assert src == scope.src and cid == scope.conversation_id
+            return conversation, scope.owner, src, scope.persona
+
+        def _workspace_note(self, *args):
+            return ''
+
+        def _workflow_scope(self, body):
+            assert body['conversation_id'] == scope.conversation_id
+            return scope
+
+    import agent_runs
+    create = agent_runs.create
+    provider = _complex_provider()
+
+    def create_and_run(body, cfg, owner, **kwargs):
+        assert body['kind'] == 'coding'
+        assert body['workspace_root'] == str(root)
+        item = create(body, cfg, owner, start=False, **kwargs)
+        agent_runs._run(item['run_id'], owner, cfg,
+                        workflow_scope=kwargs.get('workflow_scope'))
+        return agent_runs.snapshot(item['run_id'], owner)
+
+    with patch.object(workspace_store, 'get', return_value={
+            'id': scope.workspace_id, 'path': str(root)}), \
+         patch.object(agent_runs, 'create', side_effect=create_and_run), \
+         patch.object(agent_runs, 'get_provider', return_value=provider), \
+         patch.object(route_bridge, 'run_hybrid_delegation_direct',
+                      side_effect=AssertionError('coding request was diverted to delegation')):
+        result = namespace['_new_agent_run'](Handler(), {
+            'request_id': 'p19_route_coding_0001', 'intent': intent,
+            'conversation_id': scope.conversation_id, 'src': scope.src})
+
+    assert result['status'] == 'succeeded', result.get('coding')
+    flow = task_workflows.get(scope, result['coding']['task_workflow_id'])
+    assert flow['runs'][0]['run_id'] == result['run_id']
+    assert flow['status'] == 'completed'
+    import server
+    from types import SimpleNamespace
+    route_trace = server._snapshot(SimpleNamespace(mem=None, last_route=decision))['route_decision']
+    run_events = agent_runs.events(result['run_id'], scope.run_owner)['events']
+    workflow_events = [event for event in run_events if event['type'] == 'coding_workflow']
+    assert workflow_events
+    assert all('route_decision' not in event['payload'] for event in workflow_events)
+    assert route_trace == {
+        'execution_route': 'hybrid_delegate',
+        'decision_source': 'delegation.router',
+        'reason': 'multi_step_investigation_hint',
+    }
+
+
+def test_hybrid_delegation_does_not_create_agent_run_or_coding_todo(env, monkeypatch):
+    import delegation.bridge as bridge
+    import delegation.router as route_router
+    import runtime
+
+    scope, root = env
+    intent = '分析工作区日志并排查根因 %s' % root
+    monkeypatch.setitem(runtime.API_CFG, 'model_mode', 'hybrid')
+    monkeypatch.setattr(bridge, 'is_delegation_enabled', lambda src=None: True)
+    monkeypatch.setattr(bridge, 'load_delegation_config', lambda: {
+        'router_enabled': True, 'allowed_roots': [str(root)]})
+    monkeypatch.setattr(route_router, 'find_authorized_workspace',
+                        lambda text, roots: str(root))
+    monkeypatch.setattr(bridge, 'validate_contract', lambda *args, **kwargs: {'ok': True})
+    monkeypatch.setattr(bridge, 'run_delegation', lambda *args, **kwargs: {
+        'task_id': 'delegated-p19-task', 'status': 'succeeded',
+        'model_requests': 0, 'tool_calls': 1, 'verified': True,
+        'structured': {'answer': '日志证据已整理'}, 'evidence': {},
+        'output': '日志证据已整理', 'elapsed_seconds': 0,
+    })
+    with patch.object(agent_runs, 'create', side_effect=AssertionError('unexpected Agent Run')), \
+         patch.object(task_workflows, 'create_linked',
+                      side_effect=AssertionError('unexpected Coding Todo')):
+        result = bridge.run_hybrid_delegation_direct(intent, src=scope.src)
+    assert result['ok'] is True, result
+    assert result['decision']['route'] == 'hybrid_delegate'
+    assert task_workflows.listing(scope) == []
 
 
 def test_simple_coding_keeps_existing_run_without_multi_step_workflow(env):
