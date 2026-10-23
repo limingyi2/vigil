@@ -1,5 +1,7 @@
 import json
 import zipfile
+import time
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -325,9 +327,220 @@ def test_featureless_plugin_disable_is_consistent_in_listing_and_frontend(tmp_pa
             listed = plugin_host.listing()
             assets = plugin_host.frontend_assets()
         assert listed[0]["enabled"] is False
-        assert assets["plugins"][0]["enabled"] is False
+        assert assets["plugins"] == []
     finally:
         plugin_host._registry = old_registry
+
+
+def test_feature_toggle_uses_real_current_channel(tmp_path):
+    import features
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"features": {"packages": True},
+                                  "features_by_src": {
+                                      "pc": {"packages": False},
+                                      "wechat": {"packages": True}}}),
+                      encoding="utf-8")
+    previous = features._CFG
+    try:
+        features._CFG = str(config)
+        features.invalidate()
+        with features.with_channel("pc"):
+            assert features.current_src() == "pc"
+            assert features.on("packages") is False
+        with features.with_channel("wechat"):
+            assert features.current_src() == "wechat"
+            assert features.on("packages") is True
+        assert features.current_src() == "pc"
+        assert features.on("packages") is False
+    finally:
+        features._CFG = previous
+        features.invalidate()
+
+
+def _plugin_fixture(name, path, *, start=False, frontend=False):
+    mod = types.ModuleType("fixture_" + name)
+    mod.NAME = name
+    mod.DESC = name
+    mod.FEATURE = ""
+    calls = []
+    mod.TOOLS = {name + "_tool": lambda arg: calls.append(arg) or "called"}
+    mod.TOOL_SPECS = {name + "_tool": {"desc": "fixture", "params": []}}
+    mod.prompt = lambda ctx: calls.append("prompt") or "fixture prompt"
+    mod.on_turn_in = lambda ctx: calls.append("turn") or "fixture turn"
+    mod.on_reply = lambda ctx, value: calls.append("reply") or value + "!"
+    if start:
+        mod.start = lambda brain: calls.append("start")
+    if frontend:
+        (Path(path).parent / "frontend.js").write_text("window.fixture = true", encoding="utf-8")
+        (Path(path).parent / "frontend.css").write_text(".fixture{}", encoding="utf-8")
+    mod.ROUTES = [("GET", "/api/plugin/" + name, lambda body, query: {"ok": True})]
+    return plugin_host.Plugin(mod, str(path)), calls
+
+
+def test_lifecycle_blocks_all_surfaces_then_uninstalls_without_purging_data(tmp_path):
+    user_plugins = tmp_path / "installed_plugins"
+    user_plugins.mkdir()
+    source = user_plugins / "wallpaper"
+    source.mkdir()
+    entry = source / "__init__.py"
+    entry.write_text("# fixture", encoding="utf-8")
+    data = tmp_path / "plugins" / "wallpaper"
+    data.mkdir(parents=True)
+    saved = data / "settings.json"
+    saved.write_text("{}", encoding="utf-8")
+    registry = tmp_path / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"wallpaper": {
+        "version": "1.0.0", "enabled": True}}}), encoding="utf-8")
+    fake, calls = _plugin_fixture("wallpaper", entry, frontend=True)
+    old_registry, old_index, old_started = plugin_host._registry, dict(plugin_host._TOOL_INDEX), plugin_host._started
+    plugin_host._registry = {"wallpaper": fake}
+    plugin_host._started = set()
+    plugin_host._reindex_tools()
+
+    def reload_target(name=None, brain=None, allow_missing=False):
+        if allow_missing:
+            plugin_host._registry.pop(name, None)
+            plugin_host._reindex_tools()
+        return True
+
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(user_plugins)), \
+             patch.object(plugin_host, "_DIR", str(tmp_path / "builtin")), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(user_plugins)), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)), \
+             patch.object(plugin_manager, "_reload", side_effect=reload_target):
+            assert plugin_host.is_enabled("wallpaper")
+            assert plugin_host.frontend_assets()["plugins"]
+            assert plugin_host.tool_specs().get("wallpaper_tool")
+            assert plugin_manager.disable("wallpaper")[0]
+            assert not plugin_host.is_enabled("wallpaper")
+            assert plugin_host.frontend_assets()["plugins"] == []
+            assert "wallpaper_tool" not in plugin_host.tool_specs()
+            assert plugin_host.run_tool("wallpaper_tool", "x") is None
+            assert plugin_host.prompt_block() == ""
+            assert plugin_host.on_turn_in(plugin_host.Turn()) == ""
+            assert plugin_host.on_reply(plugin_host.Turn(), "reply") == "reply"
+            assert plugin_manager.enable("wallpaper")[0]
+            assert plugin_host.is_enabled("wallpaper")
+            assert plugin_host.frontend_assets()["plugins"]
+            ok, result = plugin_manager.uninstall("wallpaper")
+            assert ok, result
+            assert not source.exists()
+            assert saved.read_text(encoding="utf-8") == "{}"
+            assert not plugin_host.get("wallpaper")
+            # A fresh loader sees neither code nor an enabled registry entry.
+            assert plugin_manager.status("wallpaper")["installed"] is False
+    finally:
+        plugin_host._registry = old_registry
+        plugin_host._started = old_started
+        plugin_host._TOOL_INDEX.clear()
+        plugin_host._TOOL_INDEX.update(old_index)
+
+
+def test_builtin_is_disableable_but_never_uninstallable(tmp_path):
+    import zipfile
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+    entry = builtin / "coreplug.py"
+    entry.write_text("# fixture", encoding="utf-8")
+    runtime, _calls = _plugin_fixture("coreplug", entry)
+    registry = tmp_path / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {}}), encoding="utf-8")
+    old_registry = plugin_host._registry
+    plugin_host._registry = {"coreplug": runtime}
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(tmp_path / "installed")), \
+             patch.object(plugin_host, "_DIR", str(builtin)), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(tmp_path / "installed")), \
+             patch.object(plugin_manager, "_reload", return_value=True):
+            status = plugin_manager.status("coreplug")
+            assert status["builtin"] and not status["removable"]
+            assert plugin_manager.disable("coreplug")[0]
+            ok, result = plugin_manager.uninstall("coreplug")
+            assert not ok and result["state"] == "builtin"
+            assert entry.exists()
+            archive = tmp_path / "coreplug.zip"
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("coreplug/__init__.py", "NAME='coreplug'\n")
+                zf.writestr("coreplug/zxplugin.json", json.dumps({
+                    "name": "coreplug", "version": "2.0.0",
+                    "dependencies": {}, "permissions": []}))
+            ok, result = plugin_manager.install_archive(str(archive), reload=False)
+            assert not ok and result["state"] == "builtin"
+            ok, result = plugin_manager.update("coreplug", str(archive), reload=False)
+            assert not ok and result["state"] == "builtin"
+            assert not (tmp_path / "installed" / "coreplug").exists()
+    finally:
+        plugin_host._registry = old_registry
+
+
+def test_background_plugin_with_stop_hook_is_stopped_on_disable(tmp_path):
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    entry = installed / "threaded.py"
+    entry.write_text("# fixture", encoding="utf-8")
+    registry = tmp_path / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"threaded": {
+        "enabled": True}}}), encoding="utf-8")
+    runtime, calls = _plugin_fixture("threaded", entry, start=True)
+    runtime.mod.stop = lambda: calls.append("stop")
+    old_registry, old_started = plugin_host._registry, plugin_host._started
+    plugin_host._registry, plugin_host._started = {"threaded": runtime}, {"threaded"}
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(installed)), \
+             patch.object(plugin_host, "_DIR", str(tmp_path / "builtin")), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(installed)), \
+             patch.object(plugin_manager, "_reload", return_value=True):
+            ok, result = plugin_manager.disable("threaded")
+            assert ok, result
+            assert calls == ["stop"]
+            assert "threaded" not in plugin_host.started_names()
+            assert json.loads(registry.read_text(encoding="utf-8"))["plugins"]["threaded"]["enabled"] is False
+    finally:
+        plugin_host._registry, plugin_host._started = old_registry, old_started
+
+
+def test_start_only_disable_persists_until_restart_and_blocks_uninstall(tmp_path):
+    user_plugins = tmp_path / "installed"
+    user_plugins.mkdir()
+    entry = user_plugins / "worker.py"
+    entry.write_text("# fixture", encoding="utf-8")
+    registry = tmp_path / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {"worker": {
+        "version": "1.0.0", "enabled": True}}}), encoding="utf-8")
+    runtime, _calls = _plugin_fixture("worker", entry, start=True)
+    old_registry, old_started = plugin_host._registry, plugin_host._started
+    plugin_host._registry, plugin_host._started = {"worker": runtime}, {"worker"}
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(user_plugins)), \
+             patch.object(plugin_host, "_DIR", str(tmp_path / "builtin")), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(user_plugins)), \
+             patch.object(plugin_manager, "_reload", return_value=True):
+            ok, result = plugin_manager.disable("worker")
+            assert not ok and result["state"] == "restart_required"
+            assert json.loads(registry.read_text(encoding="utf-8"))["plugins"]["worker"]["enabled"] is False
+            pending = json.loads((user_plugins / "_pending_restart.json").read_text(encoding="utf-8"))
+            assert pending["changed_at"] > pending["started_at"]
+            assert plugin_manager.status("worker")["state"] == "restart_required"
+            ok, result = plugin_manager.uninstall("worker")
+            assert not ok and result["state"] == "restart_required"
+            assert entry.exists()
+
+            # Simulate a successful Brain restart: the disabled start hook is
+            # skipped, then the persistent pending marker is cleared by startup time.
+            plugin_host._started = set()
+            time.sleep(0.01)
+            import restart_state
+            restart_state.note_start("plugin", str(user_plugins))
+            assert plugin_manager.status("worker")["state"] == "disabled"
+            assert restart_state.snapshot("plugin", str(user_plugins))["pending"] is False
+            assert plugin_manager.uninstall("worker")[0]
+            assert not entry.exists()
+    finally:
+        plugin_host._registry, plugin_host._started = old_registry, old_started
 
 
 def test_uninstall_reloads_remaining_plugins_without_missing_target_warning():

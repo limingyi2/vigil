@@ -175,7 +175,7 @@ def on(key, src=None):
     聊天链路和后台提醒那些地方都是这么调的，它们只管问"这个功能此刻开没开"，
     不该各自记着自己是哪个渠道。
     """
-    return bool(all_features(src if src is not None else _cur_src)
+    return bool(all_features(src if src is not None else _cur_src.get())
                .get(key, True))
 
 

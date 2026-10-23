@@ -3872,7 +3872,7 @@
           '重启内核后两边才一致。</div></div>' : '') +
         '<div class="sech"><b>添加插件</b><div class="sp"></div><span class="muted">zip 上传</span></div>' +
         '<div class="drop" id="plDrop">' + icon('upload', 'md') +
-        '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 装上自动热重载，不用重启内核</span></div>' +
+        '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 安装时不会执行新代码，确认后再重载</span></div>' +
         '<div class="sech"><b>已安装的插件</b><div class="sp"></div>' +
         '<span class="tag neutral">' + items.length + ' 个</span>' +
         (pendOn ? tag('warn', '待重启生效') : '') +
@@ -3882,8 +3882,18 @@
           '<div class="pkg">' +
           '<div class="pkg-ic">' + icon('plug', 'sm') + '</div>' +
           '<div class="pkg-main">' +
-          '<div class="pkg-h"><b>' + esc(p.name) + '</b>' + (p.err ? tag('err', '装载失败') : tag('ok', '运行中')) + '</div>' +
+          '<div class="pkg-h"><b>' + esc(p.name) + '</b>' +
+          (p.state === 'restart_required' ? tag('warn', '停用待重启') :
+           p.enabled === false ? tag('neutral', '已停用') :
+           p.err ? tag('err', '装载失败') : tag('ok', '已启用')) +
+          (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
+            ? tag('warn', 'PC 渠道关闭') :
+             p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === true
+            ? tag('ok', 'PC 渠道可用') : '') +
+          (p.builtin ? tag('neutral', '内置插件') : '') + '</div>' +
           '<div class="pkg-desc">' + esc(p.desc || '') + '</div>' +
+          (p.builtin ? '<div class="pkg-desc">随 Vigil 程序发布，可停用；不能单独卸载，更新随程序版本进行。</div>' : '') +
+          (p.diagnostic ? '<div class="pkg-desc" style="color:var(--danger)">' + esc(p.diagnostic) + '</div>' : '') +
           '<div class="pkg-meta"><span class="mono">' + esc(p.file || '') + '</span>' +
           ((p.tools || []).length ? '<span>· 工具 ' + esc(p.tools.join('、')) + '</span>' : '') +
           ((p.hooks || []).length ? '<span>· 钩子 ' + esc(p.hooks.join('、')) + '</span>' : '') +
@@ -3891,27 +3901,40 @@
           '</div></div>' +
           '<div class="pkg-side">' +
           chanChips(chans, p.channels, p.name, !p.channelable) +
-          '<button class="btn pkg-un" data-un="' + esc(p.name) + '">卸载</button>' +
+          (p.state === 'restart_required' ? '<button class="btn" disabled>待重启</button>' :
+           '<button class="btn" data-life="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '停用') + '</button>') +
+          (p.removable ? '<button class="btn pkg-un" data-un="' + esc(p.name) + '">卸载</button>' : '') +
           '</div></div>').join('')
           : empty('一个插件都没装', '上面拖一个 .zip 试试'));
 
       bindDrop(v.querySelector('#plDrop'), (f) => installZip(f, '/api/plugins/install', { source: '客户端' }, 'plugin'));
       v.querySelector('#plReload').addEventListener('click', async () => {
         const rr = pick(await post('/api/plugins/reload', {}));
-        toast(rr.ok ? '已重载：' + (rr.count || '?') + ' 个插件' : '重载失败');
+        toast(rr.ok ? '插件已重载' : ('重载失败：' + (rr._err || rr.err || '未知错误')));
         plugins();
       });
+      v.querySelectorAll('[data-life]').forEach((b) => b.addEventListener('click', async () => {
+        const action = b.dataset.life;
+        const name = b.dataset.name;
+        b.disabled = true;
+        const rr = pick(await post('/api/plugins/lifecycle', { name, action }));
+        if (!rr.ok) toast((rr.state === 'restart_required' ? '停用请求已记录，待重启内核：' : '操作失败：') + (rr._err || rr.err || '未知错误'));
+        else toast(action === 'disable' ? '插件已停用' : '插件已启用');
+        window.dispatchEvent(new Event('vigil-market-changed'));
+        await plugins();
+      }));
       v.querySelectorAll('[data-un]').forEach((b) => b.addEventListener('click', async () => {
         if (!await confirmDialog('卸载插件 ' + b.dataset.un + '？')) return;
         // C2：卸载接口会回 restart_needed，必须消费。文件删掉只代表磁盘上
         // 没了，已经 import 的那份（连同它 start() 起的线程）还在跑 ——
         // 不告诉用户"要重启才真正停"，他就会以为线程也跟着没了。
         const rr = pick(await post('/api/plugins/uninstall', { name: b.dataset.un, purge_data: false }));
-        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
+        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); await plugins(); return; }
         toast(rr.restart_needed
           ? '文件已卸载，但它注册的后台线程还在跑 —— 要重启内核才真正停止'
           : '已卸载（剩 ' + (rr.count != null ? rr.count : '?') + ' 个）');
-        plugins();
+        window.dispatchEvent(new Event('vigil-market-changed'));
+        await plugins();
       }));
       bindChanChips('/api/plugins/channels', 'plugin');
       drawCurrent = plugins;
@@ -5777,12 +5800,17 @@
         }).join('');
         const localVersion = p.installed ? (p.version || '未知') : '';
         const marketVersion = p.market_version || p.version || '未知';
-        const state = p.runtime_state || p.state || (p.installed ? 'unknown' : 'not_installed');
+        const state = p.state === 'restart_required' ? p.state :
+          (p.runtime_state || p.state || (p.installed ? 'unknown' : 'not_installed'));
         const updateAvailable = p.installed && p.update_state === 'update_available';
         const actionButtons = p.installed
-          ? '<button class="btn" data-action="' + (updateAvailable ? 'update' : 'reload') + '" data-name="' + esc(p.name) + '">' + (updateAvailable ? '更新' : '重载') + '</button>' +
-            '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>' +
-            '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>'
+          ? (p.state === 'restart_required' ? '<button class="btn" disabled>待重启</button>' :
+            (p.builtin ?
+            '<button class="btn" data-action="reload" data-name="' + esc(p.name) + '">重载</button>' +
+            '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>'
+            : '<button class="btn" data-action="' + (updateAvailable ? 'update' : 'reload') + '" data-name="' + esc(p.name) + '">' + (updateAvailable ? '更新' : '重载') + '</button>' +
+              '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>' +
+              (p.removable === false ? '' : '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>')))
           : '<button class="btn" data-action="install" data-name="' + esc(p.name) + '">安装</button>';
         const badge = p.installed
           ? '<span class="tag" style="background:var(--ok-bg);color:var(--ok);margin-left:8px">已安装</span>'
@@ -5792,14 +5820,21 @@
           '<div style="display:flex;align-items:center;gap:8px">' +
           '<span class="market-icon" aria-hidden="true">' + icon('puzzle', 'md') + '</span>' +
           '<strong>' + esc(p.name) + '</strong>' +
+          (p.builtin ? '<span class="tag">内置</span>' : '') +
           '<span class="muted" style="font-size:12px">市场 v' + esc(marketVersion) + '</span>' +
           badge +
           '</div>' +
           '<div class="muted" style="font-size:12px">' + esc(p.author || '未知') + '</div>' +
           '<div style="flex:1;font-size:13px;line-height:1.5">' + esc(p.desc || '') + '</div>' +
+          (p.builtin ? '<div class="market-meta">随 Vigil 程序发布，可停用；不能单独卸载或更新。</div>' : '') +
           '<div style="margin-top:4px">' + tags + '</div>' +
           (p.installed ? '<div class="market-meta">本地 v' + esc(localVersion) + ' · ' + esc(updateAvailable ? '有可用更新' : (p.update_state === 'ahead' ? '本地版本较新' : '已是最新')) + '</div>' : '') +
-          '<div class="market-meta">运行状态：' + esc(state) + (p.enabled === false ? ' · 已禁用' : '') + '</div>' +
+          '<div class="market-meta">运行状态：' + esc(state) +
+            (p.lifecycle_enabled === false || p.enabled === false ? ' · 全局已停用' : ' · 全局已启用') +
+            (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
+              ? ' · PC 渠道关闭' :
+               p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === true
+              ? ' · PC 渠道可用' : '') + '</div>' +
           (p.diagnostic ? '<div class="market-error">诊断：' + esc(p.diagnostic) + '</div>' : '') +
           '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">' + actionButtons + '</div>' +
           '</div>'
@@ -5841,7 +5876,7 @@
             btn.textContent = action === 'install' ? '安装' : action === 'update' ? '更新' : action === 'uninstall' ? '卸载' : action === 'reload' ? '重载' : action === 'enable' ? '启用' : '禁用';
           } finally {
             marketPending.delete(name);
-            if (!disposed && marketData) draw();
+            if (!disposed && marketData) await load();
             if (disposed) window.dispatchEvent(new Event('vigil-market-changed'));
           }
         });

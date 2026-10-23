@@ -180,7 +180,9 @@ class NativeAdapterTests(unittest.TestCase):
 
     def test_native_command_never_bypasses_required_approval(self):
         task_id = self.run_task("command")
-        wait_for(lambda: self.center.get_task(task_id)["status"] in ("completed", "waiting_approval"))
+        wait_for(lambda: (self.center.get_task(task_id)["status"] == "completed"
+                          or (self.center.get_task(task_id)["status"] == "waiting_approval"
+                              and bool(self.center.approvals()))))
         task = self.center.get_task(task_id)
         if task["status"] == "waiting_approval":
             self.assertEqual(self.fixture.requests, 1)
