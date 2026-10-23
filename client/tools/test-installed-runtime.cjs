@@ -9,7 +9,7 @@ async function run(){
   const env={...process.env,VIGIL_USER_DATA:profile,VIGIL_BRAIN_EXE:'Z:/old/missing-brain.exe',
     PATH:process.env.SystemRoot+'\\System32',VIGIL_SIDECAR_DISABLE:'1'};
   delete env.ELECTRON_RUN_AS_NODE;delete env.VIGIL_CLOUD_TOKEN;delete env.VIGIL_CLOUD_URL;
-  child=spawn(path.join(install,'Vigil.exe'),['--remote-debugging-port=0'],{env,windowsHide:true,stdio:'ignore'});
+  child=spawn(path.join(install,fs.existsSync(path.join(install,'Kestrel.exe'))?'Kestrel.exe':'Vigil.exe'),['--remote-debugging-port=0'],{env,windowsHide:true,stdio:'ignore'});
   let port;
   for(let i=0;i<300;i++){
     if(child.exitCode!=null)throw Error('Installed Electron exited '+child.exitCode);

@@ -12,7 +12,7 @@ function inventory(root){
 }
 function checkpoint(installDir,userData,target){
   installDir=path.resolve(installDir);userData=path.resolve(userData);
-  if(!fs.existsSync(path.join(installDir,'Vigil.exe')))return null;
+  if(!['Kestrel.exe','Vigil.exe'].some(name=>fs.existsSync(path.join(installDir,name))))return null;
   if(contains(installDir,userData) || contains(userData,installDir))throw Error('应用目录与用户数据目录必须分离');
   const root=path.join(userData,'updates'),id=Date.now()+'-'+crypto.randomBytes(4).toString('hex');
   const backupDir=path.join(root,'rollback-'+id);fs.mkdirSync(root,{recursive:true});

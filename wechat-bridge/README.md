@@ -21,7 +21,7 @@ Vigil 仓库保留了本目录的源码快照；WeChat Bridge 本身是单独部
 
 ```
 wxauto_bridge.py              桥接本体：读消息 → 问大脑 → 发消息
-brain-plugin/gate.py          云端发言闸门（装到云端 brain/plugins/）
+brain-plugin/gate.py          历史发言闸门参考（禁止安装到当前 Brain）
 config-example/               脱敏配置示例（真配置含凭据，不进仓库）
 docs/                         部署手册 / 技术约束 / 虚拟机脚本说明
 

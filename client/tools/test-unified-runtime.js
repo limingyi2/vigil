@@ -67,3 +67,15 @@ test('rollback snapshot preserves a complete pair, checks hashes, never contains
   } finally { fs.cpSync=originalCopy; }
   assert.equal(copyAttempted,false,'overlapping install and data roots must be rejected before filesystem changes');
 });
+
+test('Kestrel installation gets the same verified rollback checkpoint', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kestrel-update-'));
+  t.after(() => fs.rmSync(tmp, {recursive:true, force:true}));
+  const install = path.join(tmp, 'app'), home = path.join(tmp, 'profile');
+  fs.mkdirSync(install);
+  fs.writeFileSync(path.join(install, 'Kestrel.exe'), 'old-client');
+  const snapshot = tx.checkpoint(install, home, identity);
+  assert.ok(snapshot);
+  assert.deepEqual(tx.inventory(snapshot.backupDir), snapshot.files);
+  assert.equal(tx.pending(home).status, 'prepared');
+});

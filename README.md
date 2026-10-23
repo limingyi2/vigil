@@ -69,7 +69,7 @@ flowchart LR
 
 ## 开发进度
 
-最新桌面安装包为 **1.0.2**，包含 P1 与 P2 的实现。源码中的 Agent 执行循环位于 [`p2-agent-execution`](https://github.com/limingyi2/vigil/tree/p2-agent-execution) 分支。
+最新桌面安装包为 **1.0.2**，包含 P1 与 P2 的实现。当前开发源码位于默认 `dev` 分支；发行安装包与开发分支的功能范围分别记录。
 
 | 阶段 | 状态 | 交付 |
 |---|---|---|
@@ -77,7 +77,7 @@ flowchart LR
 | P1 · 模型与 Creator 流式 | 已实现 | 动态输出参数、结果归一化、Creator 流式作业和会话展示恢复 |
 | P2 · Agent 执行循环 | 已实现 | 多轮模型 / 工具循环、持久运行记录、预算、取消与防重放 |
 | 后续多步插件完善 | 尚未实施 | 按计划逐步补齐分文件生成、验证与修复等能力 |
-| 任务检查点与显式继续 | 独立工作线暂停 | 已有设计契约，尚未交付完整 Resume / Recovery |
+| 任务检查点与显式继续 | 开发源码已实现 | Agent Run 支持显式继续、插话与 workflow 检查点；具体边界见对应测试与契约 |
 
 **当前边界：** 预算耗尽不会自动追加预算或继续执行；进程重启后的在途任务标记为中断，不自动重放工具。取消会阻止后续派发，已经开始的外部操作可能仍然完成。工具去重针对同一 run 的调用身份与规范化参数，并不等于外部系统的事务保证。
 
@@ -90,7 +90,7 @@ flowchart LR
 ```powershell
 git clone https://github.com/limingyi2/vigil.git
 cd vigil
-git checkout p2-agent-execution
+git checkout dev
 
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r brain/requirements.txt

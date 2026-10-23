@@ -50,7 +50,7 @@ async function start() {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.VIGIL_CLOUD_TOKEN;
   delete env.VIGIL_CLOUD_URL;
-  app = spawn(path.join(install, 'Vigil.exe'), ['--remote-debugging-port=0'], { env, windowsHide: true, stdio: 'ignore' });
+  app = spawn(path.join(install, fs.existsSync(path.join(install, 'Kestrel.exe')) ? 'Kestrel.exe' : 'Vigil.exe'), ['--remote-debugging-port=0'], { env, windowsHide: true, stdio: 'ignore' });
   let connected = false;
   for (let i = 0; i < 360; i++) {
     if (app.exitCode != null) throw Error(`Installed Electron exited ${app.exitCode}`);

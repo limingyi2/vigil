@@ -1,44 +1,7 @@
-# -*- mode: python ; coding: utf-8 -*-
+# Compatibility entry point. The release pipeline and direct builds share one spec.
+import os
 
-
-a = Analysis(
-    ['server_launch.py'],
-    pathex=[],
-    binaries=[],
-    datas=[('plugins', 'plugins'), ('version.json', '.')],
-    hiddenimports=['websocket'],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-    optimize=0,
-)
-pyz = PYZ(a.pure)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='vigil-brain',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=True,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='vigil-brain',
-)
+canonical = os.path.normpath(os.path.join(SPECPATH, '..', 'deploy', 'brain', 'vigil-brain.spec'))
+SPECPATH = os.path.dirname(canonical)
+with open(canonical, encoding='utf-8') as source:
+    exec(compile(source.read(), canonical, 'exec'))

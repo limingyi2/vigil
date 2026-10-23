@@ -69,12 +69,8 @@ def _device_id():
 
 def device_info():
     """A small public inventory; does not query Brain, files, processes, or secrets."""
-    try:
-        root = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__)))
-        with open(os.path.join(root, "version.json"), encoding="utf-8") as f:
-            version = str(json.load(f).get("version") or "development")
-    except (OSError, TypeError, ValueError):
-        version = "development"
+    from build_identity import identity
+    version = str(identity().get('version') or 'development')
     return {
         "name": socket.gethostname()[:60],
         "os": platform.platform()[:120],

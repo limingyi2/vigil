@@ -286,3 +286,7 @@ brain/plugins/_pending_restart.json
 /.agent-eval/
 /agent-eval-reports/
 /agent-eval-state/
+
+# Disposable test/host markers
+pytest-cache-files-*/
+.host_started

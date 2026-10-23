@@ -35,7 +35,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PANEL = os.path.join(ROOT, "admin", "dashboard.html")
-APP = os.path.join(ROOT, "vigil-client", "src", "js", "pages.js")
+APP = os.path.join(ROOT, "client", "src", "js", "pages.js")
 SERVER = os.path.join(ROOT, "brain", "server.py")
 
 
@@ -149,9 +149,9 @@ class TestAppRefetchesOnProviderSwitch(unittest.TestCase):
                       "换服务商没带出该家的默认地址")
 
     def test_重拉_把地址与密钥都传过去(self):
-        self.assertIn("/api/models?force=1&base=", self.h,
+        self.assertIn("mpost('/api/models/list', {", self.h,
                       "重新拉取没有带 base —— 拿到的还是当前配置那家的列表")
-        self.assertIn("encodeURIComponent(key)", self.h,
+        self.assertIn("force: true, base: base, provider: pk, api_key: key", self.h,
                       "重新拉取没带 key：用户换地址后可能也换了密钥")
 
     def test_重拉按钮存在且不是旧路径(self):

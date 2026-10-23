@@ -2433,6 +2433,10 @@ def start_remote_api(brain):
                 body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception:
                 body = {}
+            from config_transactions import dispatch
+            return dispatch(self, path, body)
+
+        def _dispatch_post(self, path, body):
             if self._reject_retired_context(body):
                 return
             if self._agent_api('POST', path, body):
@@ -3851,8 +3855,9 @@ def start_remote_api(brain):
                                              "msg": "没有改动"})
                         else:
                             model_hub.save(new_cfg)
-                            api_config.clear()
                             api_config.update(new_cfg)
+                            for key in set(api_config) - set(new_cfg):
+                                api_config.pop(key, None)
                             try:
                                 _refresh_api_cfg(api_config)
                             except Exception:

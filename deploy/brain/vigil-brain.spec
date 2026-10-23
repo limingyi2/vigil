@@ -61,6 +61,7 @@ a = Analysis(
     binaries=[],
     datas=plugin_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
     hiddenimports=[
+        "websocket",  # Optional Hub Bridge imports websocket-client lazily.
         "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",
         "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",
         # 插件按文件路径动态加载（不在静态分析图里），它们 import 的

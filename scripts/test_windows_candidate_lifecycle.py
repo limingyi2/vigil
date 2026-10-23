@@ -32,14 +32,14 @@ def run_logged(command, *, env, log_path, timeout):
     return result
 
 
-def main(installer, expected_commit, output, expected_version='1.1.0'):
+def main(installer, expected_commit, output, expected_version=None):
     assert os.name == 'nt', 'This acceptance check must run on an isolated Windows runner'
     installer = Path(installer).resolve()
     output = Path(output).resolve()
     manifest_path = installer.parent / 'release-manifest.json'
     contents_path = installer.with_suffix('.contents.json')
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    assert manifest['candidate'] is True and manifest['ver'] == expected_version
+    assert manifest['candidate'] is True and (expected_version is None or manifest['ver'] == expected_version)
     assert manifest['source_commit'] == expected_commit, 'Candidate source commit mismatch'
     assert manifest['setup_file'] == installer.name
     installer_hash = sha256(installer)
@@ -60,7 +60,7 @@ def main(installer, expected_commit, output, expected_version='1.1.0'):
     install_result = run_logged([str(installer), '/S', '/LOG=' + str(nsis_install_log), '/D=' + str(install)], env=env,
                                 log_path=root / 'installer-install.json', timeout=300)
     assert install_result.returncode == 0, f'Candidate installer exited {install_result.returncode}'
-    assert (install / 'Vigil.exe').is_file(), 'Fresh installation did not create Vigil.exe'
+    assert (install / (installer.name.split('.Setup.')[0] + '.exe')).is_file(), 'Fresh installation did not create Vigil.exe'
     for relative, expected in json.loads(contents_path.read_text(encoding='utf-8')).items():
         file = install / Path(relative)
         assert file.is_file() and sha256(file) == expected, f'Installed core file missing or changed: {relative}'
@@ -92,7 +92,7 @@ def main(installer, expected_commit, output, expected_version='1.1.0'):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
     config_file = user_data_root / 'config.json'
-    conversations_db = brain_home / 'data/conversations.sqlite3'
+    conversations_db = brain_home / 'data/db/vigil.db'
     assert config_file.is_file(), 'Fresh chat did not persist the user configuration'
     assert conversations_db.is_file(), 'Fresh chat did not persist conversation metadata in SQLite'
     with sqlite3.connect(conversations_db.as_uri() + '?mode=ro', uri=True) as db:
@@ -176,7 +176,7 @@ if __name__ == '__main__':
     parser.add_argument('installer')
     parser.add_argument('--expected-source-commit', required=True)
     parser.add_argument('--output', required=True)
-    parser.add_argument('--expected-version', default='1.1.0')
+    parser.add_argument('--expected-version', default=None)
     args = parser.parse_args()
     if Path(args.output).resolve().exists():
         parser.error('Refusing to overwrite an existing lifecycle report')

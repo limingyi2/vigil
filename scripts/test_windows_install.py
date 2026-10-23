@@ -248,7 +248,7 @@ def main(installer, baseline, output=None):
     verify_baseline(baseline)
     release = json.loads((installer.parent / 'release-manifest.json').read_text(encoding='utf-8'))
     expected_version = release.get('ver')
-    assert expected_version and installer.name == f'Vigil.Setup.{expected_version}.exe', 'Installer name must match its candidate manifest'
+    assert expected_version and installer.name.endswith(f'.Setup.{expected_version}.exe'), 'Installer name must match its candidate manifest'
     assert release['candidate'] is True and release['setup_file'] == installer.name
     assert release['sha256'] == sha256(installer) and release['size'] == installer.stat().st_size
     assert release['source_commit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
@@ -269,7 +269,7 @@ def main(installer, baseline, output=None):
 
     def setup(package):
         subprocess.run([str(package), '/S', '/D=' + str(install)], env=env, check=True, timeout=300)
-        assert (install / 'Vigil.exe').is_file(), 'Installer did not produce expected executable'
+        assert (install / (Path(package).name.split('.Setup.')[0] + '.exe')).is_file(), 'Installer did not produce expected executable'
         if Path(package).resolve() == installer:
             contents_path = installer.with_suffix('.contents.json')
             contents = json.loads(contents_path.read_text(encoding='utf-8'))
