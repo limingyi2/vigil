@@ -415,7 +415,8 @@ def _persona_for_src(src, default_key=""):
     return persona_key(cfg, src, default_key)
 
 
-def _clear_brain_history_scope(brain, src, conversations, conversation_id=None):
+def _clear_brain_history_scope(brain, src, conversations, conversation_id=None,
+                               path_overrides=None):
     """Clear legacy and indexed transcript files for one scoped history request."""
     with _chat_lock():
         previous_src, previous_conversation = brain._cur_src, brain._cur_conversation
@@ -431,7 +432,9 @@ def _clear_brain_history_scope(brain, src, conversations, conversation_id=None):
                 targets = [None] + [item['id'] for item in conversations if not item.get('legacy')]
             # Resolve every path before removing any file; a broken persona/channel
             # partition must fail closed rather than falling back to another log.
-            paths = list(dict.fromkeys(brain._log_for(src, cid) for cid in targets))
+            path_overrides = path_overrides or {}
+            paths = list(dict.fromkeys(
+                path_overrides.get(cid) or brain._log_for(src, cid) for cid in targets))
             for path in paths:
                 try:
                     os.remove(path)
@@ -1562,6 +1565,29 @@ def start_remote_api(brain):
             ids = {r['id'] for r in rows}
             return rows + [r for r in self._legacy_pc_rows(src, persona) if r['id'] not in ids]
 
+        def _visible_conversation_rows(self, owner, src, persona):
+            """Return exactly the indexed sessions shown by the PC session list."""
+            rows = self._conversation_rows(owner, src, persona)
+            import creator_jobs, display_turns, agent_runs
+            visible = []
+            for item in rows:
+                if item.get('legacy'):
+                    item['has_content'] = True
+                else:
+                    cid = item['id']
+                    turn_owner = self._display_owner({'src': src, 'conversation_id': cid})
+                    item['has_content'] = bool(
+                        brain.read_history(1, src, cid)
+                        or creator_jobs.listing(turn_owner, cid)
+                        or display_turns.listing(turn_owner)
+                        or agent_runs.display_records(turn_owner))
+                    # An empty chat opened in a workspace is a deliberate session.
+                    if item.get('workspace_id'):
+                        item['has_content'] = True
+                if item['has_content']:
+                    visible.append(item)
+            return visible
+
         def _conversation_context(self, src='pc', cid=None):
             """Resolve a desktop conversation only within the current identity/persona."""
             import conversations
@@ -2311,13 +2337,20 @@ def start_remote_api(brain):
                     return
                 if path.endswith('/delete'):
                     wid = path.rsplit('/', 2)[-2]
-                    _, owner, persona = self._workspace_context(src, wid)
-                    item = workspaces.remove(owner, src, str(persona), wid)
+                    workspace, workspace_owner, workspace_persona = self._workspace_context(src, wid)
+                    if not workspace:
+                        self._json(404, {"ok": False, "err": "工作区不存在"})
+                        return
+                    _, current_owner, _, current_persona = self._conversation_context(src)
+                    item = workspaces.remove(workspace_owner, src, str(workspace_persona), wid)
                     if not item:
                         self._json(404, {"ok": False, "err": "工作区不存在"})
                         return
                     # Chats survive as ordinary chats; no files are touched.
-                    detached = conversations.detach_workspace(owner, src, str(persona), wid)
+                    scopes = {(workspace_owner, src, str(workspace_persona)),
+                              (current_owner, src, str(current_persona))}
+                    detached = sum(conversations.detach_workspace(o, s, p, wid)
+                                   for o, s, p in scopes)
                     self._json(200, {"ok": True, "item": item, "detached": detached})
                     return
                 self._json(404, {"ok": False, "err": "接口不存在"})
@@ -3180,20 +3213,52 @@ def start_remote_api(brain):
                         _conv_rows = [_conv]
                     elif _csrc == 'pc':
                         _, _conv_owner, _, _persona = self._conversation_context(_csrc)
-                        import conversations as _conversations
-                        _conv_rows = _conversations.list_for(_conv_owner, _csrc, str(_persona))
+                        if _cloud_history(None, _csrc):
+                            import conversations as _conversations
+                            _conversations.ensure_legacy(_conv_owner, _csrc, str(_persona))
+                        _conv_rows = self._visible_conversation_rows(
+                            _conv_owner, _csrc, _persona)
+
+                    _row_scopes = {}
+                    _log_paths = {}
+                    if _csrc == 'pc' and _conv_owner is not None:
+                        import display_turns as _display_turns, conversations as _conversations
+                        _old_owner = _display_turns.owner(
+                            getattr(self, '_who', ('', '')), _csrc, 'conversations:')
+                        _old_rows = {row['id']: row for row in self._legacy_pc_rows(
+                            _csrc, _persona)}
+                        for _item in _conv_rows:
+                            _cid_row = _item['id']
+                            if _conversations.get(_conv_owner, _csrc, str(_persona), _cid_row):
+                                _row_scopes[_cid_row] = (_conv_owner, str(_persona))
+                            elif _cid_row in _old_rows:
+                                _row_scopes[_cid_row] = (_old_owner, '')
+                                _base = os.path.dirname(brain._log_for(_csrc))
+                                _suffix = '.pc.chat_history.jsonl.conversation.' + _cid_row + '.jsonl'
+                                _archives = [os.path.join(_base, name) for name in os.listdir(_base)
+                                             if name.endswith(_suffix)] if os.path.isdir(_base) else []
+                                if len(_archives) == 1:
+                                    _log_paths[_cid_row] = _archives[0]
 
                     import display_turns, creator_jobs, agent_runs
                     _owners = set() if _cid else {self._display_owner({'src': _csrc})}
                     for _item in _conv_rows:
                         _owners.add(self._display_owner({'src': _csrc, 'conversation_id': _item['id']}))
+                        if _row_scopes.get(_item['id']):
+                            _identity = getattr(self, '_who', ('', ''))
+                            _row_persona = _row_scopes[_item['id']][1]
+                            _owners.add(display_turns.owner(
+                                _identity, _csrc, str(_row_persona) + ':' + _item['id']))
+                            if _row_scopes[_item['id']][1] == '':
+                                _owners.add(display_turns.owner(_identity, _csrc, _item['id']))
 
                     _bl = _LOCAL.get("brain")
                     if _bl is None:
                         self._json(503, {"ok": False, "err": "Brain 尚未就绪，历史未清理"})
                         return
                     try:
-                        _clear_brain_history_scope(_bl, _csrc, _conv_rows, _cid)
+                        _clear_brain_history_scope(_bl, _csrc, _conv_rows, _cid,
+                                                   path_overrides=_log_paths)
                     except _Busy:
                         self._json(200, {"ok": False, "err": "她正忙着，聊天历史未清理"})
                         return
@@ -3209,7 +3274,10 @@ def start_remote_api(brain):
                             agent_runs.hide(_owner)
                         if not _cid and _csrc == 'pc':
                             import conversations as _conversations
-                            _conversations.clear_for(_conv_owner, _csrc, str(_persona))
+                            for _item in _conv_rows:
+                                _scope = _row_scopes.get(_item['id'])
+                                if _scope:
+                                    _conversations.delete(_scope[0], _csrc, _scope[1], _item['id'])
                     except Exception as e:
                         _log_history_error(_csrc, e, "clear_records")
                         self._json(500, {"ok": False, "err": "服务端历史索引清理失败"})
@@ -3839,27 +3907,7 @@ def start_remote_api(brain):
                 if old_history:
                     conversations.ensure_legacy(owner, src, str(persona))
                     items = self._conversation_rows(owner, src, persona)
-                import creator_jobs as _creator_jobs, display_turns as _display_turns, agent_runs as _agent_runs
-                visible = []
-                for item in items:
-                    if item.get('legacy'):
-                        item['has_content'] = True
-                    else:
-                        _cid = item['id']
-                        _turn_owner = self._display_owner({'src':src, 'conversation_id':_cid})
-                        _job_owner = self._display_owner({'src':src, 'conversation_id':_cid})
-                        item['has_content'] = bool(
-                            brain.read_history(1, src, _cid)
-                            or _creator_jobs.listing(_job_owner, _cid)
-                            or _display_turns.listing(_turn_owner)
-                            or _agent_runs.display_records(_turn_owner))
-                        # An empty chat the user opened inside a workspace is a
-                        # deliberate object; keep it visible after a restart.
-                        if item.get('workspace_id'):
-                            item['has_content'] = True
-                    if item['has_content']:
-                        visible.append(item)
-                items = visible
+                items = self._visible_conversation_rows(owner, src, persona)
                 legacy = next((item for item in items if item.get('legacy')), None)
                 if legacy:
                     # The historical transcript is one continuous record. Use

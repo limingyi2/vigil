@@ -194,6 +194,101 @@ def test_verified_legacy_pc_workspace_survives_coding_route(core, monkeypatch):
     assert request('/api/workspaces/' + ws['id'] + '/delete', {})[1]['ok']
 
 
+def test_clear_all_covers_visible_verified_legacy_pc_sessions_only(core):
+    b, request, data, cfg = core
+    import conversations, display_turns, agent_runs
+    identity = ('brain', '')
+    current_owner = display_turns.owner(identity, 'pc', 'conversations:alpha')
+    old_owner = display_turns.owner(identity, 'pc', 'conversations:')
+    current = conversations.create(current_owner, 'pc', 'alpha')
+    recovered = conversations.create(old_owner, 'pc', '')
+    unverified = conversations.create(old_owner, 'pc', '')
+    other_identity_owner = display_turns.owner(('other-user', ''), 'pc', 'conversations:alpha')
+    other_user = conversations.create(other_identity_owner, 'pc', 'alpha')
+    other_persona_owner = display_turns.owner(identity, 'pc', 'conversations:beta')
+    other_persona = conversations.create(other_persona_owner, 'pc', 'beta')
+
+    current_path = Path(b._log_for('pc', current['id']))
+    recovered_path = Path(b._log_for('pc', recovered['id']))
+    other_user_path = Path(b._log_for('pc', other_user['id']))
+    other_persona_path = Path(Brain(None, {'persona_file': 'personas/beta.json'})._log_for(
+        'pc', other_persona['id']))
+    for path, marker in ((current_path, 'CURRENT_VISIBLE'),
+                         (recovered_path, 'RECOVERED_VISIBLE'),
+                         (other_user_path, 'OTHER_USER'),
+                         (other_persona_path, 'OTHER_PERSONA')):
+        path.write_text(json.dumps({'role': 'user', 'text': marker}) + '\n', encoding='utf-8')
+
+    current_display = display_turns.owner(identity, 'pc', 'alpha:' + current['id'])
+    old_display = display_turns.owner(identity, 'pc', recovered['id'])
+    display_turns.begin(current_display, 'current_clear_1234', 'current pending')
+    display_turns.begin(old_display, 'old_clear_1234', 'old pending')
+    old_run = agent_runs.create({'request_id': 'old_legacy_run_1234',
+        'intent': 'old task', 'src': 'pc', 'conversation_id': recovered['id']},
+        cfg, old_display, start=False)
+    assert old_run
+
+    before = request('/api/conversations')[1]['items']
+    visible_ids = {row['id'] for row in before}
+    assert {current['id'], recovered['id']} <= visible_ids
+    assert unverified['id'] not in visible_ids
+    assert other_user['id'] not in visible_ids and other_persona['id'] not in visible_ids
+
+    code, result = request('/api/history/clear', {'src': 'pc'})
+    assert code == 200 and result['ok']
+    assert set(result['cleared_sessions']) == {'main', 'welcome', *visible_ids}
+    assert request('/api/conversations')[1]['items'] == []
+    assert not current_path.exists() and not recovered_path.exists()
+    assert other_user_path.exists() and other_persona_path.exists()
+    assert conversations.get(old_owner, 'pc', '', unverified['id']) is not None
+    assert conversations.get(other_identity_owner, 'pc', 'alpha', other_user['id']) is not None
+    assert conversations.get(other_persona_owner, 'pc', 'beta', other_persona['id']) is not None
+    assert display_turns.listing(current_display) == []
+    assert display_turns.listing(old_display) == []
+    assert agent_runs.listing(old_display) == []
+
+
+def test_deleting_recovered_workspace_detaches_old_and_new_sessions(core, monkeypatch):
+    b, request, data, cfg = core
+    import conversations, display_turns, workspaces, agent_runs
+    owner = display_turns.owner(('brain', ''), 'pc', 'conversations:')
+    workspace_path = data / 'workspace-files'
+    workspace_path.mkdir()
+    keep_file = workspace_path / 'README.md'
+    keep_file.write_text('workspace data remains', encoding='utf-8')
+    workspace = workspaces.create(owner, 'pc', '', str(workspace_path))
+    old_session = conversations.create(owner, 'pc', '', workspace['id'])
+    b._log_turn('OLD_WORKSPACE_CONTEXT', 'reply', src='pc', conversation_id=old_session['id'])
+
+    # Listing the current persona recovers the archived workspace after verifying
+    # its legacy conversation archive. A new alpha session may then use it.
+    assert workspace['id'] in {row['id'] for row in request('/api/workspaces')[1]['items']}
+    code, created = request('/api/conversations', {'workspace_id': workspace['id']})
+    assert code == 201, created
+    new_session = created['item']
+    assert new_session['workspace_id'] == workspace['id']
+
+    code, removed = request('/api/workspaces/' + workspace['id'] + '/delete', {})
+    assert code == 200 and removed['ok'] and removed['detached'] == 2
+    assert conversations.get(owner, 'pc', '', old_session['id'])['workspace_id'] is None
+    current_owner = display_turns.owner(('brain', ''), 'pc', 'conversations:alpha')
+    assert conversations.get(current_owner, 'pc', 'alpha', new_session['id'])['workspace_id'] is None
+    assert not workspaces.get(owner, 'pc', '', workspace['id'])
+    assert keep_file.read_text(encoding='utf-8') == 'workspace data remains'
+
+    code, chat = request('/api/chat', {'text': 'ordinary after workspace deletion',
+                                       'conversation_id': new_session['id']})
+    assert code == 200 and chat['reply'] == 'PC_REPLY'
+    create_run = Mock(return_value={'id': 'fixture', 'status': 'queued'})
+    monkeypatch.setattr(agent_runs, 'create', create_run)
+    code, error = request('/api/agent/runs', {'request_id': 'deleted_workspace_coding_1',
+        'intent': '修改 README.md', 'kind': 'coding', 'conversation_id': new_session['id'],
+        'workspace_id': workspace['id']})
+    assert code == 400, error
+    assert not error.get('ok')
+    create_run.assert_not_called()
+
+
 def test_ambiguous_legacy_id_never_shares_display_records(core):
     b, request, data, cfg = core
     import conversations, display_turns

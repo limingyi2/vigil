@@ -245,10 +245,19 @@ class ConversationIsolationTests(unittest.TestCase):
                         data=json.dumps({'src':'pc'}).encode('utf-8'),
                         headers={'Authorization':'Bearer history-clear-test-token',
                                  'Content-Type':'application/json'}, method='POST')
+                    listing_req = urllib.request.Request(
+                        'http://127.0.0.1:%d/api/conversations?src=pc' % port,
+                        headers={'Authorization':'Bearer history-clear-test-token'})
+                    with urllib.request.urlopen(listing_req, timeout=5) as response:
+                        visible_ids = {row['id'] for row in json.loads(
+                            response.read().decode('utf-8'))['items']}
                     with urllib.request.urlopen(req, timeout=5) as response:
                         payload = json.loads(response.read().decode('utf-8'))
                     self.assertTrue(payload['ok'])
-                    self.assertCountEqual(payload['cleared_sessions'], ['main', 'welcome', a['id'], b['id']])
+                    self.assertCountEqual(payload['cleared_sessions'],
+                                          ['main', 'welcome', *visible_ids])
+                    with urllib.request.urlopen(listing_req, timeout=5) as response:
+                        self.assertEqual(json.loads(response.read().decode('utf-8'))['items'], [])
                 finally:
                     httpd.shutdown()
                     httpd.server_close()
