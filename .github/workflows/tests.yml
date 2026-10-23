@@ -36,6 +36,9 @@ jobs:
       - name: 跑测试
         run: python -m pytest tests -q --junitxml=test-results.xml
 
+      - name: Semantic retrieval settings JS syntax
+        run: node --check client/src/js/pages.js
+
       - name: 共享订阅与 Creator 界面回归
         if: always()
         run: node --test client/tools/test-p2-stream-lifecycle.js client/tools/test-unified-runtime.js client/tools/test-public-updates.js

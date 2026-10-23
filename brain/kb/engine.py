@@ -92,6 +92,11 @@ def _sync_chunks_to_unified(chunks, persona_key="", src="app", owner="", source_
         indexed = result.get("indexed", 0)
         if indexed == 0:
             return {"ok": False, "error": "no_chunks_indexed"}
+        # Pure BM25 mode: keep text but never generate new vectors.
+        from storage import unified
+        if not unified.semantic_enabled():
+            return {"ok": True, "indexed": indexed, "vectorized": 0,
+                    "semantic_disabled": True}
         # 2. 给这些文档建向量（用统一的 EmbeddingBackend）
         doc_ids = []
         for chunk in enriched:
@@ -117,16 +122,23 @@ def ingest_text(text, name, persona_key="", src="app"):
     chunks = split_text(text, cfg["chunk_size"], cfg["chunk_overlap"])
     if not chunks:
         return {"ok": False, "err": "没有可入库的内容", "chunks": 0}
-    vecs, model = [], ""
-    for i in range(0, len(chunks), cfg["batch"]):
-        part = [c["text"] for c in chunks[i:i + cfg["batch"]]]
-        v, m = _emb.embed(part)          # 锁外做网络/GPU 调用
-        if not v:
-            return {"ok": False, "err": "向量化失败（嵌入后端都不可用）", "chunks": 0}
-        vecs.extend(v)
-        model = m
+    from storage import unified
+    semantic = unified.semantic_enabled()
     st = store_for(persona_key, src)
-    n = st.upsert(name, chunks, vecs, model)
+    if not semantic:
+        # BM25 mode still accepts knowledge files, with no model invocation.
+        n = st.upsert_text(name, chunks)
+        model = ""
+    else:
+        vecs, model = [], ""
+        for i in range(0, len(chunks), cfg["batch"]):
+            part = [c["text"] for c in chunks[i:i + cfg["batch"]]]
+            v, m = _emb.embed(part)          # 锁外做网络/GPU 调用
+            if not v:
+                return {"ok": False, "err": "向量化失败（嵌入后端都不可用）", "chunks": 0}
+            vecs.extend(v)
+            model = m
+        n = st.upsert(name, chunks, vecs, model)
     st.set_source_meta(name, size=len(text or ""))
     result = {"ok": True, "name": name, "chunks": n, "model": model,
               "scope": scope_of(persona_key, src)}
@@ -168,6 +180,9 @@ def ingest_path(path, persona_key="", src="app"):
 
 def reindex(persona_key="", src="app"):
     """按现有块正本重算向量（换了嵌入模型之后必须跑一次）。"""
+    from storage import unified
+    if not unified.semantic_enabled():
+        return {"ok": False, "err": "已关闭语义检索，未执行向量重建", "reason": "semantic_disabled"}
     st = store_for(persona_key, src)
     rows = st.chunks()
     if not rows:
@@ -293,6 +308,10 @@ def search(query, persona_key="", src="app", top_k=None, min_score=None):
         except Exception:
             pass  # 统一检索失败，降级到旧搜索
 
+    # Semantic off: BM25 is the only retrieval channel, no legacy embeddings.
+    from storage import unified
+    if not unified.semantic_enabled():
+        return []
     # 降级：旧的 npy 暴力扫描
     qv, _tag = _emb.embed_one(q)
     if qv is None:

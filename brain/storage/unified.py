@@ -56,6 +56,12 @@ def unified_enabled(api_config=None):
     return section.get("unified", True) is not False
 
 
+def semantic_enabled(api_config=None):
+    """Independent vector retrieval toggle; FTS5/BM25 stays available."""
+    _, section = _cfg(api_config)
+    return section.get("semantic_enabled", True) is not False
+
+
 def scope_for(owner="", src="", persona="", chan="", workspace_ids=None):
     """构造检索范围。**这是隔离边界的唯一出处。**"""
     scope = {}
@@ -103,6 +109,8 @@ def retrieve(query, owner="", src="", persona="", chan="", workspace_ids=None,
 def _backend(api_config=None):
     """向量后端。配置读不到就返回 none（只跑 BM25）。"""
     try:
+        if not semantic_enabled(api_config):
+            return vector.EmbeddingBackend(mode="none")
         if api_config:
             return vector.backend_from_config(api_config)
         return search._default_backend()
@@ -236,7 +244,9 @@ def sync_workspaces(owner, src, persona, chan):
 
 
 def reindex_embeddings(doc_ids=None, api_config=None, backend=None):
-    """给索引里的文档补向量。"""
+    """给索引里的文档补向量。语义检索关闭时只维护文本索引。"""
+    if not semantic_enabled(api_config):
+        return {"ok": False, "reason": "semantic_disabled", "indexed": 0}
     conn = db.connection("main")
     if doc_ids is None:
         rows = conn.execute("SELECT id FROM search_docs").fetchall()
@@ -250,7 +260,8 @@ def reindex_embeddings(doc_ids=None, api_config=None, backend=None):
 
 def status(owner="", src="", persona="", chan=""):
     """检索层概况。给面板/插件看。"""
-    out = {"unified": unified_enabled(), "db": {}, "index": {}, "vector": {}}
+    out = {"unified": unified_enabled(), "semantic_enabled": semantic_enabled(),
+           "db": {}, "index": {}, "vector": {}}
     try:
         conn = db.connection("main")
         out["db"] = {
