@@ -4,7 +4,13 @@ set "ROOT=%~dp0"
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "VSROOT="
 if exist "%VSWHERE%" (
-  for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSROOT=%%i"
+  for /f "tokens=*" %%i in ('"%VSWHERE%" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSROOT=%%i"
+)
+if not defined VSROOT (
+  for %%E in (Enterprise Professional Community BuildTools) do (
+    if not defined VSROOT if exist "%ProgramFiles%\Microsoft Visual Studio\2022\%%E\Common7\Tools\VsDevCmd.bat" set "VSROOT=%ProgramFiles%\Microsoft Visual Studio\2022\%%E"
+    if not defined VSROOT if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\%%E\Common7\Tools\VsDevCmd.bat" set "VSROOT=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\%%E"
+  )
 )
 if not defined VSROOT set "VSROOT=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools"
 if not exist "%VSROOT%\Common7\Tools\VsDevCmd.bat" (
