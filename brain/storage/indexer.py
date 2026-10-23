@@ -307,7 +307,8 @@ def sync_chat(chat_path, owner="", src="", persona="", chan="", conversation_id=
                     owner=owner, src=src, persona=persona, chan=chan,
                     content_hash=content_hash(content),
                     mtime=stat.st_mtime, size=len(content),
-                    meta={"role": role, "line": line_no, "time": stamp})
+                     meta={"role": role, "line": line_no, "time": stamp,
+                           "conversation_id": conversation_id})
                 indexed += 1
     except OSError:
         pass

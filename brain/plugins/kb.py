@@ -57,7 +57,7 @@ def _unified_rows(q, key, src):
                                        kinds=["kb"], top_k=5, budget_chars=2400)
     except Exception:
         return None
-    return rows or None
+    return rows if rows or _info.get('guarded') else None
 
 
 def _t_kb_search(arg):
@@ -68,7 +68,9 @@ def _t_kb_search(arg):
     key, src = _scope()
 
     unified_rows = _unified_rows(q, key, src)
-    if unified_rows:
+    if unified_rows is not None:
+        if not unified_rows:
+            return '知识库证据不足或指代不明确，请明确实体；不要引用其他实体的资料。'
         out = ["知识库里找到 %d 段相关内容：" % len(unified_rows)]
         for r in unified_rows:
             out.append("\n【%s｜%.2f】\n%s"
@@ -123,7 +125,9 @@ def on_turn_in(ctx):
         brain = getattr(ctx, "brain", None) or _brain
         src = getattr(ctx, "src", "pc") or "pc"
         key = brain.persona_key_of(src) if brain is not None and hasattr(brain, "persona_key_of") else ""
-        rows = kb.search(text, persona_key=key, src=src, top_k=cfg["top_k"])
+        from storage.query_resolver import for_brain
+        rows = kb.search(text, persona_key=key, src=src, top_k=cfg["top_k"],
+                         query_context=for_brain(brain))
         block = kb.format_block(rows, cfg["max_chars"])
         if block:
             print("[知识库] 注入 %d 段（最高 %.2f）"

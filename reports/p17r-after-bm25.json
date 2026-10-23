@@ -1,0 +1,534 @@
+{
+  "phase": "after",
+  "mode": "bm25",
+  "fixture_sha256": "b9a731823070a6bd783d2694668491dceea34e584bd3b05c08d90f0c29a776bf",
+  "cases": 24,
+  "repeats": 30,
+  "embedding": "deterministic offline SHA-256 features (not production embeddings)",
+  "metrics": {
+    "entity_accuracy": 1.0,
+    "recall_at_5": 1.0,
+    "mrr_at_10": 1.0,
+    "wrong_entity_answer_rate": null,
+    "wrong_entity_evidence_rate": 0.0,
+    "multi_turn_drift_rate": 0.0,
+    "chain_abstention_rate": 0.0,
+    "p50_ms": 0.7168999873101711,
+    "p95_ms": 0.9224999230355024
+  },
+  "records": [
+    {
+      "id": "zhang-followup",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 2.0586999598890543
+    },
+    {
+      "id": "latest-li",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "李四的工资是多少？",
+      "predicted_entities": [
+        "李四"
+      ],
+      "expected_entities": [
+        "李四"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "li-pay"
+      ],
+      "retrieved": [
+        "li-pay",
+        "relation"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7424000650644302
+    },
+    {
+      "id": "two-people",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "他的工资是多少？",
+      "predicted_entities": [
+        "张三",
+        "李四"
+      ],
+      "expected_entities": [],
+      "expected_status": "ambiguous",
+      "actual_status": "ambiguous",
+      "gold": [],
+      "retrieved": [],
+      "wrong_entity_evidence": false,
+      "recall5": null,
+      "rr10": null,
+      "cold_ms": 0.23549993056803942
+    },
+    {
+      "id": "topic-switch",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "他的工资是多少？",
+      "predicted_entities": [],
+      "expected_entities": [],
+      "expected_status": "ambiguous",
+      "actual_status": "ambiguous",
+      "gold": [],
+      "retrieved": [],
+      "wrong_entity_evidence": false,
+      "recall5": null,
+      "rr10": null,
+      "cold_ms": 0.19150006119161844
+    },
+    {
+      "id": "no-history-pronoun",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "他的工资是多少？",
+      "predicted_entities": [],
+      "expected_entities": [],
+      "expected_status": "ambiguous",
+      "actual_status": "ambiguous",
+      "gold": [],
+      "retrieved": [],
+      "wrong_entity_evidence": false,
+      "recall5": null,
+      "rr10": null,
+      "cold_ms": 0.1860000193119049
+    },
+    {
+      "id": "explicit-switch",
+      "original_query": "李四的工资是多少？",
+      "resolved_query": "李四的工资是多少？",
+      "predicted_entities": [
+        "李四"
+      ],
+      "expected_entities": [
+        "李四"
+      ],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [
+        "li-pay"
+      ],
+      "retrieved": [
+        "li-pay",
+        "relation"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 1.1230000527575612
+    },
+    {
+      "id": "missing-person",
+      "original_query": "赵六的工资是多少？",
+      "resolved_query": "赵六的工资是多少？",
+      "predicted_entities": [
+        "赵六"
+      ],
+      "expected_entities": [
+        "赵六"
+      ],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [],
+      "retrieved": [],
+      "wrong_entity_evidence": false,
+      "recall5": null,
+      "rr10": null,
+      "cold_ms": 0.687899999320507
+    },
+    {
+      "id": "name-boundary",
+      "original_query": "王伟的工资是多少？",
+      "resolved_query": "王伟的工资是多少？",
+      "predicted_entities": [
+        "王伟"
+      ],
+      "expected_entities": [
+        "王伟"
+      ],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [
+        "wang-pay"
+      ],
+      "retrieved": [
+        "wang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7440000772476196
+    },
+    {
+      "id": "same-name",
+      "original_query": "陈明的工资是多少？",
+      "resolved_query": "陈明的工资是多少？",
+      "predicted_entities": [
+        "陈明"
+      ],
+      "expected_entities": [
+        "陈明"
+      ],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [],
+      "retrieved": [],
+      "wrong_entity_evidence": false,
+      "recall5": null,
+      "rr10": null,
+      "cold_ms": 0.6355999503284693
+    },
+    {
+      "id": "qualified-name",
+      "original_query": "甲公司陈明的工资是多少？",
+      "resolved_query": "甲公司陈明的工资是多少？",
+      "predicted_entities": [
+        "陈明"
+      ],
+      "expected_entities": [
+        "陈明"
+      ],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [
+        "a-person"
+      ],
+      "retrieved": [
+        "a-person"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.6781000411137938
+    },
+    {
+      "id": "filename-pointer",
+      "original_query": "它的版本是多少？",
+      "resolved_query": "config.py的版本是多少？",
+      "predicted_entities": [
+        "config.py"
+      ],
+      "expected_entities": [
+        "config.py"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "config"
+      ],
+      "retrieved": [
+        "config"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 1.4158000703901052
+    },
+    {
+      "id": "date-exact",
+      "original_query": "日期2026-10-23",
+      "resolved_query": "日期2026-10-23",
+      "predicted_entities": [],
+      "expected_entities": [],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [
+        "date"
+      ],
+      "retrieved": [
+        "date"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.8975999662652612
+    },
+    {
+      "id": "money-exact",
+      "original_query": "金额5000元",
+      "resolved_query": "金额5000元",
+      "predicted_entities": [],
+      "expected_entities": [],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [
+        "date"
+      ],
+      "retrieved": [
+        "date"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.8642999455332756
+    },
+    {
+      "id": "single-search",
+      "original_query": "数据库备份",
+      "resolved_query": "数据库备份",
+      "predicted_entities": [],
+      "expected_entities": [],
+      "expected_status": "standalone",
+      "actual_status": "standalone",
+      "gold": [
+        "backup-guide"
+      ],
+      "retrieved": [
+        "backup-guide"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.5979000125080347
+    },
+    {
+      "id": "chain-00",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.8011000463739038
+    },
+    {
+      "id": "chain-01",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7039000047370791
+    },
+    {
+      "id": "chain-02",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7291000802069902
+    },
+    {
+      "id": "chain-03",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.8581000147387385
+    },
+    {
+      "id": "chain-04",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7935999892652035
+    },
+    {
+      "id": "chain-05",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7588000735267997
+    },
+    {
+      "id": "chain-06",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.7683000294491649
+    },
+    {
+      "id": "chain-07",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.8626000490039587
+    },
+    {
+      "id": "chain-08",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.790199963375926
+    },
+    {
+      "id": "chain-09",
+      "original_query": "他的工资是多少？",
+      "resolved_query": "张三的工资是多少？",
+      "predicted_entities": [
+        "张三"
+      ],
+      "expected_entities": [
+        "张三"
+      ],
+      "expected_status": "resolved",
+      "actual_status": "resolved",
+      "gold": [
+        "zhang-pay"
+      ],
+      "retrieved": [
+        "zhang-pay"
+      ],
+      "wrong_entity_evidence": false,
+      "recall5": 1.0,
+      "rr10": 1.0,
+      "cold_ms": 0.8998999837785959
+    }
+  ]
+}

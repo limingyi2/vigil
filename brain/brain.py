@@ -892,8 +892,15 @@ class Brain:
         这里**（调用方保证），不完整的答案绝不入账。
         """
         if append_user:
-            self.hist.append({"role": "user",
-                              "content": self._stamp() + user_text})
+            message = {"role": "user", "content": self._stamp() + user_text}
+            try:
+                from storage.query_resolver import brain_scope, scope_key
+                scope = brain_scope(self)
+                if scope is not None:
+                    message['_retrieval_scope'] = scope_key(scope)
+            except Exception:
+                pass  # Missing provenance prevents later contextual resolution.
+            self.hist.append(message)
         if (ans or "").strip():
             self.hist.append({"role": "assistant",
                               "content": self._stamp() + ans})
@@ -1674,8 +1681,9 @@ class Brain:
             if _ms_cfg.get("enabled", True):
                 try:
                     _t1 = time.time()
-                    memory_block = _m.render(query=q, top_k=5,
-                                                  chan=self._cur_src)
+                    from storage.query_resolver import bind, for_brain
+                    with bind(for_brain(self)):
+                        memory_block = _m.render(query=q, top_k=5, chan=self._cur_src)
                     print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
                 except Exception as e:
                     _log_memory_partition_error(
