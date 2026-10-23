@@ -509,6 +509,15 @@ def _snapshot(b):
         # 客户端可以折叠显示，排查"她为啥这么答"时用。
         "think": getattr(b, "last_think", "") or "",
     }
+    # The delegation router's workspace is an authorization detail.  Keep the
+    # decision observable without copying an absolute user path into traces.
+    route = getattr(b, "last_route", None)
+    if isinstance(route, dict):
+        d["route_decision"] = {
+            "execution_route": route.get("route"),
+            "decision_source": "delegation.router",
+            "reason": str(route.get("reason") or "")[:120],
+        }
     # 🔴 **顺带抄一份「她这轮实际看到的工具段」**。
     # 排查"技能装了却不调"时，光看 trace.tool 是空根本分不清三种情况：
     #   ① 提示词里压根没那个技能名（拼装时就没进来）
@@ -590,6 +599,8 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
     features.tools 的总开关**由 tools.all_specs() 判**（工具表的唯一出口）——
     这里不再单独分支。放在 all_specs 里，换哪条起草链路都盖得住。
     """
+    _route_decision = None
+
     def _once(t, no_tools=False):
         with _chat_lock():
             b = _LOCAL["brain"]
@@ -598,7 +609,8 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
                 b.seed_history(src=src or 'pc', conversation_id=conversation_id)
             chat_kwargs = dict(img=img_path, log=False, src=src,
                                conversation_id=conversation_id,
-                               no_tools=no_tools)
+                               no_tools=no_tools,
+                               route_decision=_route_decision)
             if native_content is not None:
                 # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
                 # 悄悄换成"另一个视觉模型的描述"）就是骗人：用户以为模型看到了
@@ -612,6 +624,12 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             # 那一轮会把它覆盖掉。
             if trace_out is not None:
                 trace_out.update(_snapshot(b))
+                if isinstance(_route_decision, dict):
+                    trace_out["route_decision"] = {
+                        "execution_route": _route_decision.get("route"),
+                        "decision_source": "delegation.router",
+                        "reason": str(_route_decision.get("reason") or "")[:120],
+                    }
                 # 原生 FC 用到的工具也记进 trace（供事后追"这轮为啥这么答"）
                 _used = getattr(b, "last_tools_used", None)
                 if _used:
@@ -640,6 +658,7 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             from delegation import bridge as _dbr
             _dbr.lock_delegation(False)
             _dpre = _dbr.run_hybrid_delegation_direct(text, src=src)
+            _route_decision = _dpre.get("decision")
         except Exception as _e:
             _dpre = {"ok": False, "reason": "precheck:%s" % type(_e).__name__}
         if _dpre.get("ok"):
@@ -655,6 +674,11 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             if trace_out is not None:
                 trace_out["plan_steps"] = 0
                 trace_out["route"] = "hybrid_delegate_preplan"
+                trace_out["route_decision"] = {
+                    "execution_route": _route_decision.get("route"),
+                    "decision_source": "delegation.router",
+                    "reason": str(_route_decision.get("reason") or "")[:120],
+                }
                 trace_out["tool"] = "delegate_to_local:preplan"
                 trace_out["plan_ms"] = int((time.time() - _plan_t0) * 1000)
                 trace_out["plan_calls"] = 1
@@ -2999,6 +3023,7 @@ def start_remote_api(brain):
                             "tok_in": _snap.get("tok_in"),
                             "tok_out": _snap.get("tok_out"),
                             "tool": _snap.get("tool") or "",
+                            "route_decision": _snap.get("route_decision"),
                             "mode": mode,
                             "fallback": 1 if err or mode == "API失败" else 0,
                             # 🔴 规划分支的观测字段**必须显式列出来**。
@@ -3035,6 +3060,7 @@ def start_remote_api(brain):
                                          "plan_steps": _snap.get("plan_steps"),
                                          "revised": bool(_snap.get("revised")),
                                          "tool": _snap.get("tool") or "",
+                                         "route_decision": _snap.get("route_decision"),
                                          "mode": mode,
                                          "ms": _snap.get("ms"),
                                          "model": _snap.get("model")
