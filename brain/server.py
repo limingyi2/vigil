@@ -1432,40 +1432,8 @@ def start_remote_api(brain):
                 chans = ["pc"]
 
             def _management_items():
-                """One lifecycle view shared by the legacy and market pages."""
-                items = _po.overview(chans)
-                by_name = {str(item.get("name") or ""): item for item in items}
-                try:
-                    import plugin_host as _ph
-                    runtime = {str(item.get("name") or ""): item
-                               for item in _ph.listing()}
-                    import plugin_manager as _pm
-                    statuses = _pm.list_plugins()
-                except Exception:
-                    return items
-                for status in statuses:
-                    name = str(status.get("name") or "")
-                    row = by_name.get(name)
-                    info = runtime.get(name) or {}
-                    if row is None:
-                        feature = str(info.get("feature") or
-                                      (status.get("manifest") or {}).get("feature") or "")
-                        row = {
-                            "name": name, "desc": info.get("desc", ""),
-                            "feature": feature, "tools": info.get("tools", []),
-                            "routes": info.get("routes", []), "hooks": info.get("hooks", []),
-                            "file": info.get("file", ""), "err": info.get("err", ""),
-                            "channels": _po.channels_of(feature, chans),
-                            "channelable": bool(feature), "meta": _po._meta_of(name),
-                        }
-                        items.append(row)
-                        by_name[name] = row
-                    for key in ("state", "enabled", "lifecycle_enabled",
-                                "effective_by_src", "source_kind", "builtin",
-                                "removable", "runtime_state", "version",
-                                "update_state", "diagnostic"):
-                        row[key] = status.get(key)
-                return sorted(items, key=lambda item: str(item.get("name") or ""))
+                from api.plugins import management_items
+                return management_items(_po, chans)
 
             if method == "GET":
                 # /api/plugins 已经被微信桥接和 VM 启动器当"大脑活着吗"

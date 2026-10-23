@@ -3,11 +3,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = ROOT / "client" / "src" / "js" / "pages.js"
+MARKET_PAGE = ROOT / "client" / "src" / "js" / "pages" / "plugin-market.js"
 STUB = ROOT / "client" / "src" / "js" / "_devstub.js"
 
 
 def test_market_client_uses_unified_lifecycle_routes_and_state_fields():
-    source = PAGES.read_text(encoding="utf-8")
+    source = MARKET_PAGE.read_text(encoding="utf-8")
     assert "/api/market/list" in source
     assert "/api/market/" in source
     for action in ("install", "update", "uninstall", "enable", "disable", "reload"):
@@ -24,7 +25,7 @@ def test_market_client_uses_unified_lifecycle_routes_and_state_fields():
 
 
 def test_ability_and_market_pages_share_lifecycle_state_and_builtin_rules():
-    source = PAGES.read_text(encoding="utf-8")
+    source = PAGES.read_text(encoding="utf-8") + MARKET_PAGE.read_text(encoding="utf-8")
     assert "get('/api/plugins')" in source
     assert "post('/api/plugins/lifecycle', { name, action })" in source
     assert "post('/api/plugins/uninstall'" in source
