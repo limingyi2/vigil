@@ -2215,6 +2215,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                                 (completion['tool_calls'][0].get('function') or {}).get('name')), None),
                             at=time.time())
                         model_step = item['steps'][sid-1]
+                        model_step['tool'] = item['last_invalid']['tool']
                         model_step['error'] = dict(
                             category='invalid_tool',
                             reason='invalid_tool',

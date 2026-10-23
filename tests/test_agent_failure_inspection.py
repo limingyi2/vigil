@@ -67,8 +67,19 @@ def test_owner_and_session_isolation_and_unknown_are_indistinguishable(isolated)
         assert query({'run_id': rid}) == inspect.INACCESSIBLE
     assert json.loads(tools.invoke_spec('agent_run_inspect', {}, None)) == inspect.INACCESSIBLE
     for args in ({'owner': 'other'}, {'sql': 'select 1'}, {'db_path': 'private'},
-                 {'filter': '*'}, {'run_id': []}, [], None):
+                 {'filter': '*'}, {'run_id': []}, {'run_id': 123}, [], None):
         assert json.loads(tools.invoke_spec('agent_run_inspect', args, ctx())) == inspect.INACCESSIBLE
+    assert json.loads(tools.invoke_spec('diagnostic_queue_status', {'sql': 'select 1'}, ctx())) == inspect.INACCESSIBLE
+
+
+def test_diagnostic_query_schemas_are_strict_and_run_id_is_a_string():
+    specs = {entry['function']['name']: entry['function']['parameters']
+             for entry in tools._static_tool_array()}
+    inspect_schema = specs['agent_run_inspect']
+    queue_schema = specs['diagnostic_queue_status']
+    assert inspect_schema['properties']['run_id']['type'] == 'string'
+    assert inspect_schema['additionalProperties'] is False
+    assert queue_schema['additionalProperties'] is False
 
 
 def test_missing_or_old_database_is_not_created_migrated_or_repaired(isolated):
@@ -157,6 +168,52 @@ def test_incomplete_json_consistent_in_main_diag_and_inspection_without_dispatch
     assert 'arguments' not in json.dumps([tuple(row) for row in rows])
 
 
+def test_recovered_invalid_call_does_not_override_terminal_tool_failure(isolated):
+    item = create()
+    provider = Provider([response('local_file_read', '{"path":'),
+                         response('local_file_read', '{"path":"safe.txt"}')])
+    import localtools
+    def fail_tool(*args):
+        localtools._RECEIPTS.get().append(dict(state='failed', reason='tool_failed', detail='failed'))
+        return 'failure'
+    with patch.object(tools, 'invoke_spec', side_effect=fail_tool):
+        execute(item, provider)
+    result = query({'run_id': item['run_id']})
+    assert result['status'] == 'failed'
+    assert result['failure_class'] == 'execution_failed'
+    assert result['steps'][0]['failure_class'] == 'not_dispatched'
+
+
+def test_invalid_call_tool_names_are_kept_per_step(isolated):
+    item = create()
+    specs = [dict(type='function', function=dict(name=name, parameters=dict(type='object',
+        properties={'path': {'type': 'string'}}, required=['path'], additionalProperties=False)))
+        for name in ('local_file_read', 'local_file_list')]
+    provider = Provider([response('local_file_read', '{"path":'),
+                         response('local_file_list', '{"path":'),
+                         response('local_file_read', '{"path":')])
+    with patch.object(tools, 'invoke_spec') as dispatch:
+        execute(item, provider, specs)
+    dispatch.assert_not_called()
+    steps = query({'run_id': item['run_id']})['steps']
+    assert [step['tool'] for step in steps] == ['local_file_read', 'local_file_list', 'local_file_read']
+
+
+def test_resume_inherited_calls_are_not_misreported_as_missing(isolated):
+    parent = create()
+    with runs.LOCK, runs._db() as conn:
+        item = runs._get(conn, parent['run_id'], 'owner')
+        item['steps'] = [dict(step_id=1, kind='tool', tool='local_file_write',
+            status='completed', result_state='returned', input_digest='write-signature')]
+        conn.execute('INSERT INTO calls VALUES (?,?,?,?,?)',
+            (item['run_id'], 'write-signature', 'completed', 'done', 1))
+        runs._finish(conn, item, 'failed', 'invalid_tool')
+    child = runs.resume(parent['run_id'], 'owner', {}, start=False)
+    result = query({'run_id': child['run_id']})
+    assert result['evidence']['call_records'] == 1
+    assert result['evidence']['completeness'] == 'complete'
+
+
 @pytest.mark.parametrize('state,category,dispatched', [
     ('not_dispatched', 'not_dispatched', False), ('denied', 'permission_denied', False),
     ('failed', 'execution_failed', True), ('unknown', 'result_unknown', None)])
@@ -171,11 +228,34 @@ def test_failure_classes_from_actual_receipts(isolated, state, category, dispatc
     result = query({'run_id': item['run_id']})
     step = result['steps'][-1]
     assert (step['failure_class'], step['dispatched']) == (category, dispatched)
+    if state == 'unknown':
+        assert step['execution_confirmed'] is None
+        assert result['evidence']['side_effects'] == 'unknown'
     assert 'PRIVATE' not in json.dumps(result)
     assert diag.flush()
     with db.read_once('logs') as conn:
         rows = conn.execute('SELECT state FROM tool_calls WHERE run_id=?', (item['run_id'],)).fetchall()
     assert [r[0] for r in rows] == [state]  # no duplicate tool diagnostic
+
+
+@pytest.mark.parametrize('reason,category,dispatched', [
+    ('permission_denied', 'permission_denied', False),
+    ('approval_denied', 'approval_denied', True),
+])
+def test_policy_and_user_denials_have_distinct_receipts(isolated, reason, category, dispatched):
+    import localtools
+    item = create()
+    def invoke(*args):
+        localtools._RECEIPTS.get().append(dict(state='denied', reason=reason,
+                                               detail='refusal receipt'))
+        return 'denied'
+    with patch.object(tools, 'invoke_spec', side_effect=invoke):
+        execute(item, Provider([response('local_file_read', '{"path":"x"}')]))
+    step = query({'run_id': item['run_id']})['steps'][-1]
+    assert step['failure_class'] == category
+    assert step['receipt_status'] == category
+    assert step['dispatched'] is dispatched
+    assert step['execution_confirmed'] is False
 
 
 def test_model_request_error_is_logged_without_sensitive_exception(isolated):

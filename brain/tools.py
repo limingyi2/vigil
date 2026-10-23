@@ -157,11 +157,14 @@ _STATIC_SPECS = {
     "agent_run_inspect": {
         "desc": "只读查询当前会话任务的脱敏失败证据。可传 run_id；省略时查询最近失败任务。不可访问表示不存在或无权查询。不会重试或派发原任务。",
         "params": [("run_id", "当前会话的任务编号；留空查询最近失败任务", False)],
+        "parameters": {"type": "object", "properties": {
+            "run_id": {"type": "string"}}, "additionalProperties": False},
         "arg_param": "run_id",
     },
     "diagnostic_queue_status": {
         "desc": "只读查询当前进程诊断队列计数，不刷新或清理数据库；进程重启后计数重置，不能用来判断历史日志是否丢失。",
-        "params": [], "arg_param": None,
+        "params": [], "parameters": {"type": "object", "properties": {},
+                                         "additionalProperties": False}, "arg_param": None,
     },
     # --- 内置 ---
     "weather": {
