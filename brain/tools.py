@@ -395,6 +395,19 @@ def _static_tool_array(src=None):
     return out
 
 
+def static_tool_enabled(name, src=None):
+    """Whether a required built-in tool is exposed for this channel.
+
+    This is a routing hint only. Actual invocation still goes through
+    ``all_specs`` and ``invoke_spec`` with their existing permission gates.
+    """
+    name = str(name or "").strip()
+    if name not in _STATIC_SPECS or not _feature_on("tools", src):
+        return False
+    feature = _STATIC_FEATURE_MAP.get(name)
+    return feature is None or _feature_on(feature, src)
+
+
 def _dynamic_tool_array(brain=None, src=None):
     """动态 JS 技能工具（`包名__工具名`）的 OpenAI tools 数组。
 

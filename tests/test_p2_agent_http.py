@@ -119,6 +119,7 @@ class HTTPTests(unittest.TestCase):
             def __init__(self):
                 self.hist = []
                 self.calls = []
+                self.tool_calls = []
 
             def use_src(self, *args):
                 pass
@@ -133,7 +134,9 @@ class HTTPTests(unittest.TestCase):
                 yield {'type': 'done', 'text': 'incremental answer'}
 
             def chat(self, *_args, **_kwargs):
-                raise AssertionError('chat() collapses the SSE response')
+                text, kwargs = _args[0], _kwargs
+                self.tool_calls.append((text, kwargs))
+                return 'function answer', 'offline'
 
         brain = StreamingBrain()
         with patch.dict(self.ns['_LOCAL'], {'brain': brain}, clear=True), \
@@ -153,11 +156,46 @@ class HTTPTests(unittest.TestCase):
                 self.assertTrue(brain.calls[-1][1]['no_tools'])
                 task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
                 self.assertEqual(task_traces[-1]['task_category'], category)
-                self.assertEqual(task_traces[-1]['target_entry'], 'chat_no_tools'
-                                 if category in ('chat', 'simple_execution') else 'brain_tools')
+                expected_entry = ('history_retrieval' if text == '帮我找出之前讨论的 RAG 方案'
+                                  else 'chat_no_tools' if category in ('chat', 'simple_execution')
+                                  else 'brain_tools')
+                self.assertEqual(task_traces[-1]['target_entry'], expected_entry)
                 if category == 'simple_execution':
                     self.assertEqual(task_traces[-1]['fallback_reason'],
                                      'workspace_not_authorized')
+
+            import tools
+            for request_id, text, required_tool in (
+                ('p19_stream_live_news', '搜索今天最新的 AI 新闻', 'search'),
+                ('p19_stream_live_weather', '查询当前天气', 'weather'),
+                ('p19_stream_live_version', '查一下最新软件版本', 'search'),
+            ):
+                with patch.object(tools, 'static_tool_enabled',
+                                  side_effect=lambda name, _src: name == required_tool):
+                    code, events = self.request('POST', '/api/chat/stream', {
+                        'request_id': request_id, 'text': text, 'src': 'pc'}, sse=True)
+                self.assertEqual(code, 200, events)
+                self.assertEqual(events[-1]['type'], 'done')
+                self.assertEqual(events[-1]['text'], 'function answer')
+                self.assertEqual(brain.tool_calls[-1][0], text)
+                self.assertNotIn('no_tools', brain.tool_calls[-1][1])
+                task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
+                self.assertEqual(task_traces[-1]['target_entry'], 'brain_tools')
+
+            before_tools, before_streams = len(brain.tool_calls), len(brain.calls)
+            with patch.object(tools, 'static_tool_enabled', return_value=False):
+                code, events = self.request('POST', '/api/chat/stream', {
+                    'request_id': 'p19_stream_live_tool_disabled',
+                    'text': '搜索今天最新的 AI 新闻', 'src': 'pc'}, sse=True)
+            self.assertEqual(code, 200, events)
+            self.assertEqual(events[-1]['type'], 'done')
+            self.assertIn('无法核实', events[-1]['text'])
+            self.assertEqual(len(brain.tool_calls), before_tools)
+            self.assertEqual(len(brain.calls), before_streams)
+            self.assertEqual(self.trace_rows[-1]['target_entry'], 'retrieval_unavailable')
+            self.assertEqual(self.trace_rows[-1]['fallback_reason'],
+                             'required_live_tool_unavailable')
+
             import task_intent
             with patch.object(task_intent, 'classify', side_effect=RuntimeError('fixture')):
                 code, events = self.request('POST', '/api/chat/stream', {

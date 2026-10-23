@@ -31,6 +31,9 @@ CASES = [
     ("请搜索网页上的最新发布说明", "retrieval"),
     ("列出这个工作区里的文件", "simple_execution"),
     ("帮我查找之前的 RAG 讨论记录", "retrieval"),
+    ("搜索今天最新的 AI 新闻", "retrieval"),
+    ("查询当前天气", "retrieval"),
+    ("查一下最新软件版本", "retrieval"),
     # Mixed intents and explanatory wording must not leak into file or agent actions.
     ("解释一下修改配置文件的风险", "chat"),
     ("说明整个项目里的装饰器如何工作", "chat"),
@@ -54,7 +57,7 @@ def test_task_category_acceptance_matrix_and_confusion_counts():
         matrix[expected][observed] += 1
     assert actual == [expected for _, expected in CASES]
     assert {label: sum(matrix[label].values()) for label in labels} == {
-        "chat": 14, "retrieval": 5, "simple_execution": 6, "complex_execution": 3}
+        "chat": 14, "retrieval": 8, "simple_execution": 6, "complex_execution": 3}
 
 
 def test_route_dimensions_and_execution_target_are_separate():
@@ -72,11 +75,21 @@ def test_route_dimensions_and_execution_target_are_separate():
 def test_existing_entry_selection_respects_category_and_agent_gate():
     chat = task_intent.classify("解释一下 Python 装饰器")
     retrieval = task_intent.classify("帮我找出之前讨论的 RAG 方案")
+    news = task_intent.classify("搜索今天最新的 AI 新闻")
+    weather = task_intent.classify("查询当前天气")
     simple = task_intent.classify("修改一个配置文件并检查结果", workspace_authorized=True)
     complex_task = task_intent.classify("检查整个项目、修复问题并运行测试",
                                         workspace_authorized=True)
     assert task_intent.select_entry(chat, agent_allowed=True) == "chat_no_tools"
-    assert task_intent.select_entry(retrieval, agent_allowed=True) == "brain_tools"
+    assert retrieval["retrieval_mode"] == "history_rag"
+    assert task_intent.select_entry(retrieval, agent_allowed=True) == "history_retrieval"
+    assert news["retrieval_mode"] == "live_tools"
+    assert news["required_tool"] == "search"
+    assert task_intent.select_entry(news, agent_allowed=True,
+                                    live_tool_available=True) == "brain_tools"
+    assert weather["required_tool"] == "weather"
+    assert task_intent.select_entry(weather, agent_allowed=True,
+                                    live_tool_available=False) == "retrieval_unavailable"
     assert task_intent.select_entry(simple, agent_allowed=True) == "agent_run"
     assert task_intent.select_entry(complex_task, agent_allowed=True) == "agent_run"
     assert task_intent.select_entry(simple, agent_allowed=False) == "brain_tools"
@@ -121,9 +134,10 @@ def test_mixed_explanation_and_ambiguous_followups_never_select_coding_agent():
         assert task_intent.select_entry(decision, agent_allowed=True) == "chat_no_tools", text
 
 
-def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools():
+def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
     import server
     import delegation.bridge as bridge
+    import tools
 
     class FakeBrain:
         def __init__(self):
@@ -146,7 +160,9 @@ def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools(
 
     for text, expected_category, expected_no_tools in (
         ("解释一下 Python 装饰器", "chat", True),
-        ("帮我找出之前讨论的 RAG 方案", "retrieval", False),
+        ("帮我找出之前讨论的 RAG 方案", "retrieval", True),
+        ("搜索今天最新的 AI 新闻", "retrieval", False),
+        ("查询当前天气", "retrieval", False),
         ("修改启动配置并验证", "simple_execution", True),
         ("全面调整我的日程，协调所有安排并逐项确认", "complex_execution", True),
     ):
@@ -154,6 +170,7 @@ def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools(
         trace = {}
         with patch.object(server, "_LOCAL", {"brain": brain}), \
              patch.object(server, "_chat_lock", unlocked), \
+             patch.object(tools, "static_tool_enabled", return_value=True), \
              patch.object(bridge, "run_hybrid_delegation_direct",
                           side_effect=AssertionError("non-execution intent delegated")):
             answer, mode = server._chat_with_tools(text, None, trace_out=trace, src="pc")
@@ -163,3 +180,17 @@ def test_brain_chat_entry_disables_tools_for_chat_and_preserves_retrieval_tools(
         assert trace["task_decision"]["task_category"] == expected_category
         if expected_category == "simple_execution":
             assert trace["task_decision"]["fallback_reason"] == "workspace_not_authorized"
+
+    brain = FakeBrain()
+    trace = {}
+    with patch.object(server, "_LOCAL", {"brain": brain}), \
+         patch.object(server, "_chat_lock", unlocked), \
+         patch.object(tools, "static_tool_enabled", return_value=False), \
+         patch.object(bridge, "run_hybrid_delegation_direct",
+                      side_effect=AssertionError("retrieval must not delegate")):
+        answer, mode = server._chat_with_tools(
+            "搜索今天最新的 AI 新闻", None, trace_out=trace, src="pc")
+    assert answer == "当前没有启用可用的实时查询工具，无法核实这条信息。"
+    assert mode == "实时检索不可用"
+    assert brain.calls == []
+    assert trace["task_decision"]["fallback_reason"] == "required_live_tool_unavailable"

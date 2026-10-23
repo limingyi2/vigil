@@ -4,11 +4,13 @@ Task categories (`chat`, `retrieval`, `simple_execution`, `complex_execution`) s
 
 ## Streaming behavior
 
-`POST /api/chat/stream` sends ordinary chat and history/RAG retrieval through `Brain.stream_chat()`. Chat and retrieval requests set `no_tools=True`; history/RAG evidence is added by the existing scoped conversation context builder. The client receives incremental `text` events and the final `done` event. Coding requests accepted by the existing Agent Run gate continue through Agent Run event streaming.
+`POST /api/chat/stream` sends ordinary chat and historical memory/RAG retrieval through `Brain.stream_chat(no_tools=True)`. History/RAG evidence is added by the existing scoped conversation context builder. The client receives incremental `text` events and the final `done` event.
 
-`Brain.stream_chat()` does not implement function calling. A retrieval request on this endpoint can use the existing scoped history/RAG context, but it cannot invoke live web, workspace, or other function tools. A tool-backed simple execution that is not admitted to Agent Run keeps using the existing Brain function-calling path, which currently returns a non-streaming answer over the SSE connection. `/api/chat` is non-streaming by design and uses the existing Brain function-calling path; it has no Agent Run/Coding Harness lifecycle context. These limits are intentional and are not represented as successful tool execution.
+Live-information retrieval (such as current weather, news, or software versions) selects the existing `Brain.chat()` Function Calling path. The route checks that the corresponding enabled built-in tool (`weather`, `search`, or `tracking`) is available for the request channel before calling the model. If it is unavailable or disabled, the endpoint returns an explicit “无法核实” response without asking the model to guess. Agent Run and Coding Harness routing remains unchanged.
 
-When workspace authorization or classification is unavailable, execution requests fall back to a no-tool answer. Ambiguous references also stay on the no-tool chat path. Tool permissions remain enforced by the existing Brain and tool gates.
+`Brain.stream_chat()` does not implement function calling. Historical retrieval streams through existing scoped context; live retrieval goes through `Brain.chat()` and returns its final answer over the SSE connection rather than incremental text. A tool-backed simple execution that is not admitted to Agent Run keeps using the same existing non-streaming Brain path. `/api/chat` is non-streaming by design and has no Agent Run/Coding Harness lifecycle context.
+
+When workspace authorization or classification is unavailable, execution requests fall back to a no-tool answer. Ambiguous references also stay on the no-tool chat path. Tool permissions remain enforced by the existing Brain and tool gates; the live-retrieval availability check only decides whether a matching tool is exposed.
 
 ## Classification regression set
 

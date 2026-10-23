@@ -12,7 +12,9 @@ _SOCIAL = re.compile(r"你好|您好|今天怎么样|最近怎么样|在吗|晚�
 _REFERENTIAL = re.compile(r"刚才|上次|之前|前面|那个|它|继续|接着|照旧")
 _RETRIEVE = re.compile(r"查找|查一下|查询|查天气|查新闻|查价格|搜索|搜一下|搜|找出|翻一下|回忆|找回|查看|search|web", re.I)
 _HISTORY = re.compile(r"之前|前几天|上次|以前|历史|讨论过|聊过|说过|提到过")
-_FACTUAL_QUERY = re.compile(r"天气|新闻|股价|汇率|价格|多少钱|最新|当前|今天|什么时候|何时|是谁|在哪里|地址|邮编|时间")
+_FACTUAL_QUERY = re.compile(r"天气|新闻|股价|汇率|价格|多少钱|最新|当前|今天|版本|release|latest|current|什么时候|何时|是谁|在哪里|地址|邮编|时间", re.I)
+_LIVE_WEATHER = re.compile(r"天气|气温|温度|weather", re.I)
+_LIVE_TRACKING = re.compile(r"快递|物流|运单|tracking", re.I)
 _LOCAL = re.compile(r"工作区|仓库|项目|代码库|文件|目录|本地")
 _CODE = re.compile(
     r"代码|源码|配置|模块|项目|仓库|代码库|文件|程序|服务|bug|缺陷|测试|构建|"
@@ -135,7 +137,17 @@ def classify(text, *, workspace_authorized=False):
     target = ("agent_run" if category in ("simple_execution", "complex_execution")
               and fallback is None else
               "retrieval" if category == "retrieval" else "chat_no_tools")
-    return _decision(category, reason, target, fallback)
+    decision = _decision(category, reason, target, fallback)
+    if category == "retrieval":
+        # Historical references need Vigil's scoped memory/history RAG. Current
+        # facts need the existing function-calling tool selected by capability.
+        # This marks the retrieval subtype only; it does not grant tool access.
+        decision["retrieval_mode"] = "history_rag" if historical_query else "live_tools"
+        if not historical_query:
+            decision["required_tool"] = (
+                "weather" if _LIVE_WEATHER.search(normalized) else
+                "tracking" if _LIVE_TRACKING.search(normalized) else "search")
+    return decision
 
 
 def _decision(category, reason, target, fallback):
@@ -148,7 +160,8 @@ def _decision(category, reason, target, fallback):
     }
 
 
-def select_entry(decision, *, agent_allowed, tools_available=True, existing_run=False):
+def select_entry(decision, *, agent_allowed, tools_available=True, existing_run=False,
+                 live_tool_available=False):
     """Choose an existing message entry point after normal server gates.
 
     Agent Run is selected only for execution decisions and only when the
@@ -163,5 +176,9 @@ def select_entry(decision, *, agent_allowed, tools_available=True, existing_run=
     if target == "agent_run":
         return "agent_run" if agent_allowed else ("brain_tools" if tools_available else "brain_chat")
     if target == "retrieval":
-        return "brain_tools" if tools_available else "brain_chat"
+        if decision.get("retrieval_mode") == "history_rag":
+            return "history_retrieval"
+        if decision.get("retrieval_mode") == "live_tools":
+            return "brain_tools" if live_tool_available else "retrieval_unavailable"
+        return "retrieval_unavailable"
     return "chat_no_tools"
