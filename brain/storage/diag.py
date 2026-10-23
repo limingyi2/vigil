@@ -381,6 +381,12 @@ def _config():
         return {}
 
 
+def _cleanup_failed(exc):
+    with _LOCK:
+        _FAILS['cleanup'] += 1
+        _FAILS['last_error'] = type(exc).__name__
+
+
 def _throttled_cleanup():
     """带节流的清理触发：不是每一批日志都去数行。"""
     global _LAST_CLEANUP
@@ -391,9 +397,8 @@ def _throttled_cleanup():
         _LAST_CLEANUP = now
     try:
         cleanup()
-    except Exception:
-        with _LOCK:
-            _FAILS["cleanup"] += 1
+    except Exception as exc:
+        _cleanup_failed(exc)
 
 
 def cleanup(force=False, retention_days=None, max_rows=None, max_bytes=None):
@@ -428,8 +433,9 @@ def cleanup(force=False, retention_days=None, max_rows=None, max_bytes=None):
                     deleted += excess
                 stats["tables"][table] = deleted
                 stats["rows"] += deleted
-            except Exception:
+            except Exception as exc:
                 # 单表清不动不影响其它表 —— 诊断库的任何问题都不该冒出去
+                _cleanup_failed(exc)
                 continue
         if stats["rows"]:
             try:
@@ -437,16 +443,16 @@ def cleanup(force=False, retention_days=None, max_rows=None, max_bytes=None):
                              "bytes_before,bytes_after,reason) VALUES (?,?,?,?,?,?)",
                              (time.time(), "*", stats["rows"], stats["bytes_before"],
                               0, "retention=%d max_rows=%d" % (retention_days, max_rows)))
-            except Exception:
-                pass
+            except Exception as exc:
+                _cleanup_failed(exc)
 
     # VACUUM 不能在事务里跑，所以放在 write() 之后。
     try:
         if stats["bytes_before"] > max_bytes:
             db.vacuum("logs")
         stats["bytes_after"] = os.path.getsize(db.logs_db_path())
-    except Exception:
-        pass
+    except Exception as exc:
+        _cleanup_failed(exc)
     return stats
 
 
@@ -460,9 +466,22 @@ def _maybe_cleanup():
         _LAST_CLEANUP = now
     try:
         cleanup()
-    except Exception:
-        with _LOCK:
-            _FAILS["cleanup"] += 1
+    except Exception as exc:
+        _cleanup_failed(exc)
+
+
+def queue_snapshot():
+    """Process-local counters only: no writer start, flush, cleanup or DB access.
+
+    The authenticated Agent tool gates this snapshot. Counters reset on process
+    restart and cannot establish historical log completeness.
+    """
+    with _LOCK:
+        return dict(scope='current_process', resets_on_restart=True,
+                    queue_size=_QUEUE.qsize(), busy=_BUSY,
+                    dropped=_FAILS['dropped'], write_failures=_FAILS['write'],
+                    cleanup_failures=_FAILS['cleanup'],
+                    last_error_class=str(_FAILS['last_error']).split(':', 1)[0])
 
 
 def stats():

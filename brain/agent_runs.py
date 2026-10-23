@@ -77,6 +77,7 @@ def _strip_xml_calls(text):
 # Explicit read-only core tools, not the broad "safe" risk tier (open_url and
 # screenshots are low risk but have side effects). Unknown tools stay conservative.
 READ_ONLY_TOOLS = frozenset({'local_system_info', 'local_file_list', 'local_file_read',
+    'agent_run_inspect', 'diagnostic_queue_status',
     'local_file_find', 'local_file_grep', 'local_file_recent', 'local_process_list',
     'local_active_window', 'local_clipboard_read', 'calc', 'weather', 'tracking', 'search'})
 MESSAGES = dict(ERROR_MESSAGES,
@@ -616,6 +617,12 @@ def _db(create=True):
     db = _store.legacy_connection()
     _tx_batches()
     _TX.depth += 1
+    diagnostics = []
+    stack = getattr(_TX, 'diagnostics', None)
+    if stack is None:
+        stack = _TX.diagnostics = []
+    stack.append(diagnostics)
+    committed = False
     try:
         db.execute('PRAGMA synchronous=FULL')
         # WAL：读者（SSE 轮询）与写者（批量落盘/控制事件）互不阻塞。持久性
@@ -642,6 +649,7 @@ def _db(create=True):
             db.execute("UPDATE calls SET state='unknown' WHERE state='dispatched'")
         yield db
         db.commit()
+        committed = True
         # 落到盘上才算写完：提交成功才把内存里那批标记为已持久化。
         if _TX.depth == 1:
             for _buf, _batch, _started in _tx_batches():
@@ -659,6 +667,21 @@ def _db(create=True):
     finally:
         _TX.depth -= 1
         db.close()
+        stack.pop()
+        if committed:
+            for method, fields in diagnostics:
+                try:
+                    from storage import diag
+                    getattr(diag, method)(**fields)
+                except Exception:
+                    pass  # Diagnostic availability never changes committed truth.
+
+
+def _queue_diagnostic(method, **fields):
+    """Only enqueue immutable, content-free metadata after this DB commit."""
+    stack = getattr(_TX, 'diagnostics', None)
+    if stack:
+        stack[-1].append((method, copy.deepcopy(fields)))
 
 
 @contextmanager
@@ -818,7 +841,8 @@ def _failure_step_line(step):
     info = step.get('error') or {}
     state = step.get('result_state') or step.get('status') or '?'
     hint = info.get('hint') or info.get('category') or ''
-    return '  工具 %s：%s%s' % (step.get('tool') or '?', state,
+    label = ('模型步骤' if step.get('kind') == 'model' else '工具 ' + (step.get('tool') or '?'))
+    return '  %s：%s%s' % (label, state,
                                ('（%s）' % hint) if hint else '')
 
 
@@ -834,7 +858,9 @@ def _failure_line(item):
     if detail:
         lines.append('  错误原因：%s' % detail)
     tools = [s for s in (item.get('steps') or []) if s.get('kind') == 'tool']
-    for step in tools[:3]:
+    failed = [s for s in (item.get('steps') or []) if s.get('status') in
+              ('failed', 'unknown') or s.get('error')]
+    for step in (failed[-3:] if failed else tools[-3:]):
         lines.append(_failure_step_line(step))
     if not tools:
         lines.append('  没有工具被派发')
@@ -983,6 +1009,13 @@ def _finish(db, item, status, reason=None, detail=None):
            else 'paused' if status in ('paused_budget', 'paused') else status,
            dict(status=status, error=item['error']))
     _save(db, item)
+    if status == 'failed':
+        try:
+            from agent_inspection import summary
+            _queue_diagnostic('log_agent_event', run_id=item['run_id'],
+                              event='run_failed', detail=summary(item), level='error')
+        except Exception:
+            pass  # Even diagnostic projection/serialization cannot abort the ledger.
     # 终态已经落盘，内存副本交还给库：之后的读走只读连接。
     if buf is not None and not buf.has_pending():
         with _BUFFER_LOCK:
@@ -1592,19 +1625,21 @@ def _tool(rid, owner, started, call, ctx):
         _save(db, item)  # Late results may settle an in-flight step, never the run terminal.
     # Diagnostic writes are noncritical and must not hold the Agent ledger lock.
     _diag_tool_call(rid, name, reason, error, raw_chars, clipped,
-                    int((time.monotonic() - _tool_t0) * 1000), raised)
+                    int((time.monotonic() - _tool_t0) * 1000), raised, step['result_state'])
     return (None if reason else result), False
 
 
-def _diag_tool_call(rid, name, reason, error, raw_chars, clipped, duration_ms, raised):
+def _diag_tool_call(rid, name, reason, error, raw_chars, clipped, duration_ms, raised,
+                    result_state=None):
     """Best-effort tool diagnostics; never affect the Agent outcome."""
     try:
         from storage import diag
         diag.log_tool_call(
             tool=name,
-            state='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
+            state='completed' if result_state == 'returned' else result_state or (
+                'unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed'),
             duration_ms=duration_ms, run_id=rid,
-            error=str(error or reason or '')[:200],
+            error=reason or '',
             scope={'raw_chars': raw_chars, 'truncated': bool(clipped),
                    'raised': bool(raised), 'reason': reason or None})
     except Exception:
@@ -1715,6 +1750,7 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
                 if not _check_budget(db, current, started, 'model'):
                     raise coding_harness.BudgetExceeded('模型请求预算已用尽')
                 sid = _step(db, current, 'model', coding_role=role)
+            request_started = time.monotonic()
             try:
                 result = _coding_json_completion(provider, cfg,
                     [{'role': 'system', 'content': system},
@@ -1726,6 +1762,10 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
                         current['steps'][sid-1].update(status='failed', reason='coding_model', finished_at=time.time())
                         _event(db, current, 'coding_model_failed', {'step_id': sid, 'role': role})
                         _save(db, current)
+                        _queue_diagnostic('log_model_request', provider=type(provider).__name__,
+                            model='', purpose='agent_coding', ok=False, error='coding_model',
+                            duration_ms=int((time.monotonic() - request_started) * 1000),
+                            scope=dict(run_id=rid, step_id=sid))
                 raise
             with LOCK, _db() as db:
                 current = _get(db, rid, owner)
@@ -1733,6 +1773,10 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id=''):
                     current['steps'][sid-1].update(status='completed', reason='normal', finished_at=time.time())
                     _event(db, current, 'coding_model_completed', {'step_id': sid, 'role': role})
                     _save(db, current)
+                    _queue_diagnostic('log_model_request', provider=type(provider).__name__,
+                        model='', purpose='agent_coding', ok=True,
+                        duration_ms=int((time.monotonic() - request_started) * 1000),
+                        scope=dict(run_id=rid, step_id=sid))
             return result
 
         def plan_provider(request, snapshot):
@@ -1810,6 +1854,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
         _run_coding(rid, owner, cfg, brain=brain, sender_id=sender_id)
         return
     started = time.monotonic()
+    request_diagnostic_logged = False
     try:
         with LOCK, _db() as db:
             item = _get(db, rid, owner)
@@ -1850,6 +1895,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
         # Tool adapters use this opaque owner only for review checkpoint
         # isolation; it never enters the model payload or event text.
         ctx.owner = owner
+        ctx.conversation_id = str(item.get('conversation_id') or '')
         provider = get_provider(cfg)
         from conversation_context import output_reserve
         # 未配置模型输出上限就不发 max_tokens：由供应商默认值决定，不发明限制。
@@ -1921,6 +1967,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             from model_providers.tool_protocol import ToolTextBoundary
             boundary = ToolTextBoundary()
             completion = None
+            request_diagnostic_logged = False
             try:
                 prepared_payload = prepare(payload, cfg, step_tokens=reserve_out)
             except Exception as exc:
@@ -1982,6 +2029,11 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
             except Exception as exc:
                 from model_providers.execution import is_context_limit_error
                 if not request_output_started and not context_recovery_used and is_context_limit_error(exc):
+                    with LOCK, _db() as db:
+                        _queue_diagnostic('log_model_request', provider=type(provider).__name__,
+                            model='', purpose='agent', ok=False, error='context_limit',
+                            scope=dict(run_id=rid, step_id=sid))
+                    request_diagnostic_logged = True
                     recovered = _recover_context(rid, owner, sid, msgs, context_budget, exc)
                     if recovered is not None:
                         context_recovery_used = True
@@ -2002,6 +2054,13 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 throughput = usage_data['output_tokens'] / request_elapsed
                 usage_data.update(request_elapsed_seconds=round(request_elapsed, 3),
                                   output_tokens_per_second=round(throughput, 2))
+                _queue_diagnostic('log_model_request', provider=type(provider).__name__,
+                    model='', purpose='agent', duration_ms=int(request_elapsed * 1000),
+                    prompt_tokens=usage_data.get('input_tokens') or 0,
+                    completion_tokens=usage_data.get('output_tokens') or 0,
+                    ok=completion.get('reason') in ('normal', 'tool_calls'),
+                    error='' if completion.get('reason') in ('normal', 'tool_calls') else 'model_request_failed',
+                    scope=dict(run_id=rid, step_id=sid))
                 model_step = item['steps'][sid-1]
                 model_step['token_usage'] = usage_data
                 # This is intentionally limited to counters and request metadata.
@@ -2152,10 +2211,11 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                         item['last_invalid'] = dict(
                             step_id=sid, attempts=attempts, reason='invalid_tool',
                             detail=_redact_error_text(str(exc), 300),
-                            tool=_safe_event_value(
-                                (completion['tool_calls'][0].get('function') or {}).get('name'), 80),
+                            tool=next((s['function']['name'] for s in specs if s['function']['name'] ==
+                                (completion['tool_calls'][0].get('function') or {}).get('name')), None),
                             at=time.time())
                         model_step = item['steps'][sid-1]
+                        model_step['tool'] = item['last_invalid']['tool']
                         model_step['error'] = dict(
                             category='invalid_tool',
                             reason='invalid_tool',
@@ -2166,6 +2226,12 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                             for index, c in enumerate(completion['tool_calls'] or [])][:4]
                         _save(db, item)
                         give_up = attempts > INVALID_TOOL_RETRIES
+                        _queue_diagnostic('log_agent_event', run_id=rid,
+                            event='tool_validation_failed', level='error',
+                            detail=dict(step_id=sid, failure_class='not_dispatched',
+                                        dispatched=False, receipt_status='not_dispatched',
+                                        tool=item['last_invalid']['tool'],
+                                        attempts=attempts))
                     if give_up:
                         with LOCK, _db() as db:
                             item = _get(db, rid, owner)
@@ -2236,6 +2302,10 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None):
                 for step in item['steps']:
                     if step['status'] == 'running' and step['kind'] == 'model':
                         step.update(status='failed', reason=reason, finished_at=time.time())
+                        if not request_diagnostic_logged:
+                            _queue_diagnostic('log_model_request', provider='agent', model='',
+                                purpose='agent', ok=False, error=reason,
+                                scope=dict(run_id=rid, step_id=step['step_id']))
                 _finish(db, item, 'failed', reason)
                 _save(db, item)
 
