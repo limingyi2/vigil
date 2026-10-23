@@ -14,22 +14,43 @@
 #vigil-wallpaper-stage > video,
 #vigil-wallpaper-stage > img { object-fit: cover; object-position: center; }
 #vigil-wallpaper-scrim { position: absolute; inset: 0; background: #070b16; pointer-events: none; }
-body.vigil-wallpaper-active { --vigil-wallpaper-blur: 0px; }
+body.vigil-wallpaper-active {
+  --vigil-wallpaper-blur: 0px;
+  --vigil-wallpaper-panel: color-mix(in srgb, var(--bg, #141822) 52%, transparent);
+  --vigil-wallpaper-surface: color-mix(in srgb, var(--bg, #141822) 58%, transparent);
+}
 body.vigil-wallpaper-active > .app,
 body.vigil-wallpaper-active > .settings-shell,
 body.vigil-wallpaper-active .app {
   position: relative; z-index: 1; background: transparent !important;
 }
+body.vigil-wallpaper-active :is(.body, .main, .scroll, .chatwrap, .chat,
+  .chat-messages, .composer, .message-list, .settings-home,
+  .settings-detail-view, .settings-content, .ac-workspace, .persona-view) {
+  background-color: transparent !important; background-image: none !important;
+}
 body.vigil-wallpaper-active .gnav,
 body.vigil-wallpaper-active .topbar,
 body.vigil-wallpaper-active .panel,
-body.vigil-wallpaper-active .main,
-body.vigil-wallpaper-active .scroll,
 body.vigil-wallpaper-active .titlebar,
 body.vigil-wallpaper-active .statusbar {
-  background: color-mix(in srgb, var(--surface, #141822) 66%, transparent) !important;
+  background: var(--vigil-wallpaper-panel) !important;
   backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
   -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
+}
+body.vigil-wallpaper-active :is(.card, .ac-card, .ac-agent-card, .pcard,
+  .vigil-wallpaper-control, .vigil-wallpaper-card, .cbox, .input-wrap,
+  .session-row.on, .settings-card) {
+  background-color: var(--vigil-wallpaper-surface) !important;
+  background-image: none !important;
+  backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
+  -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
+}
+body.vigil-wallpaper-active :is(input:not([type=range]), select, textarea, .btn, button:not(.vigil-wallpaper-card)) {
+  background-color: var(--vigil-wallpaper-surface) !important;
+  background-image: none !important;
+  backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
+  -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
 }
 body.vigil-wallpaper-active .chat,
 body.vigil-wallpaper-active .chat-messages,
@@ -44,14 +65,14 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
 .vigil-wallpaper-head p { margin: 0; opacity: .68; }
 .vigil-wallpaper-status { font-size: 12px; opacity: .66; text-align: right; max-width: 420px; }
 .vigil-wallpaper-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.vigil-wallpaper-control { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--surface, #fff) 72%, transparent); }
+.vigil-wallpaper-control { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--bg, #fff) 58%, transparent); }
 .vigil-wallpaper-control label { display: flex; justify-content: space-between; font-size: 12px; opacity: .8; }
 .vigil-wallpaper-control input[type=range] { width: 100%; accent-color: var(--accent, #8ea7ff); }
 .vigil-wallpaper-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .vigil-wallpaper-toolbar input { min-width: 220px; flex: 1; }
 .vigil-wallpaper-toolbar select { min-width: 120px; }
 .vigil-wallpaper-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
-.vigil-wallpaper-card { display: grid; gap: 8px; text-align: left; padding: 0; overflow: hidden; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--surface, #fff) 76%, transparent); color: inherit; cursor: pointer; transition: transform .16s ease, border-color .16s ease; }
+.vigil-wallpaper-card { display: grid; gap: 8px; text-align: left; padding: 0; overflow: hidden; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--bg, #fff) 62%, transparent); color: inherit; cursor: pointer; transition: transform .16s ease, border-color .16s ease; }
 .vigil-wallpaper-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent, #8ea7ff) 72%, transparent); }
 .vigil-wallpaper-card.is-active { outline: 2px solid var(--accent, #8ea7ff); }
 .vigil-wallpaper-thumb { aspect-ratio: 16 / 9; background: #0a0d15; overflow: hidden; }
