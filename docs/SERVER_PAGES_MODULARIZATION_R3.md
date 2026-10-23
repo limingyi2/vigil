@@ -3,6 +3,8 @@
 基线：R2 合并提交 `ccd075700804deb8ed6a1a4cbee0a779a6e1d324`（`dev`）  
 交付分支：`codex/server-pages-r3` → `dev`
 
+Draft PR：[#38](https://github.com/limingyi2/vigil/pull/38)，保持 OPEN、未合并。
+
 ## R2 Windows 发布验证
 
 | 检查 | 结果 |
@@ -38,7 +40,8 @@
 - Node CI 集合：31 项通过，0 失败；包含新增页面生命周期测试和 R2 视频页面测试。
 - 新市场 renderer 测试：4 项通过，覆盖首次渲染、列表刷新事件、`/api/market/refresh` 请求、销毁解绑、重复进入，以及实际 `app.go()` 的 chat → market → chat 暂存恢复。
 - Python `compileall -q brain pet`、`pages.js` / `pages/plugin-market.js` / `pages/video-workbench.js` / 新测试的 `node --check`，以及 `git diff --check` 均通过。
-- RAG 的 GitHub Actions 验收任务在 PR 创建后记录；本地 Windows 候选安装包未完成，因此没有宣称真实安装包场景通过。
+- GitHub Actions PR run #512 的单元测试、JS/客户端回归、全仓语法检查及真实 FAISS RAG 验收全部通过。
+- 本地因缺少 FAISS 未运行真实 FAISS 验收；已由上述 GitHub Actions job 覆盖。本地 Windows 候选安装包未完成，因此没有宣称真实安装包场景通过。
 
 ## 未验证事项
 
