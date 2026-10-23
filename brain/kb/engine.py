@@ -186,38 +186,79 @@ def reindex(persona_key="", src="app"):
     return {"ok": True, "chunks": n, "model": model}
 
 
+def _unified_doc_ids_for_source(name, persona_key="", src="app"):
+    """精确查询当前范围下指定 source 的所有统一检索 doc_id。
+
+    不用 LIKE：name 里的 % 和 _ 会被当作通配符，导致误删。
+    用 scope_kind='kb' + persona + src + source 精确匹配。
+    """
+    from storage import db
+    conn = db.connection("main")
+    rows = conn.execute(
+        "SELECT id FROM search_docs WHERE scope_kind='kb' AND persona=? AND src=? AND source=?",
+        (persona_key or "", src or "", str(name))).fetchall()
+    return [r[0] for r in rows if r[0]]
+
+
+def _unified_doc_ids_for_scope(persona_key="", src="app"):
+    """精确查询当前范围下所有 kb 文档的 doc_id。"""
+    from storage import db
+    conn = db.connection("main")
+    rows = conn.execute(
+        "SELECT id FROM search_docs WHERE scope_kind='kb' AND persona=? AND src=?",
+        (persona_key or "", src or "")).fetchall()
+    return [r[0] for r in rows if r[0]]
+
+
+def _ann_remove_doc_ids(doc_ids):
+    """从 ANN 索引中移除 doc_id（墓碑标记）。索引未加载则跳过。"""
+    if not doc_ids:
+        return
+    try:
+        from storage import vector, db
+        # 遍历所有已加载的 ANN 索引（不同模型/维度可能有多个）
+        for key, ann in vector._ANN_INDEXES.items():
+            if ann.is_loaded():
+                for did in doc_ids:
+                    ann.remove(did)
+                ann.save()
+    except Exception:
+        pass  # ANN 更新失败不影响主流程，下次查询会重建
+
+
 def delete_doc(name, persona_key="", src="app"):
     st = store_for(persona_key, src)
     st.load()
     st.delete_source(str(name))
     left = [s for s in (st.stats().get("sources") or {}) if s != str(name)]
-    # Phase2：同步删除统一检索里的对应文档
+    # Phase2：精确删除统一检索里的对应文档（不用 LIKE，避免 % _ 通配符误删）
+    deleted = 0
     try:
-        from storage import search, db
-        conn = db.connection("main")
-        # kb 的 doc_id 格式：kb:{persona}:{src}:{source}:{ordinal}
-        pattern = "kb:%s:%s:%s:%%" % (persona_key or "-", src or "-", str(name))
-        conn.execute("DELETE FROM search_docs WHERE id LIKE ?", (pattern,))
-        conn.execute("DELETE FROM embeddings WHERE doc_id LIKE ?", (pattern,))
-        conn.commit()
+        from storage import search
+        doc_ids = _unified_doc_ids_for_source(name, persona_key, src)
+        for did in doc_ids:
+            search.delete_doc(did)
+        deleted = len(doc_ids)
+        _ann_remove_doc_ids(doc_ids)
     except Exception:
         pass  # 删除失败不影响主流程
-    return {"ok": True, "name": name, "left": len(left)}
+    return {"ok": True, "name": name, "left": len(left), "deleted": deleted}
 
 
 def clear(persona_key="", src="app"):
     store_for(persona_key, src).clear()
-    # Phase2：同步清空统一检索里的 kb 文档
+    # Phase2：精确清空统一检索里的当前范围 kb 文档
+    deleted = 0
     try:
-        from storage import db
-        conn = db.connection("main")
-        pattern = "kb:%s:%s:%%" % (persona_key or "-", src or "-")
-        conn.execute("DELETE FROM search_docs WHERE id LIKE ?", (pattern,))
-        conn.execute("DELETE FROM embeddings WHERE doc_id LIKE ?", (pattern,))
-        conn.commit()
+        from storage import search
+        doc_ids = _unified_doc_ids_for_scope(persona_key, src)
+        for did in doc_ids:
+            search.delete_doc(did)
+        deleted = len(doc_ids)
+        _ann_remove_doc_ids(doc_ids)
     except Exception:
         pass
-    return {"ok": True}
+    return {"ok": True, "deleted": deleted}
 
 
 # ---------------- 检索 ----------------

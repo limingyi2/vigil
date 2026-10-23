@@ -66,15 +66,22 @@ QUERY_CACHE_MAX = 1000  # 最多缓存1000条，防止内存膨胀
 
 
 def _cached_query_embed(query, backend):
-    """带缓存的查询向量化。命中缓存直接返回，不调模型。"""
+    """带缓存的查询向量化。命中缓存直接返回，不调模型。
+
+    缓存键必须包含后端身份（model_tag = 模型+维度）：切换嵌入模型后，
+    旧缓存的向量维度/语义空间不同，绝不能复用，否则检索结果无意义。
+    """
     q = str(query or "").strip()
     if not q:
         return [], ""
-    key = hashlib.md5(q.encode("utf-8")).hexdigest()
+    backend_tag = backend.tag() if hasattr(backend, "tag") else ""
+    key = "%s:%s" % (backend_tag, hashlib.md5(q.encode("utf-8")).hexdigest())
     with _QUERY_CACHE_LOCK:
         cached = _QUERY_CACHE.get(key)
         if cached and time.time() - cached[1] < QUERY_CACHE_TTL:
-            return cached[0], cached[2]  # (vectors, tag)
+            # 二次校验 tag 一致（防御性）
+            if cached[2] == backend_tag:
+                return cached[0], cached[2]  # (vectors, tag)
     # 缓存未命中，调模型
     vectors, tag = backend.embed([q])
     if vectors:
@@ -310,6 +317,36 @@ def _scope_where(scope, kinds):
     return (" AND " + " AND ".join(clauses)) if clauses else "", args
 
 
+def _scope_match(row, scope, kinds):
+    """Python 层单行范围校验。用于最终获取 SearchResult 时的防御性二次校验。
+
+    row 是 search_docs 的一行元组：
+      (id, scope_kind, owner, src, persona, chan, workspace_id, ...)
+    """
+    if not row:
+        return False
+    scope_kind = row[1]
+    owner = row[2] or ""
+    src = row[3] or ""
+    persona = row[4] or ""
+    chan = row[5] or ""
+    workspace_id = row[6] or ""
+    if kinds and scope_kind not in kinds:
+        return False
+    s = scope or {}
+    for key, val in (("owner", owner), ("src", src), ("persona", persona), ("chan", chan)):
+        expected = s.get(key)
+        if expected is not None and expected != "" and val != expected:
+            return False
+    ws_ids = s.get("workspace_ids")
+    if ws_ids is not None:
+        if not ws_ids:
+            return False  # 明确要求只看工作区但一个都没授权
+        if workspace_id and workspace_id not in ws_ids:
+            return False
+    return True
+
+
 def bm25_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES):
     """BM25 关键词检索。返回 (doc_id, score) 列表，分数越大越相关。
 
@@ -379,8 +416,12 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
         if ann.ensure_loaded(all_docs=valid_rows):
             results = ann.search(qv, k=limit)
             if results:
-                # ANN 用的是归一化内积，分数范围 [-1, 1]，只取正数
-                return [(did, s) for did, s in results if s > 0][:limit]
+                # 【P0 范围隔离】ANN 索引是全局缓存的，可能包含其他 scope 的向量。
+                # 必须用当前 scope 过滤后的 valid_rows 的 doc_id 集合再次校验，
+                # 绝不能返回不在本次授权范围内的文档。
+                allowed_ids = {did for did, _ in valid_rows}
+                return [(did, s) for did, s in results
+                        if did in allowed_ids and s > 0][:limit]
     except Exception:
         pass  # ANN 失败，降级到暴力扫描
 
@@ -506,6 +547,10 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
             continue
         if len(results) >= top_k:
             break
+        # 【P0 范围隔离】最终防线：即使上游 BM25/向量/RRF 都已过滤，
+        # 这里仍要二次校验，防止任何环节漏出越权数据。
+        if not _scope_match(row, scope, kinds):
+            continue
         body = row[8] or ""
         truncated = False
         if len(body) > MAX_SNIPPET:
