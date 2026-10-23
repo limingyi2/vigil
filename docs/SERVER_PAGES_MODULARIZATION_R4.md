@@ -1,6 +1,7 @@
 # Vigil 大文件模块化 R4 交付记录
 
-基线：`eb1e22402cb74b8348c0cce0ce1e75384d8c4f4b`（`dev`）  
+基线：`eb1e22402cb74b8348c0cce0ce1e75384d8c4f4b`（`dev`）
+
 范围：数据页面迁移；配置、模型和工作区 API 边界审计。R4 是本轮最后阶段，不启动 R5/R6。
 
 ## 迁移对应关系
@@ -68,6 +69,6 @@ python .\scripts\build_release.py --candidate
 
 ## PR 与提交
 
-分支：`codex/server-pages-r4`，目标分支：`dev`。  
-提交 SHA：待创建并推送后回填。  
-Draft PR：待创建后回填；保持 OPEN、未合并。
+分支：`codex/server-pages-r4`，目标分支：`dev`。
+
+提交 SHA：以 PR 当前 head commit 为准。Draft PR：[limingyi2/vigil#39](https://github.com/limingyi2/vigil/pull/39)，保持 OPEN、未合并。
