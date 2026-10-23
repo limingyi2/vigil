@@ -50,7 +50,7 @@ R4 最终验证结果：
 | `compileall brain pet` | 通过。 |
 | JS `node --check` | `client/src/js/` 全部 JS 文件及新增测试通过。 |
 | `git diff --check` | 通过。 |
-| GitHub Actions | PR 推送后待检查 |
+| GitHub Actions | 对 R4 代码 head 的 push run #518 和 PR run #519 均完成；Python 单测、全仓语法、真实 FAISS 检索三个作业全部成功。最终报告的文档更新只改本文件，更新后的 head 会重新触发同一 CI。 |
 
 ## Windows 候选安装包
 
