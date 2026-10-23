@@ -299,8 +299,10 @@ def _scope_where(scope, kinds):
     workspace_ids = (scope or {}).get("workspace_ids")
     if workspace_ids is not None:
         if not workspace_ids:
-            # 明确要求"只看工作区文件"但一个都没授权 → 什么都不该返回
-            clauses.append("1=0")
+            # 空工作区授权只排除工作区文件，不影响同一身份可读的聊天、
+            # 长期记忆和知识库文档。
+            clauses.append("scope_kind!=?")
+            args.append(SCOPE_WORKSPACE)
         else:
             clauses.append("(workspace_id IN (%s) OR workspace_id='')" %
                            ",".join("?" for _ in workspace_ids))
@@ -498,6 +500,10 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
     used = 0
     limit = int(budget_chars) if budget_chars else None
     for row in rows:
+        # Defense in depth: candidates are already SQL-filtered in both retrieval
+        # channels, but validate the exact same scope before returning any body.
+        if not _scope_row_matches(row[1:7], scope, kinds):
+            continue
         if len(results) >= top_k:
             break
         body = row[8] or ""
@@ -529,6 +535,25 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
     results.sort(key=lambda r: (-r.score, r.doc_id))
     info["hits"] = len(results)
     return results, info
+
+
+def _scope_row_matches(values, scope, kinds):
+    """Python-side equivalent of ``_scope_where`` for final result validation."""
+    kind, owner, src, persona, chan, workspace_id = values
+    if kinds and kind not in kinds:
+        return False
+    for key, actual in (("owner", owner), ("src", src),
+                        ("persona", persona), ("chan", chan)):
+        expected = (scope or {}).get(key)
+        if expected is not None and expected != "" and actual != expected:
+            return False
+    workspace_ids = (scope or {}).get("workspace_ids")
+    if workspace_ids is not None:
+        if kind == SCOPE_WORKSPACE:
+            return workspace_id in workspace_ids
+        if workspace_ids and workspace_id not in ("", None) and workspace_id not in workspace_ids:
+            return False
+    return True
 
 
 def _default_backend():

@@ -506,14 +506,43 @@ def test_workspace_authorization_boundary(store):
     assert "d2" not in ids, "未授权的工作区内容泄漏了"
 
 
-def test_empty_workspace_list_returns_nothing(store):
-    """明确要求只看工作区但一个都没授权 → 不该返回任何东西。"""
+@pytest.mark.parametrize("vector_enabled", [False, True], ids=["bm25-only", "bm25-vector"])
+def test_empty_workspace_list_excludes_only_workspace_docs(store, vector_enabled):
+    """无工作区授权时仍可检索当前身份的聊天、记忆和知识库。"""
     from storage import search
-    search.upsert_doc("d1", "workspace", "工作区内容", owner="u", src="wechat",
-                       persona="p", workspace_id="ws-ok")
-    results, _ = search.search("内容", scope={"owner": "u", "src": "wechat",
-                                              "persona": "p", "workspace_ids": []})
-    assert not results, "空授权列表却返回了结果"
+    from storage import vector
+    scope = {"owner": "u", "src": "pc", "persona": "p", "workspace_ids": []}
+    docs = [
+        ("chat-current", "chat", "空授权隔离探针 当前会话聊天", "u", "pc", "p", ""),
+        ("memory-current", "memory", "空授权隔离探针 长期记忆", "u", "pc", "p", ""),
+        ("kb-current", "kb", "空授权隔离探针 知识库", "u", "pc", "p", ""),
+        ("workspace-ok", "workspace", "空授权隔离探针 已授权工作区", "u", "pc", "p", "ws-ok"),
+        ("workspace-other", "workspace", "空授权隔离探针 其他工作区", "u", "pc", "p", "ws-other"),
+        ("chat-other-persona", "chat", "空授权隔离探针 其他人设", "u", "pc", "other", ""),
+        ("chat-other-user", "chat", "空授权隔离探针 其他用户", "other-user", "pc", "p", ""),
+        ("chat-other-session", "chat", "空授权隔离探针 其他会话", "u", "pc", "p", ""),
+    ]
+    for doc_id, kind, body, owner, src, persona, workspace_id in docs:
+        search.upsert_doc(doc_id, kind, body, owner=owner, src=src,
+                          persona=persona, workspace_id=workspace_id)
+    if vector_enabled:
+        conn = store.connection("main")
+        for doc_id, *_ in docs:
+            conn.execute(
+                "INSERT INTO embeddings (doc_id,model,dim,vector,created_at) VALUES (?,?,?,?,?)",
+                (doc_id, "fake:4", 4, vector.pack([0.0, 0.0, 1.0, 0.0]), 0))
+        conn.commit()
+        backend = FakeBackend()
+    else:
+        backend = vector.EmbeddingBackend(mode="none")
+    results, info = search.search("空授权隔离探针", scope=scope, backend=backend, top_k=20)
+    ids = {item.doc_id for item in results}
+    assert {"chat-current", "memory-current", "kb-current"} <= ids
+    assert not {"workspace-ok", "workspace-other", "chat-other-persona", "chat-other-user"} & ids
+    if vector_enabled:
+        assert info["semantic"] > 0 and info["method"] == "bm25+vector+rrf"
+    else:
+        assert info["method"] == "bm25"
 
 
 def test_scope_isolation_applies_to_vector_channel(store):
