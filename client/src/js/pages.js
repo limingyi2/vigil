@@ -3886,6 +3886,10 @@
           (p.state === 'restart_required' ? tag('warn', '停用待重启') :
            p.enabled === false ? tag('neutral', '已停用') :
            p.err ? tag('err', '装载失败') : tag('ok', '已启用')) +
+          (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
+            ? tag('warn', 'PC 渠道关闭') :
+             p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === true
+            ? tag('ok', 'PC 渠道可用') : '') +
           (p.builtin ? tag('neutral', '内置插件') : '') + '</div>' +
           '<div class="pkg-desc">' + esc(p.desc || '') + '</div>' +
           (p.builtin ? '<div class="pkg-desc">随 Vigil 程序发布，可停用；不能单独卸载，更新随程序版本进行。</div>' : '') +
@@ -5825,7 +5829,12 @@
           (p.builtin ? '<div class="market-meta">随 Vigil 程序发布，可停用；不能单独卸载或更新。</div>' : '') +
           '<div style="margin-top:4px">' + tags + '</div>' +
           (p.installed ? '<div class="market-meta">本地 v' + esc(localVersion) + ' · ' + esc(updateAvailable ? '有可用更新' : (p.update_state === 'ahead' ? '本地版本较新' : '已是最新')) + '</div>' : '') +
-          '<div class="market-meta">运行状态：' + esc(state) + (p.enabled === false ? ' · 已禁用' : '') + '</div>' +
+          '<div class="market-meta">运行状态：' + esc(state) +
+            (p.lifecycle_enabled === false || p.enabled === false ? ' · 全局已停用' : ' · 全局已启用') +
+            (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
+              ? ' · PC 渠道关闭' :
+               p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === true
+              ? ' · PC 渠道可用' : '') + '</div>' +
           (p.diagnostic ? '<div class="market-error">诊断：' + esc(p.diagnostic) + '</div>' : '') +
           '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">' + actionButtons + '</div>' +
           '</div>'

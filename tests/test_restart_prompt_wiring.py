@@ -31,6 +31,14 @@ def _read(p):
         return f.read()
 
 
+def _handler_after(source, anchor, handler, terminator="\n      }));"):
+    """Return a complete event handler without relying on a fixed source window."""
+    anchor_at = source.index(anchor)
+    start = source.index(handler, anchor_at)
+    end = source.index(terminator, start) + len(terminator)
+    return source[start:end]
+
+
 class C1ToastWordingByKind(unittest.TestCase):
     """Skill 的提示不许再被叫成"插件"。"""
 
@@ -76,27 +84,27 @@ class C2UninstallConsumesRestartNeeded(unittest.TestCase):
         cls.src = _read(PAGES)
 
     def test_plugin_uninstall_reads_restart_needed(self):
-        i = self.src.index('data-un="')
-        block = self.src[i:i + 1400]
+        block = _handler_after(self.src, 'data-un="',
+                               "v.querySelectorAll('[data-un]')")
         self.assertIn("rr.restart_needed", block,
                       "插件卸载没有消费 restart_needed —— 后台线程还在跑，界面却说卸完了")
 
     def test_skill_uninstall_reads_restart_needed(self):
-        i = self.src.index("data-sun")
-        block = self.src[i:i + 1400]
+        block = _handler_after(self.src, "data-sun",
+                               "v.querySelectorAll('[data-sun]')")
         self.assertIn("rr.restart_needed", block,
                       "技能卸载没有消费 restart_needed")
 
     def test_uninstall_failure_is_reported(self):
         """以前卸载是 await 完就重画，失败也看着像成功。"""
-        i = self.src.index('data-un="')
-        block = self.src[i:i + 1400]
+        block = _handler_after(self.src, 'data-un="',
+                               "v.querySelectorAll('[data-un]')")
         self.assertIn("!rr.ok", block)
         self.assertIn("卸载失败", block)
 
     def test_uninstall_prompt_says_what_is_still_running(self):
-        i = self.src.index('data-un="')
-        block = self.src[i:i + 1400]
+        block = _handler_after(self.src, 'data-un="',
+                               "v.querySelectorAll('[data-un]')")
         self.assertIn("后台线程还在跑", block)
 
 

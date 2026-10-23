@@ -1391,7 +1391,8 @@ def start_remote_api(brain):
                         }
                         items.append(row)
                         by_name[name] = row
-                    for key in ("state", "enabled", "source_kind", "builtin",
+                    for key in ("state", "enabled", "lifecycle_enabled",
+                                "effective_by_src", "source_kind", "builtin",
                                 "removable", "runtime_state", "version",
                                 "update_state", "diagnostic"):
                         row[key] = status.get(key)

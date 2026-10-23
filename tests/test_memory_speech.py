@@ -224,7 +224,10 @@ class TestAgendaIsTheAuthority(unittest.TestCase):
         p = os.path.join(self._d, "agenda.json")
         with open(p, "w", encoding="utf-8") as f:
             json.dump({"items": []}, f)
-        os.utime(p, None)          # 确保 mtime 变化
+        # Force a distinct mtime even on filesystems with coarse timestamp
+        # resolution where the two writes can otherwise land in one tick.
+        st = os.stat(p)
+        os.utime(p, (st.st_atime, st.st_mtime - 10))
         self.assertEqual(M._agenda_missed_texts(), set())
 
 

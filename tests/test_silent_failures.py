@@ -142,7 +142,9 @@ class TestToolsSwitch(unittest.TestCase):
         import features
         orig = features.on
         try:
-            features.on = lambda k, src=None: True if k == "tools" else orig(k, src)
+            # Isolate the tool switch from the user's unrelated weather
+            # preference; this test requires the weather plugin to be eligible.
+            features.on = lambda k, src=None: True if k in ("tools", "weather", "packages") else orig(k, src)
             names = [t["function"]["name"] for t in tl.all_specs()]
             for n in ("weather", "tracking"):
                 self.assertIn(n, names)

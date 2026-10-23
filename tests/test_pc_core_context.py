@@ -291,14 +291,16 @@ def test_deleting_recovered_workspace_detaches_old_and_new_sessions(core, monkey
 
 def test_plugin_http_lifecycle_and_both_management_views_share_state(core, monkeypatch, tmp_path):
     b, request, data, cfg = core
-    import plugin_host, plugin_ops, plugin_manager, types
+    import plugin_host, plugin_ops, plugin_manager, features, types
 
     installed = tmp_path / 'installed_plugins'
     installed.mkdir()
     package = installed / 'lifecycle_probe'
     package.mkdir()
     entry = package / '__init__.py'
-    entry.write_text('# isolated plugin fixture', encoding='utf-8')
+    entry.write_text('FEATURE = "lifecycle_probe_feature"\n', encoding='utf-8')
+    (package / 'frontend.js').write_text('window.lifecycleProbe = true;', encoding='utf-8')
+    (package / 'frontend.css').write_text('.lifecycle-probe{}', encoding='utf-8')
     registry = installed / '_registry.json'
     registry.write_text(json.dumps({'version': 1, 'plugins': {
         'lifecycle_probe': {'enabled': True, 'version': '1.0.0'}}}), encoding='utf-8')
@@ -306,7 +308,7 @@ def test_plugin_http_lifecycle_and_both_management_views_share_state(core, monke
     mod = types.ModuleType('lifecycle_probe_fixture')
     mod.NAME = 'lifecycle_probe'
     mod.DESC = 'isolated lifecycle fixture'
-    mod.FEATURE = ''
+    mod.FEATURE = 'lifecycle_probe_feature'
     mod.TOOLS = {'lifecycle_probe_tool': lambda arg: called.append(arg) or 'ok'}
     mod.ROUTES = [('GET', '/api/plugin/lifecycle-probe',
                    lambda body, query: {'ok': True, 'result': 'reached'})]
@@ -329,13 +331,26 @@ def test_plugin_http_lifecycle_and_both_management_views_share_state(core, monke
         monkeypatch.setattr(plugin_ops, '_PLUG_DIR', str(installed))
         monkeypatch.setattr(plugin_ops, 'REGISTRY', str(registry))
         monkeypatch.setattr(plugin_manager, '_reload', reload_target)
+        cfg['features'] = {'packages': True, 'weather': True}
+        cfg['features']['lifecycle_probe_feature'] = True
+        cfg['features_by_src'] = {
+            'pc': {'lifecycle_probe_feature': False, 'weather': False}}
+        features.register('lifecycle_probe_feature', True)
+        Path(paths.CONFIG_PATH).write_text(json.dumps(cfg), encoding='utf-8')
+        monkeypatch.setattr(features, '_CFG', str(paths.CONFIG_PATH))
+        features.invalidate()
         monkeypatch.setattr(market.mod, '_read_market', lambda: {
             'state': 'ready', 'plugins': [], 'version': 'fixture'})
 
-        assert request('/api/plugin/lifecycle-probe')[0] == 200
+        assert request('/api/plugin/lifecycle-probe')[0] == 403
+        assert plugin_host.run_tool('lifecycle_probe_tool', 'blocked', src='pc') is None
+        assert all(row['name'] != 'lifecycle_probe' for row in
+                   plugin_host.frontend_assets()['plugins'])
         code, disabled = request('/api/plugins/lifecycle', {
             'name': 'lifecycle_probe', 'action': 'disable'})
         assert code == 200 and disabled['ok'] and disabled['enabled'] is False
+        assert disabled['lifecycle_enabled'] is False
+        assert disabled['effective_by_src']['pc'] is False
         assert request('/api/plugin/lifecycle-probe')[0] == 403
         assert all(row['name'] != 'lifecycle_probe' for row in
                    request('/api/plugins/frontend')[1]['plugins'])
@@ -346,11 +361,38 @@ def test_plugin_http_lifecycle_and_both_management_views_share_state(core, monke
         assert old_item['enabled'] is market_item['enabled'] is False
         assert old_item['state'] == market_item['state'] == 'disabled'
         assert old_item['removable'] and market_item['removable']
+        assert old_item['effective_by_src'] == market_item['effective_by_src']
+        assert old_item['effective_by_src']['pc'] is False
 
         code, enabled = request('/api/plugins/lifecycle', {
             'name': 'lifecycle_probe', 'action': 'enable'})
         assert code == 200 and enabled['enabled'] is True
+        assert enabled['lifecycle_enabled'] is True
+        assert enabled['effective_by_src']['pc'] is False
+        assert request('/api/plugin/lifecycle-probe')[0] == 403
+        assert plugin_host.run_tool('lifecycle_probe_tool', 'still-blocked', src='pc') is None
+        assert all(row['name'] != 'lifecycle_probe' for row in
+                   plugin_host.frontend_assets()['plugins'])
+
+        # The channel chip writes this plugin's PC override only. It restores
+        # actual availability without changing independent feature preferences.
+        code, channels = request('/api/plugins/channels', {
+            'name': 'lifecycle_probe', 'channels': ['pc']})
+        assert code == 200 and channels['channels']['pc'] is True
+        final_old = next(row for row in channels['manage']['items']
+                         if row['name'] == 'lifecycle_probe')
+        final_market = next(row for row in request('/api/market/list')[1]['plugins']
+                            if row['name'] == 'lifecycle_probe')
+        assert final_old['lifecycle_enabled'] is final_market['lifecycle_enabled'] is True
+        assert final_old['effective_by_src']['pc'] is final_market['effective_by_src']['pc'] is True
         assert request('/api/plugin/lifecycle-probe')[0] == 200
+        assert plugin_host.run_tool('lifecycle_probe_tool', 'allowed', src='pc') == 'ok'
+        assert any(row['name'] == 'lifecycle_probe'
+                   for row in plugin_host.frontend_assets()['plugins'])
+        saved_cfg = json.loads(Path(paths.CONFIG_PATH).read_text(encoding='utf-8'))
+        assert saved_cfg['features']['weather'] is True
+        assert saved_cfg['features_by_src']['pc']['weather'] is False
+        assert saved_cfg['features_by_src']['pc']['lifecycle_probe_feature'] is True
         code, removed = request('/api/plugins/uninstall', {
             'name': 'lifecycle_probe', 'purge_data': False})
         assert code == 200 and removed['ok']
@@ -360,6 +402,7 @@ def test_plugin_http_lifecycle_and_both_management_views_share_state(core, monke
         assert all(row['name'] != 'lifecycle_probe' for row in
                    request('/api/market/list')[1]['plugins'])
     finally:
+        features.invalidate()
         plugin_host._registry = old_plugins
         plugin_host._reindex_tools()
 

@@ -395,7 +395,10 @@ def frontend_assets():
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if not (p.frontend_js or p.frontend_css):
             continue
-        enabled = _enabled(p)
+        # Frontend resources are consumed by the PC client. Evaluate the same
+        # explicit channel as its tool and route requests so ambient context
+        # cannot expose a resource that is disabled for PC.
+        enabled = _enabled(p, "pc")
         if not enabled:
             # Omit disabled code so it cannot be fetched and run by the renderer.
             # The changed fingerprint makes the client dispose the old contribution.

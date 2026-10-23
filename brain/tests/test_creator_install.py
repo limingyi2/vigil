@@ -217,8 +217,12 @@ def test_creator_directory_plugin_installs_then_loads_tools_and_frontend(isolate
     monkeypatch.setattr(plugin_host, "_DIR", str(plugins))
     monkeypatch.setattr(plugin_host, "_registry", {})
     monkeypatch.setattr(plugin_host, "_TOOL_INDEX", {})
-    plugin_host.load(force=True)
+    # load(force=True) changes this process-wide flag; keep the fixture's
+    # temporary plugin directory from becoming the host's cached runtime.
+    monkeypatch.setattr(plugin_host, "_loaded", plugin_host._loaded)
     import features
+    monkeypatch.setitem(features.DEFAULTS, "creator_panel_fixture", True)
+    plugin_host.load(force=True)
     monkeypatch.setattr(features, "on", lambda name, src=None: src == "pc")
     assert "panel_status" in plugin_host.tool_specs("pc")
     assert "panel_status" not in plugin_host.tool_specs("wechat")

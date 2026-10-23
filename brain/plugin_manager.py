@@ -474,10 +474,9 @@ def enable(name):
         state_patch["source_kind"] = "builtin"
     item = _set_state(name, **state_patch)
     try:
-        import features
-        feature = _feature(name, item)
-        if feature:
-            features.set_features({feature: True})
+        # The registry is the plugin-wide lifecycle gate. Per-channel feature
+        # settings are independent user preferences and must survive enable /
+        # disable unchanged (especially legacy PC overrides).
         if not _reload(name):
             _set_state(name, state="restart_required", last_error="运行中的 Brain 不可用")
             return False, {"ok": False, "name": name, "state": "restart_required",
@@ -485,7 +484,11 @@ def enable(name):
     except Exception as exc:
         _set_state(name, state="error", last_error=str(exc)[:180])
         return False, {"ok": False, "err": str(exc)[:180], "state": "error"}
-    return True, {"ok": True, "name": name, "enabled": True, "state": "enabled"}
+    current = status(name)
+    return True, {"ok": True, "name": name, "enabled": True,
+                  "lifecycle_enabled": True,
+                  "effective_by_src": current.get("effective_by_src", {}),
+                  "state": "enabled"}
 
 
 def disable(name):
@@ -499,10 +502,6 @@ def disable(name):
         state_patch["source_kind"] = "builtin"
     item = _set_state(name, **state_patch)
     try:
-        import features
-        feature = _feature(name, item)
-        if feature:
-            features.set_features({feature: False})
         stopped, stop_err = _stop(name)
         if not stopped:
             if _needs_restart(stop_err):
@@ -517,7 +516,11 @@ def disable(name):
     except Exception as exc:
         _set_state(name, state="error", last_error=str(exc)[:180])
         return False, {"ok": False, "err": str(exc)[:180], "state": "error"}
-    return True, {"ok": True, "name": name, "enabled": False, "state": "disabled"}
+    current = status(name)
+    return True, {"ok": True, "name": name, "enabled": False,
+                  "lifecycle_enabled": False,
+                  "effective_by_src": current.get("effective_by_src", {}),
+                  "state": "disabled"}
 
 
 def uninstall(name, *, purge_data=False):
@@ -590,6 +593,24 @@ def status(name, latest_version=""):
     except Exception:
         enabled = bool(item.get("enabled", True)) if installed else False
         runtime_state, diagnostic = "unknown", item.get("last_error", "")
+    try:
+        import paths
+        sources = list(getattr(paths, "CHANNELS", ()) or ())
+    except Exception:
+        sources = []
+    if not sources:
+        sources = ["pc"]
+    feature = _feature(name, item)
+    try:
+        import features
+        effective_by_src = {
+            src: bool(installed and enabled and
+                      (features.all_features(src).get(feature, True)
+                       if feature else True))
+            for src in sources
+        }
+    except Exception:
+        effective_by_src = {src: bool(installed and enabled) for src in sources}
     update_state = "not_installed" if not installed else "current"
     if installed and latest_version and source_kind != "builtin":
         cmp = compare_versions(version, latest_version)
@@ -597,7 +618,9 @@ def status(name, latest_version=""):
     return {"name": name, "installed": installed, "version": version,
             "latest_version": latest_version, "update_state": update_state,
             "state": item.get("state", "installed" if installed else "not_installed"),
-            "enabled": enabled, "source_kind": source_kind or item.get("source_kind", "user"),
+            "enabled": enabled, "lifecycle_enabled": enabled,
+            "effective_by_src": effective_by_src,
+            "source_kind": source_kind or item.get("source_kind", "user"),
             "builtin": source_kind == "builtin", "removable": source_kind == "user",
             "runtime_state": runtime_state, "dependencies": item.get("dependencies", {}),
             "permissions": item.get("permissions", []), "diagnostic": diagnostic,
