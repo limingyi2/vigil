@@ -109,7 +109,11 @@ class AutoConnectTests(unittest.TestCase):
     def test_retry_has_three_attempts_and_preserves_cancellation_epoch(self):
         self.center.enabled = True
         epoch = self.center.reconnect_epoch
-        with patch("codex_adapter.time.sleep") as sleep, \
+        real_time = __import__("time")
+        sleep = Mock()
+        isolated_time = SimpleNamespace(sleep=sleep, time=real_time.time,
+                                        monotonic=real_time.monotonic)
+        with patch("codex_adapter.time", isolated_time), \
                 patch.object(self.center, "connect", side_effect=AdapterError("rpc_timeout")) as connect:
             self.center._reconnect(epoch)
         self.assertEqual([c.args[0] for c in sleep.call_args_list], [1, 2, 4])

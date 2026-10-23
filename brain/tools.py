@@ -154,6 +154,18 @@ def tool_help_extra(native=False):
 # 执行时 run_tool 会自动路由到 plugin_host —— 插件函数无需改动。
 
 _STATIC_SPECS = {
+    "agent_run_inspect": {
+        "desc": "只读查询当前会话任务的脱敏失败证据。可传 run_id；省略时查询最近失败任务。不可访问表示不存在或无权查询。不会重试或派发原任务。",
+        "params": [("run_id", "当前会话的任务编号；留空查询最近失败任务", False)],
+        "parameters": {"type": "object", "properties": {
+            "run_id": {"type": "string"}}, "additionalProperties": False},
+        "arg_param": "run_id",
+    },
+    "diagnostic_queue_status": {
+        "desc": "只读查询当前进程诊断队列计数，不刷新或清理数据库；进程重启后计数重置，不能用来判断历史日志是否丢失。",
+        "params": [], "parameters": {"type": "object", "properties": {},
+                                         "additionalProperties": False}, "arg_param": None,
+    },
     # --- 内置 ---
     "weather": {
         "desc": "查某城市的实时天气（天气状况、气温、风向、湿度）。不填城市就自动定位他所在的城市。"
@@ -383,6 +395,19 @@ def _static_tool_array(src=None):
     return out
 
 
+def static_tool_enabled(name, src=None):
+    """Whether a required built-in tool is exposed for this channel.
+
+    This is a routing hint only. Actual invocation still goes through
+    ``all_specs`` and ``invoke_spec`` with their existing permission gates.
+    """
+    name = str(name or "").strip()
+    if name not in _STATIC_SPECS or not _feature_on("tools", src):
+        return False
+    feature = _STATIC_FEATURE_MAP.get(name)
+    return feature is None or _feature_on(feature, src)
+
+
 def _dynamic_tool_array(brain=None, src=None):
     """动态 JS 技能工具（`包名__工具名`）的 OpenAI tools 数组。
 
@@ -560,6 +585,16 @@ def invoke_spec(name, args, ctx=None):
     n = str(name or "").strip()
     if not n:
         return None
+    if n in ("agent_run_inspect", "diagnostic_queue_status"):
+        import agent_inspection
+        if n == "agent_run_inspect":
+            result = agent_inspection.inspect(args, ctx)
+        elif agent_inspection.scope(ctx) is None or not isinstance(args, dict) or args:
+            result = dict(agent_inspection.INACCESSIBLE)
+        else:
+            from storage import diag
+            result = dict(ok=True, **diag.queue_snapshot())
+        return json.dumps(result, ensure_ascii=False)
     args = args if isinstance(args, dict) else {}
 
     if n == "capability_status":
@@ -592,11 +627,36 @@ def invoke_spec(name, args, ctx=None):
                 # Agent Run 带着 owner；普通聊天没有 owner，按渠道区分。
                 identity = "owner:%s" % str(getattr(ctx, "owner", "") or getattr(ctx, "src", "") or "local")
                 session = str(getattr(ctx, "conversation_id", "") or "")
-            out = _caps.REGISTRY.invoke(
-                str(args.get("capability") or "").strip(),
-                str(args.get("operation") or "").strip(),
-                op_args, identity=identity, session=session,
-                target=str(getattr(ctx, "capability_target", "") or ""))
+            from storage.query_resolver import bind, for_turn, QueryContext, scope_key
+            retrieval_context = for_turn(ctx)
+            if (str(args.get('capability') or '') in {'unified_search', 'knowledge_base'}
+                    and str(args.get('operation') or '') == 'search'):
+                from pc_context import runtime_persona_key, persona_key
+                bound = dict(retrieval_context.scope) if retrieval_context else {}
+                snapshot = getattr(ctx, 'api_config', None) or {}
+                trusted_persona = (persona_key(snapshot) if snapshot else
+                                   bound.get('persona') or runtime_persona_key())
+                if bound.get('persona') != trusted_persona:
+                    retrieval_context = QueryContext(
+                        str(getattr(ctx, 'conversation_id', '') or ''), (),
+                        user_query=retrieval_context.user_query if retrieval_context else '')
+                    bound = {}
+                trusted_owner = str(getattr(ctx, 'owner', '') or '')
+                if retrieval_context and trusted_owner:
+                    retrieval_context = QueryContext(retrieval_context.conversation_id,
+                        scope_key(dict(bound, owner=trusted_owner)), retrieval_context.history,
+                        retrieval_context.confirmed_entities, retrieval_context.user_query)
+                op_args = dict(op_args, owner=str(getattr(ctx, 'owner', '') or ''),
+                               src=str(getattr(ctx, 'src', '') or 'pc'),
+                               chan=bound.get('chan') or str(getattr(ctx, 'src', '') or 'pc'),
+                               persona=trusted_persona,
+                               workspace_ids=list(bound.get('workspace_ids', ())))
+            with bind(retrieval_context):
+                out = _caps.REGISTRY.invoke(
+                    str(args.get("capability") or "").strip(),
+                    str(args.get("operation") or "").strip(),
+                    op_args, identity=identity, session=session,
+                    target=str(getattr(ctx, "capability_target", "") or ""))
             return json.dumps(out, ensure_ascii=False, sort_keys=True)
         except Exception as exc:
             return "能力调用失败：%s" % str(exc)[:160]
@@ -663,4 +723,8 @@ def invoke_spec(name, args, ctx=None):
     arg = ""
     if arg_param:
         arg = str(args.get(arg_param) or "").strip()
+    if n == 'kb_search':
+        from storage.query_resolver import bind, for_turn
+        with bind(for_turn(ctx)):
+            return run_tool(n, arg, src=_src)
     return run_tool(n, arg, src=_src)

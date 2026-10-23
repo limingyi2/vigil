@@ -55,20 +55,17 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vigil-windows-plugin-market-code30
+          name: kestrel-windows-plugin-market-candidate
           # electron-builder 同时产出 nsis 安装器和差分更新用的 blockmap，
-          # 但上传列表只匹配 Vigil.Setup.*.exe —— blockmap 每次都被丢掉。
-          # 历史 release（v1.1.8-p9.3.20261021.1、p12-candidate-20261021-e6ae1a8）
-          # 都挂了它，从 CI 走出来的候选包却没有，资产结构与正式版不一致。
-          # blockmap 是客户端差分更新的依据，补齐后产品代码零改动。
+          # 上传列表匹配 Kestrel.Setup.*.exe（产品已改名，原 Vigil 通配符会找不到文件）。
+          # blockmap 是客户端差分更新的依据，必须与安装器一起上传。
           #
-          # 便携版（portable target）故意不上传：它的文件名是
-          # "Vigil <版本>.exe"（中间是空格），通配符匹配不到；而且它是
-          # 250MB 起步的重复内容，候选包阶段没有必要拖着一份。
+          # 便携版（portable target）故意不上传：它是 250MB 起步的重复内容，
+          # 候选包阶段没有必要拖着一份。
           path: |
-            client/dist-release/Vigil.Setup.*.exe
-            client/dist-release/Vigil.Setup.*.exe.blockmap
+            client/dist-release/Kestrel.Setup.*.exe
+            client/dist-release/Kestrel.Setup.*.exe.blockmap
             client/dist-release/release-manifest.json
-            client/dist-release/Vigil.Setup.*.contents.json
+            client/dist-release/Kestrel.Setup.*.contents.json
           if-no-files-found: error
           retention-days: 14

@@ -56,7 +56,7 @@ _CONN = {}          # kind -> (path, sqlite3.Connection)
 _INIT = {}          # kind -> 已跑过迁移的库路径
 _FAILED = {}        # kind -> 打开失败时的路径（不再反复重试，避免拖慢主链路）
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _dir():
@@ -878,6 +878,12 @@ def _m_main_6(conn):
     legacy_sqlite.import_legacy_files(conn)
 
 
+def _m_main_7(conn):
+    """主库 v7：P18 Todo、版本、执行尝试、Run 关联与原子检查点（只加表）。"""
+    from .workflow_schema import migrate
+    migrate(conn)
+
+
 MIGRATIONS = {
     ("main", 1): _m_main_1,
     ("main", 2): _m_main_2,
@@ -885,6 +891,7 @@ MIGRATIONS = {
     ("main", 4): _m_main_4,
     ("main", 5): _m_main_5,
     ("main", 6): _m_main_6,
+    ("main", 7): _m_main_7,
     ("logs", 1): _m_logs_1,
     ("logs", 2): _m_logs_2,
     ("logs", 3): _m_logs_3,

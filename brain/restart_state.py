@@ -101,7 +101,10 @@ def note_change(scope, directory, reason=""):
     """磁盘发生了变更（装 / 卸 / 更新）。记下时刻与原因。"""
     path = state_path(scope, directory)
     d = _read(path)
-    d["changed_at"] = time.time()
+    # Keep same-process events strictly ordered even on filesystems / clocks
+    # whose timestamp resolution rounds rapid operations to the same instant.
+    d["changed_at"] = max(time.time(), d["started_at"] + 0.000001,
+                           d["changed_at"] + 0.000001)
     if reason:
         d["reasons"] = ([str(reason)[:120]] + d["reasons"])[:_MAX_REASONS]
     _write(path, d)
@@ -115,7 +118,7 @@ def note_start(scope, directory):
     """
     path = state_path(scope, directory)
     d = _read(path)
-    d["started_at"] = time.time()
+    d["started_at"] = max(time.time(), d["changed_at"])
     _write(path, d)
     return d
 

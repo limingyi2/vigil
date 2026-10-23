@@ -2642,6 +2642,18 @@
             addStep('coding-diagnosis', '已定位失败原因：' + String(payload.summary || payload.root_cause || ''), 'warn');
           } else if (evt.type === 'coding_repair') {
             addStep('coding-repair', '自动修复第 ' + String(payload.repair_count || 0) + ' 轮', 'ok');
+          } else if (evt.type === 'coding_workflow') {
+            const progress = payload.progress || {};
+            const done = Number(progress.completed || 0), total = Number(progress.total || 0);
+            const current = (payload.steps || []).find(s => s.status === 'running');
+            let label = '已更新';
+            if (payload.requires_review) label = '需要人工核对';
+            else if (payload.status === 'failed') label = '任务失败';
+            else if (payload.status === 'cancelled') label = '已取消';
+            else if (payload.status === 'paused') label = '已暂停';
+            else if (current) label = '正在执行：' + String(current.title || current.step_id || '');
+            else if (total) label = '已完成 ' + done + ' / ' + total + ' 步';
+            addStep('coding-workflow', '复杂任务 · ' + label, payload.requires_review || payload.status === 'failed' ? 'warn' : 'neutral');
           }
         } else if (evt.type === 'stage') {
           if(evt.stage==='generating'){thinkingFinished=false;startThinking();}
@@ -3360,15 +3372,11 @@
   }
 
   // ═══ 2. 人设 ═══════════════════════════════════════════════
-  // 卡片式：选一个渠道（App / 微信私聊 / 微信群），点卡片上的「应用」把她在那边换掉。
-  // 本机控制台不参与 —— 控制台是干活的工具，不扮演角色（走全局默认）。
-  // 账本只有本机 Brain 这一份：读写的都是随包内核里的人设文件。
+  // PC persona selection edits the local Core's persona_file.
   async function renderPersona(ctx) {
     ctx.view.classList.add('persona-view');
-    const CHANS = [['app', 'App', '全局默认（没单独设置的渠道都跟它）'],
-                   ['wechat', '微信私聊', '私聊那一个'],
-                   ['wechat_group', '微信群', '群里那一个（@ 她 / 她搭话的）']];
-    let curChan = 'wechat_group';
+    const CHANS = [['pc', '本机 PC', '本机默认人设']];
+    let curChan = 'pc';
     const r = pick(await get('/api/persona'));
     const list = r.templates || r.personas || r.presets || [];
     const per = {};
@@ -3381,11 +3389,9 @@
     ctx.topbar.innerHTML = topbar('人格与语气', '存在本机 Brain · 应用/编辑立即生效，下一句话就是新人设',
       '<button class="btn oline" id="reloadP">' + icon('refresh', 'sm') + '重载人格</button>');
     ctx.panel.innerHTML = '<div class="phead"><h2>人设</h2></div>' +
-      '<div class="pseg"><button data-sub="wechat_group"' + (curChan === 'wechat_group' ? ' class="on"' : '') + '>微信群</button>' +
-      '<button data-sub="wechat"' + (curChan === 'wechat' ? ' class="on"' : '') + '>微信私聊</button>' +
-      '<button data-sub="app"' + (curChan === 'app' ? ' class="on"' : '') + '>App</button></div>' +
+      '<div class="pseg"><button data-sub="pc" class="on">本机 PC</button></div>' +
       '<div class="plist"><div class="empty" style="text-align:left;padding:14px 10px">' +
-      '在左边选渠道，点卡片上的「应用」。<br>本机控制台不设人设。</div></div>';
+      '点卡片上的「应用」切换本机人设。历史与记忆按人设隔离。</div></div>';
 
     const cardOf = (p) => {
       const k = p.key || p;
@@ -3826,7 +3832,7 @@
       return Object.keys(cur || {}).filter((k) => cur[k]);
     }
     function chanChips(chans, cur, name, dis) {
-      const CN = { app: 'App', wechat: '微信', wechat_group: '微信群', pc: '本机' };
+      const CN = { pc: '本机' };
       return '<div class="pkg-ch"><span class="muted">生效于</span>' +
         (chans || []).map((c) =>
           '<button class="chip' + (chanOn(cur, c) ? ' on' : '') + (dis ? ' dis' : '') +
@@ -3858,7 +3864,7 @@
     async function plugins() {
       const r = pick(await get('/api/plugins'));
       const m = r.manage || {};
-      const chans = m.channels || ['app', 'wechat', 'wechat_group', 'pc'];
+      const chans = m.channels || ['pc'];
       const items = m.items || [];
       v.__items = items;
       // C3：持久的"待重启"提示。判据是服务端磁盘上的两个时间戳
@@ -3878,7 +3884,7 @@
           '重启内核后两边才一致。</div></div>' : '') +
         '<div class="sech"><b>添加插件</b><div class="sp"></div><span class="muted">zip 上传</span></div>' +
         '<div class="drop" id="plDrop">' + icon('upload', 'md') +
-        '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 装上自动热重载，不用重启内核</span></div>' +
+        '<b>把插件 .zip 拖到这里</b><span class="muted">或点击选择文件 · 安装时不会执行新代码，确认后再重载</span></div>' +
         '<div class="sech"><b>已安装的插件</b><div class="sp"></div>' +
         '<span class="tag neutral">' + items.length + ' 个</span>' +
         (pendOn ? tag('warn', '待重启生效') : '') +
@@ -3888,8 +3894,18 @@
           '<div class="pkg">' +
           '<div class="pkg-ic">' + icon('plug', 'sm') + '</div>' +
           '<div class="pkg-main">' +
-          '<div class="pkg-h"><b>' + esc(p.name) + '</b>' + (p.err ? tag('err', '装载失败') : tag('ok', '运行中')) + '</div>' +
+          '<div class="pkg-h"><b>' + esc(p.name) + '</b>' +
+          (p.state === 'restart_required' ? tag('warn', '停用待重启') :
+           p.enabled === false ? tag('neutral', '已停用') :
+           p.err ? tag('err', '装载失败') : tag('ok', '已启用')) +
+          (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
+            ? tag('warn', 'PC 渠道关闭') :
+             p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === true
+            ? tag('ok', 'PC 渠道可用') : '') +
+          (p.builtin ? tag('neutral', '内置插件') : '') + '</div>' +
           '<div class="pkg-desc">' + esc(p.desc || '') + '</div>' +
+          (p.builtin ? '<div class="pkg-desc">随 Vigil 程序发布，可停用；不能单独卸载，更新随程序版本进行。</div>' : '') +
+          (p.diagnostic ? '<div class="pkg-desc" style="color:var(--danger)">' + esc(p.diagnostic) + '</div>' : '') +
           '<div class="pkg-meta"><span class="mono">' + esc(p.file || '') + '</span>' +
           ((p.tools || []).length ? '<span>· 工具 ' + esc(p.tools.join('、')) + '</span>' : '') +
           ((p.hooks || []).length ? '<span>· 钩子 ' + esc(p.hooks.join('、')) + '</span>' : '') +
@@ -3897,27 +3913,40 @@
           '</div></div>' +
           '<div class="pkg-side">' +
           chanChips(chans, p.channels, p.name, !p.channelable) +
-          '<button class="btn pkg-un" data-un="' + esc(p.name) + '">卸载</button>' +
+          (p.state === 'restart_required' ? '<button class="btn" disabled>待重启</button>' :
+           '<button class="btn" data-life="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '停用') + '</button>') +
+          (p.removable ? '<button class="btn pkg-un" data-un="' + esc(p.name) + '">卸载</button>' : '') +
           '</div></div>').join('')
           : empty('一个插件都没装', '上面拖一个 .zip 试试'));
 
       bindDrop(v.querySelector('#plDrop'), (f) => installZip(f, '/api/plugins/install', { source: '客户端' }, 'plugin'));
       v.querySelector('#plReload').addEventListener('click', async () => {
         const rr = pick(await post('/api/plugins/reload', {}));
-        toast(rr.ok ? '已重载：' + (rr.count || '?') + ' 个插件' : '重载失败');
+        toast(rr.ok ? '插件已重载' : ('重载失败：' + (rr._err || rr.err || '未知错误')));
         plugins();
       });
+      v.querySelectorAll('[data-life]').forEach((b) => b.addEventListener('click', async () => {
+        const action = b.dataset.life;
+        const name = b.dataset.name;
+        b.disabled = true;
+        const rr = pick(await post('/api/plugins/lifecycle', { name, action }));
+        if (!rr.ok) toast((rr.state === 'restart_required' ? '停用请求已记录，待重启内核：' : '操作失败：') + (rr._err || rr.err || '未知错误'));
+        else toast(action === 'disable' ? '插件已停用' : '插件已启用');
+        window.dispatchEvent(new Event('vigil-market-changed'));
+        await plugins();
+      }));
       v.querySelectorAll('[data-un]').forEach((b) => b.addEventListener('click', async () => {
         if (!await confirmDialog('卸载插件 ' + b.dataset.un + '？')) return;
         // C2：卸载接口会回 restart_needed，必须消费。文件删掉只代表磁盘上
         // 没了，已经 import 的那份（连同它 start() 起的线程）还在跑 ——
         // 不告诉用户"要重启才真正停"，他就会以为线程也跟着没了。
         const rr = pick(await post('/api/plugins/uninstall', { name: b.dataset.un, purge_data: false }));
-        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
+        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); await plugins(); return; }
         toast(rr.restart_needed
           ? '文件已卸载，但它注册的后台线程还在跑 —— 要重启内核才真正停止'
           : '已卸载（剩 ' + (rr.count != null ? rr.count : '?') + ' 个）');
-        plugins();
+        window.dispatchEvent(new Event('vigil-market-changed'));
+        await plugins();
       }));
       bindChanChips('/api/plugins/channels', 'plugin');
       drawCurrent = plugins;
@@ -4027,7 +4056,7 @@
         Object.keys(feats).map((k) => '<tr><td>' + esc(NAMES[k] || k) + '</td>' +
           '<td class="c"><button class="sw ' + (feats[k] ? 'on' : '') + '" data-f="' + esc(k) + '"></button></td></tr>').join('') +
         '</table></div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:8px">这里是本机控制台（pc）的开关，改完即时生效。App 与微信各自那份在它们自己的设置里。</div>';
+        '<div class="muted" style="font-size:11.5px;margin-top:8px">这里是本机控制台（pc）的开关，改完即时生效。所有设置仅作用于本机 PC。</div>';
 
       const range = v.querySelector('#chattyRange');
       const valEl = v.querySelector('#chattyVal');
@@ -4121,7 +4150,7 @@
         '<div class="card kpi"><div class="lb">降级</div><div class="v">' + esc(fmtNum(s.fallback || 0)) + '</div></div>' +
         '</div>' +
         '<div class="grid g3"><div class="card" style="grid-column:span 2"><b style="font-size:13.5px">上下文块分布</b>' +
-        '<div class="muted" style="font-size:12px;margin-top:8px">每轮的上下文由风格约束 / 历史摘要 / 人设 / 约定账本 / 长期记忆拼成，具体字数看 Trace 里的 blocks。</div></div>' +
+        '<div class="muted" style="font-size:12px;margin-top:8px">每轮上下文由会话历史与压缩摘要、风格约束、人设、约定账本和长期记忆组成；会话摘要按 conversation_id 隔离。</div></div>' +
         '<div class="card"><b style="font-size:13.5px">系统状态</b>' +
         '<div class="kv" style="margin-top:8px"><span>模型</span><b>' + esc(s.model || '—') + '</b></div>' +
         '<div class="kv"><span>语音</span><b>' + esc(s.voice || '未启用') + '</b></div>' +
@@ -4281,7 +4310,7 @@
       ctx.topbar.querySelector('h1').textContent = '聊天历史';
       // 控制台视角：本机是自己的会话，App / 微信的往来在这儿只读查看
       // （微信群聊的账在 wechat_group 分区，切分区也能看）
-      const CHANS = [['pc', '本机'], ['app', 'App'], ['wechat', '微信'], ['wechat_group', '微信群']];
+      const CHANS = [['pc', '本机']];
       v.innerHTML = '<div class="seg" style="margin-bottom:12px">' +
         CHANS.map(([c, n], i) => '<button data-hc="' + c + '"' + (i === 0 ? ' class="on"' : '') + '>' + n + '</button>').join('') +
         '</div><div id="hcList"></div>';
@@ -4356,9 +4385,9 @@
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
     // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
-    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['video-apps', '视频软件'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['retrieval', '检索与知识库'], ['video-apps', '视频软件'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'video-apps' ? 'video' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'retrieval' ? 'search' : k === 'video-apps' ? 'video' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('本地内核', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -4374,7 +4403,7 @@
         '<div class="card">' +
         '<div class="kv"><span>连接</span><b id="cConn">' + (state.conn.ok ? '正常 ' + state.conn.ms + ' ms' : '不通') + '</b></div>' +
         '<div class="kv"><span>地址</span><b class="mono" id="cBase">' + esc(state.base || '—') + '</b></div>' +
-        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
+        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机 PC Agent）</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
         '<button class="btn fill" id="cRetry">重试连接</button>' +
         '<button class="btn oline" id="cRestart">重启内核</button>' +
@@ -5027,7 +5056,7 @@
         '<div class="kv"><span>客户端</span><b>v0.1.0（code <span id="abCode">…</span>）</b></div>' +
         '<div class="kv"><span>桌面框架</span><b>Electron ' + esc(String((global.process && process.versions && process.versions.electron) || '')) + '</b></div>' +
         '<div class="kv"><span>Brain 地址</span><b class="mono">' + esc(state.base || '—') + '</b></div>' +
-        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机控制台，独立于 App / 微信）</b></div>' +
+        '<div class="kv"><span>渠道</span><b>' + esc(state.src) + '（本机 PC Agent）</b></div>' +
         '<div class="kv"><span>凭据</span><b>本机 Brain 自己的 token（不出机器）</b></div>' +
         '<div class="kv"><span>更新来源</span><b>GitHub Releases</b></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:10px">' +
@@ -5070,7 +5099,50 @@
       } catch (e) { /* 无云端配置等，静默 */ }
     }
 
-    const draw = { conn, model, 'video-apps': videoApps, danger, about };
+    async function retrieval() {
+      ctx.topbar.querySelector('h1').textContent = '检索与知识库';
+      v.innerHTML = '<div class="card" role="status">正在读取检索设置…</div>';
+      const r = pick(await get('/api/retrieval/settings'));
+      if (!v.isConnected) return;
+      if (!r.ok) {
+        v.innerHTML = errBox('检索设置读取失败', r._err || '请检查本地 Brain 连接与版本') +
+          '<button class="btn oline" type="button" id="retrievalRetry">重新加载</button>';
+        v.querySelector('#retrievalRetry').addEventListener('click', () => { void retrieval(); });
+        return;
+      }
+      let enabled = r.semantic_enabled !== false;
+      v.innerHTML =
+        '<div class="sec" style="margin-top:0">检索方式</div>' +
+        '<div class="card">' +
+        '<div class="row"><div class="lb"><b>语义检索</b>' +
+        '<span>开启：BM25 + 向量 + RRF；关闭：只使用 BM25 关键词检索</span></div>' +
+        '<button class="sw ' + (enabled ? 'on' : '') + '" id="retrievalSemantic" type="button" role="switch" aria-label="语义检索" aria-checked="' + String(enabled) + '"></button></div>' +
+        '<div class="muted" style="font-size:12px;margin-top:10px">关闭后不调用嵌入模型、不执行 FAISS 检索，新导入的知识库内容仍可用 BM25 搜索。已有向量不会删除；重新开启后可按需重建向量索引。</div>' +
+        '<div id="retrievalResult" role="status" aria-live="polite" class="muted" style="font-size:12px;margin-top:10px"></div>' +
+        '</div>';
+      const toggle = v.querySelector('#retrievalSemantic');
+      const result = v.querySelector('#retrievalResult');
+      toggle.addEventListener('click', async () => {
+        if (toggle.disabled) return;
+        const proposed = !enabled;
+        toggle.disabled = true;
+        result.textContent = '正在保存…';
+        const next = pick(await post('/api/retrieval/settings', { semantic_enabled: proposed }));
+        if (!v.isConnected) return;
+        if (!next.ok || typeof next.semantic_enabled !== 'boolean') {
+          result.textContent = '保存失败：' + (next._err || next.err || '请检查连接后重试');
+          toggle.disabled = false;
+          return;
+        }
+        enabled = next.semantic_enabled;
+        toggle.classList.toggle('on', enabled);
+        toggle.setAttribute('aria-checked', String(enabled));
+        toggle.disabled = false;
+        result.textContent = enabled ? '已启用混合检索' : '已切换为纯 BM25，无需重启 Brain';
+      });
+    }
+
+    const draw = { conn, model, retrieval, 'video-apps': videoApps, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -5180,6 +5252,7 @@
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
+      {title:'检索与知识库', desc:'语义检索开关、BM25 与混合检索', icon:'search', page:'system', sub:'retrieval'},
       {title:'视频软件', desc:'管理视频工作台中的本地软件', icon:'video', page:'system', sub:'video-apps'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
       {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
@@ -5739,12 +5812,17 @@
         }).join('');
         const localVersion = p.installed ? (p.version || '未知') : '';
         const marketVersion = p.market_version || p.version || '未知';
-        const state = p.runtime_state || p.state || (p.installed ? 'unknown' : 'not_installed');
+        const state = p.state === 'restart_required' ? p.state :
+          (p.runtime_state || p.state || (p.installed ? 'unknown' : 'not_installed'));
         const updateAvailable = p.installed && p.update_state === 'update_available';
         const actionButtons = p.installed
-          ? '<button class="btn" data-action="' + (updateAvailable ? 'update' : 'reload') + '" data-name="' + esc(p.name) + '">' + (updateAvailable ? '更新' : '重载') + '</button>' +
-            '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>' +
-            '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>'
+          ? (p.state === 'restart_required' ? '<button class="btn" disabled>待重启</button>' :
+            (p.builtin ?
+            '<button class="btn" data-action="reload" data-name="' + esc(p.name) + '">重载</button>' +
+            '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>'
+            : '<button class="btn" data-action="' + (updateAvailable ? 'update' : 'reload') + '" data-name="' + esc(p.name) + '">' + (updateAvailable ? '更新' : '重载') + '</button>' +
+              '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>' +
+              (p.removable === false ? '' : '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>')))
           : '<button class="btn" data-action="install" data-name="' + esc(p.name) + '">安装</button>';
         const badge = p.installed
           ? '<span class="tag" style="background:var(--ok-bg);color:var(--ok);margin-left:8px">已安装</span>'
@@ -5754,14 +5832,21 @@
           '<div style="display:flex;align-items:center;gap:8px">' +
           '<span class="market-icon" aria-hidden="true">' + icon('puzzle', 'md') + '</span>' +
           '<strong>' + esc(p.name) + '</strong>' +
+          (p.builtin ? '<span class="tag">内置</span>' : '') +
           '<span class="muted" style="font-size:12px">市场 v' + esc(marketVersion) + '</span>' +
           badge +
           '</div>' +
           '<div class="muted" style="font-size:12px">' + esc(p.author || '未知') + '</div>' +
           '<div style="flex:1;font-size:13px;line-height:1.5">' + esc(p.desc || '') + '</div>' +
+          (p.builtin ? '<div class="market-meta">随 Vigil 程序发布，可停用；不能单独卸载或更新。</div>' : '') +
           '<div style="margin-top:4px">' + tags + '</div>' +
           (p.installed ? '<div class="market-meta">本地 v' + esc(localVersion) + ' · ' + esc(updateAvailable ? '有可用更新' : (p.update_state === 'ahead' ? '本地版本较新' : '已是最新')) + '</div>' : '') +
-          '<div class="market-meta">运行状态：' + esc(state) + (p.enabled === false ? ' · 已禁用' : '') + '</div>' +
+          '<div class="market-meta">运行状态：' + esc(state) +
+            (p.lifecycle_enabled === false || p.enabled === false ? ' · 全局已停用' : ' · 全局已启用') +
+            (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
+              ? ' · PC 渠道关闭' :
+               p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === true
+              ? ' · PC 渠道可用' : '') + '</div>' +
           (p.diagnostic ? '<div class="market-error">诊断：' + esc(p.diagnostic) + '</div>' : '') +
           '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">' + actionButtons + '</div>' +
           '</div>'
@@ -5803,7 +5888,7 @@
             btn.textContent = action === 'install' ? '安装' : action === 'update' ? '更新' : action === 'uninstall' ? '卸载' : action === 'reload' ? '重载' : action === 'enable' ? '启用' : '禁用';
           } finally {
             marketPending.delete(name);
-            if (!disposed && marketData) draw();
+            if (!disposed && marketData) await load();
             if (disposed) window.dispatchEvent(new Event('vigil-market-changed'));
           }
         });

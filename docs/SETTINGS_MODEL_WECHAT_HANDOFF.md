@@ -1,3 +1,5 @@
+> 当前 PC Core 已退役微信渠道、双 Brain 转发及微信配置接口；下文相关流程属于历史设计。当前边界见 `docs/PC_CORE_LEGACY_WECHAT_CLEANUP.md`，不可据此启用旧 Core 路由。
+
 # 设置、模型与微信改版交接
 
 分支：`feature/settings-model-wechat-security`

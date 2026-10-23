@@ -36,11 +36,16 @@ class HTTPTests(unittest.TestCase):
         names = {'start_remote_api', '_auth_ok', '_is_loopback', '_device_path_allowed', '_query_param', '_norm_src'}
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
         constants = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith('DEVICE_') for t in n.targets)]
+        trace_rows = []
         ns = dict(http=http, os=os, json=json, hmac=hmac, threading=threading, time=time,
             api_config={'bind_host': '127.0.0.1'}, MOB_CFG={}, BRAIN_TOKEN='p2-fixture-token',
-            MAX_BODY=1024*1024, API_CFG={}, note_client_ip=lambda ip: None,
-            _cloud_history=lambda *a: [], _device_role=lambda _: 'device')
+            MAX_BODY=1024*1024, API_CFG={}, _LOCAL={'brain': None},
+            _chat_lock=contextlib.nullcontext,
+            _trace_write=trace_rows.append, note_client_ip=lambda ip: None,
+            _cloud_history=lambda *a: [], _device_role=lambda _: 'device',
+            _persona_for_src=lambda *_: 'default')
         cls.ns = ns
+        cls.trace_rows = trace_rows
         exec(compile(ast.Module(body=constants+nodes, type_ignores=[]), str(source), 'exec'), ns)
         with patch.dict(os.environ, {'VIGIL_PORT': '0'}), contextlib.redirect_stdout(io.StringIO()):
             cls.server = ns['start_remote_api'](None)
@@ -109,9 +114,101 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(tool.call_count, 1)
             self.assertEqual(len(provider.payloads), 2)
 
+    def test_z_chat_and_history_retrieval_keep_incremental_sse(self):
+        class StreamingBrain:
+            def __init__(self):
+                self.hist = []
+                self.calls = []
+                self.tool_calls = []
+
+            def use_src(self, *args):
+                pass
+
+            def seed_history(self, **kwargs):
+                self.hist = [{'role': 'system', 'content': 'fixture'}]
+
+            def stream_chat(self, text, **kwargs):
+                self.calls.append((text, kwargs))
+                yield {'type': 'text', 'text': 'incremental '}
+                yield {'type': 'text', 'text': 'answer'}
+                yield {'type': 'done', 'text': 'incremental answer'}
+
+            def chat(self, *_args, **_kwargs):
+                text, kwargs = _args[0], _kwargs
+                self.tool_calls.append((text, kwargs))
+                return 'function answer', 'offline'
+
+        brain = StreamingBrain()
+        with patch.dict(self.ns['_LOCAL'], {'brain': brain}, clear=True), \
+             patch.dict(self.ns['API_CFG'], {'agent_execution': {'enabled': True}}):
+            for request_id, text, category in (
+                ('p19_stream_chat_route', '你好，今天怎么样？', 'chat'),
+                ('p19_stream_retrieval_route', '帮我找出之前讨论的 RAG 方案', 'retrieval'),
+                ('p19_stream_unauthorized_edit', '修改启动配置并验证', 'simple_execution'),
+            ):
+                code, events = self.request('POST', '/api/chat/stream',
+                    {'request_id': request_id, 'text': text, 'src': 'pc'}, sse=True)
+                self.assertEqual(code, 200, events)
+                self.assertEqual([event['type'] for event in events if event['type'] in ('text', 'done')],
+                                 ['text', 'text', 'done'])
+                self.assertEqual(events[-1]['text'], 'incremental answer')
+                self.assertEqual(brain.calls[-1][0], text)
+                self.assertTrue(brain.calls[-1][1]['no_tools'])
+                task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
+                self.assertEqual(task_traces[-1]['task_category'], category)
+                expected_entry = ('history_retrieval' if text == '帮我找出之前讨论的 RAG 方案'
+                                  else 'chat_no_tools' if category in ('chat', 'simple_execution')
+                                  else 'brain_tools')
+                self.assertEqual(task_traces[-1]['target_entry'], expected_entry)
+                if category == 'simple_execution':
+                    self.assertEqual(task_traces[-1]['fallback_reason'],
+                                     'workspace_not_authorized')
+
+            import tools
+            for request_id, text, required_tool in (
+                ('p19_stream_live_news', '搜索今天最新的 AI 新闻', 'search'),
+                ('p19_stream_live_weather', '查询当前天气', 'weather'),
+                ('p19_stream_live_version', '查一下最新软件版本', 'search'),
+            ):
+                with patch.object(tools, 'static_tool_enabled',
+                                  side_effect=lambda name, _src: name == required_tool):
+                    code, events = self.request('POST', '/api/chat/stream', {
+                        'request_id': request_id, 'text': text, 'src': 'pc'}, sse=True)
+                self.assertEqual(code, 200, events)
+                self.assertEqual(events[-1]['type'], 'done')
+                self.assertEqual(events[-1]['text'], 'function answer')
+                self.assertEqual(brain.tool_calls[-1][0], text)
+                self.assertNotIn('no_tools', brain.tool_calls[-1][1])
+                task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
+                self.assertEqual(task_traces[-1]['target_entry'], 'brain_tools')
+
+            before_tools, before_streams = len(brain.tool_calls), len(brain.calls)
+            with patch.object(tools, 'static_tool_enabled', return_value=False):
+                code, events = self.request('POST', '/api/chat/stream', {
+                    'request_id': 'p19_stream_live_tool_disabled',
+                    'text': '搜索今天最新的 AI 新闻', 'src': 'pc'}, sse=True)
+            self.assertEqual(code, 200, events)
+            self.assertEqual(events[-1]['type'], 'done')
+            self.assertIn('无法核实', events[-1]['text'])
+            self.assertEqual(len(brain.tool_calls), before_tools)
+            self.assertEqual(len(brain.calls), before_streams)
+            self.assertEqual(self.trace_rows[-1]['target_entry'], 'retrieval_unavailable')
+            self.assertEqual(self.trace_rows[-1]['fallback_reason'],
+                             'required_live_tool_unavailable')
+
+            import task_intent
+            with patch.object(task_intent, 'classify', side_effect=RuntimeError('fixture')):
+                code, events = self.request('POST', '/api/chat/stream', {
+                    'request_id': 'p19_stream_classify_fallback',
+                    'text': '修改启动配置并验证', 'src': 'pc'}, sse=True)
+            self.assertEqual(code, 200, events)
+            self.assertEqual(events[-1]['type'], 'done')
+            self.assertTrue(brain.calls[-1][1]['no_tools'])
+            self.assertEqual(self.trace_rows[-1]['fallback_reason'], 'classification_error')
+
     def test_legacy_request_is_not_migrated_and_executed_again(self):
         body = dict(request_id='p2_legacy_tombstone', text='帮我整理文件', src='pc')
-        owner = display_turns.owner(('brain', ''), 'pc', 'main')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:main')
         display_turns.begin(owner, body['request_id'], body['text'])
         display_turns.update(owner, body['request_id'], status='succeeded', content='already done')
         with patch.object(runs, 'get_provider') as provider:
@@ -126,7 +223,7 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.request('GET', '/api/agent/runs', token='dt_fixture')[0], 403)
         self.assertEqual(self.request('POST', '/api/agent/runs', [1])[0], 400)
         self.assertEqual(self.request('POST', '/api/agent/runs', {'text': 'missing ID'})[0], 400)
-        owner = display_turns.owner(('brain', ''), 'pc', 'private_session')
+        owner = display_turns.owner(('brain', ''), 'pc', 'default:private_session')
         item = runs.create({'request_id': 'http_session_001', 'intent': 'private', 'src': 'pc'}, {}, owner, start=False)
         path = '/api/agent/runs/'+item['run_id']
         self.assertEqual(self.request('GET', path+'?src=pc')[0], 404)
@@ -136,7 +233,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('POST', path+'/cancel', {'src': 'pc'})[0], 404)
         self.assertEqual(self.request('POST', path+'/cancel', {'src': 'pc', 'session_id': 'private_session'})[1]['status'], 'cancelled')
 
-        conversation_owner = display_turns.owner(('brain', ''), 'pc', 'conversation_owned')
+        conversation_owner = display_turns.owner(('brain', ''), 'pc', 'default:conversation_owned')
         conversation_run = runs.create({'request_id': 'http_conversation_cancel', 'intent': 'cancel me', 'src': 'pc'},
             {}, conversation_owner, start=False)
         conversation_path = '/api/agent/runs/' + conversation_run['run_id'] + '/cancel'

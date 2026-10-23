@@ -412,7 +412,7 @@ def api_list(body, query):
         "fetched_at": market.get("fetched_at", ""),
         "diagnostic": market.get("diagnostic"),
         "plugins": plugins,
-        "installed_count": len(installed),
+        "installed_count": sum(1 for item in plugins if item.get("installed")),
     }
 
 
@@ -441,6 +441,11 @@ def api_install(body, query):
     if not meta:
         return {"ok": False, "err": "市场里找不到插件 %s" % name}
 
+    import plugin_manager
+    if plugin_manager._source(name) == "builtin":
+        return {"ok": False, "name": name, "state": "builtin",
+                "err": "这是随程序发布的内置插件，不能作为用户插件重复安装"}
+
     # Never import newly downloaded code during the install transaction.
     repo = _repo_path()
     already = name in _list_local()
@@ -465,16 +470,21 @@ def api_install(body, query):
             plugin_manager._update_meta(name, result.get("manifest") or meta,
                                         source="market:%s@%s" % (name, meta.get("version", "")))
             reload_result = plugin_manager.reload(name)
-            result["runtime_state"] = reload_result.get("state", "loaded")
+            result["runtime_state"] = ("loaded" if reload_result.get("ok")
+                                       else reload_result.get("state", "pending"))
             if reload_result.get("restart_needed"):
                 result["restart_needed"] = True
                 result["state"] = "restart_required"
             if not reload_result.get("ok"):
                 result["runtime_warning"] = reload_result.get("err", "重载失败")
+            else:
+                result["restart_needed"] = False
         except Exception as exc:
             result["runtime_warning"] = "安装后重载失败：%s" % str(exc)[:120]
-        result["msg"] = "插件已安装到独立运行时目录；重启本地 Brain 后生效"
-        result["restart_needed"] = True
+            result["runtime_state"] = "error"
+        result["msg"] = ("插件已安装并加载" if result.get("runtime_state") == "loaded"
+                          else "插件已安装；需要重启 Brain 后生效" if result.get("restart_needed")
+                          else "插件已安装，但运行时加载失败")
         result["name"] = name
     else:
         result["ok"] = False
@@ -512,9 +522,13 @@ def api_update(body, query):
     meta = next((p for p in market.get("plugins", []) if p.get("name") == name), None)
     if not meta:
         return {"ok": False, "err": "市场里找不到插件 %s" % name}
-    if name not in _list_local():
-        return {"ok": False, "state": "not_installed", "err": "插件尚未安装，请先安装"}
     import plugin_manager
+    source = plugin_manager._source(name)
+    if source == "builtin":
+        return {"ok": False, "name": name, "state": "builtin",
+                "err": "内置插件不能通过市场替换；请更新 Vigil 程序"}
+    if source != "user" or name not in _list_local():
+        return {"ok": False, "state": "not_installed", "err": "插件尚未安装，请先安装"}
     import plugin_ops
     deps = plugin_manager._dependencies(meta, plugin_ops.read_registry())
     if deps:

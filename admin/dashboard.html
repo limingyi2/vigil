@@ -802,7 +802,7 @@ function demoApi(path, opts) {
         t: `2026-10-04 ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`,
         kind: 'chat', src: i%3===0 ? 'pet' : 'app',
         in_len: 10 + Math.floor(Math.random()*80),
-        blocks: { style: 1200, recap: 560, persona: 420, agenda: 80, memory: 300 },
+        blocks: { style: 1200, history: 560, persona: 420, agenda: 80, memory: 300 },
         mem_hits: Math.floor(Math.random()*5),
         mem_top: ['用户提到喜欢喝咖啡','上周约了周末看电影'],
         agenda: [],
@@ -1171,11 +1171,13 @@ Views.overview = async function(container) {
     });
 
     // 上下文块分布：从最近一条 trace 取 blocks
-    let blocks = { style:0, recap:0, persona:0, agenda:0, memory:0 };
+    let blocks = { style:0, history:0, persona:0, agenda:0, memory:0 };
     if (trace && trace.items && trace.items.length > 0 && trace.items[0].blocks) {
-      blocks = { ...blocks, ...trace.items[0].blocks };
+      for (const [key, value] of Object.entries(trace.items[0].blocks)) {
+        if (Object.prototype.hasOwnProperty.call(blocks, key)) blocks[key] = value;
+      }
     }
-    const blockLabels = { style:'风格约束', recap:'历史摘要', persona:'人设', agenda:'约定账本', memory:'长期记忆' };
+    const blockLabels = { style:'风格约束', history:'会话历史', persona:'人设', agenda:'约定账本', memory:'长期记忆' };
     const tok = echarts.init($('#tokChart'));
     State.charts.tok = tok;
     tok.setOption({
@@ -1283,8 +1285,8 @@ Views.trace = async function(container) {
       // 上下文块
       if (r.blocks) {
         const bkv = el('div', {class:'kv'});
-        const blockNames = {style:'风格约束', recap:'历史摘要', persona:'人设', agenda:'约定账本', memory:'长期记忆'};
-        Object.entries(r.blocks).forEach(([k,v]) => {
+        const blockNames = {style:'风格约束', history:'会话历史', persona:'人设', agenda:'约定账本', memory:'长期记忆'};
+        Object.entries(r.blocks).filter(([k]) => Object.prototype.hasOwnProperty.call(blockNames, k)).forEach(([k,v]) => {
           bkv.appendChild(el('div',{class:'k'}, blockNames[k]||k));
           bkv.appendChild(el('div',{class:'v'}, fmtNum(v) + ' 字'));
         });

@@ -5,19 +5,16 @@
 所以每一条的断言都落在"东西还在不在"，而不是"函数返不返回"。
 
 覆盖：
-  1. recap 摘要水位线：上游失败时**不许**推进（原来失败和"模型答无"都返回 ""）
-  2. recap 大日分块：一天太长时不能 body[:8000] 截断了事
-  3. recap 幂等追加：重压同一批不能把同一天写两遍
-  4. memory.json 坏文件留档：解析失败不许静默当空库再覆盖
-  5. memory.json 原子写：不留半截文件
-  6. 向量索引按分区隔离：不同 persona/渠道不能共用同一个 vectors.npy
-  7. 记忆 id 全局唯一
-  8. 相对日期："大后天"是 +3 天（别被"后天"抢先匹配）
-  9. "度"不该让真实约定被当成天气播报剔掉
- 10. features.tools 总开关在工具表的唯一出口上生效
- 11. planner：模型照抄提示词里的 [tool:name:arg] 也要能拆开
- 12. planner：长情绪句子不该被当成复杂任务去规划
- 13. plugin_host.Turn.data_dir() 能真的返回目录（原来读错属性名必抛）
+  1. memory.json 坏文件留档：解析失败不许静默当空库再覆盖
+  2. memory.json 原子写：不留半截文件
+  3. 向量索引按分区隔离：不同 persona/渠道不能共用同一个 vectors.npy
+  4. 记忆 id 全局唯一
+  5. 相对日期："大后天"是 +3 天（别被"后天"抢先匹配）
+  6. "度"不该让真实约定被当成天气播报剔掉
+  7. features.tools 总开关在工具表的唯一出口上生效
+  8. planner：模型照抄提示词里的 [tool:name:arg] 也要能拆开
+  9. planner：长情绪句子不该被当成复杂任务去规划
+ 10. plugin_host.Turn.data_dir() 能真的返回目录（原来读错属性名必抛）
 """
 import json
 import os
@@ -29,103 +26,15 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "brain"))
 
-import agenda  # noqa: E402,F401  (recap 依赖它)
 import memory_store_v2 as ms  # noqa: E402
 import planner  # noqa: E402
 import plugin_host  # noqa: E402
-import recap_store as rs  # noqa: E402
 import tools as tl  # noqa: E402
 
 
 def _read(p):
     with open(p, encoding="utf-8") as f:
         return f.read()
-
-
-class TestRecapWatermark(unittest.TestCase):
-    """上游失败不能推进水位线 —— 推了那段对话就永久消失了。"""
-
-    def test_ask_returns_none_on_failure(self):
-        """没配 key / 连不上都要返回 None，不能返回 ""。
-
-        返回 "" 会被下游当成"这段没内容、可以记成处理过了"。
-        """
-        self.assertIsNone(rs._ask({}, "随便什么提示词", timeout=1))
-        self.assertIsNone(rs._ask({"api_key": ""}, "x", timeout=1))
-
-    def test_compress_day_is_tri_state(self):
-        items = [("t", "2026-09-11 10:00", "user", "x" * 200)]
-        # 上游失败 → None（不许推进水位线）
-        self.assertIsNone(rs.compress_day("2026-09-11", items, {}))
-        # 内容太短 → ""（确实没内容，可以算处理过）
-        self.assertEqual(
-            rs.compress_day("2026-09-11",
-                            [("t", "2026-09-11 10:00", "user", "嗯")], {}), "")
-
-    def test_tick_does_not_advance_watermark_on_failure(self):
-        """这是本文件最重要的一条。
-
-        构造 400 行积压 + 没有 key 的 api，跑 tick：
-        水位线**必须**原地不动，否则这几百行会被永远标成"已摘要"，
-        而原始 chat_history.jsonl 再也不会被回读。
-        """
-        state = {}
-        rows = [(i, "2026-09-11 10:%02d" % (i % 60), "user", "第%d句" % i)
-                for i in range(1, 401)]
-        orig = (rs._read_log, rs._load_state, rs._save_state, rs._day_path,
-                rs.rollup, rs._ensure)
-        rs._read_log = lambda sp=None: rows
-        rs._load_state = lambda sp=None: dict(state)
-        rs._save_state = lambda s, sp=None: state.update(s)
-        rs._day_path = lambda d, sp=None: os.path.join(self.tmp.name, "%s.md" % d)
-        rs.rollup = lambda api, sp=None: {"week": 0, "month": 0}
-        rs._ensure = lambda sp=None: None
-        try:
-            rs.tick(api={}, verbose=False)
-        finally:
-            (rs._read_log, rs._load_state, rs._save_state, rs._day_path,
-             rs.rollup, rs._ensure) = orig
-        self.assertNotIn("pressed_upto", state,
-                         "上游失败却推进了水位线 —— 这批对话永远不会被摘要")
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-
-class TestRecapBodyNotTruncated(unittest.TestCase):
-    """一天太长要分块，不能 body[:8000] 之后把后半天的对话丢掉。"""
-
-    def test_split_body_keeps_every_character(self):
-        body = "\n".join("第%d行内容" % i for i in range(3000))
-        chunks = rs._split_body(body, 8000)
-        self.assertGreater(len(chunks), 1, "这么长的正文应该被切成多块")
-        self.assertEqual("\n".join(chunks), body, "分块把内容弄丢了")
-
-    def test_chunks_respect_the_cap(self):
-        body = "\n".join("第%d行内容" % i for i in range(3000))
-        for c in rs._split_body(body, 8000):
-            self.assertLessEqual(len(c), 8000 + 64)   # 单行不切，允许轻微超出
-
-
-class TestRecapAppendIsIdempotent(unittest.TestCase):
-    """重压同一批不能同一天写两遍（否则同一件事在提示词里说两遍）。"""
-
-    def test_same_text_appended_once(self):
-        p = os.path.join(tempfile.mkdtemp(), "day.md")
-        self.assertTrue(rs._append_text_unique(p, "今天聊了天气"))
-        self.assertTrue(rs._append_text_unique(p, "今天聊了天气"))
-        self.assertEqual(_read(p).count("今天聊了天气"), 1)
-
-    def test_different_text_still_appended(self):
-        p = os.path.join(tempfile.mkdtemp(), "day.md")
-        rs._append_text_unique(p, "第一段")
-        rs._append_text_unique(p, "第二段")
-        body = _read(p)
-        self.assertIn("第一段", body)
-        self.assertIn("第二段", body)
 
 
 class TestMemoryStoreDurability(unittest.TestCase):
@@ -233,7 +142,9 @@ class TestToolsSwitch(unittest.TestCase):
         import features
         orig = features.on
         try:
-            features.on = lambda k, src=None: True if k == "tools" else orig(k, src)
+            # Isolate the tool switch from the user's unrelated weather
+            # preference; this test requires the weather plugin to be eligible.
+            features.on = lambda k, src=None: True if k in ("tools", "weather", "packages") else orig(k, src)
             names = [t["function"]["name"] for t in tl.all_specs()]
             for n in ("weather", "tracking"):
                 self.assertIn(n, names)

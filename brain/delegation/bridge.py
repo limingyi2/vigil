@@ -15,7 +15,7 @@ from .contracts import (validate_contract, load_delegation_config,
 from .dispatcher import run_delegation
 
 # 只接受现役渠道发起的委派，拼不出来的身份默认拒绝。
-_TRUSTED_SRC = ("wechat", "wechat_group", "pc", "")
+_TRUSTED_SRC = ("pc", "")
 
 # D2 路由锁（请求级，线程隔离）：PC 在线且本轮目标是**客户端可达、沙箱
 # 授权根外**的路径时，server 在进 FC 之前上锁。锁着的这一轮：
@@ -191,7 +191,7 @@ def _render(result):
             "不要声称子任务已完成。") % (head, detail or "未知原因", no_retry)
 
 
-def run_local_direct(text, src=None):
+def run_local_direct(text, src=None, decision=None):
     """P1 确定性路由 local_direct 的执行入口（brain 调用，不是 FC 工具）。
 
     成功返回 {"ok": True, "reply": 给用户的文本, "result": 委派结果}；
@@ -207,8 +207,9 @@ def run_local_direct(text, src=None):
         cfg = load_delegation_config()
         if not cfg.get("router_enabled", True):
             return {"ok": False, "reason": "router_disabled"}
-        from .router import classify
-        decision = classify(text, allowed_roots=cfg.get("allowed_roots") or [])
+        if not isinstance(decision, dict):
+            from .router import classify
+            decision = classify(text, allowed_roots=cfg.get("allowed_roots") or [])
         if decision["route"] != "local_direct":
             return {"ok": False, "reason": "route=%s" % decision["route"],
                     "decision": decision}
@@ -299,7 +300,8 @@ def run_hybrid_delegation_direct(text, src=None):
         decision = classify(str(text or ""),
                             allowed_roots=cfg.get("allowed_roots") or [])
         if decision["route"] != "hybrid_delegate" or not decision["workspace"]:
-            return {"ok": False, "reason": "route=%s" % decision["route"]}
+            return {"ok": False, "reason": "route=%s" % decision["route"],
+                    "decision": decision}
         kind = decision.get("kind") or kind_for_goal(str(text or ""))
         contract = validate_contract(
             {"kind": kind, "goal": str(text or "")[:_GOAL_MAX],
@@ -310,7 +312,7 @@ def run_hybrid_delegation_direct(text, src=None):
         if result.get("status") != "succeeded":
             return {"ok": False,
                     "reason": "delegation_%s" % result.get("status"),
-                    "result": result}
+                    "result": result, "decision": decision}
         return {"ok": True, "result": result,
                 "evidence_text": _render(result),
                 "decision": decision}

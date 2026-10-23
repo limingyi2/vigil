@@ -31,23 +31,21 @@ try:
     import paths
     CHAT_LOG = paths.CHAT_LOG
 
-    def chat_log_for(src="wechat"):
+    def chat_log_for(src="pc"):
         return paths.chat_log_for(src)
 except Exception:                 # 单独跑某个文件时的兜底（正常走上面）
     CHAT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "data", "chat_history.jsonl")
 
-    def chat_log_for(src="wechat"):
+    def chat_log_for(src="pc"):
         return CHAT_LOG
 
-DEFAULT_SRC = "wechat"        # 微信私聊走这条；群聊传 "wechat_group"，本机控制台传 "pc"
+DEFAULT_SRC = "pc"
 
 
 def norm_src(src):
-    """把渠道名收拾干净。认不出来的一律当默认渠道 —— 宁可跟 App 混在一起，
-    也别因为一个拼错的字段名开出一份空历史（那边她会失忆，且没有任何提示）。"""
-    s = str(src or "").strip().lower()
-    return s or DEFAULT_SRC
+    from pc_context import normalize_src
+    return normalize_src(src)
 
 
 def _log_memory_partition_error(src, persona, partition_path, exc):
@@ -465,9 +463,7 @@ class Brain:
         self.max_new_tokens = max_new_tokens
         self.history_turns = history_turns
 
-        # 每个渠道一份对话历史：手机 App 和微信上的她不该互相读到对方的对话。
-        # 键是渠道名（app / wechat / 以后加什么都行），代码里不针对具体渠道写规则。
-        # 必须在 reload_persona 之前建好：reload_persona 会往 self.hist 里写 system 段。
+        # PC histories are keyed by conversation; reload checks persona ownership.
         self._hists = {}
         # The Brain instance is shared by server threads. Keep the active
         # channel local to the request context so work after the chat lock
@@ -476,6 +472,8 @@ class Brain:
             "vigil_brain_src_%x" % id(self), default=DEFAULT_SRC)
         self._conversation_context = contextvars.ContextVar(
             "vigil_brain_conversation_%x" % id(self), default=None)
+        self._turn_note_context = contextvars.ContextVar(
+            "vigil_brain_turn_note_%x" % id(self), default='')
         # 每个渠道的内存历史**是按哪个人设载入的**。
         # 换人设时靠它判断"这份 hist 能不能留" —— 换了人就不能接着上一段的话说。
         self._hist_persona = {}
@@ -569,6 +567,14 @@ class Brain:
         self._conversation_context.set(value)
 
     # --- 渠道：对话历史按渠道分份 ---
+    @property
+    def turn_note(self):
+        return self._turn_note_context.get()
+
+    @turn_note.setter
+    def turn_note(self, value):
+        self._turn_note_context.set(str(value or ''))
+
     def _hist(self, src, conversation_id=None):
         """取（必要时建）某个渠道的对话历史。每份第一条固定是 system。"""
         src = norm_src(src)
@@ -580,13 +586,8 @@ class Brain:
         return h
 
     def use_src(self, src, conversation_id=None):
-        """把当前请求的渠道切到 src。
-
-        记忆检索也跟着切 —— 这是隔离的关键：她在微信里认得的人和 App 里
-        认得的人若是同一个，记忆反而该共用；配了独立人设时该隔开。
-        现在统一按渠道隔，代价是微信里学到的事不会出现在 App 里。
-        """
-        self._cur_src = src
+        """Bind this request to its local PC conversation."""
+        self._cur_src = norm_src(src)
         self._cur_conversation = conversation_id
         return self._cur_src
 
@@ -616,20 +617,10 @@ class Brain:
             pass
         return max(0, n)
 
-    # 人设也是按渠道分的：微信那边可能是另一套设定（persona_wechat）。
-    # 没配就退回主渠道那套 —— 宁可跟 App 用同一个人设，也不能让她变成空白。
+    # Shared resolver used by prompts, memory, history and HTTP management.
     def _persona_key_for(self, src):
-        src = norm_src(src)
-        if src == DEFAULT_SRC:
-            return key_from_config(self.api)
-        extra = {}
-        try:
-            import paths
-            cfg = json.loads(open(paths.CONFIG_PATH, encoding="utf-8").read())
-            extra = cfg.get("persona_by_src") or {}
-        except Exception:
-            extra = {}
-        return str(extra.get(src) or "").strip() or key_from_config(self.api)
+        from pc_context import persona_key
+        return persona_key(self.api, src)
 
     def _persona_for(self, src):
         """这个渠道的人设 dict（带缓存 —— 每轮重建太贵）。
@@ -657,7 +648,7 @@ class Brain:
         而且症状是"人设文件改了没反应"，极难查。
         """
         key = self._persona_key_for(src)
-        ckey = "%s\x00%s" % (key, str(src or "wechat"))
+        ckey = "%s\x00%s" % (key, str(src or DEFAULT_SRC))
         cache = getattr(self, "_ptext_cache", None)
         if cache is None:
             cache = self._ptext_cache = {}
@@ -695,7 +686,7 @@ class Brain:
         cache = getattr(self, "_ptext_cache", None)
         if cache is None:
             cache = self._ptext_cache = {}
-        cache[self._persona_key_for(self._cur_src)] = v
+        cache["%s\x00%s" % (self._persona_key_for(self._cur_src), self._cur_src)] = v
 
     @property
     def draft_rules(self):
@@ -736,7 +727,7 @@ class Brain:
 
         换人设就是换一个人：她的存档也该换一份，不然新的人设一开口就
         记得你跟上一个她说过的所有事 —— 人设换了但感知不变，就是这么来的。
-        默认人设 + app 走老路径，老数据不用搬。
+        PC 路径始终带 pc 分区，不能回退到旧微信基础文件。
         """
         s = norm_src(src or self._cur_src)
         if conversation_id:
@@ -746,24 +737,15 @@ class Brain:
             conversation_id = str(uuid.UUID(str(conversation_id)))
         try:
             import paths
-            # 🔴 用**不带渠道后缀**的基础名再 scoped。
-            # chat_log_for('wechat') 返回的已经是 chat_history.wechat.jsonl，
-            # 再 scoped 一次会拼出 chat_history.wechat.wechat.jsonl ——
-            # 写的是双后缀那份、读的也是双后缀那份，看起来自洽，
-            # 但默认人设那条老路径（chat_history.jsonl）永远读不到，
-            # 于是「换渠道/换人设后记忆对不上」这类问题很难查。
+            # Scope the base filename exactly once.
             base = os.path.join(paths.DATA_DIR, "chat_history.jsonl")
             result = paths.scoped(base, self._persona_key_for(s), s)
             if conversation_id:
                 result += ".conversation." + conversation_id + ".jsonl"
             return result
         except Exception:
-            # A new conversation must never fall back to the shared legacy
-            # channel file: doing so would merge histories when partitioning
-            # fails. Legacy calls without an ID retain their old path behavior.
-            if conversation_id:
-                raise
-            return chat_log_for(s)
+            # A partition failure must never expose another persona's archive.
+            raise
 
     # --- 人设 / 时间 ---
     def reload_persona(self, keep_history=True):
@@ -772,8 +754,7 @@ class Brain:
         关系定位跟着人设一起重载 —— 它现在是 persona["relation"] 里的自由文本，
         不是 config 里的档位，所以不单独读。
 
-        每个渠道的 system 段都要换 —— 微信那边可能是另一套人设，
-        只换当前这份的话，切渠道后她会顶着上一套设定开口。
+        切换人设时更新 system 段，并按人设重新载入独立会话历史。
         """
         # 🔴 先丢缓存再重建。persona_text / draft_rules 现在是按
         # (人设 key) 缓存的属性，配置文件刚被改过（换人设/改渠道绑定）时
@@ -782,25 +763,12 @@ class Brain:
         self._ptext_cache = {}
         self._rules_cache = {}
 
-        self.persona = load_persona(key_from_config(self.api))
+        self.persona = load_persona(self._persona_key_for(DEFAULT_SRC))
         # 这两行走属性 setter，存进缓存里，下一次读到的就是它。
         # src 要传：底线按渠道选（PC 客户端是助手规则），不传就默认按
         # 陪伴渠道拼 —— 助手渠道重载后会拿到陪伴底线，设定又变回去。
         self.persona_text = build_system_text(self.persona, src=self._cur_src)
         self.draft_rules = build_draft_rules(self.persona)
-        # 历史摘要也跟着换人设 —— 摘要里全是"你们聊过什么"，
-        # 不切的话新人设一开口就知道你的旧事（症状：换了人设她还记得
-        # 上次说摸鱼被老板抓了）。分区跟记忆库一个道理。
-        try:
-            import recap_store
-            #渠道要一起给：只切人设不切渠道，微信那半份对话的摘要会落进
-            # app 的分区（跟记忆库同一个道理）。
-            _rs = recap_store.scoped_to(key_from_config(self.api),
-                                        self._cur_src)
-            if _rs and _rs != "(默认)":
-                print(f"[大脑] 历史摘要已切到人设分区 {_rs}", flush=True)
-        except Exception:
-            pass
         # 🔴 渠道绑定可能被改了（面板里换人设就是改 persona_by_src），
         # 所以连 _hist_persona 里记的"这份历史属于哪个人设"也要作废，
         # 否则 key 变了但 same 判定用的是旧 key 的对照结果，历史会被留下来。
@@ -818,7 +786,7 @@ class Brain:
         self._hist(self._cur_src)
         # 各渠道人设 key 打一行，换完人设不用猜它有没有生效
         try:
-            for s in sorted(set([key[0] for key in self._hists] + [DEFAULT_SRC, "wechat"])):
+            for s in sorted(set([key[0] for key in self._hists] + [DEFAULT_SRC])):
                 print("[大脑] 渠道 %s -> 人设 %s" % (s, self._persona_key_for(s)),
                       flush=True)
         except Exception:
@@ -924,8 +892,15 @@ class Brain:
         这里**（调用方保证），不完整的答案绝不入账。
         """
         if append_user:
-            self.hist.append({"role": "user",
-                              "content": self._stamp() + user_text})
+            message = {"role": "user", "content": self._stamp() + user_text}
+            try:
+                from storage.query_resolver import brain_scope, scope_key
+                scope = brain_scope(self)
+                if scope is not None:
+                    message['_retrieval_scope'] = scope_key(scope)
+            except Exception:
+                pass  # Missing provenance prevents later contextual resolution.
+            self.hist.append(message)
         if (ans or "").strip():
             self.hist.append({"role": "assistant",
                               "content": self._stamp() + ans})
@@ -943,7 +918,7 @@ class Brain:
 
     # --- 公共：组装 system 资料块（draft_native 用）---
     def _build_system_parts(self, user_text, memory_block):
-        """组装人设+此刻+记忆+历史摘要+生活+约定+贴纸+插件行为引导。
+        """组装人设+此刻+记忆+生活+约定+贴纸+插件行为引导。
 
         返回 (parts, life)：parts 是字符串列表，life 是生活块文本（调用方
         据此决定是否追加 LIFE_RULES）。**不包含**工具使用规则——那是调用方
@@ -964,15 +939,6 @@ class Brain:
         if any(str(m.get("content") or "").startswith("[")
                for m in self.hist[1:] if m.get("role") != "system"):
             parts.append("\n" + HIST_TIME_NOTE)
-        try:
-            import recap_store
-            rb = recap_store.block(
-                persona_key=self._persona_key_for(self._cur_src),
-                src=self._cur_src)
-            if rb:
-                parts.append("\n" + rb)
-        except Exception:
-            pass
         life = self._life_block()
         if life:
             parts.append("\n" + life)
@@ -1057,7 +1023,7 @@ class Brain:
     #   * 它们的提示词还在教 `[tool:...]` 标签，和 tools schema 打架。
     # 一个决策点只留一条路，这类"改一处漏一处"才不会重演。
     def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None,
-                     native_content=None):
+                     native_content=None, route_decision=None):
         """原生 FC 出草稿：工具调用走结构化 tool_calls，时序仍是 ReAct。
 
         和 draft 的区别只在"工具怎么传"：工具表挂在请求的 tools 字段，模型在
@@ -1086,7 +1052,8 @@ class Brain:
             try:
                 from delegation import bridge as _dbridge
                 _direct = _dbridge.run_local_direct(user_text,
-                                                    src=ctx_src or self._cur_src)
+                                                    src=ctx_src or self._cur_src,
+                                                    decision=route_decision)
                 self.last_route = _direct.get("decision") or {
                     "route": "cloud_direct", "reason": _direct.get("reason", "")}
                 if _direct.get("ok"):
@@ -1493,7 +1460,8 @@ class Brain:
     #
     # **当前没有被 chat() 调用**（线上走 draft_native）。保留是因为它省 token
     # --- 流式聊天：实时产出思考过程和正文 ---
-    def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None):
+    def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None,
+                    no_tools=False):
         """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
         产出的事件格式：
@@ -1513,17 +1481,17 @@ class Brain:
             yield {"type": "error", "msg": "模型没配好（云端 key 或本地模型）"}
             return
 
-        if src:
-            self.use_src(src, conversation_id)
+        self.use_src(src, conversation_id)
 
         # 复用 draft_native 的 system prompt 构建逻辑
         parts, life = self._build_system_parts(user_text, "")
-        parts.append(
-            "\n## 工具\n"
-            "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
-            "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
-            "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
-            "原样倒给他；查不到就照实说查不到。")
+        if not no_tools:
+            parts.append(
+                "\n## 工具\n"
+                "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
+                "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
+                "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
+                "原样倒给他；查不到就照实说查不到。")
         if life:
             parts.append("\n" + LIFE_RULES)
 
@@ -1663,13 +1631,14 @@ class Brain:
 
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,
-             no_tools=False, conversation_id=None, native_content=None):
+             no_tools=False, conversation_id=None, native_content=None,
+             route_decision=None):
         """返回 (她说的话, 模式标签)。模式标签用于排查到底走的哪条路
 
         img：这一轮带的图片路径（有的话会记进聊天存档，手机/App 那边好显示）。
         图片内容本身早就在 user_text 里被描述成文字了 —— 她看不见像素，只看得见描述。
 
-        src：渠道（app / wechat）。决定这轮读哪份人设、哪份对话历史、哪个记忆分区。
+        src：本机 PC 上下文，省略时使用 pc。
         不传就是主渠道。主动搭话不算渠道对话，走主渠道。
 
         no_tools：不挂工具表。给 plan 分支的收尾那一步用（工具已经查过了，
@@ -1677,7 +1646,7 @@ class Brain:
         """
         from memory_store_v2 import MemoryStore, classify_her_speech
 
-        if src and not proactive:
+        if not proactive:
             self.use_src(src, conversation_id)
         if proactive:
             # 主动搭话是"她在跟你说话"，不属于某个渠道 —— 固定落主渠道，
@@ -1716,8 +1685,9 @@ class Brain:
             if _ms_cfg.get("enabled", True):
                 try:
                     _t1 = time.time()
-                    memory_block = _m.render(query=q, top_k=5,
-                                                  chan=self._cur_src)
+                    from storage.query_resolver import bind, for_brain
+                    with bind(for_brain(self)):
+                        memory_block = _m.render(query=q, top_k=5, chan=self._cur_src)
                     print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
                 except Exception as e:
                     _log_memory_partition_error(
@@ -1731,6 +1701,8 @@ class Brain:
             # 主动搭话的 user_text 是"说/无"那个决策提示词，不是用户的话 ——
             # 那种轮次不会有工具需求，挂上去纯属白花钱。
             _draft_kwargs = dict(no_tools=no_tools or proactive, ctx_src=self._cur_src)
+            if route_decision is not None:
+                _draft_kwargs['route_decision'] = route_decision
             if native_content is not None:
                 _draft_kwargs['native_content'] = native_content
             draft = self.draft_native(user_text, memory_block, **_draft_kwargs)
@@ -1902,11 +1874,7 @@ class Brain:
             channel = norm_src(src or self._cur_src)
             with open(self._log_for(channel, conversation_id), "a", encoding="utf-8") as f:
                 f.write(json.dumps(u, ensure_ascii=False) + "\n")
-                # pc 渠道不拆分；微信等渠道按 split_messages 拆
-                if channel == "pc":
-                    pieces = [ans] if (ans or "").strip() else []
-                else:
-                    pieces = split_messages(ans)
+                pieces = [ans] if (ans or "").strip() else []
                 for piece in pieces:
                     f.write(json.dumps({"t": t, "role": "assistant", "text": piece},
                                        ensure_ascii=False) + "\n")

@@ -157,7 +157,9 @@ class KBStore:
                         if c.get("source") != source]
             old = [self._chunks[i] for i in keep_idx]
             width = self._vectors.shape[1] if self._vectors.ndim == 2 else 0
-            old_vecs = (self._vectors[keep_idx] if keep_idx and self._vectors.size
+            # A (rows, 0) text-only matrix has size==0 but still has rows.
+            # Preserve those rows or the chunks/vectors row counts diverge on reload.
+            old_vecs = (self._vectors[keep_idx] if keep_idx and self._vectors.ndim == 2
                         else np.zeros((0, width), dtype=np.float32))
 
             new = []
@@ -171,6 +173,10 @@ class KBStore:
                                  % (len(new), "None" if vecs is None else len(vecs)))
 
             mat = np.asarray(vecs, dtype=np.float32)
+            # Turning semantic search back on: earlier BM25-only rows have
+            # shape (n, 0). Pad those old rows rather than dropping KB text.
+            if old and old_vecs.ndim == 2 and old_vecs.shape[1] == 0 and mat.shape[1] > 0:
+                old_vecs = np.zeros((len(old), mat.shape[1]), dtype=np.float32)
             if self._vectors.ndim == 2 and self._vectors.shape[1] and mat.shape[1] != self._vectors.shape[1]:
                 # 维度变了 = 换了嵌入模型，旧向量全部作废（留着算余弦只会得出垃圾）。
                 self._chunks, old, old_vecs = [], [], np.zeros((0, mat.shape[1]), dtype=np.float32)
@@ -189,6 +195,18 @@ class KBStore:
             self.save()
             return len(new)
 
+    def upsert_text(self, source, chunks):
+        """Store searchable KB chunks without generating embeddings.
+
+        Existing vectors are preserved; newly ingested chunks get zero vectors
+        of the current width, which are ignored until an explicit reindex.
+        """
+        with self._lock:
+            self.load()
+            width = self._vectors.shape[1] if self._vectors.ndim == 2 else 0
+            empty_vectors = np.zeros((len(chunks), width), dtype=np.float32)
+            return self.upsert(source, chunks, empty_vectors, self._meta.get("model") or "")
+
     def set_source_meta(self, source, **kw):
         with self._lock:
             self.load()
@@ -206,7 +224,7 @@ class KBStore:
             if len(keep) == len(self._chunks):
                 return 0
             self._chunks = [self._chunks[i] for i in keep]
-            self._vectors = (self._vectors[keep] if keep and self._vectors.size
+            self._vectors = (self._vectors[keep] if keep and self._vectors.ndim == 2
                              else np.zeros((0, self._vectors.shape[1] if self._vectors.ndim == 2
                                             else 0), dtype=np.float32))
             src = dict(self._meta.get("sources") or {})

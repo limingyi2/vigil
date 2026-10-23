@@ -114,9 +114,9 @@ def test_xml_tool_text_is_rejected_without_execution(monkeypatch):
                 "</function></tool_call>"}}]}
 
     brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
+    brain._src_context = contextvars.ContextVar("test_src", default="pc")
     brain.api = {"api_key": "unit", "model": "unit-model"}
-    brain._cur_src = "app"
+    brain._cur_src = "pc"
     brain.draft_rules = ""
     brain.last_err = ""
     brain.last_tools_used = []
@@ -148,7 +148,7 @@ def test_unsupported_xml_file_tool_is_rejected_without_touching_temp_dir(monkeyp
                 + "</parameter></function></tool_call>"}}]}
 
     brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
+    brain._src_context = contextvars.ContextVar("test_src", default="pc")
     brain.api = {"provider": "custom", "api_key": "unit", "api_base": "https://example.test/v1",
                  "model": "text-model"}
     brain._cur_src = "pc"
@@ -201,7 +201,7 @@ def test_mimo_structured_file_tool_reads_isolated_directory(monkeypatch, tmp_pat
 
     provider = FakeProvider()
     brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
+    brain._src_context = contextvars.ContextVar("test_src", default="pc")
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
@@ -276,7 +276,7 @@ def test_mimo_xml_file_tool_uses_existing_authorized_queue(monkeypatch, tmp_path
 
     provider = FakeProvider()
     brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
+    brain._src_context = contextvars.ContextVar("test_src", default="pc")
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
@@ -371,7 +371,7 @@ def test_fake_provider_calls_plugin_tool_and_receives_result_in_followup(monkeyp
 
     provider = FakeProvider()
     brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="wechat")
+    brain._src_context = contextvars.ContextVar("test_src", default="pc")
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"

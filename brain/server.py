@@ -2,7 +2,7 @@
 """云端大脑服务（组装与路由层）。
 
 远程大脑 API（端口 8788）：手机 App 与桌宠都连它聊天，记忆/人设/上下文
-只有云上这一份；历史摘要、主动搭话也都在这个进程里跑。
+只有云上这一份；会话上下文压缩、主动搭话也都在这个进程里跑。
 
 模块分工：runtime 共享配置｜reply 回复后处理｜randimg 随机图｜selfie 自拍｜
 imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环。
@@ -289,12 +289,6 @@ def _save_turn_image(blob, src=None, desc=''):
             _image_ext(blob)))
         with open(img_path, "wb") as f:
             f.write(blob)
-        try:
-            if src and str(src).startswith("wechat"):
-                import stickers as _stk
-                _stk.save_bytes(blob, desc=str(desc or ''), src=str(src))
-        except Exception:
-            pass
         return img_path
     except Exception as e:
         print(f"[大脑] 图片落盘失败（不影响回复）：{e}", flush=True)
@@ -392,22 +386,8 @@ class _Busy(Exception):
 
 
 def _norm_src(src):
-    """把请求里的渠道名收拾成已知渠道。
-
-    白名单而不是黑名单：渠道名会拼进存档文件名，写进配置也决定读哪份人设，
-    认不出来的值一律归一化成主渠道 wechat。这是"app 已退役"后的明确政策，
-    不是静默巧合：
-      - 桌面客户端显式发 pc；微信桥接显式发 wechat/wechat_group；
-      - 手机 App 框架不再有聊天链路（PollService 的历史轮询也已改默认值）；
-      - 多传/拼错一个 src 不会出事，但 "../../evil" 也没机会碰到文件系统。
-    """
-    try:
-        import paths
-        allowed = paths.CHANNELS
-    except Exception:
-        allowed = ("wechat", "wechat_group", "pc")
-    s = str(src or "").strip().lower()
-    return s if s in allowed else "wechat"
+    from pc_context import normalize_src
+    return normalize_src(src)
 
 
 def _log_history_error(src, exc, action):
@@ -429,23 +409,14 @@ def _log_history_error(src, exc, action):
 
 
 def _persona_for_src(src, default_key=""):
-    """这个渠道该用哪个人设（读 config.json 的 persona_by_src）。
-
-    跟 brain._persona_key_for 同一套规则：渠道有人设专用就用那个，
-    否则回默认人设。**必须共用一份实现** —— 两处各读一次 config，
-    改了一处忘了另一处，存档路径和记忆路径就会算成两个名字，
-    表现是「分区建了、文件也有，只有内容是错的」。
-    """
-    try:
-        import paths, json as _json
-        cfg = _json.loads(open(paths.CONFIG_PATH, encoding="utf-8").read())
-        by = cfg.get("persona_by_src") or {}
-        return str(by.get(src) or "").strip() or str(default_key or "")
-    except Exception:
-        return str(default_key or "")
+    from pc_context import persona_key
+    b = _LOCAL.get("brain")
+    cfg = getattr(b, "api", None) or API_CFG
+    return persona_key(cfg, src, default_key)
 
 
-def _clear_brain_history_scope(brain, src, conversations, conversation_id=None):
+def _clear_brain_history_scope(brain, src, conversations, conversation_id=None,
+                               path_overrides=None):
     """Clear legacy and indexed transcript files for one scoped history request."""
     with _chat_lock():
         previous_src, previous_conversation = brain._cur_src, brain._cur_conversation
@@ -461,7 +432,9 @@ def _clear_brain_history_scope(brain, src, conversations, conversation_id=None):
                 targets = [None] + [item['id'] for item in conversations if not item.get('legacy')]
             # Resolve every path before removing any file; a broken persona/channel
             # partition must fail closed rather than falling back to another log.
-            paths = list(dict.fromkeys(brain._log_for(src, cid) for cid in targets))
+            path_overrides = path_overrides or {}
+            paths = list(dict.fromkeys(
+                path_overrides.get(cid) or brain._log_for(src, cid) for cid in targets))
             for path in paths:
                 try:
                     os.remove(path)
@@ -536,6 +509,15 @@ def _snapshot(b):
         # 客户端可以折叠显示，排查"她为啥这么答"时用。
         "think": getattr(b, "last_think", "") or "",
     }
+    # The delegation router's workspace is an authorization detail.  Keep the
+    # decision observable without copying an absolute user path into traces.
+    route = getattr(b, "last_route", None)
+    if isinstance(route, dict):
+        d["route_decision"] = {
+            "execution_route": route.get("route"),
+            "decision_source": "delegation.router",
+            "reason": str(route.get("reason") or "")[:120],
+        }
     # 🔴 **顺带抄一份「她这轮实际看到的工具段」**。
     # 排查"技能装了却不调"时，光看 trace.tool 是空根本分不清三种情况：
     #   ① 提示词里压根没那个技能名（拼装时就没进来）
@@ -617,15 +599,49 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
     features.tools 的总开关**由 tools.all_specs() 判**（工具表的唯一出口）——
     这里不再单独分支。放在 all_specs 里，换哪条起草链路都盖得住。
     """
+    _route_decision = None
+    import task_intent as _task_intent
+    try:
+        _task_decision = _task_intent.classify(text)
+    except Exception:
+        _task_decision = {"task_category": "chat", "decision_source": "fallback",
+            "reason": "分类异常回退", "target_entry": "chat_no_tools",
+            "fallback_reason": "classification_error"}
+    if trace_out is not None:
+        trace_out["task_decision"] = dict(_task_decision,
+                                          target_entry="brain_tools" if _task_decision.get("target_entry") == "agent_run"
+                                          else _task_decision.get("target_entry"))
+
+    # Live-information requests must never fall through to a model answer from
+    # training data when their specific built-in retrieval tool is disabled.
+    if (_task_decision.get("task_category") == "retrieval"
+            and _task_decision.get("retrieval_mode") == "live_tools"):
+        try:
+            import tools as _live_tools
+            _live_available = _live_tools.static_tool_enabled(
+                _task_decision.get("required_tool"), src or 'pc')
+        except Exception:
+            _live_available = False
+        if not _live_available:
+            _task_decision["fallback_reason"] = "required_live_tool_unavailable"
+            _task_decision["target_entry"] = "retrieval_unavailable"
+            if trace_out is not None:
+                trace_out["task_decision"] = dict(_task_decision)
+            return "当前没有启用可用的实时查询工具，无法核实这条信息。", "实时检索不可用"
+
     def _once(t, no_tools=False):
         with _chat_lock():
             b = _LOCAL["brain"]
-            b.use_src(src or 'wechat', conversation_id)
+            b.use_src(src or 'pc', conversation_id)
             if len(b.hist) <= 1:
-                b.seed_history(src=src or 'wechat', conversation_id=conversation_id)
+                b.seed_history(src=src or 'pc', conversation_id=conversation_id)
             chat_kwargs = dict(img=img_path, log=False, src=src,
                                conversation_id=conversation_id,
-                               no_tools=no_tools)
+                               no_tools=bool(no_tools or _task_decision.get("task_category") == "chat"
+                                             or _task_decision.get("fallback_reason")
+                                             or (_task_decision.get("task_category") == "retrieval"
+                                                 and _task_decision.get("retrieval_mode") == "history_rag")),
+                               route_decision=_route_decision)
             if native_content is not None:
                 # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
                 # 悄悄换成"另一个视觉模型的描述"）就是骗人：用户以为模型看到了
@@ -639,6 +655,12 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             # 那一轮会把它覆盖掉。
             if trace_out is not None:
                 trace_out.update(_snapshot(b))
+                if isinstance(_route_decision, dict):
+                    trace_out["route_decision"] = {
+                        "execution_route": _route_decision.get("route"),
+                        "decision_source": "delegation.router",
+                        "reason": str(_route_decision.get("reason") or "")[:120],
+                    }
                 # 原生 FC 用到的工具也记进 trace（供事后追"这轮为啥这么答"）
                 _used = getattr(b, "last_tools_used", None)
                 if _used:
@@ -666,10 +688,24 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
         try:
             from delegation import bridge as _dbr
             _dbr.lock_delegation(False)
-            _dpre = _dbr.run_hybrid_delegation_direct(text, src=src)
+            _dpre = (_dbr.run_hybrid_delegation_direct(text, src=src)
+                     if _task_decision.get("task_category") in ("simple_execution", "complex_execution")
+                     and _task_decision.get("fallback_reason") not in (
+                         "classification_error", "unsupported_complex_task", "ambiguous_reference")
+                     else {"ok": False, "reason": "task_category_bypass"})
+            _route_decision = _dpre.get("decision")
         except Exception as _e:
             _dpre = {"ok": False, "reason": "precheck:%s" % type(_e).__name__}
         if _dpre.get("ok"):
+            if _task_decision.get("fallback_reason") == "workspace_not_authorized":
+                # The existing delegation router just revalidated the stored
+                # workspace scope. Reflect that evidence in diagnostics only;
+                # this does not widen any tool permission.
+                _task_decision["fallback_reason"] = None
+                _task_decision["reason"] = "委派路由已确认授权工作区"
+                _task_decision["target_entry"] = "brain_tools"
+                if trace_out is not None:
+                    trace_out["task_decision"] = dict(_task_decision)
             _dres = _dpre["result"]
             _prompt = (
                 "（系统提示：本地子任务已在授权工作区内完成勘察，下面是经过程序"
@@ -682,6 +718,11 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             if trace_out is not None:
                 trace_out["plan_steps"] = 0
                 trace_out["route"] = "hybrid_delegate_preplan"
+                trace_out["route_decision"] = {
+                    "execution_route": _route_decision.get("route"),
+                    "decision_source": "delegation.router",
+                    "reason": str(_route_decision.get("reason") or "")[:120],
+                }
                 trace_out["tool"] = "delegate_to_local:preplan"
                 trace_out["plan_ms"] = int((time.time() - _plan_t0) * 1000)
                 trace_out["plan_calls"] = 1
@@ -697,6 +738,10 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
 
         import planner
         _yes, _plan_why = planner.plan_decision(text)
+        if (_task_decision.get("task_category") != "complex_execution"
+                or _task_decision.get("fallback_reason")):
+            _yes = False
+            _plan_why = "任务类别不需要多步规划"
         # 🔴 **关掉之后要单独记一笔，不能当成"规划失败"。**
         # `plan()` 自己在 enabled=false 时返回 None，于是 server 会走下面
         # "判要规划但没解析出步骤"那条分支、写 `plan: "empty"` ——
@@ -835,78 +880,6 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
     return _tools.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
 
 
-# ── M3 双大脑路由（wechat_route = cloud | local）────────────────────
-# cloud（默认）：微信消息由云上她自己答 —— 现状，随时可回。
-# local：微信消息转发给用户电脑上的本地大脑（经 /ws/brain 长连），
-#        本地不在线就落回云端直答，本地 25s 没答就用超时话术顶着。
-# flag 是运行时热改的（POST /api/route 秒切 + 落盘），为的是"一键切回"。
-_TIMEOUT_REPLY = "（我这边的脑子好像掉线了，消息先记下了，等会儿回来补你～）"
-
-
-def _wechat_route():
-    try:
-        v = (API_CFG or {}).get("wechat_route")
-        return v if v in ("cloud", "local") else "cloud"
-    except Exception:
-        return "cloud"
-
-
-def _wechat_enabled():
-    try:
-        return bool((API_CFG or {}).get("wechat_enabled", True))
-    except Exception:
-        return True
-
-
-def _set_wechat_enabled(v):
-    val = bool(v)
-    API_CFG["wechat_enabled"] = val
-    cfg = {}
-    try:
-        cfg = json.load(open(config_path(), encoding="utf-8"))
-    except Exception:
-        cfg = {}
-    cfg["wechat_enabled"] = val
-    with open(config_path(), "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-
-
-def _set_wechat_route(v):
-    """热改 + 落盘。落盘照 /api/persona/apply 的写法：整份读出、改键、写回。"""
-    if v not in ("cloud", "local"):
-        raise ValueError("wechat_route 只能是 cloud | local")
-    API_CFG["wechat_route"] = v
-    cfg = {}
-    try:
-        cfg = json.load(open(config_path(), encoding="utf-8"))
-    except Exception:
-        cfg = {}
-    cfg["wechat_route"] = v
-    with open(config_path(), "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-
-
-def _late_to_history(src, display, reply):
-    """本地大脑的迟到答案：话术已经顶出去了，这条**只写历史不外发** ——
-    她事后翻聊天记录能看到自己真正回了什么，微信端却不会冒出一条迟到的
-    复读。挂到 ws_forward.HUB.on_late_result（run_server 装配完大脑后接上）。"""
-    try:
-        b = _LOCAL["brain"]
-        channel = _norm_src(src)
-        b._log_turn(display, reply, img=None, src=channel)
-        print("[转发] 迟到答案已入历史（src=%s）" % src, flush=True)
-    except Exception as e:
-        channel = _norm_src(src)
-        try:
-            b = _LOCAL.get("brain")
-            persona = b._persona_key_for(channel) if b else "default"
-            path = b._log_for(channel) if b else "<unavailable>"
-        except Exception:
-            persona, path = "default", "<unavailable>"
-        print("[history] src=%s persona=%s path=%s error_code=%s" %
-              (channel, persona, path, type(e).__name__), flush=True)
-
-
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                    dry_run=False, attachments=None, conversation_id=None,
                    native_content=None):
@@ -916,8 +889,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
     content 发送给当前对话模型。
     display：存档/给用户看的那份原文（不含系统注入的提示），None 就用 text。
     trace_out：可选 dict；填上就在**持锁时**抄下这轮的 trace 字段（见 _snapshot）。
-    src：渠道（app / wechat）。决定读哪份人设、哪份对话历史、哪个记忆分区 ——
-    不传就是主渠道（手机 App / 桌宠）。
+    src：本机 PC 上下文，省略时使用 pc。
     dry_run：**不写聊天存档、也不改历史**。给"用 API 打探测句"用。
 
     🔴 **dry_run 是踩了坑才加的。** 我调试时用 `/api/chat` 直接打了一串探测句
@@ -928,6 +900,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
 
     所以：**任何从接口打进去的探测句都会污染她的上下文。** 要测就带 dry_run。
     """
+    src = _norm_src(src)
     orig_text = text if display is None else display
     # 她就在本进程里，直接问，不走网络
     if _LOCAL["brain"] is not None:
@@ -950,14 +923,6 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                         + "." + _image_ext(base64.b64decode(img_b64)))
                     with open(img_path, "wb") as f:
                         f.write(base64.b64decode(img_b64))
-                    # 收藏群聊表情包：入站图片顺手入库（仅微信群渠道）。
-                    try:
-                        if src and str(src).startswith("wechat"):
-                            import stickers as _stk
-                            _stk.save_bytes(base64.b64decode(img_b64),
-                                            src=str(src))
-                    except Exception:
-                        pass
                 except Exception as e:
                     _log_history_error(src, e, "image_write")
             # 他要自拍：不指望模型"只打字不发图"，直接按她此刻的时间和地点
@@ -1092,31 +1057,18 @@ def _stats_today():
 
 
 
-def _cloud_history(limit=60, src="wechat"):
-    """最近 N 条聊天记录（t / role / text），给客户端历史页用。
-
-    缺省主渠道 wechat（app 已退役）。按渠道读不同文件 —— 群聊里不该看见
-    私聊那份对话。
-
-    🔴 分区名必须跟 brain._log_for 算出来的一致（人设 × 渠道），不能只按渠道拼。
-    两边各算一套的后果：群友人设在群里聊的对话被写进
-    preset_group.app.chat_history.jsonl（按渠道拼的名字），而这里读的也是那份
-    —— 看着「读到了」，读到的是错人设的对话。
-    """
+def _cloud_history(limit=60, src="pc"):
+    """Read PC history using the same persona partition as Brain."""
     try:
         import paths
         from persona_store import key_from_config
         pk = _persona_for_src(_norm_src(src), key_from_config(API_CFG))
-        # 🔴 用不带渠道的基础名再 scoped：chat_log_for('wechat') 已经带了
-        # ".wechat" 后缀，再 scoped 一次会拼出 chat_history.wechat.wechat.jsonl
-        # 这种双后缀名 —— 跟 brain._log_for 同一个毛病，一并对齐成基础名。
+        # Use the same single-scoped base path as Brain.
         base = os.path.join(paths.DATA_DIR, "chat_history.jsonl")
         p = paths.scoped(base, pk, _norm_src(src))
-    except Exception:
-        p = data_file("chat_history.jsonl"
-                      if _norm_src(src) == "app" else
-                      "chat_history.%s.jsonl" % _norm_src(src),
-                      r"C:\vigil\data\chat_history.jsonl")
+    except Exception as exc:
+        _log_history_error(src, exc, "resolve")
+        return []
     items = []
     try:
         with open(p, encoding="utf-8") as f:
@@ -1480,7 +1432,43 @@ def start_remote_api(brain):
                 import paths
                 chans = list(paths.CHANNELS)
             except Exception:
-                chans = ["wechat", "wechat_group", "pc"]
+                chans = ["pc"]
+
+            def _management_items():
+                """One lifecycle view shared by the legacy and market pages."""
+                items = _po.overview(chans)
+                by_name = {str(item.get("name") or ""): item for item in items}
+                try:
+                    import plugin_host as _ph
+                    runtime = {str(item.get("name") or ""): item
+                               for item in _ph.listing()}
+                    import plugin_manager as _pm
+                    statuses = _pm.list_plugins()
+                except Exception:
+                    return items
+                for status in statuses:
+                    name = str(status.get("name") or "")
+                    row = by_name.get(name)
+                    info = runtime.get(name) or {}
+                    if row is None:
+                        feature = str(info.get("feature") or
+                                      (status.get("manifest") or {}).get("feature") or "")
+                        row = {
+                            "name": name, "desc": info.get("desc", ""),
+                            "feature": feature, "tools": info.get("tools", []),
+                            "routes": info.get("routes", []), "hooks": info.get("hooks", []),
+                            "file": info.get("file", ""), "err": info.get("err", ""),
+                            "channels": _po.channels_of(feature, chans),
+                            "channelable": bool(feature), "meta": _po._meta_of(name),
+                        }
+                        items.append(row)
+                        by_name[name] = row
+                    for key in ("state", "enabled", "lifecycle_enabled",
+                                "effective_by_src", "source_kind", "builtin",
+                                "removable", "runtime_state", "version",
+                                "update_state", "diagnostic"):
+                        row[key] = status.get(key)
+                return sorted(items, key=lambda item: str(item.get("name") or ""))
 
             if method == "GET":
                 # /api/plugins 已经被微信桥接和 VM 启动器当"大脑活着吗"
@@ -1495,7 +1483,7 @@ def start_remote_api(brain):
                             "plugins": _ph.listing(),
                             "manage": {
                                 "channels": chans,
-                                "items": _po.overview(chans),
+                                "items": _management_items(),
                             },
                             # 持久的"待重启"判据（磁盘改动时刻 vs 本进程启动时刻）。
                             # 界面刷新后靠它认出待重启态 —— 不是靠 toast 记忆。
@@ -1545,31 +1533,34 @@ def start_remote_api(brain):
                 try:
                     with os.fdopen(fd, "wb") as f:
                         f.write(blob)
-                    ok, res = _po.install(fp, note=str(body.get("source") or "")[:40])
+                    import plugin_manager as _pm
+                    ok, res = _pm.install_archive(
+                        fp, source=str(body.get("source") or "客户端")[:40], reload=False)
                 finally:
                     try:
                         os.remove(fp)
                     except OSError:
                         pass
                 if not ok:
-                    self._json(400, {"ok": False, "err": res.get("err") or "装不上"})
+                    self._json(400, dict(res, ok=False))
                     return True
                 # Installing files must not execute newly supplied code.
                 # Explicit restart performs activation outside the transaction.
-                import plugin_host as _ph
                 self._json(200, {"ok": True, "installed": res,
-                                 "count": len(_ph.all_plugins()), "restart_needed": True,
+                                 "count": len(_management_items()), "restart_needed": True,
                                  "manage": {"channels": chans,
-                                            "items": _po.overview(chans)}})
+                                            "items": _management_items()}})
                 return True
 
             if path == "/api/plugins/uninstall":
-                ok, res = _po.uninstall(str(body.get("name") or ""),
+                import plugin_manager as _pm
+                ok, res = _pm.uninstall(str(body.get("name") or ""),
                                         purge_data=bool(body.get("purge_data")))
                 if not ok:
-                    self._json(400, {"ok": False, "err": res.get("err") or "卸不掉"})
+                    self._json(409 if res.get("state") == "restart_required" else 400,
+                               dict(res, ok=False))
                     return True
-                n, need = self._plugin_reload_now()
+                n = len(_management_items())
                 # restart_needed **只认刚卸掉的那个插件**（plugin_ops 在删
                 # 文件前查过它的 start 钩子，信息只有那一刻拿得到）。
                 # 曾经把重载返回的"剩下的插件里有带的"也 OR 进来，理由是
@@ -1581,7 +1572,27 @@ def start_remote_api(brain):
                 self._json(200, {"ok": True, "uninstalled": res,
                                  "count": n, "restart_needed": need,
                                  "manage": {"channels": chans,
-                                            "items": _po.overview(chans)}})
+                                            "items": _management_items()}})
+                return True
+
+            if path == "/api/plugins/lifecycle":
+                import plugin_manager as _pm
+                name = str(body.get("name") or "").strip()
+                action = str(body.get("action") or "").strip().lower()
+                if action == "enable":
+                    ok, result = _pm.enable(name)
+                elif action == "disable":
+                    ok, result = _pm.disable(name)
+                elif action == "reload":
+                    result = _pm.reload(name or None)
+                    ok = bool(result.get("ok"))
+                else:
+                    self._json(400, {"ok": False, "err": "不支持的生命周期操作"})
+                    return True
+                result["ok"] = bool(ok)
+                result["manage"] = {"channels": chans, "items": _management_items()}
+                code = 200 if ok else (409 if result.get("state") == "restart_required" else 400)
+                self._json(code, result)
                 return True
 
             if path == "/api/plugins/channels":
@@ -1620,19 +1631,16 @@ def start_remote_api(brain):
                 self._json(200, {"ok": True, "feature": feat,
                                  "channels": _po.channels_of(feat, chans),
                                  "manage": {"channels": chans,
-                                            "items": _po.overview(chans)}})
+                                            "items": _management_items()}})
                 return True
 
             if path == "/api/plugins/reload":
-                n, need = self._plugin_reload_now()
-                try:
-                    import plugin_host as _ph
-                    listing = _ph.listing()
-                except Exception:
-                    listing = []
-                self._json(200, {"ok": True, "count": n,
-                                 "restart_needed": need,
-                                 "plugins": listing})
+                import plugin_manager as _pm
+                result = _pm.reload()
+                result["manage"] = {"channels": chans, "items": _management_items()}
+                code = 200 if result.get("ok") else (
+                    409 if result.get("state") == "restart_required" else 500)
+                self._json(code, result)
                 return True
 
             return False
@@ -1646,7 +1654,67 @@ def start_remote_api(brain):
             session = (body.get('conversation_id') or body.get('session_id')
                        or _query_param(self.path, 'conversation_id')
                        or _query_param(self.path, 'session_id') or 'main')
-            return display_turns.owner(getattr(self, '_who', ('', '')), src, session)
+            from pc_context import persona_key
+            persona = persona_key(getattr(brain, 'api', None) or API_CFG, src)
+            identity = getattr(self, '_who', ('', ''))
+            scoped_owner = display_turns.owner(identity, src, persona + ':' + session)
+            # Recover pre-cleanup records only for a verifiable, unambiguous PC
+            # conversation. Never infer a persona for old main/welcome records.
+            import conversations
+            if conversations.valid_id(session) and callable(getattr(brain, '_log_for', None)):
+                item, _, _, _ = self._conversation_context(src, session)
+                if item:
+                    import glob, agent_runs
+                    base = os.path.dirname(brain._log_for(src, session))
+                    suffix = 'chat_history.jsonl.conversation.' + session + '.jsonl'
+                    archives = [p for p in glob.glob(os.path.join(base, '*' + suffix))
+                                if os.path.basename(p) == 'pc.' + suffix or
+                                os.path.basename(p).endswith('.pc.' + suffix)]
+                    legacy_owner = display_turns.owner(identity, src, session)
+                    if len(archives) == 1 and not (display_turns.listing(scoped_owner) or agent_runs.listing(scoped_owner)):
+                        if display_turns.listing(legacy_owner) or agent_runs.listing(legacy_owner):
+                            return legacy_owner
+            return scoped_owner
+
+        def _legacy_pc_rows(self, src, persona):
+            """Read old unbound PC metadata only when its persona-specific archive exists.
+
+            No rows/files are migrated. Never infer ownership from a shared legacy log.
+            """
+            import conversations, display_turns
+            old_owner = display_turns.owner(getattr(self, '_who', ('', '')), src, 'conversations:')
+            rows = conversations.list_for(old_owner, src, '')
+            return [r for r in rows if not r.get('legacy') and
+                    os.path.isfile(brain._log_for(src, r['id']))]
+
+        def _conversation_rows(self, owner, src, persona):
+            import conversations
+            rows = conversations.list_for(owner, src, str(persona))
+            ids = {r['id'] for r in rows}
+            return rows + [r for r in self._legacy_pc_rows(src, persona) if r['id'] not in ids]
+
+        def _visible_conversation_rows(self, owner, src, persona):
+            """Return exactly the indexed sessions shown by the PC session list."""
+            rows = self._conversation_rows(owner, src, persona)
+            import creator_jobs, display_turns, agent_runs
+            visible = []
+            for item in rows:
+                if item.get('legacy'):
+                    item['has_content'] = True
+                else:
+                    cid = item['id']
+                    turn_owner = self._display_owner({'src': src, 'conversation_id': cid})
+                    item['has_content'] = bool(
+                        brain.read_history(1, src, cid)
+                        or creator_jobs.listing(turn_owner, cid)
+                        or display_turns.listing(turn_owner)
+                        or agent_runs.display_records(turn_owner))
+                    # An empty chat opened in a workspace is a deliberate session.
+                    if item.get('workspace_id'):
+                        item['has_content'] = True
+                if item['has_content']:
+                    visible.append(item)
+            return visible
 
         def _conversation_context(self, src='pc', cid=None):
             """Resolve a desktop conversation only within the current identity/persona."""
@@ -1659,6 +1727,11 @@ def start_remote_api(brain):
             if not conversations.valid_id(cid):
                 return None, owner, src, persona
             item = conversations.get(owner, src, str(persona), cid)
+            if item is None:
+                item = next((r for r in self._legacy_pc_rows(src, persona) if r['id'] == cid), None)
+                if item:
+                    owner = display_turns.owner(getattr(self, '_who', ('', '')), src, 'conversations:')
+                    return item, owner, src, ''
             return item, owner, src, persona
 
         def _workspace_note(self, src, conv, conv_owner, persona):
@@ -1673,6 +1746,8 @@ def start_remote_api(brain):
             try:
                 import workspaces as _ws
                 item = _ws.get(conv_owner, src, str(persona), conv['workspace_id'])
+                if not item:
+                    item, _, _ = self._workspace_context(src, conv['workspace_id'])
             except Exception:
                 return ''
             if not item or not item.get('path'):
@@ -1681,6 +1756,18 @@ def start_remote_api(brain):
                     '涉及这个目录下文件的任务，默认就在这个目录里做。'
                     % (item.get('name') or '工作区', item.get('path')))
 
+        def _workspace_context(self, src, wid):
+            """Resolve current or archive-verified legacy workspace metadata."""
+            import workspaces, display_turns
+            _, owner, src, persona = self._conversation_context(src)
+            item = workspaces.get(owner, src, str(persona), wid)
+            if item:
+                return item, owner, persona
+            if any(r.get('workspace_id') == wid for r in self._legacy_pc_rows(src, persona)):
+                old_owner = display_turns.owner(getattr(self, '_who', ('', '')), src, 'conversations:')
+                return workspaces.get(old_owner, src, '', wid), old_owner, ''
+            return None, owner, persona
+
         def _new_agent_run(self, body):
             import agent_runs
             import copy
@@ -1688,6 +1775,14 @@ def start_remote_api(brain):
             body = dict(body, src=src)
             if not isinstance(body.get('intent', body.get('text')), str):
                 raise ValueError('任务内容无效')
+            workspace_note = ''
+            if body.get('conversation_id'):
+                conv, conv_owner, conv_src, conv_persona = self._conversation_context(src, body['conversation_id'])
+                if not conv:
+                    raise ValueError('会话不存在或不属于当前人设')
+                body['brain_conversation_id'] = None if conv.get('legacy') else conv['id']
+                body['session_id'] = conv['id']
+                workspace_note = self._workspace_note(src, conv, conv_owner, conv_persona)
             # A selected workspace is the project root for development shaped
             # requests.  Plain questions in the same chat remain normal Agent
             # runs; the heuristic only selects the coding harness when the
@@ -1718,15 +1813,19 @@ def start_remote_api(brain):
                     # selected workspace through the latter made auto detected
                     # Coding requests fail with a misleading 400.
                     _workspace_owner = self._display_owner(body)
+                    _workspace_persona = _persona_for_src(src)
                     try:
                         _selected, _conv_owner, _conv_src, _persona = self._conversation_context(
                             src, body.get('conversation_id'))
                         if _selected:
                             _workspace_owner = _conv_owner
+                            _workspace_persona = _persona
                     except Exception:
                         pass
                     workspace = _workspaces.get(_workspace_owner, src,
-                                                str(_persona_for_src(src)), wid)
+                                                str(_workspace_persona), wid)
+                    if not workspace:
+                        workspace, _, _ = self._workspace_context(src, wid)
                     if not workspace:
                         raise ValueError('工作区不存在或不属于当前会话')
                     body['workspace_root'] = workspace['path']
@@ -1739,7 +1838,11 @@ def start_remote_api(brain):
                 with _chat_lock():
                     brain.use_src(src, body.get('brain_conversation_id'))
                     text = body.get('intent', body.get('text', ''))
-                    parts, _ = brain._build_system_parts(text, '')
+                    brain.turn_note = workspace_note
+                    try:
+                        parts, _ = brain._build_system_parts(text, '')
+                    finally:
+                        brain.turn_note = ''
                     messages = [{'role': 'system', 'content': ''.join(parts)}]
                     if len(brain.hist) <= 1:
                         brain.seed_history(src=src, conversation_id=body.get('brain_conversation_id'))
@@ -1790,8 +1893,40 @@ def start_remote_api(brain):
                 _user_content = (_content_builder(text, body.get('_native_content'))
                                  if _content_builder else brain._user_msg_with_rules(text))
                 messages.append({'role': 'user', 'content': _user_content})
-            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body),
-                                     brain=brain, messages=messages)
+            scope_builder = getattr(self, '_workflow_scope', None)
+            workflow_scope = scope_builder(body) if callable(scope_builder) else None
+            options = {'brain': brain, 'messages': messages}
+            if workflow_scope is not None:
+                options['workflow_scope'] = workflow_scope
+            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body), **options)
+
+        def _workflow_scope(self, body=None):
+            """Build P18 scope only from authenticated identity and stored conversation data."""
+            import task_workflows
+            body = body or {}
+            src = _norm_src(body.get('src') or 'pc')
+            cid = str(body.get('conversation_id') or body.get('session_id') or '')
+            if not cid or src != 'pc':
+                return None
+            try:
+                conv, _, _, persona = self._conversation_context(src, cid)
+            except Exception:
+                # Legacy/main sessions do not always have a P18 conversation row.
+                # They continue on the existing Run path without a Workflow scope.
+                return None
+            if not conv or conv.get('legacy'):
+                return None
+            # Todo projections require the same stored workspace identity that
+            # the Coding Harness will guard. A conversation without one keeps
+            # using the existing Run path and cannot mint an unscoped Workflow.
+            if not conv.get('workspace_id'):
+                return None
+            identity = getattr(self, '_who', ('', ''))
+            try:
+                return task_workflows.Scope(tuple(identity), str(persona), str(conv['id']),
+                    str(conv.get('workspace_id') or ''), src)
+            except (TypeError, ValueError):
+                return None
 
         def _agent_api(self, method, path, body=None):
             if path != '/api/agent/runs' and not path.startswith('/api/agent/runs/'):
@@ -1828,19 +1963,27 @@ def start_remote_api(brain):
                     elif method == 'GET' and len(parts) == 4:
                         self._json(200, {'ok': True, **item})
                     elif method == 'POST' and parts[4:] == ['cancel']:
-                        self._json(200, {'ok': True, **agent_runs.cancel(rid, owner)})
+                        self._json(200, {'ok': True, **agent_runs.cancel(rid, owner,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'POST' and parts[4:] == ['pause']:
-                        self._json(200, {'ok': True, **agent_runs.pause(rid, owner)})
+                        self._json(200, {'ok': True, **agent_runs.pause(rid, owner,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'POST' and parts[4:] == ['resume']:
                         import copy as _copy
                         self._json(200, {'ok': True, **agent_runs.resume(
-                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
+                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'POST' and parts[4:] == ['interject']:
                         # 执行中插话：旧 run 停成 paused/interjected，另起一个
                         # run 带检查点重新规划。和 pause/cancel/新消息语义分开。
                         import copy as _copy
                         self._json(200, {'ok': True, **agent_runs.interject(
-                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain)})
+                            rid, owner, _copy.deepcopy(API_CFG), body, brain=brain,
+                            workflow_scope=self._workflow_scope({'src': item.get('src'),
+                                'conversation_id': item.get('conversation_id')}))})
                     elif method == 'GET' and parts[4:] == ['events']:
                         after = int(_query_param(self.path, 'after') or 0)
                         if after < 0 or after > item['event_cursor']:
@@ -2173,19 +2316,27 @@ def start_remote_api(brain):
                 tbl = plugin_host.route_table()
             except Exception:
                 return False
+            try:
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                q = {k: (v[0] if v else "") for k, v in q.items()}
+            except Exception:
+                q = {}
+            raw_src = (body or {}).get("src") or q.get("src")
+            route_src = _norm_src(raw_src) if raw_src else None
             # 受限设备只能打 remote 插件那几条（在设备权限矩阵里），
             # 其余插件路由一律视为管理面：防止低权限凭据借插件路由越权。
-            if not self._is_admin() and not _device_path_allowed(method, path):
-                self._json(403, {"ok": False,
-                                 "err": "设备 Token 无权访问这个插件接口"})
-                return True
             for m, p, fn, owner in tbl:
                 if m != method or p != path:
                     continue
+                if not plugin_host.is_enabled(owner, route_src):
+                    self._json(403, {"ok": False, "err": "插件已停用，不能调用它的接口"})
+                    return True
+                if not self._is_admin() and not _device_path_allowed(method, path):
+                    self._json(403, {"ok": False,
+                                     "err": "设备 Token 无权访问这个插件接口"})
+                    return True
                 try:
-                    from urllib.parse import urlparse, parse_qs
-                    q = parse_qs(urlparse(self.path).query)
-                    q = {k: (v[0] if v else "") for k, v in q.items()}
                     # 已认证身份按请求注入（ContextVar），handler 据此做
                     # 设备归属校验；handler 签名保持 (body, query) 不变。
                     with plugin_host.use_principal(
@@ -2212,6 +2363,24 @@ def start_remote_api(brain):
                           f"{type(e).__name__}: {e}", flush=True)
                     self._json(500, {"ok": False, "err": str(e)[:120]})
                 return True
+            return False
+
+        def _reject_retired_context(self, body=None):
+            from urllib.parse import parse_qs, urlparse
+            parsed = urlparse(self.path)
+            values = parse_qs(parsed.query).get("src", [])
+            if isinstance(body, dict) and "src" in body:
+                values.append(body["src"])
+            if parsed.path in ("/api/route", "/ws/brain"):
+                self._json(410, {"ok": False, "err": "legacy_wechat_retired"})
+                return True
+            for value in values:
+                try:
+                    _norm_src(value)
+                except ValueError:
+                    code = 410 if str(value).strip().lower() in ("wechat", "wechat_group", "app") else 400
+                    self._json(code, {"ok": False, "err": "unsupported_channel", "supported": ["pc"]})
+                    return True
             return False
 
         def do_POST(self):
@@ -2264,6 +2433,8 @@ def start_remote_api(brain):
                 body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception:
                 body = {}
+            if self._reject_retired_context(body):
+                return
             if self._agent_api('POST', path, body):
                 return
             if path in ('/api/capabilities/events', '/api/capabilities/invoke',
@@ -2333,6 +2504,7 @@ def start_remote_api(brain):
                     return
                 if path.endswith('/rename'):
                     wid = path.rsplit('/', 2)[-2]
+                    _, owner, persona = self._workspace_context(src, wid)
                     item = workspaces.rename(owner, src, str(persona), wid, body.get('name'))
                     if not item:
                         self._json(404, {"ok": False, "err": "工作区不存在或名称为空"})
@@ -2341,12 +2513,20 @@ def start_remote_api(brain):
                     return
                 if path.endswith('/delete'):
                     wid = path.rsplit('/', 2)[-2]
-                    item = workspaces.remove(owner, src, str(persona), wid)
+                    workspace, workspace_owner, workspace_persona = self._workspace_context(src, wid)
+                    if not workspace:
+                        self._json(404, {"ok": False, "err": "工作区不存在"})
+                        return
+                    _, current_owner, _, current_persona = self._conversation_context(src)
+                    item = workspaces.remove(workspace_owner, src, str(workspace_persona), wid)
                     if not item:
                         self._json(404, {"ok": False, "err": "工作区不存在"})
                         return
                     # Chats survive as ordinary chats; no files are touched.
-                    detached = conversations.detach_workspace(owner, src, str(persona), wid)
+                    scopes = {(workspace_owner, src, str(workspace_persona)),
+                              (current_owner, src, str(current_persona))}
+                    detached = sum(conversations.detach_workspace(o, s, p, wid)
+                                   for o, s, p in scopes)
                     self._json(200, {"ok": True, "item": item, "detached": detached})
                     return
                 self._json(404, {"ok": False, "err": "接口不存在"})
@@ -2364,7 +2544,7 @@ def start_remote_api(brain):
                 def _workspace_ok(wid):
                     if not wid:
                         return True
-                    return bool(workspaces.get(owner, src, str(persona), wid))
+                    return bool(self._workspace_context(src, wid)[0])
                 if path == '/api/conversations':
                     wid = str(body.get('workspace_id') or '') or None
                     if not _workspace_ok(wid):
@@ -2372,6 +2552,11 @@ def start_remote_api(brain):
                         return
                     item = conversations.create(owner, src, str(persona), wid)
                     self._json(201, {"ok": True, "item": item})
+                    return
+                _cid = path.rsplit('/', 2)[-2] if path.endswith(('/workspace', '/delete')) else path.rsplit('/', 1)[-1]
+                _existing, owner, src, persona = self._conversation_context(src, _cid)
+                if not _existing:
+                    self._json(404, {"ok": False, "err": "会话不存在"})
                     return
                 if path.endswith('/workspace'):
                     cid = path.rsplit('/', 2)[-2]
@@ -2411,7 +2596,7 @@ def start_remote_api(brain):
                 self._json(200, {"ok": True, "item": item})
                 return
             # query 也要给 POST 用：Electron 客户端把渠道 src 放在 query 里
-            # （?src=wechat），body 里没有。不解析的话渠道设置页的改动
+            # （?src=pc），body 里没有。不解析的话渠道设置页的改动
             # 会全写进 app 覆盖 —— 渠道错乱。
             try:
                 from urllib.parse import parse_qs as _pqs, urlparse as _up
@@ -2484,6 +2669,49 @@ def start_remote_api(brain):
                         return
                     import localtools as _lt
                     self._json(200, {"ok": True, "items": _lt.audit()})
+                    return
+                if path == "/api/retrieval/settings":
+                    # Desktop retrieval preference. This is independent of
+                    # retrieval.unified: switching off semantic keeps BM25.
+                    if not self._is_admin():
+                        self._json(403, {"ok": False, "err": "检索设置只允许管理员修改"})
+                        return
+                    val = body.get("semantic_enabled") if isinstance(body, dict) else None
+                    if not isinstance(val, bool):
+                        self._json(400, {"ok": False, "err": "semantic_enabled 必须是布尔值"})
+                        return
+                    import tempfile
+                    with _chat_lock():
+                        cfg_path = config_path()
+                        try:
+                            with open(cfg_path, encoding="utf-8") as fh:
+                                disk_cfg = json.load(fh)
+                            if not isinstance(disk_cfg, dict):
+                                disk_cfg = {}
+                        except (FileNotFoundError, json.JSONDecodeError):
+                            disk_cfg = dict(api_config)
+                        section = disk_cfg.get("retrieval")
+                        section = dict(section) if isinstance(section, dict) else {}
+                        section["semantic_enabled"] = val
+                        disk_cfg["retrieval"] = section
+                        os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+                        fd, tmp_path = tempfile.mkstemp(prefix=".retrieval-", suffix=".tmp",
+                                                         dir=os.path.dirname(cfg_path))
+                        try:
+                            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                                json.dump(disk_cfg, fh, ensure_ascii=False, indent=2)
+                                fh.flush()
+                                os.fsync(fh.fileno())
+                            os.replace(tmp_path, cfg_path)
+                        finally:
+                            if os.path.exists(tmp_path):
+                                os.unlink(tmp_path)
+                        api_config["retrieval"] = section
+                    from storage import unified as _retrieval
+                    self._json(200, {"ok": True,
+                                     "semantic_enabled": _retrieval.semantic_enabled(),
+                                     "unified": _retrieval.unified_enabled(),
+                                     "restart_required": False})
                     return
                 if path == "/api/search":
                     # P17 统一检索：聊天历史 / 长期记忆 / 知识库 / 已授权工作区
@@ -2598,23 +2826,6 @@ def start_remote_api(brain):
                     ok = devices.revoke(did)
                     self._json(200 if ok else 404,
                                {"ok": ok, "err": "" if ok else "没有这台设备"})
-                    return
-                if path == "/api/route":
-                    # M3：一键切"微信消息谁答"。热改 + 落盘，秒生效不重启。
-                    _v = str(body.get("wechat_route") or body.get("route") or "")
-                    try:
-                        _set_wechat_route(_v)
-                        if "enabled" in body:
-                            _set_wechat_enabled(body.get("enabled"))
-                    except Exception as e:
-                        self._json(400, {"ok": False, "err": str(e)[:80]})
-                        return
-                    import ws_forward as _fwd
-                    print("[路由] wechat_route -> %s（本地在线：%s）"
-                          % (_v, _fwd.HUB.online()), flush=True)
-                    self._json(200, {"ok": True, "wechat_route": _v,
-                                     "enabled": _wechat_enabled(),
-                                     "forward": _fwd.HUB.stats()})
                     return
                 if path == "/api/models/list":
                     # Model discovery accepts a freshly entered key in the JSON
@@ -2733,9 +2944,7 @@ def start_remote_api(brain):
                 if path == "/api/chat":
                     _in_text = str(body.get("text") or "")
                     _disp = _in_text          # 存档用原文，注入的系统提示不带
-                    # 渠道：桌面客户端传 pc，微信桥接传 wechat/wechat_group。
-                    # 缺省/认不出来的值归一到主渠道 wechat（app 已退役；
-                    # 未知值同时也是防路径穿越，绝不能原样拼进存档文件名）。
+                    # Core chat defaults to the local PC context.
                     _src = _norm_src(body.get("src"))
                     _cid = body.get('conversation_id')
                     _brain_cid = None
@@ -2786,76 +2995,6 @@ def start_remote_api(brain):
                         _lt.set_context(_src, str(body.get("sender_id") or ""))
                     except Exception:
                         pass
-                    # ── M3 双大脑路由：微信渠道可转发给本地大脑 ──
-                    # 拦截点必须在云端自己的注入链（快递/插件/记忆）之前：
-                    # 本地大脑会跑**它自己的**全链路，两边都跑一遍就成了
-                    # 双重注入（快递单号注册两次、插件提醒说两遍）。
-                    # 只有 wechat / wechat_group 参与路由；app 渠道的客户端
-                    # 连的就是云端，永远直答。离线 → 落到下面正常直答。
-                    if _src in ("wechat", "wechat_group") and not _wechat_enabled():
-                        _msg = "微信聊天集成已停用，请在设置中重新启用"
-                        self._json(200, {"reply": _msg,
-                                         "messages": split_messages(_msg),
-                                         "mode": "微信已停用", "err": ""})
-                        return
-                    if _src in ("wechat", "wechat_group") \
-                            and _wechat_route() == "local":
-                        import ws_forward as _fwd
-                        if _fwd.HUB.online():
-                            _loc = _fwd.HUB.ask_local(
-                                {"text": _in_text, "display": _disp,
-                                 "src": _src, "img": body.get("img") or "",
-                                 "dry_run": bool(body.get("dry_run"))},
-                                timeout=_fwd.ACK_TIMEOUT)
-                            if _loc.get("ok"):
-                                _fans = _loc.get("reply") or ""
-                                # 云端权威历史：本地答的这段也要写进云上存档
-                                # （本地大脑只写它自己那一份）。dry_run 照旧不写。
-                                if not body.get("dry_run"):
-                                    try:
-                                        _LOCAL["brain"].use_src(_src)
-                                        _LOCAL["brain"]._log_turn(
-                                            _disp, _fans, img=None)
-                                    except Exception:
-                                        pass
-                                try:
-                                    _trace_write({
-                                        "t": time.strftime("%Y-%m-%d %H:%M"),
-                                        "kind": "chat", "src": _src,
-                                        "mode": "本地大脑",
-                                        "in_len": len(_in_text)})
-                                except Exception:
-                                    pass
-                                self._json(200, {
-                                    "reply": _fans,
-                                    "messages": split_messages(_fans),
-                                    "mode": "本地大脑", "err": "",
-                                    "t": time.strftime("%Y-%m-%d %H:%M"),
-                                    "trace": {"mode": "本地大脑"}})
-                                return
-                            if _loc.get("reason") in ("timeout", "local_err"):
-                                # 超时：话术顶着（**不写存档**——迟到的真答案
-                                # 会由 on_late_result 补进历史，话术和真答
-                                # 都入档就成了两条复读）。
-                                _msg = _TIMEOUT_REPLY if _loc.get("reason") == "timeout" \
-                                    else "（本地大脑出了点小差子：%s）" \
-                                    % str(_loc.get("err") or "")[:60]
-                                try:
-                                    _trace_write({
-                                        "t": time.strftime("%Y-%m-%d %H:%M"),
-                                        "kind": "chat", "src": _src,
-                                        "mode": "本地大脑超时",
-                                        "in_len": len(_in_text)})
-                                except Exception:
-                                    pass
-                                self._json(200, {
-                                    "reply": _msg,
-                                    "messages": split_messages(_msg),
-                                    "mode": "本地大脑超时", "err": "",
-                                    "t": time.strftime("%Y-%m-%d %H:%M"),
-                                    "trace": {"mode": "本地大脑超时"}})
-                                return
-                            # reason=offline / send → 掉到下面云端直答
                     # 话里带单号就进监控（每 30 分钟自动查），现状也塞给模型，
                     # 她回话时能顺口说一句"刚发出去了"
                     try:
@@ -2876,33 +3015,6 @@ def start_remote_api(brain):
                         _proactive_note_user()   # 他说话了：给自适应频率喂反馈
                     except Exception:
                         pass
-                    # ── 群聊上下文（2026-10-09）─────────────────────────
-                    # 桥接随消息透传最近几条群聊（body.context）。以前她被
-                    # 叫到名字才抬头，看到的就是孤零零一句"除了贵"——接什么
-                    # 都靠猜；闸门更惨（它找的 brain.recent_msgs 属性从来
-                    # 不存在，永远"最近在聊：（没历史）"）。
-                    # 拼进 _in_text：大脑看得到；**不进 _disp**：存档里她的
-                    # 历史仍是一句一条，不污染（display 机制，见
-                    # ask_with_retry）。注意：放快递注册之后 —— 前情里别人
-                    # 贴的单号不该被注册进监控。
-                    _ctx_for_gate = ""
-                    _raw_ctx = body.get("context")
-                    if isinstance(_raw_ctx, (list, tuple)):
-                        _ctx_lines = [str(x).strip() for x in _raw_ctx
-                                      if str(x).strip()]
-                    elif isinstance(_raw_ctx, str) and _raw_ctx.strip():
-                        _ctx_lines = [x.strip() for x in _raw_ctx.splitlines()
-                                      if x.strip()]
-                    else:
-                        _ctx_lines = []
-                    if _ctx_lines:
-                        _ctx_lines = _ctx_lines[-12:]
-                        _ctx_for_gate = "\n".join(_ctx_lines)
-                        _in_text = ("[群聊前情，仅供你了解大家在聊什么，"
-                                    "别逐条回应]\n%s\n[最新一条消息]\n%s"
-                                    % (_ctx_for_gate, _disp))
-                        print("[群聊上下文] 带了 %d 条前文" % len(_ctx_lines),
-                              flush=True)
                     # 插件的入站钩子（on_turn_in）：各插件看一句他说了什么，
                     # 需要就返回一段要注入 system 的提示（提醒插件靠它把
                     # "手上还有哪些到点要喊的事"喂进上下文）。
@@ -2919,11 +3031,6 @@ def start_remote_api(brain):
                         _tctx = _ph.Turn(text=_disp, src=_src,
                                          api_config=API_CFG,
                                          brain=_LOCAL["brain"])
-                        if _ctx_for_gate:
-                            # 闸门的上下文单独给，**不能并进 text** ——
-                            # _called_someone_else 扫全文会把前文里别人
-                            # 之间的 @ 也算成"这条在 @ 别人"，整条误拦。
-                            _tctx.context = _ctx_for_gate
                         _extra = _ph.on_turn_in(_tctx)
                         if _tctx.vetoed:
                             print("[闸门] 这一轮被否决，不问大脑"
@@ -3004,6 +3111,8 @@ def start_remote_api(brain):
                             "tok_in": _snap.get("tok_in"),
                             "tok_out": _snap.get("tok_out"),
                             "tool": _snap.get("tool") or "",
+                            "route_decision": _snap.get("route_decision"),
+                            "task_decision": _snap.get("task_decision"),
                             "mode": mode,
                             "fallback": 1 if err or mode == "API失败" else 0,
                             # 🔴 规划分支的观测字段**必须显式列出来**。
@@ -3040,6 +3149,8 @@ def start_remote_api(brain):
                                          "plan_steps": _snap.get("plan_steps"),
                                          "revised": bool(_snap.get("revised")),
                                          "tool": _snap.get("tool") or "",
+                                         "route_decision": _snap.get("route_decision"),
+                                         "task_decision": _snap.get("task_decision"),
                                          "mode": mode,
                                          "ms": _snap.get("ms"),
                                          "model": _snap.get("model")
@@ -3131,12 +3242,61 @@ def start_remote_api(brain):
                     _admin_pc = bool(self._is_admin() and _src == 'pc' and body.get('request_id'))
                     _route_interject = bool(_interject_of and _admin_pc)
                     _route_resume = bool(_resume_of and _admin_pc)
-                    _route_agent = bool(_admin_pc and not _route_interject and not _route_resume
-                                        and (_existing_run or (
-                                            not _existing_legacy
-                                            and _run_tools.schema_needed(_in_text)
-                                            and isinstance(_agent_cfg, dict)
-                                            and _agent_cfg.get('enabled', True))))
+                    _task_workspace_authorized = False
+                    if body.get('conversation_id'):
+                        try:
+                            _task_conv, _task_owner, _task_src, _task_persona = self._conversation_context(
+                                _src, body.get('conversation_id'))
+                            _task_wid = str((_task_conv or {}).get('workspace_id') or '')
+                            if _task_wid:
+                                _task_ws, _, _ = self._workspace_context(_src, _task_wid)
+                                _task_workspace_authorized = bool(_task_ws and _task_ws.get('path'))
+                        except Exception:
+                            _task_workspace_authorized = False
+                    import task_intent as _task_intent
+                    try:
+                        _task_tools_available = bool(_run_tools.schema_needed(_in_text))
+                        _task_decision = _task_intent.classify(
+                            _in_text, workspace_authorized=_task_workspace_authorized)
+                        _live_tool_available = False
+                        if (_task_decision.get('task_category') == 'retrieval'
+                                and _task_decision.get('retrieval_mode') == 'live_tools'):
+                            _live_tool_available = _run_tools.static_tool_enabled(
+                                _task_decision.get('required_tool'), _src)
+                        _task_agent_allowed = bool(_admin_pc and not _route_interject and not _route_resume
+                            and _task_tools_available and isinstance(_agent_cfg, dict)
+                            and _agent_cfg.get('enabled', True))
+                        _task_entry = _task_intent.select_entry(
+                            _task_decision, agent_allowed=_task_agent_allowed,
+                            tools_available=_task_tools_available,
+                            live_tool_available=_live_tool_available,
+                            existing_run=bool(_existing_run and _admin_pc))
+                        if _task_entry == 'retrieval_unavailable':
+                            _task_decision['fallback_reason'] = 'required_live_tool_unavailable'
+                    except Exception:
+                        _task_decision = {"task_category": "chat", "decision_source": "fallback",
+                            "reason": "分类异常回退", "target_entry": "chat_no_tools",
+                            "fallback_reason": "classification_error"}
+                        _task_entry = "agent_run" if (_existing_run and _admin_pc) else "chat_no_tools"
+                    _stream_brain_entry = bool(
+                        _task_entry in ('chat_no_tools', 'brain_chat', 'history_retrieval'))
+                    # Agent Run is one execution location. The P19.1 model
+                    # location route stays in route_decision and is not used as
+                    # the task category.
+                    _route_agent = bool(_task_entry == 'agent_run'
+                                        and (_existing_run or not _existing_legacy))
+                    # Keep an inspectable decision in the existing trace file;
+                    # this is diagnostics only and never grants tool access.
+                    try:
+                        _trace_write({"t": time.strftime("%Y-%m-%d %H:%M"),
+                            "kind": "task_route", "src": _src,
+                            "task_category": _task_decision.get("task_category"),
+                            "decision_source": _task_decision.get("decision_source"),
+                            "reason": str(_task_decision.get("reason") or "")[:120],
+                            "target_entry": _task_entry,
+                            "fallback_reason": _task_decision.get("fallback_reason")})
+                    except Exception:
+                        pass
                     # 🔴 图片能力闸门：**必须在做任何 Agent Run 工作之前**判。
                     # 放到流里判就晚了：客户端已经收到 200，再补一个 error
                     # 事件，它看起来像"回复完了"，而图根本没进模型。
@@ -3162,11 +3322,11 @@ def start_remote_api(brain):
                             _gate_err = ('当前对话模型不支持在任务中直接接收图片，'
                                          '这一轮没有把图送进去')
                         else:
-                            # 普通聊天这一轮走 chat 还是 stream_chat，由
-                            # schema_needed 决定 —— 判的那个入口必须接得住。
-                            import tools as _gate_tools
-                            _gate_method = ('chat' if _gate_tools.schema_needed(_in_text)
-                                            else 'stream_chat')
+                            # Match the image check to the already selected
+                            # execution entry; schema availability alone no
+                            # longer decides whether this request streams.
+                            _gate_method = ('stream_chat' if _stream_brain_entry
+                                            else 'chat')
                             _gate_ok = _supports_native_image(brain, _gate_method)
                             _gate_err = ('当前对话模型不支持直接接收图片，'
                                          '这一轮没有把图送进去')
@@ -3230,7 +3390,22 @@ def start_remote_api(brain):
                             _LOCAL['brain'].use_src(_src, _brain_cid)
                             if len(_LOCAL['brain'].hist) <= 1:
                                 _LOCAL['brain'].seed_history(src=_src, conversation_id=_brain_cid)
-                            if _chat_tools.schema_needed(_in_text):
+                            if _stream_brain_entry:
+                                # Ordinary chat and history/RAG retrieval retain
+                                # the original streaming path. stream_chat has
+                                # no function-calling loop, so retrieval uses
+                                # its scoped context injection and cannot invoke
+                                # tools from model-generated arguments.
+                                _stream_kwargs = dict(src=_src,
+                                                      conversation_id=_brain_cid,
+                                                      no_tools=True)
+                                if _native_content is not None:
+                                    _stream_kwargs['native_content'] = _native_content
+                                yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
+                            elif _task_entry == 'retrieval_unavailable':
+                                yield {'type': 'done', 'text':
+                                       '当前没有启用可用的实时查询工具，无法核实这条信息。'}
+                            elif _task_entry == 'brain_tools':
                                 _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
                                 if _native_content is not None:
                                     # 闸门已经确认这一轮走的入口接得住图，
@@ -3245,7 +3420,9 @@ def start_remote_api(brain):
                                 else:
                                     yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
-                                _stream_kwargs = dict(src=_src, conversation_id=_brain_cid)
+                                _stream_kwargs = dict(src=_src,
+                                                      conversation_id=_brain_cid,
+                                                      no_tools=True)
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
@@ -3325,20 +3502,52 @@ def start_remote_api(brain):
                         _conv_rows = [_conv]
                     elif _csrc == 'pc':
                         _, _conv_owner, _, _persona = self._conversation_context(_csrc)
-                        import conversations as _conversations
-                        _conv_rows = _conversations.list_for(_conv_owner, _csrc, str(_persona))
+                        if _cloud_history(None, _csrc):
+                            import conversations as _conversations
+                            _conversations.ensure_legacy(_conv_owner, _csrc, str(_persona))
+                        _conv_rows = self._visible_conversation_rows(
+                            _conv_owner, _csrc, _persona)
+
+                    _row_scopes = {}
+                    _log_paths = {}
+                    if _csrc == 'pc' and _conv_owner is not None:
+                        import display_turns as _display_turns, conversations as _conversations
+                        _old_owner = _display_turns.owner(
+                            getattr(self, '_who', ('', '')), _csrc, 'conversations:')
+                        _old_rows = {row['id']: row for row in self._legacy_pc_rows(
+                            _csrc, _persona)}
+                        for _item in _conv_rows:
+                            _cid_row = _item['id']
+                            if _conversations.get(_conv_owner, _csrc, str(_persona), _cid_row):
+                                _row_scopes[_cid_row] = (_conv_owner, str(_persona))
+                            elif _cid_row in _old_rows:
+                                _row_scopes[_cid_row] = (_old_owner, '')
+                                _base = os.path.dirname(brain._log_for(_csrc))
+                                _suffix = '.pc.chat_history.jsonl.conversation.' + _cid_row + '.jsonl'
+                                _archives = [os.path.join(_base, name) for name in os.listdir(_base)
+                                             if name.endswith(_suffix)] if os.path.isdir(_base) else []
+                                if len(_archives) == 1:
+                                    _log_paths[_cid_row] = _archives[0]
 
                     import display_turns, creator_jobs, agent_runs
                     _owners = set() if _cid else {self._display_owner({'src': _csrc})}
                     for _item in _conv_rows:
                         _owners.add(self._display_owner({'src': _csrc, 'conversation_id': _item['id']}))
+                        if _row_scopes.get(_item['id']):
+                            _identity = getattr(self, '_who', ('', ''))
+                            _row_persona = _row_scopes[_item['id']][1]
+                            _owners.add(display_turns.owner(
+                                _identity, _csrc, str(_row_persona) + ':' + _item['id']))
+                            if _row_scopes[_item['id']][1] == '':
+                                _owners.add(display_turns.owner(_identity, _csrc, _item['id']))
 
                     _bl = _LOCAL.get("brain")
                     if _bl is None:
                         self._json(503, {"ok": False, "err": "Brain 尚未就绪，历史未清理"})
                         return
                     try:
-                        _clear_brain_history_scope(_bl, _csrc, _conv_rows, _cid)
+                        _clear_brain_history_scope(_bl, _csrc, _conv_rows, _cid,
+                                                   path_overrides=_log_paths)
                     except _Busy:
                         self._json(200, {"ok": False, "err": "她正忙着，聊天历史未清理"})
                         return
@@ -3354,7 +3563,10 @@ def start_remote_api(brain):
                             agent_runs.hide(_owner)
                         if not _cid and _csrc == 'pc':
                             import conversations as _conversations
-                            _conversations.clear_for(_conv_owner, _csrc, str(_persona))
+                            for _item in _conv_rows:
+                                _scope = _row_scopes.get(_item['id'])
+                                if _scope:
+                                    _conversations.delete(_scope[0], _csrc, _scope[1], _item['id'])
                     except Exception as e:
                         _log_history_error(_csrc, e, "clear_records")
                         self._json(500, {"ok": False, "err": "服务端历史索引清理失败"})
@@ -3444,30 +3656,26 @@ def start_remote_api(brain):
                             self._json(200, {"ok": False,
                                              "err": "没有这套人设"})
                             return
-                        cfg = {}
-                        try:
-                            cfg = json.load(open(config_path(), encoding="utf-8"))
-                        except Exception:
-                            cfg = {}
-                        # 🔴 带 src 时改的是**那个渠道的覆盖**（persona_by_src），
-                        # 不是全局 persona_file。否则在面板里切到微信点「应用」，
-                        # 会把 App 的默认人设也一起换掉 —— 两个渠道各换各的。
-                        _asrc = _norm_src(body.get("src") or "")
-                        if _asrc != "app":
-                            by = cfg.get("persona_by_src") or {}
-                            by[_asrc] = key
-                            cfg["persona_by_src"] = by
-                        else:
-                            cfg["persona_file"] = "personas/%s.json" % key
-                        with open(config_path(), "w", encoding="utf-8") as f:
-                            json.dump(cfg, f, ensure_ascii=False, indent=2)
-                        # 内存那份也要改：reload_persona() 读的是内存的 persona_file，
-                        # 只写盘的话会载回旧人设
-                        if _asrc == "app":
-                            api_config["persona_file"] = cfg["persona_file"]
-                        else:
-                            api_config.setdefault("persona_by_src", {})[_asrc] = key
                         with _chat_lock():
+                            cfg = {}
+                            try:
+                                cfg = json.load(open(config_path(), encoding="utf-8"))
+                            except Exception:
+                                cfg = {}
+                            # PC uses persona_file. Preserve archived channel bindings verbatim.
+                            _asrc = _norm_src(body.get("src"))
+                            cfg["persona_file"] = "personas/%s.json" % key
+                            by = cfg.get("persona_by_src")
+                            if isinstance(by, dict):
+                                by.pop("pc", None)
+                            with open(config_path(), "w", encoding="utf-8") as f:
+                                json.dump(cfg, f, ensure_ascii=False, indent=2)
+                            # 内存那份也要改：reload_persona() 读的是内存的 persona_file，
+                            # 只写盘的话会载回旧人设
+                            api_config["persona_file"] = cfg["persona_file"]
+                            api_config["persona_by_src"] = cfg.get("persona_by_src") or {}
+                            API_CFG.update({k: api_config[k] for k in ("persona_file", "persona_by_src")})
+                            brain.api.update({k: api_config[k] for k in ("persona_file", "persona_by_src")})
                             brain.reload_persona()
                         her = ""
                         try:
@@ -3805,7 +4013,7 @@ def start_remote_api(brain):
                     patch.pop("token", None)
                     # 渠道取值优先级：body 显式给的 > query 里的（Electron 放
                     # query）> 都没有 = 全局那一份。🔴 不能用 _norm_src("") 兜
-                    # 底 —— 它把空串归成 "wechat"，"不带 src 改全局"就永远走不到。
+                    # 底 —— 它把空串归成 "pc"，"不带 src 改全局"就永远走不到。
                     _raw = str(patch.pop("src", "") or qp.get("src") or "").strip()
                     _fsrc = _norm_src(_raw) if _raw else None
                     cur = _feat.set_features(patch, _fsrc) if patch else None
@@ -3905,19 +4113,8 @@ def start_remote_api(brain):
                     pass
 
         def _do_GET(self):
-            # M3 转发通道：/ws/brain 的 WebSocket 升级在鉴权之前接管
-            # （它自带 token 校验；普通 HTTP 鉴权对升级请求没有意义）。
-            # 握手成功后这个 handler 线程就被帧循环占住了。
-            try:
-                import ws_forward as _fwd_up
-                if _fwd_up.try_upgrade(
-                        self, (api_config or {}).get("brain_token")
-                        or BRAIN_TOKEN or ""):
-                    return
-            except (BrokenPipeError, ConnectionResetError):
-                raise
-            except Exception:
-                pass
+            if self._reject_retired_context():
+                return
             # 🔴 /api/health 在鉴权之前放行：sidecar 的启动壳（server_launch）
             # 和 Electron 壳靠它做就绪探测 —— 此时可能还没配 token，
             # 走鉴权就永远探测不到。只回存活信息，不吐任何配置。
@@ -3968,8 +4165,15 @@ def start_remote_api(brain):
                 _, owner, src, persona = self._conversation_context(src)
                 import workspaces, conversations
                 items = workspaces.list_for(owner, src, str(persona))
+                import display_turns
+                _old_owner = display_turns.owner(getattr(self, '_who', ('', '')), src, 'conversations:')
+                _old_rows = self._legacy_pc_rows(src, persona)
+                _old_ids = {r.get('workspace_id') for r in _old_rows if r.get('workspace_id')}
+                _ids = {r['id'] for r in items}
+                items.extend(r for r in workspaces.list_for(_old_owner, src, '')
+                             if r['id'] in _old_ids and r['id'] not in _ids)
                 counts = {}
-                for conv in conversations.list_for(owner, src, str(persona)):
+                for conv in self._conversation_rows(owner, src, persona):
                     wid = conv.get('workspace_id')
                     if wid:
                         counts[wid] = counts.get(wid, 0) + 1
@@ -3987,32 +4191,12 @@ def start_remote_api(brain):
                     return
                 _, owner, src, persona = self._conversation_context(src)
                 import conversations
-                items = conversations.list_for(owner, src, str(persona))
+                items = self._conversation_rows(owner, src, persona)
                 old_history = _cloud_history(None, src)
                 if old_history:
                     conversations.ensure_legacy(owner, src, str(persona))
-                    items = conversations.list_for(owner, src, str(persona))
-                import creator_jobs as _creator_jobs, display_turns as _display_turns, agent_runs as _agent_runs
-                visible = []
-                for item in items:
-                    if item.get('legacy'):
-                        item['has_content'] = True
-                    else:
-                        _cid = item['id']
-                        _turn_owner = self._display_owner({'src':src, 'conversation_id':_cid})
-                        _job_owner = self._display_owner({'src':src, 'conversation_id':_cid})
-                        item['has_content'] = bool(
-                            brain.read_history(1, src, _cid)
-                            or _creator_jobs.listing(_job_owner, _cid)
-                            or _display_turns.listing(_turn_owner)
-                            or _agent_runs.display_records(_turn_owner))
-                        # An empty chat the user opened inside a workspace is a
-                        # deliberate object; keep it visible after a restart.
-                        if item.get('workspace_id'):
-                            item['has_content'] = True
-                    if item['has_content']:
-                        visible.append(item)
-                items = visible
+                    items = self._conversation_rows(owner, src, persona)
+                items = self._visible_conversation_rows(owner, src, persona)
                 legacy = next((item for item in items if item.get('legacy')), None)
                 if legacy:
                     # The historical transcript is one continuous record. Use
@@ -4183,7 +4367,7 @@ def start_remote_api(brain):
                 cur = ""
                 try:
                     name = brain.persona.get("name") or ""
-                    cur = persona_store.key_from_config(api_config)
+                    cur = _persona_for_src("pc")
                 except Exception:
                     pass
                 #🔴 这里**必须用 list_templates**，别再手搓一份。
@@ -4209,7 +4393,7 @@ def start_remote_api(brain):
                 except Exception:
                     _qs = {}
                 _psrc = _norm_src(_qs.get("src") or "")
-                _pkey = _persona_for_src(_psrc, cur) if _psrc != "app" else cur
+                _pkey = _persona_for_src(_psrc, cur)
                 _pname = ""
                 try:
                     _pname = (persona_store.load(_pkey) or {}).get("name") or ""
@@ -4328,6 +4512,11 @@ def start_remote_api(brain):
                                       for k, v in model_hub.PROVIDERS.items()],
                         "groups": dict(model_hub.FALLBACK),
                         "source": "fallback", "count": 0})
+            elif path == "/api/retrieval/settings":
+                from storage import unified as _retrieval
+                self._json(200, {"ok": True,
+                                 "semantic_enabled": _retrieval.semantic_enabled(),
+                                 "unified": _retrieval.unified_enabled()})
             elif path == "/api/models/saved":
                 # 主页聊天框旁的快速切换下拉：已保存的模型 + 当前生效的是哪条。
                 # 只读、不发网络请求（不像 /api/models 要在线拉清单），
@@ -4403,8 +4592,7 @@ def start_remote_api(brain):
                 self._json(200, {"items": _trace_tail(n)})
             elif path == "/api/history":
                 lim = _query_param(self.path, "limit") or 60
-                # 缺省渠道是主渠道 wechat（app 已退役；老的 PollService 不带
-                # src，给它微信这份才是她真正的对话历史）。
+                # History defaults to the active PC persona.
                 import display_turns
                 import agent_runs
                 _records = {i['request_id']: i for i in display_turns.listing(self._display_owner())}
@@ -4434,7 +4622,7 @@ def start_remote_api(brain):
                 self._json(200, {"items": _cloud_history(lim, src),
                     'display_turns': list(_records.values())})
             elif path == "/api/features":
-                # App 设置页读功能开关。带 src=wechat 读的是那渠道覆盖后的结果。
+                # App 设置页读功能开关。带 src=pc 读的是那渠道覆盖后的结果。
                 import features as _feat
                 _q = {}
                 try:
@@ -4443,13 +4631,13 @@ def start_remote_api(brain):
                           parse_qs(urlparse(self.path).query).items()}
                 except Exception:
                     _q = {}
-                # 不带 src 读全局视角（_norm_src 会把空串兜成 "wechat"，别让它
+                # 不带 src 读全局视角（_norm_src 会把空串兜成 "pc"，别让它
                 # 混进来 —— 渠道视角只在明确带了 src 时才生效）
                 _fsrc = (_norm_src(_q.get("src"))
                          if (_q.get("src") or "").strip() else None)
                 self._json(200, {"features": _feat.all_features(_fsrc)})
             elif path == "/api/chatty":
-                # 说话多少（1~10）。带 src=wechat 读的是那个渠道的值。
+                # 说话多少（1~10）。带 src=pc 读的是那个渠道的值。
                 import chatty as _ch
                 _q = {}
                 try:
@@ -4587,19 +4775,6 @@ def start_remote_api(brain):
                 self.end_headers()
                 self.wfile.write(blob)
                 return
-            elif path == "/api/route":
-                # M3：当前路由 + 转发通道状态（客户端设置页显示用）
-                import ws_forward as _fwd
-                _vis = (API_CFG or {}).get("vision")
-                _vis = _vis if isinstance(_vis, dict) else {}
-                self._json(200, {"wechat_route": _wechat_route(),
-                                 "enabled": _wechat_enabled(),
-                                 "model": str((API_CFG or {}).get("model") or ""),
-                                 "provider": str((API_CFG or {}).get("provider") or ""),
-                                 "models": {"chat": str((API_CFG or {}).get("model") or ""),
-                                            "vision": str(_vis.get("model") or ""),
-                                            "image": str((API_CFG or {}).get("image_model") or "")},
-                                 "forward": _fwd.HUB.stats()})
             elif path.startswith("/api/sync/"):
                 # 同步拉取（权威源 → 本地）。只读接口，设备 token 也能用：
                 # 本地大脑拿的是主人钥匙，但将来别的只读端可能拿设备 token
@@ -4690,15 +4865,8 @@ def run_server():
         except Exception as e:
             print(f"[大脑] 远程大脑 API 没起来（不影响主服务）：{e}",
                   flush=True)
-        # 她的全部后台循环：历史摘要 / 主动搭话 / 事件提醒
+        # 后台循环：约定账本 / 主动搭话 / 事件提醒
         start_background(_LOCAL["brain"])
-        # M3：本地大脑的迟到答案只写云端历史（话术已经顶出去了，不外发）
-        try:
-            import ws_forward as _fwd
-            _fwd.HUB.on_late_result = _late_to_history
-        except Exception as e:
-            print("[转发] ws_forward 初始化失败（不影响聊天）：%s" % e,
-                  flush=True)
         # 插件（plugins/）：装完就起后台线程。装载失败只少几个功能，不影响主服务
         try:
             import plugin_host
@@ -4713,7 +4881,7 @@ def run_server():
 
     print("=" * 58, flush=True)
     print(" 云端大脑", flush=True)
-    print(" 远程 API / 历史摘要 / 主动搭话 照常运行。", flush=True)
+    print(" 远程 API / 会话上下文压缩 / 主动搭话 照常运行。", flush=True)
     print("=" * 58, flush=True)
     try:
         while True:

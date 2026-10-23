@@ -1,0 +1,38 @@
+{
+  "scope": {"owner": "eval", "src": "pc", "persona": "alpha", "chan": "pc", "workspace_ids": []},
+  "documents": [
+    {"id": "zhang-pay", "text": "张三的工资是5000元。", "entity": "张三"},
+    {"id": "li-pay", "text": "李四的工资是9000元。", "entity": "李四"},
+    {"id": "wang-pay", "text": "王伟的工资是6000元。", "entity": "王伟"},
+    {"id": "wangqiang-pay", "text": "王伟强的工资是16000元。", "entity": "王伟强"},
+    {"id": "relation", "text": "张三是李四的朋友。李四的工资是9000元。", "entity": "李四"},
+    {"id": "birthday", "text": "张三的生日日期是1990-01-02。", "entity": "张三"},
+    {"id": "config", "text": "config.py的版本是v1.2.3。", "entity": "config.py"},
+    {"id": "backup", "text": "config.py.bak的版本是v1.2.30。", "entity": "config.py.bak"},
+    {"id": "date", "text": "发布日期是2026-10-23，金额为5000元。", "entity": "date"},
+    {"id": "wrong-date", "text": "发布日期是2026-10-24，金额为15000元。", "entity": "wrong-date"},
+    {"id": "a-person", "text": "甲公司陈明的工资是7000元。", "entity": "employee-a", "meta": {"entities": [{"name": "陈明", "id": "employee-a"}]}},
+    {"id": "b-person", "text": "乙公司陈明的工资是17000元。", "entity": "employee-b", "meta": {"entities": [{"name": "陈明", "id": "employee-b"}]}},
+    {"id": "foreign-persona", "text": "张三的工资是25000元。", "entity": "foreign", "persona": "beta"},
+    {"id": "foreign-owner", "text": "张三的工资是35000元。", "entity": "foreign", "owner": "other"},
+    {"id": "foreign-workspace", "text": "张三的工资是45000元。", "entity": "foreign", "workspace_id": "private", "kind": "workspace"},
+    {"id": "backup-guide", "text": "数据库备份使用SQLite在线备份接口。", "entity": "database"}
+  ],
+  "cases": [
+    {"id": "zhang-followup", "query": "他的工资是多少？", "history": ["张三"], "entities": ["张三"], "status": "resolved", "gold": ["zhang-pay"]},
+    {"id": "latest-li", "query": "他的工资是多少？", "history": ["张三", "李四"], "entities": ["李四"], "status": "resolved", "gold": ["li-pay"]},
+    {"id": "two-people", "query": "他的工资是多少？", "history": ["张三与李四"], "entities": [], "status": "ambiguous", "gold": []},
+    {"id": "topic-switch", "query": "他的工资是多少？", "history": ["张三", "换个话题"], "entities": [], "status": "ambiguous", "gold": []},
+    {"id": "no-history-pronoun", "query": "他的工资是多少？", "history": [], "entities": [], "status": "ambiguous", "gold": []},
+    {"id": "explicit-switch", "query": "李四的工资是多少？", "history": ["张三"], "entities": ["李四"], "status": "standalone", "gold": ["li-pay"]},
+    {"id": "missing-person", "query": "赵六的工资是多少？", "history": ["李四"], "entities": ["赵六"], "status": "standalone", "gold": []},
+    {"id": "name-boundary", "query": "王伟的工资是多少？", "history": [], "entities": ["王伟"], "status": "standalone", "gold": ["wang-pay"]},
+    {"id": "same-name", "query": "陈明的工资是多少？", "history": [], "entities": ["陈明"], "status": "standalone", "gold": []},
+    {"id": "qualified-name", "query": "甲公司陈明的工资是多少？", "history": [], "entities": ["陈明"], "status": "standalone", "gold": ["a-person"]},
+    {"id": "filename-pointer", "query": "它的版本是多少？", "history": ["config.py"], "entities": ["config.py"], "status": "resolved", "gold": ["config"]},
+    {"id": "date-exact", "query": "日期2026-10-23", "history": [], "entities": [], "status": "standalone", "gold": ["date"]},
+    {"id": "money-exact", "query": "金额5000元", "history": [], "entities": [], "status": "standalone", "gold": ["date"]},
+    {"id": "single-search", "query": "数据库备份", "history": [], "entities": [], "status": "standalone", "gold": ["backup-guide"]}
+  ],
+  "chain": {"turns": 10, "initial": "张三", "query": "他的工资是多少？", "entities": ["张三"], "gold": ["zhang-pay"]}
+}

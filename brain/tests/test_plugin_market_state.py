@@ -30,7 +30,11 @@ def test_github_market_is_the_default_when_no_local_override_exists():
         with patch.object(paths, "CONFIG_DIR", str(config_dir)):
             with patch.object(market, "_read_remote_market", return_value=fake):
                 assert market._repo_path() == ""
-                result = market.api_list({}, {})
+                # This contract covers the published market manifest. Installed
+                # runtime plugins are covered by lifecycle tests and may be
+                # present in a developer's test process.
+                with patch("plugin_manager.list_plugins", return_value=[]):
+                    result = market.api_list({}, {})
                 assert result["state"] == "ready"
                 assert result["source"] == "github"
                 assert result["repo_configured"] is True
@@ -120,7 +124,8 @@ def test_refresh_pulls_updated_manifest_from_a_fake_local_git_remote():
         with patch.object(market, "_repo_path", return_value=str(clone)):
             result = market.api_refresh({}, {})
             assert result["ok"] is True
-            listed = market.api_list({}, {})
+            with patch("plugin_manager.list_plugins", return_value=[]):
+                listed = market.api_list({}, {})
         assert listed["state"] == "ready"
         assert [p["name"] for p in listed["plugins"]] == ["fixture"]
 

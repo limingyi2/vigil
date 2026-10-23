@@ -638,8 +638,8 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
                               source="brain.storage.unified", operations={
                                   "status": {"permission": READ,
                                              "handler": lambda a: _unified.status(
-                                                 owner=a.get("owner", ""), src=a.get("src", ""),
-                                                 persona=a.get("persona", ""), chan=a.get("chan", ""))},
+                                                 owner=a.get("owner", ""), src=a.get("src") or "pc",
+                                                 persona=a.get("persona") or _runtime_persona_key(), chan=a.get("chan", ""))},
                                   "search": {"permission": READ,
                                              "handler": lambda a: _unified_search_handler(a)},
                                   "sync": {"permission": DELEGATED,
@@ -665,10 +665,10 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
                               source="brain.kb", operations={
                                   "status": {"permission": READ,
                                              "handler": lambda a: _kb.stats(
-                                                 persona_key=a.get("persona", ""), src=a.get("src", "app"))},
+                                                 persona_key=a.get("persona") or _runtime_persona_key(), src=a.get("src") or "pc")},
                                   "list": {"permission": READ,
                                            "handler": lambda a: _kb.list_docs(
-                                               persona_key=a.get("persona", ""), src=a.get("src", "app"))},
+                                               persona_key=a.get("persona") or _runtime_persona_key(), src=a.get("src") or "pc")},
                                   "search": {"permission": READ,
                                              "handler": lambda a: _kb_search_handler(a)},
                                   "ingest_text": {"permission": DELEGATED,
@@ -702,8 +702,8 @@ def _unified_search_handler(args):
     results, info = unified.retrieve(
         query,
         owner=args.get("owner", ""),
-        src=args.get("src", ""),
-        persona=args.get("persona", ""),
+        src=args.get("src") or "pc",
+        persona=args.get("persona") or _runtime_persona_key(),
         chan=args.get("chan", ""),
         workspace_ids=args.get("workspace_ids"),
         kinds=args.get("kinds"),
@@ -716,6 +716,8 @@ def _unified_search_handler(args):
         "method": info.get("method", "unknown"),
         "hits": info.get("hits", 0),
         "vector_available": info.get("vector_available", False),
+        "resolution": info.get("resolution"),
+        "evidence_status": info.get("evidence_status"),
         "results": [r.to_dict() for r in results],
     }
 
@@ -725,8 +727,8 @@ def _unified_sync_handler(args):
     from storage import unified
     result = unified.sync_all(
         owner=args.get("owner", ""),
-        src=args.get("src", ""),
-        persona=args.get("persona", ""),
+        src=args.get("src") or "pc",
+        persona=args.get("persona") or _runtime_persona_key(),
         chan=args.get("chan", ""),
         include_workspace=bool(args.get("include_workspace", True)),
     )
@@ -755,8 +757,8 @@ def _kb_search_handler(args):
         return {"ok": False, "error": "empty_query"}
     results = kb.search(
         query,
-        persona_key=args.get("persona", ""),
-        src=args.get("src", "app"),
+        persona_key=args.get("persona") or _runtime_persona_key(),
+        src=args.get("src") or "pc",
         top_k=args.get("top_k"),
         min_score=args.get("min_score"),
     )
@@ -772,8 +774,8 @@ def _kb_ingest_text_handler(args):
         return {"ok": False, "error": "text_and_name_required"}
     result = kb.ingest_text(
         text, name,
-        persona_key=args.get("persona", ""),
-        src=args.get("src", "app"),
+        persona_key=args.get("persona") or _runtime_persona_key(),
+        src=args.get("src") or "pc",
     )
     return {"ok": True, "ingested": result}
 
@@ -786,8 +788,8 @@ def _kb_ingest_path_handler(args):
         return {"ok": False, "error": "path_required"}
     result = kb.ingest_path(
         path,
-        persona_key=args.get("persona", ""),
-        src=args.get("src", "app"),
+        persona_key=args.get("persona") or _runtime_persona_key(),
+        src=args.get("src") or "pc",
     )
     return {"ok": True, "ingested": result}
 
@@ -800,8 +802,8 @@ def _kb_delete_handler(args):
         return {"ok": False, "error": "name_required"}
     result = kb.delete_doc(
         name,
-        persona_key=args.get("persona", ""),
-        src=args.get("src", "app"),
+        persona_key=args.get("persona") or _runtime_persona_key(),
+        src=args.get("src") or "pc",
     )
     return {"ok": True, "deleted": result}
 
@@ -810,8 +812,8 @@ def _kb_reindex_handler(args):
     """重建知识库索引。"""
     import kb
     result = kb.reindex(
-        persona_key=args.get("persona", ""),
-        src=args.get("src", "app"),
+        persona_key=args.get("persona") or _runtime_persona_key(),
+        src=args.get("src") or "pc",
     )
     return {"ok": True, "reindexed": result}
 
@@ -877,3 +879,8 @@ __all__ = ["CapabilityRegistry", "CapabilityError", "CapabilityGrant", "REGISTRY
            "bootstrap", "READ", "DELEGATED", "STATE_QUERYABLE", "STATE_EXECUTABLE",
            "STATE_UNAVAILABLE", "STATE_AWAITING", "RUN_SUCCEEDED", "RUN_FAILED",
            "RUN_AWAITING", "RUN_UNAVAILABLE", "RUN_DENIED", "RUN_UNKNOWN"]
+
+
+def _runtime_persona_key():
+    from pc_context import runtime_persona_key
+    return runtime_persona_key()

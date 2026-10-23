@@ -2,7 +2,7 @@
 """主对话上下文压缩器（P8.5）。
 
 只管"主对话的即时上下文"：历史滑出内存窗口时把旧消息折叠进本会话的
-滚动摘要，超预算时优先缩减较早的历史。不动 recap 的日/周/月摘要系统，
+滚动摘要，超预算时优先缩减较早的历史。
 不重写、不删除任何原始聊天记录（原始流水永远在 chat_history*.jsonl 里）。
 
 核心约定：
@@ -133,7 +133,7 @@ def _cid_str(conversation_id):
 
 
 def _key_from(persona_key, src, conversation_id):
-    return (str(persona_key or "default"), str(src or "wechat"),
+    return (str(persona_key or "default"), str(src or "pc"),
             _cid_str(conversation_id))
 
 

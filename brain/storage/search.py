@@ -61,20 +61,30 @@ DEFAULT_CANDIDATES = 60
 # 查询向量缓存：相同 query 不重复向量化，省 30ms/次
 _QUERY_CACHE = {}
 _QUERY_CACHE_LOCK = threading.Lock()
+# A cursor must finish fetching before another thread reuses a prepared statement
+# on the existing shared SQLite connection (not merely serialize execute()).
+_SQL_READ_LOCK = threading.RLock()
 QUERY_CACHE_TTL = 3600  # 1小时
 QUERY_CACHE_MAX = 1000  # 最多缓存1000条，防止内存膨胀
 
 
 def _cached_query_embed(query, backend):
-    """带缓存的查询向量化。命中缓存直接返回，不调模型。"""
+    """带缓存的查询向量化。命中缓存直接返回，不调模型。
+
+    缓存键必须包含后端身份（model_tag = 模型+维度）：切换嵌入模型后，
+    旧缓存的向量维度/语义空间不同，绝不能复用，否则检索结果无意义。
+    """
     q = str(query or "").strip()
     if not q:
         return [], ""
-    key = hashlib.md5(q.encode("utf-8")).hexdigest()
+    backend_tag = backend.tag() if hasattr(backend, "tag") else ""
+    key = "%s:%s" % (backend_tag, hashlib.md5(q.encode("utf-8")).hexdigest())
     with _QUERY_CACHE_LOCK:
         cached = _QUERY_CACHE.get(key)
         if cached and time.time() - cached[1] < QUERY_CACHE_TTL:
-            return cached[0], cached[2]  # (vectors, tag)
+            # 二次校验 tag 一致（防御性）
+            if cached[2] == backend_tag:
+                return cached[0], cached[2]  # (vectors, tag)
     # 缓存未命中，调模型
     vectors, tag = backend.embed([q])
     if vectors:
@@ -251,10 +261,11 @@ def _heal_fts_if_needed():
     """
     conn = db.connection("main")
     try:
-        docs = conn.execute("SELECT COUNT(*) FROM search_docs").fetchone()[0]
-        if not docs:
-            return 0
-        indexed = conn.execute("SELECT COUNT(*) FROM search_fts").fetchone()[0]
+        with _SQL_READ_LOCK:
+            docs = conn.execute("SELECT COUNT(*) FROM search_docs").fetchone()[0]
+            if not docs:
+                return 0
+            indexed = conn.execute("SELECT COUNT(*) FROM search_fts").fetchone()[0]
         if indexed >= docs:
             return 0
     except Exception:
@@ -297,15 +308,62 @@ def _scope_where(scope, kinds):
             clauses.append("%s=?" % key)
             args.append(value)
     workspace_ids = (scope or {}).get("workspace_ids")
+    if (scope or {}).get('conversation_id'):
+        clauses.append("(scope_kind!=? OR json_extract(meta,'$.conversation_id')=?)")
+        args.extend([SCOPE_CHAT, scope['conversation_id']])
     if workspace_ids is not None:
         if not workspace_ids:
-            # 明确要求"只看工作区文件"但一个都没授权 → 什么都不该返回
-            clauses.append("1=0")
+            # 空工作区授权只排除工作区文件，不影响同一身份可读的聊天、
+            # 长期记忆和知识库文档。
+            clauses.append("(scope_kind!=? AND workspace_id='')")
+            args.append(SCOPE_WORKSPACE)
         else:
-            clauses.append("(workspace_id IN (%s) OR workspace_id='')" %
-                           ",".join("?" for _ in workspace_ids))
-            args.extend(workspace_ids)
+            placeholders = ",".join("?" for _ in workspace_ids)
+            clauses.append("((scope_kind=? AND workspace_id IN (%s)) OR "
+                           "(scope_kind!=? AND (workspace_id='' OR workspace_id IN (%s))))"
+                           % (placeholders, placeholders))
+            args.extend([SCOPE_WORKSPACE] + list(workspace_ids) +
+                        [SCOPE_WORKSPACE] + list(workspace_ids))
     return (" AND " + " AND ".join(clauses)) if clauses else "", args
+
+
+def _scope_match(row, scope, kinds):
+    """Python 层单行范围校验。用于最终获取 SearchResult 时的防御性二次校验。
+
+    row 是 search_docs 的一行元组：
+      (id, scope_kind, owner, src, persona, chan, workspace_id, ...)
+    """
+    if not row:
+        return False
+    scope_kind = row[1]
+    owner = row[2] or ""
+    src = row[3] or ""
+    persona = row[4] or ""
+    chan = row[5] or ""
+    workspace_id = row[6] or ""
+    if kinds and scope_kind not in kinds:
+        return False
+    s = scope or {}
+    for key, val in (("owner", owner), ("src", src), ("persona", persona), ("chan", chan)):
+        expected = s.get(key)
+        if expected is not None and expected != "" and val != expected:
+            return False
+    ws_ids = s.get("workspace_ids")
+    if scope_kind == SCOPE_CHAT and s.get('conversation_id'):
+        try:
+            if json.loads(row[11] or '{}').get('conversation_id') != s['conversation_id']:
+                return False
+        except (ValueError, TypeError):
+            return False
+    if ws_ids is not None:
+        if not ws_ids:
+            return scope_kind != SCOPE_WORKSPACE and not workspace_id
+        if scope_kind == SCOPE_WORKSPACE:
+            if workspace_id not in ws_ids:
+                return False
+        elif workspace_id and workspace_id not in ws_ids:
+            return False
+    return True
 
 
 def bm25_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES):
@@ -324,7 +382,8 @@ def bm25_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES):
            "WHERE search_fts MATCH ?" + where +
            " ORDER BY rank LIMIT ?")
     try:
-        rows = conn.execute(sql, [match] + args + [int(limit)]).fetchall()
+        with _SQL_READ_LOCK:
+            rows = conn.execute(sql, [match] + args + [int(limit)]).fetchall()
     except Exception:
         return []
     # bm25() 越小越相关，取负号当"越大越好"的分数
@@ -338,6 +397,10 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
     FAISS 不可用或索引未构建时自动降级到暴力扫描。
     **失败返回空列表**，绝不抛异常 —— 调用方据此降级到 BM25。
     """
+    # Independent gate: disabled means zero embedding calls, including explicit backends.
+    from . import unified
+    if not unified.semantic_enabled():
+        return []
     conn = db.connection("main")
     backend = backend or _default_backend()
     ok, reason = backend.available()
@@ -353,10 +416,11 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
     qv = vectors[0]
     dim = len(qv)
     # 只取同模型同维度的向量 —— 混用会算出无意义的相似度
-    rows = conn.execute(
-        "SELECT e.doc_id, e.model, e.dim, e.vector FROM embeddings e "
-        "JOIN search_docs d ON d.id = e.doc_id WHERE 1=1" + where,
-        args).fetchall()
+    with _SQL_READ_LOCK:
+        rows = conn.execute(
+            "SELECT e.doc_id, e.model, e.dim, e.vector FROM embeddings e "
+            "JOIN search_docs d ON d.id = e.doc_id WHERE 1=1" + where,
+            args).fetchall()
     if not rows:
         return []
     # 过滤出同模型同维度的向量
@@ -377,8 +441,12 @@ def vector_search(query, scope=None, kinds=None, limit=DEFAULT_CANDIDATES, backe
         if ann.ensure_loaded(all_docs=valid_rows):
             results = ann.search(qv, k=limit)
             if results:
-                # ANN 用的是归一化内积，分数范围 [-1, 1]，只取正数
-                return [(did, s) for did, s in results if s > 0][:limit]
+                # 【P0 范围隔离】ANN 索引是全局缓存的，可能包含其他 scope 的向量。
+                # 必须用当前 scope 过滤后的 valid_rows 的 doc_id 集合再次校验，
+                # 绝不能返回不在本次授权范围内的文档。
+                allowed_ids = {did for did, _ in valid_rows}
+                return [(did, s) for did, s in results
+                        if did in allowed_ids and s > 0][:limit]
     except Exception:
         pass  # ANN 失败，降级到暴力扫描
 
@@ -424,7 +492,7 @@ def rrf(rankings, k=RRF_K):
 
 
 def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
-           candidates=DEFAULT_CANDIDATES, backend=None, budget_chars=None):
+           candidates=DEFAULT_CANDIDATES, backend=None, budget_chars=None, resolution=None):
     """统一检索入口。
 
     返回 (results, info)。`results` 是 SearchResult 列表，`info` 是诊断信息。
@@ -440,6 +508,11 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
             "vector_reason": "", "candidates": 0, "truncated": False}
     text = (query or "").strip()
     if not text:
+        return [], info
+    from . import query_resolver as qr
+    resolution = resolution or qr.prepare(text, scope=scope)
+    if resolution.resolution_status == 'ambiguous':
+        info['evidence_status'] = 'ambiguous'
         return [], info
 
     try:
@@ -480,7 +553,7 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
         return [], info
 
     conn = db.connection("main")
-    doc_ids = [d for d, _ in fused][:max(top_k * 3, top_k)]
+    doc_ids = [d for d, _ in fused][:candidates if resolution.guarded else max(top_k * 3, top_k)]
     scores = dict(fused)
     origins = {}
     for d, _ in lexical[:top_k * 3]:
@@ -489,10 +562,15 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
         origins.setdefault(d, set()).add("vector")
 
     placeholders = ",".join("?" for _ in doc_ids)
-    rows = conn.execute(
-        "SELECT id,scope_kind,owner,src,persona,chan,workspace_id,title,body,"
-        "locator,source,meta FROM search_docs WHERE id IN (%s)" % placeholders,
-        doc_ids).fetchall()
+    with _SQL_READ_LOCK:
+        rows = conn.execute(
+            "SELECT id,scope_kind,owner,src,persona,chan,workspace_id,title,body,"
+            "locator,source,meta FROM search_docs WHERE id IN (%s)" % placeholders,
+            doc_ids).fetchall()
+    # SQLite IN does not preserve RRF rank. Filter before the top-k/budget cut.
+    rows = sorted(rows, key=lambda r: (-scores.get(r[0], 0), r[0]))
+    conflicts = qr.conflicting_names(resolution, [(r[8] or '', qr.metadata(r[11])) for r in rows])
+    info['entity_rejected'] = 0
 
     results = []
     used = 0
@@ -500,7 +578,19 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
     for row in rows:
         if len(results) >= top_k:
             break
+        # 【P0 范围隔离】最终防线：即使上游 BM25/向量/RRF 都已过滤，
+        # 这里仍要二次校验，防止任何环节漏出越权数据。
+        if not _scope_match(row, scope, kinds):
+            continue
         body = row[8] or ""
+        meta = qr.metadata(row[11])
+        if conflicts:
+            info['entity_rejected'] += 1
+            continue
+        body = qr.guarded_text(resolution, body, meta, ' '.join(str(row[i] or '') for i in (7, 9, 10)))
+        if not body:
+            info['entity_rejected'] += 1
+            continue
         truncated = False
         if len(body) > MAX_SNIPPET:
             body = body[:MAX_SNIPPET]
@@ -568,6 +658,9 @@ def index_embeddings(doc_ids, backend=None, include_workspace=False):
     为主，中文嵌入模型对代码语义理解有限，且代码检索靠 BM25 精确匹配
     （函数名/类名/注释）已经够用。需要给代码建向量时显式传 include_workspace=True。
     """
+    from . import unified
+    if not unified.semantic_enabled():
+        return {"ok": False, "reason": "semantic_disabled", "indexed": 0}
     conn = db.connection("main")
     backend = backend or _default_backend()
     ok, reason = backend.available()

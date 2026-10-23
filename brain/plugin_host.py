@@ -82,9 +82,9 @@ class Turn(object):
     插件就会开始直接改她的内部状态，出问题没法查。
     """
 
-    def __init__(self, text="", src="app", api_config=None, brain=None):
+    def __init__(self, text="", src="pc", api_config=None, brain=None):
         self.text = str(text or "")          # 他这一轮说的话（原值，含插件前处理）
-        self.src = str(src or "app")         # 渠道：app / wechat
+        self.src = str(src or "pc")         # 渠道：app / wechat
         self.api_config = api_config or {}   # 共享的那份 API_CFG
         self.brain = brain# 大脑对象，只读用（问问题、查记忆）
         self.meta = {}                       # 插件自己的中途数据，同轮内互相传
@@ -395,12 +395,19 @@ def frontend_assets():
     for p in sorted(all_plugins().values(), key=lambda x: x.name):
         if not (p.frontend_js or p.frontend_css):
             continue
-        enabled = _enabled(p)
+        # Frontend resources are consumed by the PC client. Evaluate the same
+        # explicit channel as its tool and route requests so ambient context
+        # cannot expose a resource that is disabled for PC.
+        enabled = _enabled(p, "pc")
+        if not enabled:
+            # Omit disabled code so it cannot be fetched and run by the renderer.
+            # The changed fingerprint makes the client dispose the old contribution.
+            continue
         items.append({
             "name": p.name,
             "js": p.frontend_js,
             "css": p.frontend_css,
-            "enabled": enabled,
+            "enabled": True,
         })
     digest = hashlib.sha256()
     for item in items:
@@ -782,9 +789,9 @@ def is_started(name):
         return str(name or "") in _started
 
 
-def is_enabled(name):
+def is_enabled(name, src=None):
     plugin = get(name)
-    return bool(plugin is not None and _enabled(plugin))
+    return bool(plugin is not None and _enabled(plugin, src))
 
 
 def stop(name=None):

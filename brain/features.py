@@ -81,12 +81,12 @@ _lock = threading.RLock()
 # 两个请求的处理线程会互相覆盖同一个"当前渠道"，A 请求的功能开关/权限判断
 # 可能读到 B 请求的渠道。ContextVar 按线程（按上下文）隔离，请求线程之间
 # 天然不串；后台线程在 start 时复制一份父上下文，也不会回写主流程。
-_cur_src = contextvars.ContextVar("features_cur_src", default="wechat")
+_cur_src = contextvars.ContextVar("features_cur_src", default="pc")
 
 
 def set_current_src(src):
     """声明这一轮处理的是哪个渠道。只影响当前请求线程/上下文。"""
-    s = str(src or "wechat").strip().lower() or "wechat"
+    s = str(src or "pc").strip().lower() or "pc"
     _cur_src.set(s)
     return s
 
@@ -107,7 +107,7 @@ class with_channel(object):
         self._token = None
 
     def __enter__(self):
-        s = str(self.src or "wechat").strip().lower() or "wechat"
+        s = str(self.src or "pc").strip().lower() or "pc"
         self._token = _cur_src.set(s)
         return s
 
@@ -175,7 +175,7 @@ def on(key, src=None):
     聊天链路和后台提醒那些地方都是这么调的，它们只管问"这个功能此刻开没开"，
     不该各自记着自己是哪个渠道。
     """
-    return bool(all_features(src if src is not None else _cur_src)
+    return bool(all_features(src if src is not None else _cur_src.get())
                .get(key, True))
 
 

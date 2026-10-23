@@ -25,8 +25,13 @@ class ConversationIsolationTests(unittest.TestCase):
         self.data.mkdir()
         self.patch = patch.object(paths, 'DATA_DIR', str(self.data))
         self.patch.start()
+        self.config_path = self.data / 'config.json'
+        self.config_path.write_text('{}', encoding='utf-8')
+        self.config_patch = patch.object(paths, 'CONFIG_PATH', str(self.config_path))
+        self.config_patch.start()
 
     def tearDown(self):
+        self.config_patch.stop()
         self.patch.stop()
         self.tmp.cleanup()
 
@@ -37,12 +42,13 @@ class ConversationIsolationTests(unittest.TestCase):
         brain.hist.extend([{'role':'user','content':'A_ONLY'}, {'role':'assistant','content':'A_REPLY'}])
         brain.use_src('pc', b)
         brain.hist.extend([{'role':'user','content':'B_ONLY'}, {'role':'assistant','content':'B_REPLY'}])
-        brain.use_src('wechat_group', None)
-        brain.hist.append({'role':'user','content':'GROUP_ONLY'})
+        with self.assertRaises(ValueError):
+            brain.use_src('wechat_group', None)
         self.assertIn('A_ONLY', str(brain.hist_for('pc', a)))
         self.assertNotIn('B_ONLY', str(brain.hist_for('pc', a)))
         self.assertNotIn('A_ONLY', str(brain.hist_for('pc', b)))
-        self.assertNotIn('A_ONLY', str(brain.hist_for('wechat_group', None)))
+        with self.assertRaises(ValueError):
+            brain.hist_for('wechat_group', None)
 
         barrier = threading.Barrier(2)
         errors = []
@@ -165,7 +171,8 @@ class ConversationIsolationTests(unittest.TestCase):
         with patch.object(paths, 'scoped', side_effect=OSError('partition unavailable')):
             with self.assertRaises(OSError):
                 brain._log_for('pc', created['id'])
-            self.assertEqual(brain._log_for('pc'), brain._log_for('pc', None))
+            with self.assertRaises(OSError):
+                brain._log_for('pc')
         self.assertTrue(legacy[0]['legacy'])
         self.assertTrue(brain._log_for('pc', None).endswith('chat_history.jsonl'))
 
@@ -181,11 +188,9 @@ class ConversationIsolationTests(unittest.TestCase):
         brain.use_src('pc', None)
         brain.hist.append({'role':'user','content':'LEGACY_ONLY'})
         brain._log_turn('LEGACY_ONLY','LEGACY_REPLY',src='pc')
-        brain.use_src('wechat', None)
-        brain.hist.append({'role':'user','content':'WECHAT_KEEP'})
-        brain._log_turn('WECHAT_KEEP','WECHAT_REPLY',src='wechat')
-        wechat_path = Path(brain._log_for('wechat'))
-        self.assertTrue(wechat_path.exists())
+        wechat_path = Path(paths.scoped(str(self.data / 'chat_history.jsonl'), 'default', 'wechat'))
+        wechat_path.write_text('WECHAT_KEEP', encoding='utf-8')
+        before = wechat_path.read_bytes()
 
         server._clear_brain_history_scope(brain, 'pc', rows)
 
@@ -195,23 +200,22 @@ class ConversationIsolationTests(unittest.TestCase):
             self.assertNotIn('B_ONLY', str(brain.hist_for('pc', cid)))
         self.assertFalse(Path(brain._log_for('pc')).exists())
         self.assertTrue(wechat_path.exists())
-        self.assertIn('WECHAT_KEEP', str(brain.hist_for('wechat', None)))
-        self.assertEqual(brain._cur_src, 'wechat')
+        self.assertEqual(wechat_path.read_bytes(), before)
+        self.assertEqual(brain._cur_src, 'pc')
 
     def test_history_clear_http_cleans_matching_indexes_and_display_rows_only(self):
-        config_path = self.data / 'config.json'
-        config_path.write_text('{}', encoding='utf-8')
+        config_path = self.config_path
         brain = Brain(None, {'persona_file':'default'}, mode='api')
         identity = ('brain', '')
         import display_turns
-        owner = display_turns.owner(identity, 'pc', 'conversations:')
-        a = conversations.create(owner, 'pc', '')
-        b = conversations.create(owner, 'pc', '')
+        owner = display_turns.owner(identity, 'pc', 'conversations:default')
+        a = conversations.create(owner, 'pc', 'default')
+        b = conversations.create(owner, 'pc', 'default')
         other_persona = conversations.create(owner, 'pc', 'other-persona')
         other_channel = conversations.create(owner, 'wechat', '')
         pc_paths = [Path(brain._log_for('pc', item['id'])) for item in (a, b)]
         legacy_path = Path(brain._log_for('pc'))
-        other_channel_path = Path(brain._log_for('wechat'))
+        other_channel_path = Path(paths.scoped(str(self.data / 'chat_history.jsonl'), 'default', 'wechat'))
         other_brain = Brain(None, {'persona_file':'other-persona'}, mode='api')
         other_persona_path = Path(other_brain._log_for('pc', other_persona['id']))
         for path in [*pc_paths, legacy_path, other_channel_path, other_persona_path]:
@@ -219,12 +223,12 @@ class ConversationIsolationTests(unittest.TestCase):
             path.write_text('{"role":"user","text":"KEEP_OR_CLEAR"}\n', encoding='utf-8')
 
         for item in (a, b):
-            session_owner = display_turns.owner(identity, 'pc', item['id'])
+            session_owner = display_turns.owner(identity, 'pc', 'default:' + item['id'])
             display_turns.begin(session_owner, 'pc_request_' + item['id'][:8], 'PC pending')
             display_turns.update(session_owner, 'pc_request_' + item['id'][:8], status='interrupted')
-        main_owner = display_turns.owner(identity, 'pc', 'main')
+        main_owner = display_turns.owner(identity, 'pc', 'default:main')
         display_turns.begin(main_owner, 'pc_main_request', 'PC legacy pending')
-        other_persona_owner = display_turns.owner(identity, 'pc', other_persona['id'])
+        other_persona_owner = display_turns.owner(identity, 'pc', 'other-persona:' + other_persona['id'])
         display_turns.begin(other_persona_owner, 'other_persona_request', 'Other persona pending')
         wechat_owner = display_turns.owner(identity, 'wechat', 'main')
         display_turns.begin(wechat_owner, 'wechat_request_1', 'wechat pending')
@@ -236,7 +240,6 @@ class ConversationIsolationTests(unittest.TestCase):
         server._LOCAL['brain'] = brain
         try:
             with patch.object(server, 'BRAIN_TOKEN', 'history-clear-test-token'), \
-                 patch.object(paths, 'CONFIG_PATH', str(config_path)), \
                  patch.dict(os.environ, {'VIGIL_PORT':str(port), 'VIGIL_BIND_HOST':'127.0.0.1'}):
                 httpd = server.start_remote_api(brain)
                 try:
@@ -245,10 +248,19 @@ class ConversationIsolationTests(unittest.TestCase):
                         data=json.dumps({'src':'pc'}).encode('utf-8'),
                         headers={'Authorization':'Bearer history-clear-test-token',
                                  'Content-Type':'application/json'}, method='POST')
+                    listing_req = urllib.request.Request(
+                        'http://127.0.0.1:%d/api/conversations?src=pc' % port,
+                        headers={'Authorization':'Bearer history-clear-test-token'})
+                    with urllib.request.urlopen(listing_req, timeout=5) as response:
+                        visible_ids = {row['id'] for row in json.loads(
+                            response.read().decode('utf-8'))['items']}
                     with urllib.request.urlopen(req, timeout=5) as response:
                         payload = json.loads(response.read().decode('utf-8'))
                     self.assertTrue(payload['ok'])
-                    self.assertCountEqual(payload['cleared_sessions'], ['main', 'welcome', a['id'], b['id']])
+                    self.assertCountEqual(payload['cleared_sessions'],
+                                          ['main', 'welcome', *visible_ids])
+                    with urllib.request.urlopen(listing_req, timeout=5) as response:
+                        self.assertEqual(json.loads(response.read().decode('utf-8'))['items'], [])
                 finally:
                     httpd.shutdown()
                     httpd.server_close()
@@ -261,11 +273,11 @@ class ConversationIsolationTests(unittest.TestCase):
         self.assertFalse(any(path.exists() for path in [*pc_paths, legacy_path]))
         self.assertTrue(other_channel_path.exists())
         self.assertTrue(other_persona_path.exists())
-        self.assertEqual(conversations.list_for(owner, 'pc', ''), [])
+        self.assertEqual(conversations.list_for(owner, 'pc', 'default'), [])
         self.assertIsNotNone(conversations.get(owner, 'wechat', '', other_channel['id']))
         self.assertIsNotNone(conversations.get(owner, 'pc', 'other-persona', other_persona['id']))
         for item in (a, b):
-            self.assertEqual(display_turns.listing(display_turns.owner(identity, 'pc', item['id'])), [])
+            self.assertEqual(display_turns.listing(display_turns.owner(identity, 'pc', 'default:' + item['id'])), [])
         self.assertEqual(display_turns.listing(main_owner), [])
         self.assertTrue(display_turns.listing(other_persona_owner))
         self.assertTrue(display_turns.listing(wechat_owner))

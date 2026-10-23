@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""后台循环：她的"生活"全在这几根线程里跑。
+"""后台循环：主动搭话、约定账本和事件提醒。
 
 - 生活补算（半小时）      过日子（写经历流）
-- 历史摘要（20 分钟）    滑出窗口的旧对话压成摘要，让她不忘前几天；顺路刷约定账本
+- 约定账本（20 分钟）    从长期记忆刷新带日期的约定
 - 主动搭话（自适应间隔）  静默时段/每日上限/被回应率全算进去
 - 事件提醒（30 分钟）    快递进展 + 天气突变，走主动搭话同一条路弹通知
 
@@ -44,7 +44,7 @@ def _feat_channel(src):
 
 def start_background(brain):
     """把她的后台循环全部跑起来（run_server 装配完大脑后调一次）。"""
-    threading.Thread(target=_recap_loop, args=(brain,), daemon=True).start()
+    threading.Thread(target=_agenda_loop, args=(brain,), daemon=True).start()
     threading.Thread(target=_proactive_loop, args=(brain,), daemon=True).start()
     threading.Thread(target=_reminder_loop, args=(brain,), daemon=True).start()
 
@@ -65,17 +65,13 @@ def _trace_loop(kind, **kw):
         pass
 
 
-def _recap_scopes(b):
-    """要压哪几个分区：每个渠道按它自己那份人设算。
-
-    🔴 漏掉渠道这一维的话，只有"当前渠道"那一份会被压 —— 另一个渠道
-    的对话一直堆在窗口里没人管，她照样忘事，而日志里看不出任何异常。
-    """
+def _agenda_scopes(b):
+    """列出约定账本需要刷新的 persona/channel 分区。"""
     try:
         import paths
         srcs = list(paths.CHANNELS)
     except Exception:
-        srcs = ["wechat", "wechat_group"]
+        srcs = ["pc"]
     out = []
     for s in srcs:
         try:
@@ -85,29 +81,19 @@ def _recap_scopes(b):
     return out
 
 
-def _recap_loop(b):
-    """历史摘要：把滑出上下文窗口的旧对话压成"聊过什么"再存，否则旧话题转头就忘。启动 60 秒先补积压，之后每 20 分钟一轮。"""
-    import recap_store
+def _agenda_loop(b):
+    """定时从长期记忆刷新约定账本，不读取或写入旧版历史摘要。"""
     time.sleep(60)
     while True:
-        try:
-            st = recap_store.tick(b.api, scopes=_recap_scopes(b))
-            if st.get("pressed"):
-                print("[大脑] 历史摘要：%s"
-                      % "；".join(st.get("parts") or []), flush=True)
-        except Exception as e:
-            print(f"[大脑] 历史摘要出错（不影响聊天）：{str(e)[:80]}",
-                  flush=True)
         # 约定账本：从记忆库里把"有日期的说好的事"捞出来按日期注入。
-        # 跟着摘要循环一起跑就够（20 分钟一次），纯读盘、不调模型。
+        # 20 分钟刷新一次，纯读盘、不调模型。
         # 按 persona+src 分区，每个渠道各刷一份，互不串台。
         try:
             import agenda
-            for _pk, _s in _recap_scopes(b):
+            for _pk, _s in _agenda_scopes(b):
                 agenda.refresh(persona_key=_pk, src=_s)
         except Exception as e:
-            print(f"[大脑] 约定账本出错（不影响聊天）：{str(e)[:80]}",
-                  flush=True)
+            print(f"[大脑] 约定账本出错（不影响聊天）：{str(e)[:80]}", flush=True)
         time.sleep(1200)
 
 
@@ -210,12 +196,10 @@ def _reminder_loop(b):
     静默时段照躲：快递到了也不凌晨轰炸，睡醒那轮补说。"""
 
     def _say(prompt):
-        # 事件提醒是**私聊**内容：天气变化、快递到货都是跟你一个人的事，
-        # 发到群里会出戏（"该加衣服了"当着另外三个人说）。所以显式按微信私聊
-        # 走，别让后台线程落在上一个处理过的渠道上。
-        with _feat_channel("wechat"):
+        # Background reminders belong to the local PC Agent.
+        with _feat_channel("pc"):
             with _LOCAL["lock"]:
-                ans, _m = b.chat(prompt, proactive=True, log=False, src="wechat")
+                ans, _m = b.chat(prompt, proactive=True, log=False, src="pc")
             text = strip_say_marker((ans or "").strip())
             if not text or text == "无":
                 _trace_loop("reminder", sent=0, reason="她自己不想说")
