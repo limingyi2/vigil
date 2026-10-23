@@ -4834,6 +4834,12 @@ def start_remote_api(brain):
 
 def run_server():
     base = None
+    # Optional outbound Kestrel Hub Bridge; it is inert until an owner signs in locally.
+    try:
+        import kestrel_hub_bridge
+        kestrel_hub_bridge.start_from_config(api_config)
+    except Exception as e:
+        print("[Kestrel Hub] Bridge startup skipped (Brain remains available): %s" % str(e)[:100], flush=True)
     # 注：插件 scope 的"启动时刻"登记在 start_remote_api 里绑定成功之后
     # （见那边注释）—— 放这里会在"重启失败"时虚假清除待重启提示。
     # 🔴 把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。

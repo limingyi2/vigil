@@ -7,6 +7,12 @@
 
 ---
 
+## 2026-10-24
+
+### Kestrel Hub Bridge
+
+增加可选的出站 Kestrel Hub Bridge。凭证使用 Windows DPAPI 加密保存，Bridge 只响应只读设备信息请求。
+
 ## 2026-10-08
 
 ### 工具链路四个修复：skill_call 断链 / 微信渠道不过滤 / 旧标签死代码 / 危险工具权限确认
