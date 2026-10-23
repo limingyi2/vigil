@@ -40,7 +40,9 @@ class HubBridgeTests(unittest.TestCase):
         self.assertEqual(ws.sent, [])
 
     def test_device_info_does_not_advertise_remote_execution(self):
-        self.assertEqual(bridge.device_info()["actions"], ["info"])
+        info = bridge.device_info()
+        self.assertEqual(info["actions"], ["info"])
+        self.assertEqual(set(info), {"name", "os", "version", "actions"})
 
 
 if __name__ == "__main__":
