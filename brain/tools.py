@@ -23,7 +23,8 @@ TOOL_TAG_ANY_RE = re.compile(r"\[tool[:：][^\]]*\]", re.IGNORECASE)
 # Audited pure or externally read-only tools available during ordinary chat.
 # Names are only identifiers here: this exact set was reviewed against each
 # implementation and is also enforced immediately before dispatch in Brain.
-READ_ONLY_TOOL_NAMES = frozenset({"search", "weather", "tracking", "calc"})
+READ_ONLY_TOOL_NAMES = frozenset({"search", "weather", "tracking", "calc",
+                                 "capability_status"})
 
 
 def read_only_specs(specs):
@@ -205,7 +206,7 @@ _STATIC_SPECS = {
         "arg_param": "tracking_number",
     },
     "capability_status": {
-        "desc": "查询 Vigil 已注册能力的真实连接状态、支持操作和权限要求。未知/离线状态必须照实告诉用户。",
+        "desc": "只读查询当前 Vigil Brain 宿主环境、实际注册工具、插件/Skill 入口、工作区选择和已注册能力的连接状态、支持操作与权限要求。返回值区分已确认可用、已注册但未启用、当前不可用、未确认；不得把注册等同于可执行。不会安装、启用或修改任何内容。",
         "params": [("capability", "能力名称；留空返回全部能力", False)],
         "arg_param": "capability",
     },
@@ -415,7 +416,8 @@ def readonly_failure(text):
 def validate_readonly_arguments(name, args):
     """Validate the same narrow argument contract for native and XML calls."""
     fields = {"search": ("query", True), "weather": ("location", False),
-              "tracking": ("tracking_number", True), "calc": ("expression", True)}
+              "tracking": ("tracking_number", True), "calc": ("expression", True),
+              "capability_status": ("capability", False)}
     if name not in fields or not isinstance(args, dict):
         raise ValueError("只读工具参数必须是已知工具的对象")
     field, required = fields[name]
@@ -446,6 +448,11 @@ def invoke_readonly_spec(name, args, ctx=None):
             outcome = _weather_result(arg)
         elif n == "tracking":
             outcome = _tracking_result(arg)
+        elif n == "capability_status":
+            import host_environment
+            outcome = {"ok": True, "text": json.dumps(
+                host_environment.capability_status(ctx, arg),
+                ensure_ascii=False, sort_keys=True)}
         else:
             from plugins.calc import _calc_result
             outcome = _calc_result(arg)
@@ -692,13 +699,15 @@ def invoke_spec(name, args, ctx=None):
 
     if n == "capability_status":
         try:
-            import capability_registry as _caps
-            snap = _caps.bootstrap()
+            import host_environment as _host_env
             target = str(args.get("capability") or "").strip()
-            return json.dumps(snap.get(target) if target else snap.snapshot(),
+            return json.dumps(_host_env.capability_status(ctx, target),
                               ensure_ascii=False, sort_keys=True)
-        except Exception as exc:
-            return "能力状态读取失败：%s" % str(exc)[:160]
+        except Exception:
+            return json.dumps({"state": "unconfirmed",
+                               "source": "Vigil Brain runtime",
+                               "message": "宿主能力状态当前未确认。"},
+                              ensure_ascii=False)
 
     if n == "capability_call":
         try:

@@ -278,6 +278,32 @@ class TestNativeFunctionCalling(unittest.TestCase):
         invoke.assert_not_called()
         self.assertIn("没有创建提醒", answer)
 
+    def test_nonstream_readonly_capability_turn_binds_exact_request_tools(self):
+        features.on = lambda _key, _src=None: True
+        self._stub([_want("cap", "capability_status", {}), _say("工具状态已读取。")])
+        from unittest.mock import patch
+        turns = []
+
+        def invoke(_name, _args, ctx):
+            turns.append(ctx)
+            return tl.ReadOnlyToolResult(True, '{"environment":{}}')
+
+        with patch.object(tl, "invoke_readonly_spec", side_effect=invoke):
+            answer = self._brain().draft_native(
+                "我有哪些工具？", "", tool_policy="readonly")
+        self.assertTrue(answer)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0].tool_policy, "readonly")
+        schema_names = {item["function"]["name"] for item in self.seen[0]["tools"]}
+        bound_names = {item["function"]["name"]
+                       for item in turns[0].allowed_tool_specs}
+        self.assertEqual(bound_names, schema_names)
+        self.assertTrue(bound_names <= tl.READ_ONLY_TOOL_NAMES, bound_names)
+        self.assertIn("capability_status", bound_names)
+        self.assertNotIn("capability_call", bound_names)
+        self.assertNotIn("local_exec", bound_names)
+        self.assertFalse(any("install" in name.lower() for name in bound_names))
+
     def test_readonly_policy_deduplicates_identical_calls_and_caps_rounds(self):
         features.on = lambda key, src=None: True
         self._stub([_want("s1", "search", {"query": "Vigil release"}),
