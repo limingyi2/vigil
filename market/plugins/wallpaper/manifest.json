@@ -1,7 +1,7 @@
 {
   "schema": "vigil.brain-plugin/v1",
   "name": "wallpaper",
-  "version": "4.1.7",
+  "version": "4.1.8",
   "entry": "__init__.py",
   "frontend": {
     "script": "frontend.js",
@@ -20,31 +20,31 @@
   "files": [
     {
       "path": "LICENSE.txt",
-      "sha256": "a116f28b94e928c3b22acc3346cbd29b3cb2fddd68f73be5c9b93d7626f20cf6"
+      "sha256": "0e9771dccf317863c1eeae95034ce7aa771b8055507d1b5db35df77e69e414fa"
     },
     {
       "path": "README.md",
-      "sha256": "49596250592f956061f6a541eb2c3039fa3924e6b6d323543fe9ca2bb41176f3"
+      "sha256": "14308c02943f93713e5c250bb67a8405486f10feb53a3ca360bad7eb67213d76"
     },
     {
       "path": "UPSTREAM.md",
-      "sha256": "a2aef1d62b473cea7dcd301dada10682e24959914d4436aa49cee772dbc20f49"
+      "sha256": "cac7d6d9102239c5f0bdd9fe49500d35b89cd968fc71e1cefcecbcd60c99fbcf"
     },
     {
       "path": "__init__.py",
-      "sha256": "9911efecdfae64ef641f3fcaedcc9a979d9bd9c963dd2b0d950ee6e6e52a51fb"
+      "sha256": "12c702d5c8696231e2550c7166f76f7beedff16b88574fe37e40f0733b60c47b"
     },
     {
       "path": "frontend.css",
-      "sha256": "d3d2b070992c9910a17170d411e11d06fa6063ef912eb077843459542c7344ea"
+      "sha256": "0cad61daf405e40d05aed27c466713313e3708020743e9131a5d57a030e8421e"
     },
     {
       "path": "frontend.js",
-      "sha256": "b58192871579d8ee7ae0a41e7dada1b4a2d77c3f5e47a74cbcb304a6859ebc35"
+      "sha256": "f6f6726b76082c9e87472caceccf1e2476f13b7a2746f54f1e460a7af16d1065"
     },
     {
       "path": "version.json",
-      "sha256": "80182f9a21270a0ee49f57da74ae037fd4724948f05903db761fc1f5f71e45a0"
+      "sha256": "db41ebd7bffb80b743f2c5b8c93d723cdca7f7d453e93aefa979362f8b7051f8"
     }
   ],
   "dependencies": []

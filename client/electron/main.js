@@ -631,7 +631,10 @@ function openSettingsWindow(options) {
     minHeight: 600,
     parent: win && !win.isDestroyed() ? win : undefined,
     frame: false,
-    backgroundColor: '#0d1019',   // 设置窗口走深色主题（插件 CSS 只做适配不挂壁纸），避免闪白
+    // 和主窗口同一个底色：设置窗口不挂壁纸，页面上来就是浅色（默认浅色主题）。
+    // 之前这里给的是深色 #0d1019，页面还没画出来的那一两百毫秒整块发黑，
+    // 正好就是"点设置主界面黑屏一下"。
+    backgroundColor: '#faf7f2',
     show: false,
     icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
     webPreferences: {

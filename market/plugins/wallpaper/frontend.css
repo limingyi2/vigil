@@ -34,6 +34,9 @@ body.vigil-wallpaper-active {
   --chat-sidebar: rgba(13, 16, 27, .5); --chat-surface: rgba(20, 24, 38, .55);
   --chat-hover: rgba(255, 255, 255, .09); --chat-selected: rgba(255, 255, 255, .15);
   --chat-bg: #12141f; --chat-user: rgba(255, 255, 255, .15); --chat-code: rgba(8, 10, 18, .68);
+  /* 不透明底色：壁纸还在解码、或者根本没解出来时，露出来的是这块深色，
+     而不是窗口默认底色 —— 那一下"整窗黑掉/白掉"就是它露出来的样子。 */
+  background-color: #0b0e16;
 }
 body.vigil-wallpaper-active > .app,
 body.vigil-wallpaper-active > .settings-shell,
@@ -42,7 +45,8 @@ body.vigil-wallpaper-active .app {
 }
 body.vigil-wallpaper-active :is(.body, .main, .scroll, .chatwrap, .chat,
   .chat-messages, .composer, .message-list, .settings-home, .settings-home-view,
-  .settings-detail-view, .settings-content, .settings-intro, .ac-workspace, .persona-view) {
+  .settings-detail-view, .settings-content, .settings-intro, .ac-workspace, .persona-view,
+  #view, .page, .wrap, .view) {
   background-color: transparent !important; background-image: none !important;
 }
 body.vigil-wallpaper-active .gnav,
@@ -58,9 +62,22 @@ body.vigil-wallpaper-active .chatwrap .rp {
   backdrop-filter: var(--vigil-wallpaper-frost);
   -webkit-backdrop-filter: var(--vigil-wallpaper-frost);
 }
+/* 真正的"面板"才给玻璃底：卡片、对话框、输入框外壳。
+   注意这里**不再**包含 button/input/textarea —— 之前那条通配规则给每一个
+   按钮都刷了深色底，于是侧栏每一行、输入框里每一个小图标各自成为一个黑框。 */
 body.vigil-wallpaper-active :is(.card, .ac-card, .ac-agent-card, .pcard,
-  .vigil-wallpaper-control, .vigil-wallpaper-card, .cbox, .input-wrap,
-  .session-row.on, .settings-card, .settings-tile, .settings-grid .tile, .vigil-confirm) {
+  .vigil-wallpaper-control, .vigil-wallpaper-card, .vigil-confirm,
+  .settings-card, .settings-tile, .settings-grid .tile, .modal, .dialog) {
+  background-color: var(--vigil-wallpaper-surface) !important;
+  background-image: none !important;
+  border-color: var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost-soft);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
+}
+/* 设置/市场这类"表单页"里的字段与按钮才需要玻璃底（聊天壳自己有一套）。
+   插件自己的壁纸页同理 —— 它的搜索框/下拉/工具按钮就长在玻璃上。 */
+body.vigil-wallpaper-active :is(.settings-shell, .settings-home, .settings-detail-view,
+  .ac-workspace, .persona-view, .vigil-confirm, .vigil-wallpaper-page) :is(input:not([type=range]), select, textarea, .btn) {
   background-color: var(--vigil-wallpaper-surface) !important;
   background-image: none !important;
   border-color: var(--vigil-wallpaper-line) !important;
@@ -74,13 +91,9 @@ body.vigil-wallpaper-active .chatwrap .turn.me .txt {
 body.vigil-wallpaper-active .chatwrap .think-content {
   background: color-mix(in srgb, var(--chat-surface, #292d35) 72%, transparent) !important;
 }
-body.vigil-wallpaper-active :is(input:not([type=range]), select, textarea, .btn, button:not(.vigil-wallpaper-card)) {
-  background-color: var(--vigil-wallpaper-surface) !important;
-  background-image: none !important;
-  border-color: var(--vigil-wallpaper-line) !important;
-  backdrop-filter: var(--vigil-wallpaper-frost-soft);
-  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
-}
+/* 旧版这里有一条 input/select/textarea/.btn/button 的通配玻璃规则，已删除：
+   它把侧栏每一行、输入框里每个图标按钮都刷成独立深色方块。要玻璃底，
+   请在上面的白名单里逐个点名。 */
 /* 欢迎页（壁纸模式专属）：
    · 输入框上移，与 Vigil 标题成一组垂直居中；
    · 标题与副题半透明化，压在壁纸上像玻璃刻字；
@@ -115,7 +128,14 @@ body.vigil-wallpaper-active .chatwrap .localpop {
   -webkit-backdrop-filter: var(--vigil-wallpaper-frost);
 }
 
-/* 左侧整列背景全透明：去掉面板那层暗色底，只留列表项/按钮玻璃。 */
+/* 直接压在壁纸上的文字给一层极淡的暗投影：浅色壁纸下白字才不会糊成一片。
+   收紧到 2px —— 大半径会变成发光，小字反而更脏。 */
+body.vigil-wallpaper-active :is(.panel, .composer-foot, .cbox .cbar) {
+  text-shadow: 0 1px 2px rgba(6, 9, 16, .6);
+}
+/* ── 左侧整列 ──────────────────────────────────────────────
+   整列背景透明，列表项本身也不给底色：只有 hover / 选中才浮起一层淡玻璃。
+   之前每个行内按钮各带一块深色底，在浅色壁纸上就是一串错位的黑框。 */
 body.vigil-wallpaper-active .panel,
 body.vigil-wallpaper-active .gnav,
 body.vigil-wallpaper-active .chatwrap .rp {
@@ -123,10 +143,17 @@ body.vigil-wallpaper-active .chatwrap .rp {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-/* 设置窗口不挂壁纸：给一个纯深色底，玻璃组件照常生效。 */
-body.settings-window.vigil-wallpaper-active {
-  background: linear-gradient(160deg, #0d1019 0%, #131725 100%) !important;
+body.vigil-wallpaper-active .panel :is(.session-row, .ws-row, .li, .session-open, .ws-open,
+  .session-rename, .session-delete, .ws-new, .ws-remove, .panel-settings, .panel-new) {
+  background: transparent !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
+body.vigil-wallpaper-active .panel :is(.session-row, .ws-row, .li):hover { background: rgba(255, 255, 255, .07) !important; }
+body.vigil-wallpaper-active .panel :is(.session-row, .ws-row, .li):is(.on, .session-draft) { background: rgba(255, 255, 255, .12) !important; }
 /* 图标栏按钮不再是深色卡片：平时全透明，悬停/选中才起玻璃底。 */
 body.vigil-wallpaper-active .gnav .gbtn,
 body.vigil-wallpaper-active .gnav .gbtn.on {
@@ -143,12 +170,39 @@ body.vigil-wallpaper-active .titlebar {
   background: transparent !important; border-color: transparent !important;
   backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
 }
-/* 聊天框只要最外面一个玻璃框：内层输入区/工具条全部透明无边框。 */
-body.vigil-wallpaper-active .cbox :is(textarea, .input-wrap, .cbar) {
-  background: transparent !important; border: 0 !important; box-shadow: none !important;
-  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+/* ── 输入框：只要最外面那一个玻璃框 ────────────────────────
+   .cbox 本体就是那个框，保留；里面所有控件一律透明无边框 —— 加号、创作
+   模式、权限、模型、发送、底部那排标签都不再各自成框。 */
+body.vigil-wallpaper-active .cbox {
+  background: var(--vigil-wallpaper-surface) !important;
+  border: 1px solid var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost-soft);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
 }
+body.vigil-wallpaper-active .cbox :is(textarea, .input-wrap, .cbar, .ibtn, .btn, .chip,
+  .composer-model, .cbar-add) {
+  background: transparent !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.vigil-wallpaper-active .cbox :is(.ibtn, .btn, .chip, .composer-model):hover { background: rgba(255,255,255,.1) !important; }
 body.vigil-wallpaper-active .cbox textarea:focus { outline: none; }
+/* 发送键是唯一保留填充的控件：它是一个动作，不是一层框。空输入（禁用态）
+   不画底，免得又变成一块灰方块；有内容才出现那颗强调色。 */
+body.vigil-wallpaper-active .cbox #sendBtn { background: transparent !important; color: var(--text-2) !important; }
+body.vigil-wallpaper-active .cbox #sendBtn:not(:disabled):not(.is-sending) {
+  background: var(--chat-send, #54759f) !important;
+  color: var(--chat-on-send, #fff) !important;
+}
+/* 输入框下面那排标签（模型 / 工作空间 / 授权）同样只留文字。 */
+body.vigil-wallpaper-active .composer-foot :is(.foot-chip, .foot-brand, .ccount) {
+  background: transparent !important; border: 0 !important; box-shadow: none !important;
+}
+body.vigil-wallpaper-active .composer-foot .foot-chip:hover { background: rgba(255,255,255,.08) !important; }
 /* 视频工作台等内容页跟随玻璃变量。 */
 body.vigil-wallpaper-active { --surface: rgba(20, 24, 38, .55); }
 body.vigil-wallpaper-active :is(.video-ai-workspace, .video-settings-row) {

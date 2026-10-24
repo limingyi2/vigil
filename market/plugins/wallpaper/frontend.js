@@ -14,6 +14,13 @@
     carousel_enabled: false, carousel_minutes: 30, carousel_shuffle: false };
   let disposed = false;
   let config = { ...DEFAULT };
+  // 上一轮的外观立刻顶上：配置要走云端链路（几十到几百毫秒），这期间若先按
+  // "没开壁纸"渲染，整窗会先退回默认底色（看起来就是黑屏/白屏闪一下）。
+  const CACHE_KEY = 'vigil.wallpaper.v4.appearance';
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (cached && typeof cached === 'object') config = { ...config, ...cached };
+  } catch (_) {}
   let library = [];
   let locals = [];
   let active = null;
@@ -84,10 +91,17 @@
     root.style.opacity = String(opacity);
     scrim.style.opacity = String(overlay);
     document.documentElement.style.setProperty('--vigil-wallpaper-blur', Math.max(0, Number(config.blur) || 0) + 'px');
-    document.body.classList.toggle('vigil-wallpaper-active', !!config.enabled && !!active);
+    // 🔴 玻璃主题只跟"是否启用且选了壁纸"走，不等渲染器挂载完成。
+    // 渲染要经过 配置→壁纸库→票据→解码 四步，把主题绑在 active 上会让整窗
+    // 在每一步之间退回应用默认底色（黑屏闪一下的根因）。
+    const on = !!config.enabled && (!!active || !!config.wallpaper_id);
+    document.body.classList.toggle('vigil-wallpaper-active', on);
     // The bundled Vigil UI still scopes persona and Agent surfaces to this
     // compatibility class. Keep both names in sync until those styles migrate.
-    document.body.classList.toggle('vwp-active', !!config.enabled && !!active);
+    document.body.classList.toggle('vwp-active', on);
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ enabled: !!config.enabled, wallpaper_id: config.wallpaper_id || null }));
+    } catch (_) {}
   }
   function ensureLayers() {
     root = document.getElementById('vigil-wallpaper-root') || document.createElement('div');
@@ -340,13 +354,12 @@
     disposed = true; clearStage(); if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } messageHandler && window.removeEventListener('message', messageHandler); visibilityHandler && document.removeEventListener('visibilitychange', visibilityHandler); objectUrls.forEach((url) => URL.revokeObjectURL(url)); objectUrls.clear(); locals = []; library = []; active = null; document.body.classList.remove('vigil-wallpaper-active', 'vwp-active'); document.documentElement.style.removeProperty('--vigil-wallpaper-blur'); root?.remove(); badge?.remove(); window.__vigilWallpaperV4Dispose = null; try { window.vigil?.plugins?.releaseResources?.(); } catch (_) {}
   }
   window.__vigilWallpaperV4Dispose = dispose;
-  // 设置窗口（?window=settings）：只做主题适配——挂上 vigil-wallpaper-active
-  // 类让玻璃变量生效，但不创建壁纸层、不跑渲染器（壁纸属于主窗口）。
+  // 设置窗口（?window=settings）：壁纸层只属于主窗口，这里既不挂壁纸，也不套
+  // 玻璃主题 —— 设置窗口背后没有壁纸，套了只会得到"深色底 + 白内容"的黑框，
+  // 而且插件前端是页面加载完之后才注入的，中途换底色正好变成"黑屏闪一下"。
   const IS_SETTINGS_WINDOW = (() => { try { return new URLSearchParams(window.location.search).get('window') === 'settings'; } catch (_) { return false; } })();
   if (IS_SETTINGS_WINDOW) {
-    document.body.classList.add('vigil-wallpaper-active');
-    window.__vigilWallpaperV4Dispose = () => document.body.classList.remove('vigil-wallpaper-active');
-    window.VigilPlugin?.registerCleanup?.(OWNER, window.__vigilWallpaperV4Dispose);
+    window.__vigilWallpaperV4Dispose = () => {};
     return;
   }
 
