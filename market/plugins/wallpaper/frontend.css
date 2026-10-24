@@ -16,13 +16,24 @@
 #vigil-wallpaper-scrim { position: absolute; inset: 0; background: #070b16; pointer-events: none; }
 body.vigil-wallpaper-active {
   --vigil-wallpaper-blur: 0px;
-  /* 真磨砂：模糊量固定，不跟“毛玻璃”滑块（那是给壁纸本身的）。
-     面板 46% 底 + 26px 背景模糊；浮层表面 62% 底 + 16px。 */
-  --vigil-wallpaper-panel: color-mix(in srgb, var(--bg, #141822) 46%, transparent);
-  --vigil-wallpaper-surface: color-mix(in srgb, var(--bg, #141822) 62%, transparent);
-  --vigil-wallpaper-frost: blur(26px) saturate(1.5);
+  /* 壁纸模式整体切到深色玻璃主题（参考系统级毛玻璃观感）：
+     深蓝黑半透明面板 + 白字，任何壁纸下都可读。 */
+  --vigil-wallpaper-panel: rgba(13, 16, 27, .58);
+  --vigil-wallpaper-surface: rgba(18, 22, 36, .52);
+  --vigil-wallpaper-frost: blur(28px) saturate(1.4);
   --vigil-wallpaper-frost-soft: blur(16px) saturate(1.3);
-  --vigil-wallpaper-line: color-mix(in srgb, var(--text, #fff) 12%, transparent);
+  --vigil-wallpaper-line: rgba(255, 255, 255, .13);
+  /* 应用主题变量整体覆写成暗色系（设置页/聊天页共用）。 */
+  --bg: rgba(12, 15, 26, .45); --bg-sub: rgba(15, 18, 30, .5); --bg-sunken: rgba(255, 255, 255, .07);
+  --bg-hover: rgba(255, 255, 255, .09); --bg-active: rgba(255, 255, 255, .14);
+  --text: #edf1fa; --text-2: #c6ccdc; --text-3: #aab1c5; --text-4: #8f97ad;
+  --line: rgba(255, 255, 255, .13); --line-soft: rgba(255, 255, 255, .08); --line-strong: rgba(255, 255, 255, .22);
+  --grid: transparent;
+  --fill: #f1f4fb; --on-fill: #12141d; --fill-hover: #dde3f0;
+  --chat-text: #edf1fa; --chat-muted: #a9b0c4; --chat-line: rgba(255, 255, 255, .12);
+  --chat-sidebar: rgba(13, 16, 27, .5); --chat-surface: rgba(20, 24, 38, .55);
+  --chat-hover: rgba(255, 255, 255, .09); --chat-selected: rgba(255, 255, 255, .15);
+  --chat-bg: #12141f; --chat-user: rgba(255, 255, 255, .15); --chat-code: rgba(8, 10, 18, .68);
 }
 body.vigil-wallpaper-active > .app,
 body.vigil-wallpaper-active > .settings-shell,
@@ -30,8 +41,8 @@ body.vigil-wallpaper-active .app {
   position: relative; z-index: 1; background: transparent !important;
 }
 body.vigil-wallpaper-active :is(.body, .main, .scroll, .chatwrap, .chat,
-  .chat-messages, .composer, .message-list, .settings-home,
-  .settings-detail-view, .settings-content, .ac-workspace, .persona-view) {
+  .chat-messages, .composer, .message-list, .settings-home, .settings-home-view,
+  .settings-detail-view, .settings-content, .settings-intro, .ac-workspace, .persona-view) {
   background-color: transparent !important; background-image: none !important;
 }
 body.vigil-wallpaper-active .gnav,
@@ -49,7 +60,7 @@ body.vigil-wallpaper-active .chatwrap .rp {
 }
 body.vigil-wallpaper-active :is(.card, .ac-card, .ac-agent-card, .pcard,
   .vigil-wallpaper-control, .vigil-wallpaper-card, .cbox, .input-wrap,
-  .session-row.on, .settings-card, .settings-tile, .vigil-confirm) {
+  .session-row.on, .settings-card, .settings-tile, .settings-grid .tile, .vigil-confirm) {
   background-color: var(--vigil-wallpaper-surface) !important;
   background-image: none !important;
   border-color: var(--vigil-wallpaper-line) !important;

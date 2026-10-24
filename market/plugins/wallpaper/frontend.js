@@ -139,7 +139,7 @@
       let dead = false;
       const post = (op, extra) => { try { parent.postMessage({ vigilWallpaperV4: true, op, ...extra }, '*'); } catch (_) {} };
       addEventListener('message', e => { if (e.source !== parent || !e.data || e.data.vigilWallpaper !== true) return; const w = window.__wp; if (!w) return; try {
-        if (e.data.command === 'pause') w.pause?.(); else if (e.data.command === 'resume') w.resume?.();
+        if (e.data.command === 'pause') w.pause?.(); else if (e.data.command === 'resume') w.resume?.(); else if (e.data.command === 'ping') { const c = document.querySelector('canvas'); post('pong', { hasCanvas: !!c, width: c ? c.width : 0, height: c ? c.height : 0 }); }
         else if (e.data.command === 'quality') w.setQuality?.(e.data.value || {}); else if (e.data.command === 'fit') w.setFit?.(e.data.value);
       } catch (_) {} });
       // GPU 探测：报告 WebGL2 是否可用、用的哪块适配器（镜像渲染器的
@@ -310,6 +310,7 @@
   }
   function onMessage(event) {
     if (!frame || event.source !== frame.contentWindow || !event.data?.vigilWallpaperV4) return;
+    if (event.data.op === 'pong') { lastPong = Date.now(); return; }
     if (event.data.op === 'gpu') { gpuDiag = event.data; return; }
     if (event.data.op === 'ready') {
       if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
@@ -317,7 +318,23 @@
     }
     if (event.data.op === 'error') { showBadge('渲染错误：' + String(event.data.message || '未知错误').slice(0, 100)); }
   }
-  function onVisibility() { if (!frame) return; frame.contentWindow?.postMessage({ vigilWallpaper: true, command: document.hidden ? 'pause' : 'resume' }, '*'); }
+  let lastPong = 0; let probeTimer = 0;
+  // Windows 上窗口被完全遮挡后 WebGL 上下文可能被丢弃，回来时画布变白/变黑
+  //（用户看到“壁纸被覆盖”）。恢复可见时先 ping 渲染器，无应答就整体重挂。
+  function onVisibility() {
+    if (!frame) return;
+    if (document.hidden) { clearTimeout(probeTimer); frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'pause' }, '*'); return; }
+    frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'resume' }, '*');
+    const live = active;
+    if (!live || (live.type !== 'scene' && live.type !== 'web')) return;
+    const sentAt = Date.now();
+    frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'ping' }, '*');
+    clearTimeout(probeTimer);
+    probeTimer = setTimeout(() => {
+      if (disposed || !frame) return;
+      if (lastPong < sentAt) mount(live);
+    }, 1000);
+  }
   function dispose() {
     disposed = true; clearStage(); if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } messageHandler && window.removeEventListener('message', messageHandler); visibilityHandler && document.removeEventListener('visibilitychange', visibilityHandler); objectUrls.forEach((url) => URL.revokeObjectURL(url)); objectUrls.clear(); locals = []; library = []; active = null; document.body.classList.remove('vigil-wallpaper-active', 'vwp-active'); document.documentElement.style.removeProperty('--vigil-wallpaper-blur'); root?.remove(); badge?.remove(); window.__vigilWallpaperV4Dispose = null; try { window.vigil?.plugins?.releaseResources?.(); } catch (_) {}
   }
