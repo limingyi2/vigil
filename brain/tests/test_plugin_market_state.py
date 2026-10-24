@@ -227,12 +227,14 @@ def _package(extra=False, bad_hash=False, duplicate=False, version='1.0.0', perm
 
 
 def test_complete_package_install_refresh_uninstall_and_reinstall(tmp_path):
+    import plugin_host
     import plugin_ops
     import restart_state
     meta, data = _package()
     target = tmp_path / 'installed'
     with patch.object(plugin_ops, '_PLUG_DIR', str(target)), \
          patch.object(plugin_ops, 'REGISTRY', str(target / '_registry.json')), \
+         patch.object(plugin_host, '_INSTALLED_DIR', str(target)), \
          patch.object(market, '_plugins_dir', return_value=str(target)), \
          patch.object(market, '_read_market', return_value={'state': 'ready', 'plugins': [meta]}), \
          patch.object(market, '_fetch_bytes', return_value=data), \
@@ -243,10 +245,66 @@ def test_complete_package_install_refresh_uninstall_and_reinstall(tmp_path):
             installed = action == 'install'
             assert market.api_list({}, {})['plugins'][0]['installed'] == installed
             assert (target / 'fixture' / 'frontend.js').exists() == installed
+            if action == 'uninstall':
+                duplicate = market.api_uninstall({'name': 'fixture'}, {})
+                assert duplicate['ok'] is False
+                assert market.api_list({}, {})['plugins'][0]['installed'] is False
         assert not list(target.glob('_tmp*'))
 
 
+def test_market_uninstall_reports_builtin_recovery_and_refreshes_status(tmp_path):
+    import plugin_host
+    import plugin_manager
+    import plugin_ops
+    user_plugins = tmp_path / 'installed'
+    builtin_plugins = tmp_path / 'builtin'
+    user_plugins.mkdir()
+    builtin_plugins.mkdir()
+    (user_plugins / 'overlay.py').write_text('NAME="overlay"\nVALUE="user"\n', encoding='utf-8')
+    (builtin_plugins / 'overlay.py').write_text('NAME="overlay"\nVALUE="builtin"\n', encoding='utf-8')
+    registry = user_plugins / '_registry.json'
+    registry.write_text(json.dumps({'version': 1, 'plugins': {
+        'overlay': {'version': '2.0.0', 'enabled': True}}}), encoding='utf-8')
+    old_registry = plugin_host._registry
+    old_started = plugin_host._started
+    old_index = dict(plugin_host._TOOL_INDEX)
+    plugin_host._registry = {}
+    plugin_host._started = set()
+    market_doc = {'state': 'ready', 'version': '1', 'plugins': [
+        {'name': 'overlay', 'version': '2.0.0', 'desc': 'overlay fixture'}]}
+    try:
+        with patch.object(plugin_host, '_INSTALLED_DIR', str(user_plugins)), \
+             patch.object(plugin_host, '_DIR', str(builtin_plugins)), \
+             patch.object(plugin_ops, '_PLUG_DIR', str(user_plugins)), \
+             patch.object(plugin_ops, 'REGISTRY', str(registry)), \
+             patch.object(market, '_plugins_dir', return_value=str(user_plugins)), \
+             patch.object(market, '_read_market', return_value=market_doc):
+            plugin_host.load(force=True, only='overlay')
+            result = market.api_uninstall({'name': 'overlay'}, {})
+            assert result['ok'] is True
+            assert result['state'] == 'builtin_restored'
+            assert result['source_before'] == 'user'
+            assert result['source_kind'] == 'builtin'
+            assert result['builtin_restored'] is True
+            assert result['msg'] == '用户版本已卸载，已恢复内置版本；用户配置和素材保留'
+            refreshed = market.api_list({}, {})
+            plugin = refreshed['plugins'][0]
+            assert plugin['installed'] is True
+            assert plugin['source_kind'] == 'builtin'
+            assert plugin['builtin'] is True
+            assert plugin['removable'] is False
+            assert not (user_plugins / 'overlay.py').exists()
+            saved_registry = json.loads(registry.read_text(encoding='utf-8'))
+            assert 'overlay' not in saved_registry['plugins']
+    finally:
+        plugin_host._registry = old_registry
+        plugin_host._started = old_started
+        plugin_host._TOOL_INDEX.clear()
+        plugin_host._TOOL_INDEX.update(old_index)
+
+
 def test_managed_market_update_persists_verified_manifest_and_clears_update_state(tmp_path):
+    import plugin_host
     import plugin_manager
     import plugin_ops
     meta, data = _package(version='2.0.0', permissions=['fixture.read'])
@@ -259,6 +317,7 @@ def test_managed_market_update_persists_verified_manifest_and_clears_update_stat
         'version': '1.0.0', 'enabled': True, 'source': 'market:fixture@1.0.0'}}}), encoding='utf-8')
     with patch.object(plugin_ops, '_PLUG_DIR', str(target)), \
          patch.object(plugin_ops, 'REGISTRY', str(registry)), \
+         patch.object(plugin_host, '_INSTALLED_DIR', str(target)), \
          patch.object(market, '_fetch_bytes', return_value=data), \
          patch.object(plugin_manager, '_reload', return_value=True):
         ok, result = market._install_remote_directory(meta, 'fixture', replace=True, managed=True)
@@ -270,7 +329,11 @@ def test_managed_market_update_persists_verified_manifest_and_clears_update_stat
     assert saved['source'] == 'market:fixture@2.0.0'
     assert saved['manifest']['version'] == '2.0.0'
     assert saved['manifest']['permissions'] == ['fixture.read']
-    with patch.object(plugin_ops, 'REGISTRY', str(registry)):
+    with patch.object(plugin_ops, 'REGISTRY', str(registry)), \
+         patch.object(plugin_host, '_INSTALLED_DIR', str(target)), \
+         patch.object(plugin_host, '_registry', {k: v for k, v in plugin_host._registry.items()
+                                                 if k != 'fixture'}):
+        assert plugin_host._plugin_entry_path('fixture') == str(old / '__init__.py')
         assert plugin_manager.status('fixture', '2.0.0')['update_state'] == 'current'
 
 

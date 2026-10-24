@@ -403,6 +403,22 @@ class TransactionTests(unittest.TestCase):
         self.assertTrue(package.exists())
         self.assertIn('插件目录清理失败', result['err'])
 
+    def test_uninstall_registry_write_failure_restores_plugin_and_registry(self):
+        package = self.plugins / 'demo'
+        package.mkdir()
+        entry = package / '__init__.py'
+        entry.write_text('NAME="demo"\n', encoding='utf-8')
+        original = {'version': 1, 'plugins': {'demo': {'version': '1.0.0'}}}
+        self.registry.write_text(json.dumps(original), encoding='utf-8')
+        with patch.object(ops, 'write_registry', return_value=False), \
+             patch.object(ops.restart_state, 'note_change'):
+            ok, result = ops.uninstall('demo')
+        self.assertFalse(ok)
+        self.assertIn('注册表写入失败', result['err'])
+        self.assertEqual(entry.read_text(encoding='utf-8'), 'NAME="demo"\n')
+        self.assertEqual(json.loads(self.registry.read_text(encoding='utf-8')), original)
+        self.assertFalse(any(p.name.startswith('.uninstall-demo-') for p in self.plugins.iterdir()))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -611,34 +611,76 @@ def uninstall(name, purge_data=False):
     # 必须在删文件**之前**读出 FEATURE：文件一删就再也读不到，
     # 而渠道开关的键（features_by_src.<src>.<FEATURE>）得靠它才能摘掉。
     feat = _feature_of(f)
-    if os.path.isfile(f):
-        os.remove(f)
-        hit = f
-    if os.path.isdir(d):          # 有目录就一起清，别留半个空壳
-        try:
-            shutil.rmtree(d)
-            if os.path.exists(d):
-                raise OSError("plugin directory remains after removal")
-        except OSError:
-            return False, {"err": "插件目录清理失败，卸载未完成",
-                           "removed": os.path.basename(hit) if hit else ""}
-        hit = hit or d
-    if not hit:
-        return False, {"err": "没找到这个插件（可能已经被删了）"}
-    # 附属文件（安装时落的 _<name>_xxx.json / md）跟着清，
-    # 不然每装一次留一批，重装几轮就攒出一堆同名不同代的文件。
+    # Keep a private snapshot until both file removal and registry persistence
+    # succeed. The previous order could delete code, ignore a failed registry
+    # write, and report success while status() still saw a registry entry.
+    owned = []
+    for path in (f, d):
+        if os.path.isfile(path) or os.path.isdir(path):
+            owned.append(path)
     try:
         for fn in os.listdir(_PLUG_DIR):
             if fn.startswith("_" + name + "_"):
-                try:
-                    os.remove(os.path.join(_PLUG_DIR, fn))
-                except OSError:
-                    pass
+                path = os.path.join(_PLUG_DIR, fn)
+                if os.path.isfile(path) or os.path.isdir(path):
+                    owned.append(path)
     except OSError:
         pass
-    reg = read_registry()
-    (reg.get("plugins") or {}).pop(name, None)
-    write_registry(reg)
+    if not owned:
+        return False, {"err": "没找到这个插件（可能已经被删了）"}
+
+    stage = tempfile.mkdtemp(prefix=".uninstall-%s-" % name, dir=_PLUG_DIR)
+    snapshots = {}
+    try:
+        for path in owned:
+            staged = os.path.join(stage, os.path.basename(path))
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.copytree(path, staged, symlinks=True)
+            else:
+                shutil.copy2(path, staged, follow_symlinks=False)
+            snapshots[path] = staged
+        for path in owned:
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            except Exception as remove_exc:
+                if path == d:
+                    raise OSError("插件目录清理失败：%s" % str(remove_exc)[:100])
+                raise
+            if os.path.lexists(path):
+                raise OSError("plugin path remains after removal")
+
+        reg = read_registry()
+        reg.setdefault("plugins", {}).pop(name, None)
+        if not write_registry(reg):
+            raise OSError("插件注册表写入失败")
+    except Exception as exc:
+        restore_errors = []
+        for path, staged in snapshots.items():
+            if not os.path.lexists(staged):
+                continue
+            try:
+                if os.path.lexists(path):
+                    if os.path.isdir(path) and not os.path.islink(path):
+                        shutil.rmtree(path)
+                    else:
+                        os.remove(path)
+                if os.path.isdir(staged) and not os.path.islink(staged):
+                    shutil.copytree(staged, path, symlinks=True)
+                else:
+                    shutil.copy2(staged, path, follow_symlinks=False)
+            except Exception as restore_exc:
+                restore_errors.append("%s: %s" % (os.path.basename(path), str(restore_exc)[:100]))
+        shutil.rmtree(stage, ignore_errors=True)
+        message = "卸载失败，插件文件和注册表已恢复：%s" % str(exc)[:140]
+        if restore_errors:
+            message += "；恢复失败：" + "; ".join(restore_errors)
+        return False, {"err": message, "state": "error"}
+
+    hit = owned[0]
+    shutil.rmtree(stage, ignore_errors=True)
     extra = ""
     # 渠道开关的键一起摘掉。
     # 不摘的话：插件没了，features_by_src.<src>.<FEATURE> 还在，

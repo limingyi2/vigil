@@ -503,9 +503,14 @@ def api_uninstall(body, query):
         return {"ok": False, "err": "插件名不合法或为 Windows 保留名称"}
 
     import plugin_manager
+    source_before = plugin_manager._source(name)
     ok, result = plugin_manager.uninstall(name, purge_data=False)
     if ok:
-        result.update(ok=True, name=name, msg="插件已卸载；用户配置和素材保留")
+        if result.get("builtin_restored"):
+            message = "用户版本已卸载，已恢复内置版本；用户配置和素材保留"
+        else:
+            message = "插件已卸载；用户配置和素材保留"
+        result.update(ok=True, name=name, source_before=source_before, msg=message)
     else:
         result["ok"] = False
     return result
