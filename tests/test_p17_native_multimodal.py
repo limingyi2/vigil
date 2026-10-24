@@ -108,10 +108,11 @@ def test_capability_registry_is_truthful_and_permission_checked():
     approved = registry.approve(denied["request_id"], identity="brain", session="s1")
     assert approved["status"] == "succeeded"
     assert approved["result"]["focused"] is True
-    # 授权生效，同作用域可以直接复用
+    # P20.2：授权是一次性的，执行后立即吊销 —— 一次审批不能变成
+    # 长期可复用的授权，同作用域再次执行也要走新的审批。
     assert registry.invoke("video_workbench", "focus", {},
-                           identity="brain", session="s1")["status"] == "succeeded"
-    # 但换会话 / 换身份都不行
+                           identity="brain", session="s1")["status"] == "awaiting_authorization"
+    # 换会话 / 换身份都不行
     assert registry.invoke("video_workbench", "focus", {},
                            identity="brain", session="s2")["status"] == "awaiting_authorization"
     assert registry.invoke("video_workbench", "focus", {},

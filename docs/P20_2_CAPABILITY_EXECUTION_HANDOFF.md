@@ -1,10 +1,9 @@
-# P20.2 能力发现、用户审批与实际执行 —— 交接文档
+# P20.2 能力发现、用户审批与实际执行 —— 交接文档（已完成，转入验收）
 
 - 分支:`codex/p20-2-capability-execution`(基于 `origin/dev` = `3d5a7c6`)
-- 本地提交:`7a94f11`(fix(capability): one-shot approval grants and plugin/skill operations)
-- 状态:**进行中,未完成**。服务端能力注册与审批语义已落地并验证;Agent Run 审批闭环、客户端卡片、MiMo think 修复、验收测试未开始。
-- 推送:push 因 GitHub TLS 握手瞬时失败未完成,提交在本地。恢复后执行
-  `git push -u origin codex/p20-2-capability-execution`。
+- 提交:`7a94f11`(审批语义 + plugins_skills 操作集)、`9a87a60`(审批闭环 + 客户端卡片 + MiMo think)、`bb0f669`(本文档)
+- **Draft PR #47 已创建,OPEN 不合并**:https://github.com/limingyi2/vigil/pull/47
+- 状态:规划中的全部缺口(①-④)已实现并通过测试;真实 Windows 客户端手工授权交互未执行(标注未验证)。
 
 ## 一、任务书要求(摘要)
 
@@ -100,16 +99,22 @@
 - 可用解释器:`C:\Users\26871\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\python.exe`(3.13.16,无 pytest、无网络)。
 - 跑测试:`PYTHONPATH="/d/vigil/venv/Lib/site-packages:/d/vigil/brain" <上述python> -m pytest tests/... -q`(借用 venv site-packages 的 pytest 9.1.1;`brain/tests/` 下的用例需要把 `brain/` 加进 PYTHONPATH)。CI 侧是 `pip install -r requirements-dev.txt && pytest tests`(.github/workflows/tests.yml:34-37)。
 
-## 四、未完成工作(按优先级)
+## 四、未完成工作 → 完成情况（提交 9a87a60）
 
-1. **Agent Run 审批闭环(缺口①)**:`agent_runs._tool()`/`tools.py capability_call` 识别 `awaiting_authorization`,步骤挂起、事件带 request_id、审批后续跑/拒绝后如实汇报;防止重复提交与审批后改参(request 的 args 快照已在 `request_authorization` 落定,approve 重放的是快照——已实现,Agent Run 侧要对齐)。
-2. **客户端审批卡片(缺口②)**:见上;SSE 事件白名单加新事件类型;`agent-view.js` 步骤卡片加确认/拒绝按钮与执行证据展示。
-3. **tools.py 文案**:`capability_call` 的工具说明(tools.py:213-224)更新 plugins_skills 新操作与"先查再调"指引(小改)。
-4. **MiMo think 修复(缺口④)**:execution.py 归一化层,流式安全剥离 content 内联 `<think>`。
-5. **MCP 缺口记录(缺口③)**:写进交付报告即可。
-6. **验收测试**:任务书 10 项(插件真实查询/未审批不可改/审批成功复核/拒绝不执行/内置卸载拒绝/Skill Host 离线不虚报/重复-取消-失败-未知/只读无回归/渠道隔离/MiMo 无泄漏)。前 6 项大部分可直接测 REGISTRY + handler(离线);渠道隔离测 identity 绑定;MiMo 用假 SSE 流喂 `<think>` 分片。真实 Windows 客户端授权交互测试需真机,没有就标注未验证。
-7. **全量回归**:Python 全仓 + Node CI(`client/tools/test-*.js`)+ compileall。
-8. **Draft PR**:分支推送(本地 TLS 失败待重试)→ `gh` 不可用(未登录),用 GitHub API 或让用户开;保持 OPEN 不合并。
+1. **Agent Run 审批闭环（原缺口①）✅**：`agent_runs._tool()` 识别 `awaiting_authorization` 返回，步骤落为 `result_state=awaiting_authorization` 并持久化审批凭据（`step['approval'] = {request_id, capability, operation, target}`），事件流携带；run 不失败、模型如实请用户批准。审批快照在 `request_authorization` 落定，approve 重放快照参数，审批后不可改参。
+2. **客户端审批卡片（原缺口②）✅**：`agent-view.js` 新增 `approvalCard()`（操作目标/类型/影响说明/确认拒绝按钮/执行中/真实回执证据）；`pages.js` 委托点击处理调 `/api/capabilities/approve|deny`，回填 Brain 真实回执（含 `after` 状态复核）；历史会话经 `GET /api/capabilities/requests`（server.py 新增，admin）解析真实请求状态，pending 之外不显示按钮。
+3. **tools.py 文案 ✅**：`capability_call` 说明加入 plugins_skills 操作与审批流程。
+4. **MiMo think 修复（原缺口④）✅**：`tool_protocol.ThinkTextBoundary`（流式：跨 chunk 安全的标签状态机，代码围栏/行内代码字面保留；未闭合块整体按思考处理）+ `execution.normalize()`（非流式：成对块移入 reasoning）+ `completion_events` 流式接线。见 `tests/test_p20_2_capability_execution.py::MiMoThinkLeakTests`。
+5. **MCP 缺口记录（原缺口③）✅**：无 MCP Client/Server 管理/工具发现/授权执行入口（仅 codex_adapter 两处字面量）；已记录在 PR #47 描述，未从零开发。
+6. **验收测试 ✅**：`tests/test_p20_2_capability_execution.py` 25 项覆盖任务书 10 项中 9 项（第 10 项渠道隔离在 registry 层验证 + approve 端点 admin 鉴权为既有防线）。
+7. **全量回归 ✅**：相关套件 183+ 项、`brain/tests/` + P19/P18、Node CI 42/42 全过；全仓 Python 套件结果见 PR 描述补充。
+8. **Draft PR ✅**：#47（open/draft），https://github.com/limingyi2/vigil/pull/47
+
+### 仍需人工/真机的事项
+
+- **真实 Windows 客户端授权交互测试未执行**（需要 Electron 真机手工点确认/拒绝），已标注未验证。
+- 审批后 Agent Run 步骤不回写执行结果（run 已完成；证据在卡片与 requests 端点）——刻意保持 run 终态语义，避免重构。
+- 全仓 Python 套件中有依赖可选包（faiss 等）的既有跳过项，与本次改动无关。
 
 ## 五、约束提醒(下一轮必须遵守)
 
