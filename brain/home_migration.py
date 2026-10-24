@@ -16,6 +16,9 @@ CORE_FEATURE_NAMES = frozenset({
     "plugin_market.py", "remote.py", "skill.py",
 })
 LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"calc.py", "gate.py", "kb.py", "react.py", "websearch.py"})
+# 外部插件由插件市场装到 data/installed_plugins，绝不从安装包种入。
+# 打包 spec 是第一道防线；这里是纵深防御，旧包或误打包也带不进用户家目录。
+EXTERNAL_PLUGIN_NAMES = frozenset({"wallpaper"})
 _MIGRATED_PLUGIN_MARKER = "data/run/legacy-plugin-migration.json"
 
 
@@ -84,13 +87,70 @@ def seed_core_features(bundle, home, legacy_roots=()):
     return {"seeded": len(current), "removed_stale": removed_stale}
 
 
+def seed_plugins(bundle, home, legacy_roots=()):
+    """Seed the plugins shipped inside the Brain package; never overwrite user edits.
+
+    Bundled plugins land in home/plugins (the loader's builtin root). An extension
+    that is not bundled — wallpaper today — lives only in data/installed_plugins.
+    """
+    bundle, home = Path(bundle).resolve(), Path(home).resolve()
+    marker = home / "data/run/bundled-plugins.json"
+    previous = _read_json(marker)
+    current = {}
+    seeded = 0
+    for src in sorted(bundle.rglob("*")):
+        if not src.is_file() or src.is_symlink():
+            continue
+        rel = src.relative_to(bundle)
+        if "__pycache__" in rel.parts or src.suffix in (".pyc", ".pyo", ".log"):
+            continue
+        if rel.parts[0].lower().split(".")[0] in EXTERNAL_PLUGIN_NAMES:
+            continue
+        dst = home / "plugins" / rel
+        if not dst.resolve().is_relative_to(home):
+            raise ValueError("Bundled plugin path escapes the application home")
+        digest = _sha256(src)
+        old_hashes = {previous.get(rel.as_posix())}
+        for root in legacy_roots:
+            old = Path(root) / "_internal/plugins" / rel
+            if old.is_file() and not old.is_symlink():
+                old_hashes.add(_sha256(old))
+        if not dst.exists() or (dst.is_file() and _sha256(dst) in old_hashes):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            temp = dst.with_name(dst.name + ".seed-tmp")
+            shutil.copy2(src, temp)
+            os.replace(temp, dst)
+            seeded += 1
+        elif not dst.is_file():
+            raise ValueError("Bundled plugin target is not a regular file: " + rel.as_posix())
+        current[rel.as_posix()] = digest
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temp = marker.with_suffix(".tmp")
+    temp.write_text(json.dumps(current, sort_keys=True), encoding="utf-8")
+    os.replace(temp, marker)
+    return {"seeded": seeded, "tracked": len(current)}
+
+
+def _matches_bundled_dir(src, bundled):
+    """True when a legacy plugin directory is byte-identical to the shipped copy."""
+    prefix = src.name + "/"
+    entries = {k[len(prefix):]: v for k, v in bundled.items() if k.startswith(prefix)}
+    if not entries:
+        return False
+    for rel, digest in entries.items():
+        child = src / Path(rel)
+        if not child.is_file() or child.is_symlink() or _sha256(child) != digest:
+            return False
+    return True
+
+
 def migrate_legacy_plugins(home, legacy_roots=()):
     """Copy legacy user plugins into the user install directory without overwriting.
 
-    New releases never ship a plugins/ tree. Existing homes may have one from older
-    releases or user-created packages. Preserve optional packages as user installs;
-    skip unchanged copies of the modules now shipped as core features. Source files
-    are retained for recovery and no user data is deleted.
+    Bundled plugins ship in home/plugins, so an unchanged copy left by an older
+    release must not also be imported as a user install (that would shadow the
+    newer bundled version). Anything a user edited or added is copied instead.
+    Source files are retained for recovery and no user data is deleted.
     """
     home = Path(home).resolve()
     legacy = home / "plugins"
@@ -118,7 +178,7 @@ def migrate_legacy_plugins(home, legacy_roots=()):
             same_as_current_core = (src.name in CORE_FEATURE_NAMES and core_copy.is_file()
                                     and _sha256(src) == _sha256(core_copy))
             same_as_old_bundle = bool(bundled.get(src.name) and _sha256(src) == bundled.get(src.name))
-            if src.name in CORE_FEATURE_NAMES and (same_as_current_core or same_as_old_bundle):
+            if same_as_current_core or same_as_old_bundle:
                 result["skipped_core"] += 1
                 continue
             dst = installed / src.name
@@ -161,6 +221,9 @@ def migrate_legacy_plugins(home, legacy_roots=()):
         key = "plugins/" + src.name
         digest = _tree_sha256(src)
         if migrated.get(key) == digest:
+            continue
+        if _matches_bundled_dir(src, bundled):
+            result["skipped_core"] += 1
             continue
         if dst.exists():
             migrated[key] = digest

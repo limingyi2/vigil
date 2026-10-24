@@ -46,13 +46,17 @@ try:
             time.sleep(0.5)
     else:
         raise RuntimeError('Backend health timed out; fixture: %s' % home)
-    assert (home / 'plugins/wallpaper/frontend.js').is_file()
+    # 内置插件随包；wallpaper 是市场外部插件，不该出现在安装包里。
+    for rel in ('plugins/kb.py', 'plugins/gate.py', 'plugins/react.py',
+                'plugins/websearch.py', 'plugins/branch-atlas/frontend.js'):
+        assert (home / '_internal' / rel).is_file(), 'missing bundled plugin: ' + rel
+    assert not (home / '_internal/plugins/wallpaper').exists(), 'wallpaper must stay external'
     first = get('/api/plugins/frontend')
-    assert any(p['name'] == 'wallpaper' and p['js'] and p['css'] for p in first['plugins']), first
+    assert any(p['name'] == 'branch-atlas' and p['js'] and p['css'] for p in first['plugins']), first
     time.sleep(2)
     assert first['version'] == get('/api/plugins/frontend')['version']
     get('/api/plugins')
-    print('PASS: packaged backend health, directory plugin seeding, wallpaper JS/CSS, stable version')
+    print('PASS: packaged backend health, bundled plugin seeding, extension isolation')
 finally:
     process.terminate()
     process.wait(timeout=15)

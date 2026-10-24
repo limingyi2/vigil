@@ -47,8 +47,12 @@ exports.afterPack=async context=>{
   if(dependencies.some(([before,after])=>before<0||after<0||before>=after))throw new Error('Packaged client script loading order is invalid.');
   const client=JSON.parse(asar.extractFile(archive,'build-info.json'));
   const root=path.join(resources,'vigil-brain'),brain=contract.read(path.join(root,'brain-manifest.json'));
-  for(const rel of ['plugins','_internal/plugins']) {
-    if(fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain contains a plugin source tree: '+rel);
+  // 内置插件必须随包；只有 wallpaper 这类市场外部插件不许进安装包。
+  for(const rel of ['plugins/wallpaper','_internal/plugins/wallpaper']) {
+    if(fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain contains an external plugin payload: '+rel);
+  }
+  for(const rel of ['_internal/plugins/kb.py','_internal/plugins/gate.py','_internal/plugins/react.py','_internal/plugins/websearch.py']) {
+    if(!fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain is missing a bundled plugin: '+rel);
   }
   contract.compatible(client,brain);contract.verifyTree(root,brain);
 };

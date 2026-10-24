@@ -47,15 +47,15 @@ import threading
 import traceback
 
 try:
-    from paths import CORE_FEATURES_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
-    _DIR = str(CORE_FEATURES_DIR)
-    _CORE_PLUGIN_ROOT = str(CORE_FEATURES_DIR)
-    _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)
+    from paths import PLUGINS_DIR, CORE_FEATURES_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
+    _DIR = str(PLUGINS_DIR)                     # 随包内置插件（wallpaper 不在其中）
+    _CORE_PLUGIN_ROOT = str(CORE_FEATURES_DIR)   # 核心能力适配器
+    _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)     # 市场安装的外部插件
     _DDIR = str(PLUGIN_DATA_DIR)
     _ROOT = str(CONFIG_DIR)
 except Exception:
-    _DIR = r"C:\vigil\core_features"
-    _CORE_PLUGIN_ROOT = _DIR
+    _DIR = r"C:\vigil\plugins"
+    _CORE_PLUGIN_ROOT = r"C:\vigil\core_features"
     _INSTALLED_DIR = r"C:\vigil\data\installed_plugins"
     _DDIR = r"C:\vigil\data\plugins"
     _ROOT = r"C:\vigil\config"
@@ -63,7 +63,10 @@ except Exception:
 # 钩子名 → 必需参数个数。用于参数个数不对时打一行日志而不是抛 TypeError
 # 到调用方栈里（插件作者看到的应该是"你这里少传了参数"，不是她的调用栈）。
 _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
-_CORE_PLUGIN_FILES = frozenset({"plugin_market.py", "remote.py", "skill.py"})
+# brain/plugins/ 里的这几个文件是历史镜像，实际来源另有其一：
+# 前三个随核心从 core_features/ 加载，calc 已内联进 tools.py。
+# 打包时它们也不进制品，这里排除是为开发态不出现同名双份。
+_SHADOWED_BUILTINS = frozenset({"plugin_market.py", "remote.py", "skill.py", "calc.py"})
 
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()
@@ -260,7 +263,7 @@ def re_name_ok(n):
     return bool(n) and all(c.isalnum() or c in "_-" for c in n)
 
 
-def _scan_plugin_directory(directory, allowed_files=None):
+def _scan_plugin_directory(directory, exclude_files=None):
     """Read plugin source files from one directory without mixing it with user installs."""
     found = {}
     try:
@@ -280,7 +283,7 @@ def _scan_plugin_directory(directory, allowed_files=None):
         # Single-file plugin.
         if not fn.endswith(".py") or fn.startswith("_"):
             continue
-        if allowed_files is not None and fn not in allowed_files:
+        if exclude_files is not None and fn in exclude_files:
             continue
         plugin = _load_one(fpath)
         if plugin:
@@ -289,13 +292,13 @@ def _scan_plugin_directory(directory, allowed_files=None):
 
 
 def _plugin_entry_path(name):
-    """Find one core-feature or installed-plugin entry without importing unrelated modules."""
+    """Find one builtin/core-feature/installed entry without importing unrelated modules."""
     name = str(name or "").strip()
-    for directory in (_INSTALLED_DIR, _DIR):
+    for directory in (_INSTALLED_DIR, _DIR, _CORE_PLUGIN_ROOT):
         if not directory:
             continue
-        if (os.path.abspath(directory) == os.path.abspath(_CORE_PLUGIN_ROOT)
-                and name + ".py" not in _CORE_PLUGIN_FILES):
+        if (name + ".py" in _SHADOWED_BUILTINS
+                and os.path.abspath(directory) == os.path.abspath(_DIR)):
             continue
         package_init = os.path.join(directory, name, "__init__.py")
         if os.path.isfile(package_init):
@@ -307,10 +310,11 @@ def _plugin_entry_path(name):
 
 
 def load(force=False, only=None):
-    """Load core capability adapters first, then user-installed extensions as overrides.
+    """Load core capability adapters, bundled plugins, then installed extensions.
 
-    Optional extensions are read only from data/installed_plugins. The tracked
-    brain/plugins source tree is never scanned by the runtime or included in releases.
+    Bundled plugins ship inside the Brain package (everything except wallpaper);
+    wallpaper and any future optional extension are read only from
+    data/installed_plugins, so an installed copy overrides a bundled one.
     """
     global _loaded
     with _lock:
@@ -329,12 +333,15 @@ def load(force=False, only=None):
             _loaded = True
             _sync_features()
             return dict(_registry)
-        core_allowlist = (_CORE_PLUGIN_FILES if os.path.abspath(_DIR) ==
-                          os.path.abspath(_CORE_PLUGIN_ROOT) else None)
-        found = _scan_plugin_directory(_DIR, core_allowlist)
-        if os.path.abspath(_INSTALLED_DIR) != os.path.abspath(_DIR):
-            # Installed plugins override a same-named core plugin intentionally.
-            found.update(_scan_plugin_directory(_INSTALLED_DIR))
+        found = {}
+        # 核心能力适配器（随核心发布的三件）先装，内置插件不得顶掉它们的名字。
+        for directory, skip in ((_CORE_PLUGIN_ROOT, None), (_DIR, _SHADOWED_BUILTINS)):
+            if directory and os.path.abspath(directory) != os.path.abspath(_INSTALLED_DIR):
+                for name, plugin in _scan_plugin_directory(directory, skip).items():
+                    found[name] = plugin
+        # Installed plugins override a same-named builtin intentionally.
+        for name, plugin in _scan_plugin_directory(_INSTALLED_DIR).items():
+            found[name] = plugin
         # Remove stale module objects from sys.modules after hot reload.
         keep = set("zxplug_" + plugin.name for plugin in found.values())
         for key in [key for key in sys.modules if key.startswith("zxplug_")]:

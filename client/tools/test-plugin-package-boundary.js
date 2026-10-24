@@ -11,13 +11,29 @@ test('core plugin management and resource bridge are allowed in the client packa
   ]), true);
 });
 
-test('extension source directories are rejected regardless of plugin name or nesting', () => {
+test('bundled plugins inside the Brain payload are expected, not rejected', () => {
+  assert.equal(verifyNoBundledPluginPaths([
+    '/resources/vigil-brain/_internal/plugins/kb.py',
+    '/resources/vigil-brain/_internal/plugins/gate.py',
+    '/resources/vigil-brain/_internal/plugins/branch-atlas/frontend.js',
+  ]), true);
+});
+
+test('the wallpaper extension is rejected wherever it appears', () => {
   for (const file of [
+    '/resources/vigil-brain/_internal/plugins/wallpaper/__init__.py',
     '/src/plugins/wallpaper/manifest.json',
-    '/src/js/plugins/future-extension/index.js',
-    '/src/js/plugins/future_plugin/manifest.json',
-    '/electron/extensions/plugins/example/main.js',
-    '/assets/market/plugins/example.zip',
+    '/src/js/plugins/wallpaper/frontend.js',
+    '\\resources\\vigil-brain\\_internal\\plugins\\wallpaper\\frontend.css',
+  ]) {
+    assert.throws(() => verifyNoBundledPluginPaths([file]), /extension plugin payload/, file);
+  }
+});
+
+test('runtime install trees are rejected in the client package', () => {
+  for (const file of [
+    '/resources/vigil-brain/data/installed_plugins/wallpaper/__init__.py',
+    '/electron/extensions/installed_plugins/example/main.js',
   ]) {
     assert.throws(() => verifyNoBundledPluginPaths([file]), /extension plugin payload/, file);
   }
@@ -29,11 +45,4 @@ test('renamed extension packages are rejected by their manifest in app.asar or e
   } };
   assert.throws(() => verifyNoBundledPluginManifests([entry]), /extension plugin manifest/);
   assert.equal(verifyNoBundledPluginManifests([{path:'/electron/package.json',content:{name:'vigil-client'}}]), true);
-});
-
-test('Windows separators are normalized before package-boundary checks', () => {
-  assert.throws(
-    () => verifyNoBundledPluginPaths(['\\src\\js\\plugins\\wallpaper\\manifest.json']),
-    /extension plugin payload/,
-  );
 });

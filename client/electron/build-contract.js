@@ -21,9 +21,11 @@ function verifyTree(root, manifest) {
   if (!manifest.files || !manifest.files['vigil-brain.exe']) throw new Error('缺少 Brain 文件清单');
 }
 function verifyNoBundledPluginPaths(files) {
+  // 内置插件（kb/gate/react…）随包发布是预期状态；wallpaper 由市场安装，
+  // 以及任何运行时安装目录，都不许出现在安装包里。
   const offenders = (files || []).filter(file => {
     const normalized = String(file).replace(/\\/g, '/').replace(/^\/+/, '');
-    return /(?:^|\/)plugins\/.+/i.test(normalized)
+    return /(?:^|\/)plugins\/wallpaper(?:\/|$)/i.test(normalized)
       || /(?:^|\/)installed_plugins\/.+/i.test(normalized);
   });
   if (offenders.length) {

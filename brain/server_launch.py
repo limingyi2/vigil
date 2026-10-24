@@ -24,14 +24,14 @@ HOME_DIR = os.path.abspath(os.environ.get('VIGIL_HOME') or
 
 
 def _seed_core_features():
-    """把随核心发布的能力适配器铺到 exe 旁边；绝不从安装包种入可选插件。"""
+    """把随包的能力适配器与内置插件铺到 exe 旁边；wallpaper 等外部插件不由安装包带。"""
     if not FROZEN:
         return
     src = os.path.join(CODE_DIR, "core_features")
     if not os.path.isdir(src):
         raise RuntimeError("Required core feature payload is missing: " + src)
     import json
-    from home_migration import seed_core_features, migrate_legacy_plugins
+    from home_migration import seed_core_features, seed_plugins, migrate_legacy_plugins
     legacy_roots = []
     if os.environ.get("VIGIL_MANAGED") == "1":
         legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
@@ -47,7 +47,17 @@ def _seed_core_features():
         # directory must not prevent the Brain from starting with user data intact.
         print("[sidecar] 旧版插件迁移失败，Brain 继续启动；原文件已保留：%s" %
               str(exc)[:180], flush=True)
+    # 顺序要紧：先迁移旧 home 的 plugins/，再铺新版内置；反过来会把旧文件
+    # 当成"用户改动"复制进 installed，从而覆盖掉刚铺好的新版。
     seed_core_features(src, HOME_DIR, legacy_roots)
+    bundled = os.path.join(CODE_DIR, "plugins")
+    if os.path.isdir(bundled):
+        try:
+            seeded = seed_plugins(bundled, HOME_DIR, legacy_roots)
+            print("[sidecar] 内置插件已就位 %d 个（跟踪 %d 个文件）" %
+                  (seeded["seeded"], seeded["tracked"]), flush=True)
+        except Exception as exc:
+            print("[sidecar] 内置插件铺设失败，Brain 继续启动：%s" % str(exc)[:180], flush=True)
 
 
 def _start_skill_host():

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 sys.path.insert(0, str(ROOT))
 
-from home_migration import migrate_legacy_plugins, seed_core_features
+from home_migration import migrate_legacy_plugins, seed_core_features, seed_plugins
 from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
 
 
@@ -30,15 +30,34 @@ def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, m
     assert payload["port"] == 54321
 
 
-def test_brain_release_guard_rejects_legacy_plugin_trees(tmp_path):
-    (tmp_path / "_internal" / "core_features").mkdir(parents=True)
-    (tmp_path / "_internal" / "core_features" / "kb.py").write_text("core", encoding="utf-8")
+def test_brain_release_guard_allows_bundled_plugins(tmp_path):
+    """内置插件（kb/gate/branch-atlas…）随包发布是预期状态，不该被拦。"""
+    internal = tmp_path / "_internal"
+    (internal / "core_features").mkdir(parents=True)
+    (internal / "core_features" / "skill.py").write_text("core", encoding="utf-8")
+    plugins = internal / "plugins"
+    plugins.mkdir()
+    (plugins / "kb.py").write_text("bundled", encoding="utf-8")
+    package = plugins / "branch-atlas"
+    package.mkdir()
+    (package / "__init__.py").write_text("bundled", encoding="utf-8")
     assert assert_no_bundled_plugin_tree(tmp_path) is True
 
-    plugin_dir = tmp_path / "_internal" / "plugins"
-    plugin_dir.mkdir()
-    (plugin_dir / "future_plugin.py").write_text("extension", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="bundled plugin tree"):
+
+def test_brain_release_guard_rejects_wallpaper_payload(tmp_path):
+    """wallpaper 是市场外部插件，任何形态都不许随包。"""
+    package = tmp_path / "_internal" / "plugins" / "wallpaper"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("external", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="external plugin"):
+        assert_no_bundled_plugin_tree(tmp_path)
+
+
+def test_brain_release_guard_rejects_installed_plugin_tree(tmp_path):
+    installed = tmp_path / "_internal" / "data" / "installed_plugins"
+    installed.mkdir(parents=True)
+    (installed / "kb.py").write_text("runtime data", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="installed plugin"):
         assert_no_bundled_plugin_tree(tmp_path)
 
 
@@ -48,7 +67,7 @@ def test_brain_release_guard_rejects_renamed_future_plugin_by_manifest(tmp_path)
     (package / "manifest.json").write_text(json.dumps({
         "schema": "vigil.brain-plugin/v1", "name": "future_plugin",
     }), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="bundled plugin manifest"):
+    with pytest.raises(RuntimeError, match="extension plugin manifest"):
         assert_no_bundled_plugin_tree(tmp_path)
 
 
@@ -160,37 +179,73 @@ def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_ro
     assert (old_brain / "_internal/core_features/kb.py").is_file()
 
 
-def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
+def test_seed_plugins_updates_shipped_code_and_keeps_user_edits(tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    source = bundle / "kb.py"
+    source.write_text("kb-v1", encoding="utf-8")
+
+    assert seed_plugins(bundle, home)["seeded"] == 1
+    target = home / "plugins" / "kb.py"
+    assert target.read_text(encoding="utf-8") == "kb-v1"
+
+    # 上一版随包内容应被新版覆盖，用户改过的必须保留。
+    source.write_text("kb-v2", encoding="utf-8")
+    seed_plugins(bundle, home)
+    assert target.read_text(encoding="utf-8") == "kb-v2"
+
+    target.write_text("user-edited", encoding="utf-8")
+    source.write_text("kb-v3", encoding="utf-8")
+    seed_plugins(bundle, home)
+    assert target.read_text(encoding="utf-8") == "user-edited"
+
+
+def test_seed_plugins_keeps_directory_package_resources(tmp_path):
+    bundle = tmp_path / "bundle" / "branch-atlas"
+    bundle.mkdir(parents=True)
+    (bundle / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
+    (bundle / "frontend.js").write_text("// ui", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = seed_plugins(tmp_path / "bundle", home)
+    assert result["seeded"] == 2
+    assert (home / "plugins" / "branch-atlas" / "frontend.js").is_file()
+
+
+def test_release_spec_ships_bundled_plugins_and_isolates_wallpaper():
     spec = (ROOT / "deploy/brain/vigil-brain.spec").read_text(encoding="utf-8")
-    legacy_spec = (ROOT / "brain/vigil-brain.spec").read_text(encoding="utf-8")
     launcher = (ROOT / "brain/server_launch.py").read_text(encoding="utf-8")
     paths = (ROOT / "brain/paths.py").read_text(encoding="utf-8")
     host = (ROOT / "brain/plugin_host.py").read_text(encoding="utf-8")
     build = (ROOT / "scripts/build_release.py").read_text(encoding="utf-8")
 
-    assert '["git", "ls-files", "-z", "--", "brain/core_features"]' in spec
-    assert '["git", "ls-files", "-z", "--", "brain/plugins"]' not in spec
-    assert "split(chr(0))" in spec
+    # 内置插件随包：从 git 取受控文件，显式排除 wallpaper。
+    assert '["git", "ls-files", "-z", "--", "brain/plugins"]' in spec
+    assert 'if rel_file == "wallpaper" or rel_file.startswith("wallpaper/")' in spec
+    assert "datas=core_feature_data + plugins_data + skill_host_data" in spec
+    assert '"kb.py", "gate.py", "react.py", "websearch.py"' in spec
+    # 与 core_features 重名的镜像与已内联的 calc 不进包。
+    assert 'BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py", "calc.py"}' in spec
+    # 核心适配器仍是允许清单制。
     assert "CORE_FEATURE_ALLOWLIST = {" in spec
-    assert "if rel_file not in CORE_FEATURE_ALLOWLIST" in spec
     assert "if seen_core_features != CORE_FEATURE_ALLOWLIST" in spec
-    assert "datas=core_feature_data + skill_host_data" in spec
     for optional in ("gate.py", "kb.py", "react.py", "websearch.py"):
-        assert optional not in spec
         assert not (ROOT / "brain/core_features" / optional).exists()
-    assert not (ROOT / "brain/core_features" / "calc.py").exists()
-    assert "('core_features', 'core_features')" not in legacy_spec
-    assert "('core_features/plugin_market.py', 'core_features')" in legacy_spec
+
+    # 启动时先迁移旧 home 再铺内置，顺序反了会用旧文件盖掉新版。
     assert "def _seed_core_features()" in launcher
-    assert "_seed_plugins()" not in launcher
-    assert "migrate_legacy_plugins(HOME_DIR, legacy_roots)" in launcher
-    assert 'CORE_FEATURES_DIR = os.path.join(ROOT, "core_features")' in paths
-    assert "CORE_FEATURES_DIR" in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
-    assert "PLUGINS_DIR" not in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
-    assert "from paths import CORE_FEATURES_DIR" in host
-    assert "_CORE_PLUGIN_FILES = frozenset({\"plugin_market.py\", \"remote.py\", \"skill.py\"})" in host
-    assert "(\"kb.py\", \"plugin_market.py\", \"remote.py\", \"skill.py\")" not in spec
-    assert "core_features/kb.py" not in legacy_spec
+    assert "seed_plugins(bundled, HOME_DIR, legacy_roots)" in launcher
+    assert launcher.index("migrate_legacy_plugins(HOME_DIR, legacy_roots)") < \
+        launcher.index("seed_plugins(bundled, HOME_DIR, legacy_roots)")
+
+    assert "CORE_FEATURES_DIR = os.path.join(ROOT, \"core_features\")" in paths
+    dirs = paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
+    assert "CORE_FEATURES_DIR" in dirs and "PLUGINS_DIR" in dirs
+    assert "from paths import PLUGINS_DIR, CORE_FEATURES_DIR" in host
+    assert "_SHADOWED_BUILTINS = frozenset(" in host
     assert "assert_no_bundled_plugin_tree(OUT)" in build
 
 
