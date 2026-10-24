@@ -1,6 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('fs'),os=require('os'),path=require('path'),vm=require('vm');
 const contract=require('../electron/build-contract'),tx=require('../electron/update-transaction');
+require('./test-sidecar-startup.js');
 const identity={version:'fixture',commit:'fixture-sha',source_digest:'fixture-tree',protocol:1,capabilities:contract.REQUIRED,candidate:true};
 test('public update source rejects candidates and untrusted download origins',()=>{
   const source=require('../electron/public-updates');
@@ -52,18 +53,28 @@ test('the client only ever connects to the bundled brain',()=>{
 test('rollback snapshot preserves a complete pair, checks hashes, never contains user home',t=>{
   const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'vigil-update-'));t.after(()=>fs.rmSync(tmp,{recursive:true,force:true}));
   const install=path.join(tmp,'app'),home=path.join(tmp,'profile');fs.mkdirSync(install);
-  fs.writeFileSync(path.join(install,'Vigil.exe'),'old-client');fs.mkdirSync(path.join(install,'resources'));
+  fs.writeFileSync(path.join(install,'Kestrel.exe'),'old-client');fs.mkdirSync(path.join(install,'resources'));
   fs.writeFileSync(path.join(install,'resources/brain.bin'),'old-brain');
-  const snapshot=tx.checkpoint(install,home,identity);
+  const snapshot=tx.checkpoint(install,home,identity,'Kestrel.exe');
+  assert.ok(snapshot,'Current product executable name is accepted by the installer checkpoint');
   assert.equal(tx.pending(home).status,'prepared');
   assert.deepEqual(tx.inventory(snapshot.backupDir),snapshot.files);
+  assert.equal(tx.canRollback(home,identity),true,'Only the matching pending update can roll back');
+  assert.equal(tx.canRollback(home,{...identity,commit:'another-build'}),false,'A stale or unrelated build cannot roll back');
   tx.markHealthy(home,{...identity,source_digest:'wrong'});assert.equal(tx.pending(home).status,'prepared');
   tx.markHealthy(home,identity);assert.equal(tx.pending(home).status,'healthy');
-  assert.throws(()=>tx.checkpoint(install,path.join(install,'data'),identity));
+  assert.equal(tx.canRollback(home,identity),false,'A previously healthy update does not trigger recovery on a later Brain failure');
+  assert.throws(()=>tx.launchRollback(home,process.pid,identity),/没有待确认更新/);
+  assert.throws(()=>tx.checkpoint(install,path.join(install,'data'),identity,'Kestrel.exe'));
   const originalCopy=fs.cpSync;let copyAttempted=false;
   fs.cpSync=function(){copyAttempted=true;throw new Error('copy must not be reached for overlapping roots')};
   try {
-    assert.throws(()=>tx.checkpoint(install,install,identity),/应用目录与用户数据目录必须分离/);
+    assert.throws(()=>tx.checkpoint(install,install,identity,'Kestrel.exe'),/应用目录与用户数据目录必须分离/);
   } finally { fs.cpSync=originalCopy; }
   assert.equal(copyAttempted,false,'overlapping install and data roots must be rejected before filesystem changes');
+});
+test('NSIS checkpoint targets the product executable declared by electron-builder',()=>{
+  const nsis=fs.readFileSync(path.join(__dirname,'installer.nsh'),'utf8');
+  assert.ok(nsis.includes('$INSTDIR\\${APP_EXECUTABLE_FILENAME}'),'Upgrade backup must launch the actual installed product executable');
+  assert.equal(nsis.includes('$INSTDIR\\Vigil.exe'),false,'The old product name must not gate Kestrel backup creation');
 });
