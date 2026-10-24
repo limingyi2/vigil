@@ -7,13 +7,18 @@ a = Analysis(
     binaries=[],
     datas=[
         ('core_features/__init__.py', 'core_features'),
-        ('core_features/kb.py', 'core_features'),
         ('core_features/plugin_market.py', 'core_features'),
         ('core_features/remote.py', 'core_features'),
         ('core_features/skill.py', 'core_features'),
         ('version.json', '.'),
     ],
-    hiddenimports=['websocket'],
+    hiddenimports=[
+        'websocket',
+        # The optional Knowledge Base extension is loaded from user data and
+        # imports these package modules dynamically in frozen builds.
+        'kb', 'kb.config', 'kb.chunker', 'kb.embedder', 'kb.engine',
+        'kb.ingest', 'kb.kb_core', 'kb.reader', 'kb.search', 'kb.store',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

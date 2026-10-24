@@ -13,9 +13,10 @@ DIRECTORIES = ('config', 'data', 'plugins', 'logs', 'archive', 'skill_host/skill
 
 
 CORE_FEATURE_NAMES = frozenset({
-    "kb.py", "plugin_market.py", "remote.py", "skill.py",
+    "plugin_market.py", "remote.py", "skill.py",
 })
-LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"calc.py", "gate.py", "react.py", "websearch.py"})
+LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"calc.py", "gate.py", "kb.py", "react.py", "websearch.py"})
+_MIGRATED_PLUGIN_MARKER = "data/run/legacy-plugin-migration.json"
 
 
 def _read_json(path):
@@ -83,7 +84,7 @@ def seed_core_features(bundle, home, legacy_roots=()):
     return {"seeded": len(current), "removed_stale": removed_stale}
 
 
-def migrate_legacy_plugins(home):
+def migrate_legacy_plugins(home, legacy_roots=()):
     """Copy legacy user plugins into the user install directory without overwriting.
 
     New releases never ship a plugins/ tree. Existing homes may have one from older
@@ -98,9 +99,11 @@ def migrate_legacy_plugins(home):
     if legacy.is_symlink():
         return {"copied": 0, "skipped_core": 0, "skipped_links": 0, "errors": []}
     has_legacy = legacy.is_dir()
-    if not has_legacy and not old_core.is_dir():
+    legacy_roots = tuple(Path(root).resolve() for root in legacy_roots if root)
+    if not has_legacy and not old_core.is_dir() and not legacy_roots:
         return {"copied": 0, "skipped_core": 0, "skipped_links": 0, "errors": []}
     bundled = _read_json(home / "data/run/bundled-plugins.json")
+    migrated = _read_json(home / _MIGRATED_PLUGIN_MARKER)
     result = {"copied": 0, "skipped_core": 0, "skipped_links": 0, "errors": []}
     installed.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +122,15 @@ def migrate_legacy_plugins(home):
                 result["skipped_core"] += 1
                 continue
             dst = installed / src.name
+            digest = _sha256(src)
+            # The legacy source is deliberately retained for recovery. Remember
+            # which exact source revision was imported so uninstalling the user
+            # copy cannot cause the next client upgrade/start to resurrect it.
+            key = "plugins/" + src.name
+            if migrated.get(key) == digest:
+                continue
             if dst.exists():
+                migrated[key] = digest
                 continue
             if not dst.resolve().is_relative_to(installed):
                 raise ValueError("Legacy plugin target escapes install directory")
@@ -128,6 +139,7 @@ def migrate_legacy_plugins(home):
                 shutil.copy2(src, temp)
                 os.replace(temp, dst)
                 result["copied"] += 1
+                migrated[key] = digest
             except Exception as exc:
                 try:
                     temp.unlink(missing_ok=True)
@@ -146,7 +158,12 @@ def migrate_legacy_plugins(home):
             result["skipped_links"] += 1
             continue
         dst = installed / src.name
+        key = "plugins/" + src.name
+        digest = _tree_sha256(src)
+        if migrated.get(key) == digest:
+            continue
         if dst.exists():
+            migrated[key] = digest
             continue
         if not dst.resolve().is_relative_to(installed):
             raise ValueError("Legacy plugin package escapes install directory")
@@ -156,9 +173,78 @@ def migrate_legacy_plugins(home):
                 "__pycache__", "*.pyc", "*.pyo", "*.log", ".host_started"))
             os.replace(temp, dst)
             result["copied"] += 1
+            migrated[key] = digest
         except Exception as exc:
             shutil.rmtree(temp, ignore_errors=True)
             result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
+
+    # Older clients stored extension code beside the packaged Brain instead of
+    # under the persistent user home. Read those explicit previous-install roots
+    # before the installer replaces them; copy only optional features from old
+    # core_features, and preserve other non-core modules from old plugins trees.
+    for root in legacy_roots:
+        if root == home or not root.is_dir() or root.is_symlink():
+            continue
+        for folder in ("_internal/plugins", "plugins", "_internal/core_features", "core_features"):
+            source_dir = root / folder
+            if not source_dir.is_dir() or source_dir.is_symlink():
+                continue
+            is_core_folder = folder.endswith("core_features")
+            for src in sorted(source_dir.iterdir()):
+                if src.is_symlink():
+                    result["skipped_links"] += 1
+                    continue
+                if is_core_folder:
+                    if src.name not in LEGACY_OPTIONAL_FEATURE_NAMES or not src.is_file():
+                        continue
+                elif src.is_file():
+                    if src.name.startswith("_") or src.suffix.lower() not in (".py", ".json", ".md", ".txt"):
+                        continue
+                    if src.name in CORE_FEATURE_NAMES:
+                        # This is a previous application install root, so these
+                        # names are shipped infrastructure adapters rather than
+                        # user-installed extension entries. The old root remains
+                        # untouched as recovery while the new Brain supplies them.
+                        result["skipped_core"] += 1
+                        continue
+                elif src.is_dir():
+                    if not (src / "__init__.py").is_file():
+                        continue
+                    if any(child.is_symlink() for child in src.rglob("*")):
+                        result["skipped_links"] += 1
+                        continue
+                else:
+                    continue
+
+                digest = _sha256(src) if src.is_file() else _tree_sha256(src)
+                key = folder + "/" + src.name
+                if migrated.get(key) == digest:
+                    continue
+                dst = installed / src.name
+                if dst.exists():
+                    migrated[key] = digest
+                    continue
+                if not dst.resolve().is_relative_to(installed):
+                    raise ValueError("Legacy plugin target escapes install directory")
+                temp = installed / ("." + src.name + ".migration-" + uuid.uuid4().hex)
+                try:
+                    if src.is_dir():
+                        shutil.copytree(src, temp, ignore=shutil.ignore_patterns(
+                            "__pycache__", "*.pyc", "*.pyo", "*.log", ".host_started"))
+                    else:
+                        shutil.copy2(src, temp)
+                    os.replace(temp, dst)
+                    result["copied"] += 1
+                    migrated[key] = digest
+                except Exception as exc:
+                    if temp.is_dir():
+                        shutil.rmtree(temp, ignore_errors=True)
+                    else:
+                        try:
+                            temp.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
 
     # P21.0 briefly shipped optional feature modules under core_features/. Copy
     # them into the user install area before core seeding prunes unchanged files.
@@ -168,20 +254,45 @@ def migrate_legacy_plugins(home):
                     or src.is_symlink()):
                 continue
             dst = installed / src.name
+            key = "core_features/" + src.name
+            digest = _sha256(src)
+            if migrated.get(key) == digest:
+                continue
             if dst.exists():
+                migrated[key] = digest
                 continue
             temp = dst.with_name(dst.name + ".migration-" + uuid.uuid4().hex)
             try:
                 shutil.copy2(src, temp)
                 os.replace(temp, dst)
                 result["copied"] += 1
+                migrated[key] = digest
             except Exception as exc:
                 try:
                     temp.unlink(missing_ok=True)
                 except OSError:
                     pass
                 result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
+    # Persist migration receipts atomically; successful copies are idempotent
+    # across restarts and do not turn an explicit later uninstall into reinstall.
+    marker = home / _MIGRATED_PLUGIN_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temp = marker.with_name(marker.name + ".tmp")
+    temp.write_text(json.dumps(migrated, sort_keys=True), encoding="utf-8")
+    os.replace(temp, marker)
     return result
+
+
+def _tree_sha256(root):
+    """Stable digest for a legacy directory package without following links."""
+    digest = hashlib.sha256()
+    root = Path(root)
+    for path in sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink()):
+        rel = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(len(rel).to_bytes(4, "big"))
+        digest.update(rel)
+        digest.update(bytes.fromhex(_sha256(path)))
+    return digest.hexdigest()
 
 
 def migrate(source, home):

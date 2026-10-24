@@ -9,7 +9,10 @@ async function run(){
   const env={...process.env,VIGIL_USER_DATA:profile,VIGIL_BRAIN_EXE:'Z:/old/missing-brain.exe',
     PATH:process.env.SystemRoot+'\\System32',VIGIL_SIDECAR_DISABLE:'1'};
   delete env.ELECTRON_RUN_AS_NODE;delete env.VIGIL_CLOUD_TOKEN;delete env.VIGIL_CLOUD_URL;
-  child=spawn(path.join(install,'Vigil.exe'),['--remote-debugging-port=0'],{env,windowsHide:true,stdio:'ignore'});
+  const executable=fs.readdirSync(install).find(name=>/^Kestrel\.exe$/i.test(name))||
+    fs.readdirSync(install).find(name=>/^Vigil\.exe$/i.test(name));
+  assert.ok(executable,'Installed Electron executable was not found');
+  child=spawn(path.join(install,executable),['--remote-debugging-port=0'],{env,windowsHide:true,stdio:'ignore'});
   let port;
   for(let i=0;i<300;i++){
     if(child.exitCode!=null)throw Error('Installed Electron exited '+child.exitCode);
@@ -90,8 +93,12 @@ async function run(){
   await startNewConversation();
   const conversationA=await sendUiMessage('A_ONLY','Hello fixture');
   assert.ok(conversationA,'First user message did not create and activate conversation A');
-  assert.ok(await evaluate(`document.querySelector('[data-session="${conversationA}"]').textContent.includes('A_ONLY')`),
-    'First user message did not create a conversation title');
+  let titled=false;
+  for(let i=0;i<100;i++){
+    titled=await evaluate(`document.querySelector('[data-session="${conversationA}"]')?.textContent.includes('A_ONLY')`);
+    if(titled)break;await sleep(50);
+  }
+  assert.ok(titled,'First user message did not create a conversation title');
   await startNewConversation();
   const conversationB=await sendUiMessage('B_ONLY','Hello fixture');
   assert.ok(conversationB,'First user message did not create and activate conversation B');
@@ -163,15 +170,21 @@ async function run(){
   const pluginB64=fs.readFileSync(pluginZip).toString('base64');
   const installed=await evaluate(`vigil.api('POST','/api/plugins/install',{zip_b64:${JSON.stringify(pluginB64)},source:'windows-acceptance'})`);
   assert.equal(installed.status,200);assert.equal(installed.json?.ok,true,JSON.stringify(installed.json));
-  const reloaded=await evaluate("vigil.api('POST','/api/plugins/reload',{})");
-  assert.equal(reloaded.status,200);assert.ok(reloaded.json?.plugins?.some(p=>p.name==='vigil_smoke'));
+  const reloaded=await evaluate("vigil.api('POST','/api/market/lifecycle',{action:'reload',name:'vigil_smoke'})");
+  assert.equal(reloaded.status,200);assert.equal(reloaded.json?.ok,true,JSON.stringify(reloaded.json));
   const pluginList=await evaluate("vigil.api('GET','/api/plugins')");
   assert.ok(pluginList.json?.plugins?.some(p=>p.name==='vigil_smoke'));
   const smokeChat=await evaluate(`(async()=>{const events=[];let text='';let final='';const off=vigil.onStreamEvent(e=>{events.push(e.type);if(e.type==='text')text+=e.text||'';if(e.type==='done')final=e.text||'';});try{const r=await vigil.apiStream('/api/chat/stream',{text:'请实际调用 smoke_ping 工具并原样返回执行结果',src:'pc',request_id:'smoke_ping_'+crypto.randomUUID()});return {ok:r.ok,events,reply:text+final};}finally{off();}})()`);
   assert.ok(smokeChat.ok&&smokeChat.events.includes('done'),'Installed plugin chat stream did not complete: '+JSON.stringify(smokeChat));
   assert.equal(smokeChat.reply,'VIGIL_PLUGIN_CALL_OK','Real installed-chat tool result did not reach the Electron renderer');
+  if(mode==='uninstall-legacy'){
+    const removed=await evaluate("vigil.api('POST','/api/plugins/uninstall',{name:'user_fixture',purge_data:false})");
+    assert.equal(removed.status,200);assert.equal(removed.json?.ok,true,JSON.stringify(removed.json));
+    assert.ok(!fs.existsSync(path.join(profile,'brain/data/installed_plugins/user_fixture.py')),
+      'Plugin Manager left the migrated plugin installed');
+  }
   assert.ok(fs.existsSync(path.join(profile,'brain/data')));
   assert.equal(fs.existsSync(path.join(install,'resources/vigil-brain/config')),false);
   console.log('PASS installed pair, migrated data, chat, installed smoke_ping tool call, Creator SSE, saved failure and generated draft');
 }
-run().then(()=>{if(ws)ws.close();if(child?.pid)execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}).catch(e=>{console.error(e.message);if(ws)ws.close();if(child?.pid){try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}catch(_){}}process.exitCode=1;});
+run().then(()=>{if(ws)ws.close();if(child?.pid)execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}).catch(e=>{console.error(e.stack||e.message);if(ws)ws.close();if(child?.pid){try{execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}catch(_){}}process.exitCode=1;});

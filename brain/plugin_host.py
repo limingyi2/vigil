@@ -63,7 +63,7 @@ except Exception:
 # 钩子名 → 必需参数个数。用于参数个数不对时打一行日志而不是抛 TypeError
 # 到调用方栈里（插件作者看到的应该是"你这里少传了参数"，不是她的调用栈）。
 _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
-_CORE_PLUGIN_FILES = frozenset({"kb.py", "plugin_market.py", "remote.py", "skill.py"})
+_CORE_PLUGIN_FILES = frozenset({"plugin_market.py", "remote.py", "skill.py"})
 
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()

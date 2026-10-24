@@ -76,27 +76,28 @@ def test_core_feature_seeding_never_creates_plugins_directory_and_preserves_user
     assert target.read_text(encoding="utf-8") == "user-edited"
 
 
-def test_legacy_optional_plugins_migrate_as_user_installs_but_core_duplicates_do_not(tmp_path):
+def test_legacy_optional_plugins_migrate_once_without_resurrection_after_uninstall(tmp_path):
     home = tmp_path / "home"
     legacy = home / "plugins"
-    core = home / "core_features"
     legacy.mkdir(parents=True)
-    core.mkdir()
-    (core / "kb.py").write_text("current-core", encoding="utf-8")
-    (legacy / "kb.py").write_text("current-core", encoding="utf-8")
+    (legacy / "kb.py").write_text("legacy-kb-feature", encoding="utf-8")
     (legacy / "reminder.py").write_text("legacy-optional-plugin", encoding="utf-8")
 
     result = migrate_legacy_plugins(home)
     installed = home / "data" / "installed_plugins"
-    assert result["skipped_core"] == 1
-    assert result["copied"] == 1
-    assert not (installed / "kb.py").exists()
+    assert result["copied"] == 2
+    assert (installed / "kb.py").read_text(encoding="utf-8") == "legacy-kb-feature"
     assert (installed / "reminder.py").read_text(encoding="utf-8") == "legacy-optional-plugin"
     assert (legacy / "reminder.py").is_file(), "migration must preserve the source for recovery"
 
-    (legacy / "kb.py").write_text("user-modified-core", encoding="utf-8")
+    # Simulate explicit Plugin Manager uninstall while the immutable legacy
+    # source remains present. Future starts/upgrades must not reinstall it.
+    (installed / "kb.py").unlink()
+    (installed / "reminder.py").unlink()
     result = migrate_legacy_plugins(home)
-    assert (installed / "kb.py").read_text(encoding="utf-8") == "user-modified-core"
+    assert result["copied"] == 0
+    assert not (installed / "kb.py").exists()
+    assert not (installed / "reminder.py").exists()
 
 
 def test_failed_legacy_plugin_copy_is_reported_and_keeps_source(monkeypatch, tmp_path):
@@ -123,12 +124,40 @@ def test_previous_p21_core_feature_copies_migrate_as_optional_plugins(tmp_path):
     old = home / "core_features" / "gate.py"
     old.parent.mkdir(parents=True)
     old.write_text("user-adjusted-gate", encoding="utf-8")
+    (old.parent / "kb.py").write_text("legacy-kb-feature", encoding="utf-8")
 
     result = migrate_legacy_plugins(home)
     target = home / "data/installed_plugins/gate.py"
-    assert result["copied"] == 1
+    kb_target = home / "data/installed_plugins/kb.py"
+    assert result["copied"] == 2
     assert target.read_text(encoding="utf-8") == "user-adjusted-gate"
+    assert kb_target.read_text(encoding="utf-8") == "legacy-kb-feature"
     assert old.read_text(encoding="utf-8") == "user-adjusted-gate"
+
+
+def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_roots(tmp_path):
+    home = tmp_path / "user-home"
+    old_brain = tmp_path / "previous-install" / "resources" / "vigil-brain"
+    (old_brain / "_internal/core_features").mkdir(parents=True)
+    (old_brain / "_internal/plugins").mkdir(parents=True)
+    (old_brain / "_internal/core_features/kb.py").write_text("legacy-kb-adapter", encoding="utf-8")
+    (old_brain / "_internal/core_features/gate.py").write_text("legacy-gate", encoding="utf-8")
+    (old_brain / "_internal/plugins/reminder.py").write_text("legacy-reminder", encoding="utf-8")
+    (old_brain / "_internal/core_features/remote.py").write_text("core-only", encoding="utf-8")
+
+    result = migrate_legacy_plugins(home, [old_brain])
+    installed = home / "data/installed_plugins"
+    assert result["copied"] == 3
+    assert (installed / "kb.py").read_text(encoding="utf-8") == "legacy-kb-adapter"
+    assert (installed / "gate.py").read_text(encoding="utf-8") == "legacy-gate"
+    assert (installed / "reminder.py").read_text(encoding="utf-8") == "legacy-reminder"
+    assert not (installed / "remote.py").exists()
+
+    (installed / "kb.py").unlink()
+    result = migrate_legacy_plugins(home, [old_brain])
+    assert result["copied"] == 0
+    assert not (installed / "kb.py").exists()
+    assert (old_brain / "_internal/core_features/kb.py").is_file()
 
 
 def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
@@ -146,7 +175,7 @@ def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
     assert "if rel_file not in CORE_FEATURE_ALLOWLIST" in spec
     assert "if seen_core_features != CORE_FEATURE_ALLOWLIST" in spec
     assert "datas=core_feature_data + skill_host_data" in spec
-    for optional in ("gate.py", "react.py", "websearch.py"):
+    for optional in ("gate.py", "kb.py", "react.py", "websearch.py"):
         assert optional not in spec
         assert not (ROOT / "brain/core_features" / optional).exists()
     assert not (ROOT / "brain/core_features" / "calc.py").exists()
@@ -154,12 +183,14 @@ def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
     assert "('core_features/plugin_market.py', 'core_features')" in legacy_spec
     assert "def _seed_core_features()" in launcher
     assert "_seed_plugins()" not in launcher
-    assert "migrate_legacy_plugins(HOME_DIR)" in launcher
+    assert "migrate_legacy_plugins(HOME_DIR, legacy_roots)" in launcher
     assert 'CORE_FEATURES_DIR = os.path.join(ROOT, "core_features")' in paths
     assert "CORE_FEATURES_DIR" in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
     assert "PLUGINS_DIR" not in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
     assert "from paths import CORE_FEATURES_DIR" in host
-    assert "_CORE_PLUGIN_FILES = frozenset({\"kb.py\", \"plugin_market.py\", \"remote.py\", \"skill.py\"})" in host
+    assert "_CORE_PLUGIN_FILES = frozenset({\"plugin_market.py\", \"remote.py\", \"skill.py\"})" in host
+    assert "(\"kb.py\", \"plugin_market.py\", \"remote.py\", \"skill.py\")" not in spec
+    assert "core_features/kb.py" not in legacy_spec
     assert "assert_no_bundled_plugin_tree(OUT)" in build
 
 

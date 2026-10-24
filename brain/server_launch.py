@@ -36,7 +36,7 @@ def _seed_core_features():
     if os.environ.get("VIGIL_MANAGED") == "1":
         legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
     try:
-        migrated = migrate_legacy_plugins(HOME_DIR)
+        migrated = migrate_legacy_plugins(HOME_DIR, legacy_roots)
         if migrated.get("copied"):
             print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
                   migrated["copied"], flush=True)
