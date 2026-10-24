@@ -95,3 +95,12 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
 .vigil-wallpaper-live-badge { position: fixed; left: 14px; bottom: 12px; z-index: 60; padding: 4px 8px; border-radius: 999px; background: #0b1220cc; color: #d9e5ff; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
 @media (max-width: 860px) { .vigil-wallpaper-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .vigil-wallpaper-controls { grid-template-columns: 1fr; } .vigil-wallpaper-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* dshwe 吸收版:页签 / 预设 / 自动轮播 */
+.vigil-wallpaper-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 2px; }
+.vigil-wallpaper-tab { padding: 6px 16px; border-radius: 999px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+.vigil-wallpaper-tab.is-active { background: var(--vigil-wallpaper-surface, color-mix(in srgb, var(--bg, #141822) 58%, transparent)); font-weight: 600; }
+.vigil-wallpaper-panel[hidden] { display: none; }
+.vigil-wallpaper-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.vigil-wallpaper-carousel { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; padding: 12px 14px; margin-bottom: 10px; }
+.vigil-wallpaper-carousel label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.vigil-wallpaper-carousel input[type="number"] { width: 84px; }
