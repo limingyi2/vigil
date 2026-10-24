@@ -16,8 +16,13 @@
 #vigil-wallpaper-scrim { position: absolute; inset: 0; background: #070b16; pointer-events: none; }
 body.vigil-wallpaper-active {
   --vigil-wallpaper-blur: 0px;
-  --vigil-wallpaper-panel: color-mix(in srgb, var(--bg, #141822) 52%, transparent);
-  --vigil-wallpaper-surface: color-mix(in srgb, var(--bg, #141822) 58%, transparent);
+  /* 真磨砂：模糊量固定，不跟“毛玻璃”滑块（那是给壁纸本身的）。
+     面板 46% 底 + 26px 背景模糊；浮层表面 62% 底 + 16px。 */
+  --vigil-wallpaper-panel: color-mix(in srgb, var(--bg, #141822) 46%, transparent);
+  --vigil-wallpaper-surface: color-mix(in srgb, var(--bg, #141822) 62%, transparent);
+  --vigil-wallpaper-frost: blur(26px) saturate(1.5);
+  --vigil-wallpaper-frost-soft: blur(16px) saturate(1.3);
+  --vigil-wallpaper-line: color-mix(in srgb, var(--text, #fff) 12%, transparent);
 }
 body.vigil-wallpaper-active > .app,
 body.vigil-wallpaper-active > .settings-shell,
@@ -38,16 +43,18 @@ body.vigil-wallpaper-active .chat-topbar,
 body.vigil-wallpaper-active .settings-home-topbar,
 body.vigil-wallpaper-active .chatwrap .rp {
   background: var(--vigil-wallpaper-panel) !important;
-  backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
-  -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
+  border-color: var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost);
 }
 body.vigil-wallpaper-active :is(.card, .ac-card, .ac-agent-card, .pcard,
   .vigil-wallpaper-control, .vigil-wallpaper-card, .cbox, .input-wrap,
   .session-row.on, .settings-card, .settings-tile, .vigil-confirm) {
   background-color: var(--vigil-wallpaper-surface) !important;
   background-image: none !important;
-  backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
-  -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
+  border-color: var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost-soft);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
 }
 /* 聊天气泡与思考块：保持可读但让壁纸透出来 */
 body.vigil-wallpaper-active .chatwrap .turn.me .txt {
@@ -59,9 +66,44 @@ body.vigil-wallpaper-active .chatwrap .think-content {
 body.vigil-wallpaper-active :is(input:not([type=range]), select, textarea, .btn, button:not(.vigil-wallpaper-card)) {
   background-color: var(--vigil-wallpaper-surface) !important;
   background-image: none !important;
-  backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
-  -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
+  border-color: var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost-soft);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
 }
+/* 欢迎页（壁纸模式专属）：
+   · 输入框上移，与 Vigil 标题成一组垂直居中；
+   · 标题与副题半透明化，压在壁纸上像玻璃刻字；
+   · 窗控胶囊、提示 chips、弹出层统一玻璃。 */
+body.vigil-wallpaper-active.welcome-home .titlebar { background: transparent !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; border: 0 !important; }
+body.vigil-wallpaper-active.welcome-home .wctl {
+  background: var(--vigil-wallpaper-panel) !important;
+  border: 1px solid var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost-soft);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
+}
+body.vigil-wallpaper-active.welcome-home .chatwrap .chat.is-empty { justify-content: center; }
+body.vigil-wallpaper-active.welcome-home .chatwrap .chat.is-empty .hero { flex: 0 0 auto; padding-top: 0; }
+body.vigil-wallpaper-active.welcome-home .chatwrap .chat.is-empty .composer { flex: 0 0 auto; padding-bottom: clamp(20px, 6vh, 56px); }
+body.vigil-wallpaper-active.welcome-home .chatwrap .welcome-brand {
+  color: color-mix(in srgb, var(--chat-text, #fff) 64%, transparent);
+  text-shadow: 0 2px 22px color-mix(in srgb, var(--chat-bg, #000) 55%, transparent);
+}
+body.vigil-wallpaper-active.welcome-home .chatwrap .hero p {
+  color: color-mix(in srgb, var(--chat-text, #fff) 60%, transparent);
+}
+body.vigil-wallpaper-active.welcome-home .chatwrap .hero-hints .chip {
+  background: var(--vigil-wallpaper-surface) !important;
+  border-color: var(--vigil-wallpaper-line) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost-soft);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
+}
+body.vigil-wallpaper-active .chatwrap .modelpop,
+body.vigil-wallpaper-active .chatwrap .localpop {
+  background: color-mix(in srgb, var(--chat-bg, #141822) 88%, transparent) !important;
+  backdrop-filter: var(--vigil-wallpaper-frost);
+  -webkit-backdrop-filter: var(--vigil-wallpaper-frost);
+}
+
 body.vigil-wallpaper-active .chat,
 body.vigil-wallpaper-active .chat-messages,
 body.vigil-wallpaper-active .composer,
