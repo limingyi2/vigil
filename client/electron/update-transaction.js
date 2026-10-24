@@ -20,7 +20,7 @@ function checkpoint(installDir,userData,target,appExecutable='Vigil.exe'){
   fs.cpSync(installDir,backupDir,{recursive:true,errorOnExist:true,force:false});
   const copied=inventory(backupDir);
   if(JSON.stringify(files)!==JSON.stringify(copied))throw Error('旧版本备份校验失败，取消更新');
-  const value={schema:1,id,installDir,backupDir,files,target,status:'prepared'};
+  const value={schema:1,id,installDir,backupDir,appExecutable:path.basename(appExecutable),files,target,status:'prepared'};
   atomic(path.join(root,'pending.json'),value);return value;
 }
 function pending(userData){try{return JSON.parse(fs.readFileSync(path.join(userData,'updates/pending.json'),'utf8').replace(/^\uFEFF/,''));}catch(_){return null;}}
