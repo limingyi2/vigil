@@ -290,3 +290,4 @@ brain/plugins/_pending_restart.json
 # Disposable test/host markers
 pytest-cache-files-*/
 .host_started
+brain/config/plugin_market_cache.json
