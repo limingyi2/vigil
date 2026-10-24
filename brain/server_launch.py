@@ -156,10 +156,20 @@ def _pick_port(exclude=()):
 def _wait_health(port, timeout=180):
     """轮询 /api/health 直到 200。首次启动可能要下载嵌入模型，放宽到 3 分钟。"""
     url = "http://127.0.0.1:%d/api/health" % port
+    headers = {}
+    try:
+        import json
+        with open(os.path.join(HOME_DIR, "config", "config.json"), encoding="utf-8-sig") as stream:
+            token = str((json.load(stream) or {}).get("brain_token") or "").strip()
+        if token:
+            headers["Authorization"] = "Bearer " + token
+    except Exception:
+        pass
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=2) as r:
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=2) as r:
                 if r.status == 200:
                     return True
         except Exception:
