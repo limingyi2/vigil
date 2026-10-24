@@ -101,3 +101,98 @@ class ToolTextBoundary:
             result.append({'id': 'xml_' + uuid.uuid4().hex, 'type': 'function',
                            'function': {'name': match[1], 'arguments': json.dumps(params, ensure_ascii=False)}})
         return result
+
+
+class ThinkTextBoundary:
+    """把 content 里内联的 <think>…</think> 推理块从正式回答中分出去。
+
+    MiMo 等 OpenAI 兼容端点不一定把推理放在 reasoning_content 字段：
+    推理会以内联 <think> 标签混进 content 流。这些块是思考内容，
+    不能作为正式回答展示或写进对话历史 —— 但也不能粗暴全局删除：
+    代码围栏（反引号）里的字面文本、以及用户正文里合法出现的
+    "<think>" 字样必须原样保留。
+
+    只在出现**成对的** <think>…</think> 时才把区间转入 think 通道；
+    标签跨 chunk 分割时先缓冲（等标签闭合再判定），流结束时仍未闭合
+    的 <think> 块整体按思考内容处理，绝不当作正文。
+    """
+
+    OPEN = '<think>'
+    CLOSE = '</think>'
+
+    def __init__(self):
+        self.pending = ''
+        self.mode = 'text'      # 'text' | 'think'
+        self.code_ticks = 0
+        self.complete = True    # 全部内容都得到了明确的通道归属
+
+    @staticmethod
+    def _partial_tag_suffix(low, tag):
+        """pending 尾部可能是 tag 前缀的长度（0..len(tag)-1）。"""
+        for size in range(min(len(tag) - 1, len(low)), 0, -1):
+            if low.endswith(tag[:size]):
+                return size
+        return 0
+
+    def feed(self, fragment, final=False):
+        """吃进一段 content 增量，返回 [(kind, text)]，kind 为 'text'|'think'。"""
+        self.pending += fragment or ''
+        output = []
+        while self.pending:
+            if self.mode == 'think':
+                low = self.pending.lower()
+                idx = low.find(self.CLOSE)
+                if idx < 0:
+                    keep = self._partial_tag_suffix(low, self.CLOSE)
+                    emit = self.pending[:len(self.pending) - keep]
+                    if emit:
+                        output.append(('think', emit))
+                    self.pending = self.pending[len(self.pending) - keep:]
+                    break
+                if self.pending[:idx]:
+                    output.append(('think', self.pending[:idx]))
+                self.pending = self.pending[idx + len(self.CLOSE):]
+                self.mode = 'text'
+                continue
+            # ---- text 通道 ----
+            # 批量发出到下一个可能改变状态的字符；围栏内只有反引号有意义。
+            scan = '`' if self.code_ticks else '<`'
+            nxt = len(self.pending)
+            for i, ch in enumerate(self.pending):
+                if ch in scan:
+                    nxt = i
+                    break
+            if nxt:
+                output.append(('text', self.pending[:nxt]))
+                self.pending = self.pending[nxt:]
+                continue
+            head = self.pending[0]
+            if head == '`':
+                ticks = len(self.pending) - len(self.pending.lstrip('`'))
+                if ticks == len(self.pending) and not final:
+                    break          # 定界符本身可能被拆成多个 chunk
+                if not self.code_ticks:
+                    self.code_ticks = ticks
+                elif ticks == self.code_ticks:
+                    self.code_ticks = 0
+                # 数量对不上的反引号串是围栏里的字面内容
+                output.append(('text', self.pending[:ticks]))
+                self.pending = self.pending[ticks:]
+                continue
+            if not self.code_ticks:
+                low = self.pending.lower()
+                if low.startswith(self.OPEN):
+                    self.pending = self.pending[len(self.OPEN):]
+                    self.mode = 'think'
+                    continue
+                if len(low) < len(self.OPEN) and self.OPEN.startswith(low) and not final:
+                    break          # 可能是 <think> 的前缀，等下一个 chunk
+            output.append(('text', head))
+            self.pending = self.pending[1:]
+        if final and self.pending:
+            # 流结束仍有滞留：think 模式的尾巴是思考内容；text 模式的
+            # 滞留只可能是半个标签前缀，按字面正文处理。
+            output.append(('think' if self.mode == 'think' else 'text', self.pending))
+            self.pending = ''
+            self.complete = self.mode == 'text'
+        return output

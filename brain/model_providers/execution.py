@@ -12,6 +12,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 
 from .base import ProviderResponseError
+from .tool_protocol import ThinkTextBoundary
 
 _CACHE = {}
 _LOCK = threading.Lock()
@@ -185,6 +186,29 @@ def is_context_limit_error(exc):
     return bool(_CONTEXT_LIMIT.search('\n'.join(parts)))
 
 
+_THINK_BLOCK = re.compile(r'^\s*<think>(.*?)</think>\s*', re.S | re.I)
+
+
+def _extract_inline_think(content, reasoning):
+    """非流式响应：把 content 开头的内联 <think>…</think> 块并入 reasoning。
+
+    只搬**成对闭合**的块；没有闭合标签的内容原样保留（保守优先：
+    误删合法正文比多显示一段思考更糟）。流式路径由 ThinkTextBoundary 处理。
+    """
+    moved = []
+    rest = content or ''
+    while True:
+        match = _THINK_BLOCK.match(rest)
+        if not match:
+            break
+        moved.append(match[1])
+        rest = rest[match.end():]
+    if moved:
+        thinking = ''.join(moved)
+        reasoning = (reasoning + thinking) if reasoning else thinking
+    return rest, reasoning
+
+
 def normalize(data):
     result = dict(content='', reasoning='', tool_calls=[], usage=None, finish_reason=None,
                   reason='invalid_structure', complete=False)
@@ -200,6 +224,7 @@ def normalize(data):
         calls = message.get('tool_calls') or []
         if not isinstance(content, str) or not isinstance(reasoning, str) or not isinstance(calls, list):
             return result
+        content, reasoning = _extract_inline_think(content, reasoning)
         usage = data.get('usage')
         safe_usage = {k: v for k, v in (usage.items() if isinstance(usage, dict) else [])
             if k in ('prompt_tokens', 'completion_tokens', 'total_tokens')
@@ -426,6 +451,9 @@ def completion_events(provider, payload, timeout=180, stop=None):
     calls = {}
     sse_chunks = 0
     argument_fragments = {}
+    # MiMo 等端点把推理以内联 <think> 块混进 content 流；在这里分流，
+    # 聊天层与 Agent Run 拿到的 text_delta 就永远不含思考正文。
+    think_boundary = ThinkTextBoundary()
     with provider.stream(dict(payload, stream=True, stream_options={'include_usage': True}), timeout=timeout) as response:
         if stop is not None:
             stop.attach(getattr(response, 'close', None) or (lambda: None))
@@ -478,20 +506,31 @@ def completion_events(provider, payload, timeout=180, stop=None):
                                         argument_fragments[index] = argument_fragments.get(index, 0) + 1
                                 else:
                                     target[key] = _merge_identifier(target[key], value)
-                    for field, buffer, kind in [('content', content, 'text_delta'),
-                        ('reasoning_content', reasoning, 'think_delta')]:
-                        value = delta.get(field)
-                        if value:
-                            if not isinstance(value, str):
-                                raise ValueError('invalid delta')
-                            buffer.append(value)
-                            yield dict(type=kind, text=value, t=time.monotonic())
+                    value = delta.get('reasoning_content')
+                    if value:
+                        if not isinstance(value, str):
+                            raise ValueError('invalid delta')
+                        reasoning.append(value)
+                        yield dict(type='think_delta', text=value, t=time.monotonic())
+                    value = delta.get('content')
+                    if value:
+                        if not isinstance(value, str):
+                            raise ValueError('invalid delta')
+                        for kind, text in think_boundary.feed(value):
+                            (reasoning if kind == 'think' else content).append(text)
+                            yield dict(type='think_delta' if kind == 'think' else 'text_delta',
+                                       text=text, t=time.monotonic())
                 except (ValueError, TypeError, KeyError, IndexError, AttributeError):
                     raise ProviderResponseError('流式响应结构错误')
         finally:
             if stop is not None:
                 stop.detach()
     _check()
+    # 流结束的滞留（半个标签、未闭合的 think 块）在这里收尾。
+    for kind, text in think_boundary.feed('', final=True):
+        (reasoning if kind == 'think' else content).append(text)
+        yield dict(type='think_delta' if kind == 'think' else 'text_delta',
+                   text=text, t=time.monotonic())
     result = normalize({'choices': [{'message': {'content': ''.join(content),
         'reasoning_content': ''.join(reasoning),
         'tool_calls': [calls[i] for i in sorted(calls)]}, 'finish_reason': finish}], 'usage': usage})

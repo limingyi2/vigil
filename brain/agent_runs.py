@@ -1900,6 +1900,7 @@ def _tool(rid, owner, started, call, ctx):
     raw_chars = 0
     error = None
     raised = False
+    awaiting = None
     _tool_t0 = time.monotonic()
     try:
         import localtools
@@ -1925,6 +1926,19 @@ def _tool(rid, owner, started, call, ctx):
             result, clipped = _clip(result, MAX_TEXT)
         if reason:
             error = _tool_error(reason, receipts, result)
+        elif result.lstrip().startswith('{'):
+            # 能力调用的"等待授权"不是失败：操作还没执行、也不会执行，
+            # 直到用户在客户端点了确认。识别它并把 request_id 带出去，
+            # 客户端才有地方渲染审批卡片；记成失败会诱导 Agent 重试，
+            # 而重试只会再生成一个同样的审批请求。
+            try:
+                parsed = json.loads(result)
+            except ValueError:
+                parsed = None
+            if (isinstance(parsed, dict)
+                    and parsed.get('status') == 'awaiting_authorization'
+                    and parsed.get('request_id')):
+                awaiting = parsed
     except Exception as exc:
         reason = 'tool_unknown'
         raised = True
@@ -1937,7 +1951,7 @@ def _tool(rid, owner, started, call, ctx):
         step = item['steps'][sid-1]
         step.update(status='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
                     reason=reason, finished_at=time.time(),
-                    result_state=_execution_state(reason, receipts, raised),
+                    result_state='awaiting_authorization' if awaiting else _execution_state(reason, receipts, raised),
                     result='' if reason else result[:MAX_TEXT],
                     result_chars=raw_chars, truncated=bool(clipped),
                     # 收据进台账前统一脱敏：命令输出里带回显的密钥是现实场景
@@ -1947,13 +1961,24 @@ def _tool(rid, owner, started, call, ctx):
                               for r in receipts][:8])
         if error:
             step['error'] = error
+        if awaiting:
+            # 审批凭据进台账：卡片渲染、历史回看和验收测试都认这个字段。
+            op_args = awaiting.get('args') if isinstance(awaiting.get('args'), dict) else {}
+            step['approval'] = {'request_id': str(awaiting.get('request_id') or ''),
+                                'capability': str(args.get('capability') or ''),
+                                'operation': str(args.get('operation') or ''),
+                                'target': str(awaiting.get('target')
+                                              or op_args.get('plugin')
+                                              or op_args.get('skill')
+                                              or op_args.get('name') or '')}
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
         _event(db, item, 'tool_finished', dict(step_id=sid, call_id=cid, tool=name,
             result_state=step['result_state'], input=step.get('input'),
             output=_safe_event_value(step.get('result') or ''),
-            error=_safe_event_value(step.get('error') or '') if reason else ''))
+            error=_safe_event_value(step.get('error') or '') if reason else '',
+            approval=dict(step['approval']) if step.get('approval') else None))
         # 迟到的结果只能落 step，不能改 run 终态：插话/暂停/取消之后旧 run
         # 已是 stopped，在途工具的回执晚到 —— 把它翻成 failed 会破坏"暂停
         # 可续"的语义，前端也会看到旧任务失败而非暂停。

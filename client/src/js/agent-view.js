@@ -76,6 +76,45 @@
       detail:String(raw.detail||''),receipts:Array.isArray(raw.receipts)?raw.receipts:[],
       dispatched:raw.dispatched};
   }
+  // 能力审批卡片：等待授权的操作不是失败也不是成功，它要用户拍板。
+  // 展示操作目标/类型/影响说明 + 确认/拒绝；执行证据来自 Brain 的真实
+  // 回执（approve 响应或 /api/capabilities/requests 的请求状态），不猜。
+  function approvalCard(meta){
+    const a=meta.approval;
+    if(!a || !a.request_id)return '';
+    const rid=String(a.request_id);
+    const state=String(a.state || 'pending');
+    const target=a.target || a.capability || '';
+    const op=a.operation || '';
+    const input=meta.input && typeof meta.input==='object' ? (meta.input.args || meta.input) : {};
+    const impact=input.detail || (typeof input==='object' ? JSON.stringify(redact(input)).slice(0,200) : String(input||'').slice(0,200));
+    const head='<div class="cap-approval" data-cap-request-id="'+esc(rid)+'">'
+      +'<div class="cap-approval-title">需要你的授权</div>'
+      +'<dl class="cap-approval-facts">'
+      +'<dt>操作</dt><dd><code>'+esc(a.capability||'')+'.'+esc(op)+'</code></dd>'
+      +(target?'<dt>目标</dt><dd><code>'+esc(target)+'</code></dd>':'')
+      +(impact?'<dt>说明</dt><dd>'+esc(String(impact).slice(0,200))+'</dd>':'')
+      +'</dl>';
+    if(state==='denied' || a.denied){
+      return head+'<div class="cap-approval-state cap-denied">已拒绝，未执行</div></div>';
+    }
+    if(state==='completed'){
+      const ok=a.result && a.result.ok;
+      const detail=a.result ? JSON.stringify(redact(a.result)).slice(0,400) : '';
+      return head+'<div class="cap-approval-state '+(ok?'cap-ok':'cap-fail')+'">'
+        +(ok?'已确认并执行成功':'已确认，但执行未成功')
+        +(detail?'<pre>'+esc(detail)+'</pre>':'')+'</div></div>';
+    }
+    if(state==='executing'){
+      return head+'<div class="cap-approval-state cap-running">正在执行…</div></div>';
+    }
+    // pending：只有真正等待用户拍板时才出现按钮。
+    return head+'<div class="cap-approval-actions">'
+      +'<button type="button" class="cap-approve" data-cap-action="approve" data-cap-request="'+esc(rid)+'">确认执行</button>'
+      +'<button type="button" class="cap-deny" data-cap-action="deny" data-cap-request="'+esc(rid)+'">拒绝</button>'
+      +'<span class="cap-approval-note">执行前不会产生任何更改；拒绝后 Agent 会如实说明</span>'
+      +'</div></div>';
+  }
   function step(meta, open=false) {
     const name=meta.tool || '工具', input=redact(meta.input || {}), state=meta.state || 'started';
     const info=errorInfo(meta);
@@ -88,9 +127,11 @@
     // The category decides the wording; the state decides which variant.
     // An unknown outcome reads as unknown — never as a plain success.
     const unknownOutcome=state==='unknown'||state==='not_returned'||state==='interrupted';
+    const awaiting=state==='awaiting_authorization' && !!(meta.approval && meta.approval.request_id);
     const words=CAT_LABEL[cat]||CAT_LABEL.other;
     let label;
-    if(state==='denied')label=words.denied;
+    if(awaiting)label='等待你的授权';
+    else if(state==='denied')label=words.denied;
     else if(unknownOutcome)label=words.fail.replace(/失败$/,'结果未知');
     else if(running)label=words.run;
     else if(failed)label=words.fail;
@@ -115,6 +156,7 @@
       ['原因', info.detail],
     ].filter(([,v])=>v!==undefined && v!=='') : [];
     const parts=[];
+    if(awaiting)parts.push(approvalCard(meta));
     if(diagnostics.length)parts.push('<div class="agent-detail-label">诊断</div><pre>'
       +esc(diagnostics.map(([k,v])=>k+'：'+redact(v)).join('\n'))+'</pre>');
     if(info && info.receipts.length)parts.push('<div class="agent-detail-label">执行凭据</div><pre>'
@@ -152,6 +194,6 @@
       '<div class="agent-coding-meta">自动修复 '+esc(coding.repair_count||0)+' 次</div>'+
       (coding.diff?'<details><summary>查看 Diff</summary><pre>'+esc(coding.diff)+'</pre></details>':'')+'</section>';
   }
-  const api={step,elapsed,redact,codingSummary};root.VigilAgentView=api;
+  const api={step,elapsed,redact,codingSummary,approvalCard};root.VigilAgentView=api;
   if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

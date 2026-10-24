@@ -1319,6 +1319,71 @@
       } catch (_) { toast('复制失败，请选中代码手动复制'); }
     });
 
+    // ---- P20.2 能力审批卡片 ----
+    // 确认/拒绝按钮是受控操作唯一的执行入口；回执来自 Brain 的 approve
+    // 响应（含执行后的真实状态复核），不在前端伪造成功。
+    function renderCapabilityOutcome(card, action, r) {
+      let html;
+      if (action === 'deny') {
+        html = '<div class="cap-approval-state cap-denied">已拒绝，未执行</div>';
+      } else {
+        const ok = !!(r && r.ok);
+        const facts = [];
+        if (r && r.after && typeof r.after === 'object') {
+          facts.push(Object.entries(r.after).filter(([, v]) => v !== undefined && v !== '')
+            .map(([k, v]) => k + '=' + v).join(' · '));
+        }
+        if (Array.isArray(r && r.receipts) && r.receipts.length) {
+          facts.push(r.receipts.map((x) => [x.state, x.reason, x.detail].filter(Boolean).join(' ')).join(' | '));
+        }
+        html = '<div class="cap-approval-state ' + (ok ? 'cap-ok' : 'cap-fail') + '">'
+          + (ok ? '已确认并执行成功' : '已确认，但执行未成功：' + esc(String((r && (r.error || r.detail)) || '原因未知').slice(0, 160)))
+          + (facts.length ? '<pre>' + esc(facts.join('\n').slice(0, 400)) + '</pre>' : '')
+          + '</div>';
+      }
+      const actions = card.querySelector('.cap-approval-actions');
+      if (actions) actions.outerHTML = html;
+      else card.insertAdjacentHTML('beforeend', html);
+      card.dataset.capDecorated = '1';
+    }
+    msgs.addEventListener('click', async (e) => {
+      const button = e.target.closest('[data-cap-action]');
+      if (!button || button.disabled) return;
+      e.preventDefault();
+      const action = button.dataset.capAction;
+      const card = button.closest('.cap-approval');
+      const rid = button.dataset.capRequest;
+      if (!card || !rid) return;
+      const actions = card.querySelector('.cap-approval-actions');
+      if (actions) actions.innerHTML = '<div class="cap-approval-state cap-running">正在'
+        + (action === 'approve' ? '执行' : '记录拒绝') + '…</div>';
+      try {
+        const r = pick(await post('/api/capabilities/' + (action === 'approve' ? 'approve' : 'deny'),
+          { request_id: rid }));
+        renderCapabilityOutcome(card, action, r);
+      } catch (err) {
+        if (actions) actions.innerHTML = '<div class="cap-approval-state cap-fail">请求失败：'
+          + esc(String((err && err.message) || err).slice(0, 120)) + '</div>';
+      }
+    });
+    // 历史会话回填：卡片的当前状态以 Brain 里的审批请求为准（等待授权
+    // 才有按钮；已执行/已拒绝显示真实结果），拿不到状态就保持原样不猜。
+    async function decorateCapabilityApprovals() {
+      const cards = [...msgs.querySelectorAll('.cap-approval[data-cap-request-id]')];
+      if (!cards.length) return;
+      let byId = {};
+      try {
+        const r = pick(await get('/api/capabilities/requests'));
+        for (const item of (r && r.requests) || []) byId[item.request_id] = item;
+      } catch (_) { return; }
+      for (const card of cards) {
+        if (card.dataset.capDecorated) continue;
+        const req = byId[card.dataset.capRequestId];
+        if (!req || req.state === 'pending' || req.state === 'approved') continue;
+        renderCapabilityOutcome(card, req.state === 'denied' ? 'deny' : 'approve', req.result || {});
+      }
+    }
+
     const cIn = Number(st.tok_in) || 0, cOut = Number(st.tok_out) || 0;
     rp.innerHTML =
       '<div class="card" style="margin-bottom:10px"><div class="gtitle" style="padding:0 0 6px">本轮上下文</div>' +
@@ -2305,6 +2370,7 @@
           '</div></div></div>';
       }).join('');
       renderedDraftConversationId = loadConversationId;
+      void decorateCapabilityApprovals();
       for (const button of msgs.querySelectorAll('.agent-cancel')) {
         button.onclick = async () => {
           button.disabled = true;

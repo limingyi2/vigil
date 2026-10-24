@@ -217,9 +217,13 @@ _STATIC_SPECS = {
                 "所以只在你确实被要求这么做时才调。"
                 "返回里带 task_id（这次执行的编号）和 status（succeeded/failed/awaiting_authorization）。"
                 "如果 status 是 awaiting_authorization，说明这一步需要用户先批准 —— "
-                "把要做的事说清楚请他批准，**不要自己换个办法绕过去**。",
-        "params": [("capability", "能力名称，如 codex / video_workbench / local_tools", True),
-                   ("operation", "操作名，如 status / tasks / focus / create_task", True),
+                "把要做的事说清楚请他批准，**不要自己换个办法绕过去**。"
+                "plugins_skills 能力支持插件管理：list/plugin_status（只读查询）、enable/disable/uninstall"
+                "（修改操作，会先弹审批卡片）；skill_status/skill_list（只读）、skill_install/skill_uninstall/"
+                "skill_reload（修改操作，需要审批）。查询插件用 plugin_status 时在 args 里带 {\"name\": 插件名}；"
+                "启用/禁用/卸载同理。内置插件不能卸载、可以禁用 —— 这要如实告诉用户。",
+        "params": [("capability", "能力名称，如 codex / video_workbench / local_tools / plugins_skills", True),
+                   ("operation", "操作名，如 status / tasks / focus / create_task / list / disable", True),
                    ("args", "操作参数，JSON 对象字符串；没有参数就传 {}", False)],
         "arg_param": "capability",
         "multi_args": True,

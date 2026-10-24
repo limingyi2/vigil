@@ -2015,10 +2015,13 @@ def start_remote_api(brain):
                                'seq': event['seq']}
                     elif kind == 'tool_finished':
                         # 工具步骤进聊天流：她在干什么、结果如何，看得见。
+                        # awaiting_authorization 的步骤带上审批凭据，客户端
+                        # 据此渲染确认/拒绝卡片。
                         yield {'type': 'tool', 'tool': payload.get('tool'),
                                'state': payload.get('result_state'), 'call_id': payload.get('call_id'),
                                'step_id': payload.get('step_id'), 'input': payload.get('input'),
                                'output': payload.get('output'), 'error': payload.get('error'),
+                               'approval': payload.get('approval') or None,
                                'run_id': rid, 'seq': event['seq']}
                     elif kind == 'tool_reused':
                         # 看门狗检测到的同参复用：自我纠错的可见信号。
@@ -2033,6 +2036,7 @@ def start_remote_api(brain):
                             evidence = dict(type='tool', tool=step.get('tool'),
                                 step_id=step.get('step_id'), call_id=step.get('call_id'),
                                 input=step.get('input'), run_id=rid,
+                                approval=step.get('approval') or None,
                                 request_id=item['request_id'], historical=True)
                             yield dict(evidence, state='started')
                             if step.get('status') != 'running':
@@ -4208,6 +4212,16 @@ def start_remote_api(brain):
                     self._json(400, {"ok": False, "err": "能力事件游标无效"})
                 except Exception as exc:
                     self._json(500, {"ok": False, "err": "能力状态读取失败：%s" % str(exc)[:100]})
+                return
+            if path == '/api/capabilities/requests':
+                # 审批请求状态查询：历史会话里的执行卡片据此显示真实进度
+                # （等待授权 / 已执行 / 已拒绝），不靠客户端本地猜。
+                if not self._is_admin():
+                    self._json(403, {"ok": False, "err": "需要管理员权限"})
+                    return
+                import capability_registry as _caps
+                _caps.bootstrap(API_CFG)
+                self._json(200, {"ok": True, "requests": _caps.REGISTRY.requests()})
                 return
             if path.startswith("/api/agent-center/"):
                 import codex_adapter as _codex_center
