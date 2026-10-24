@@ -46,6 +46,7 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
     feature_module = SimpleNamespace(on=lambda *_args, **_kwargs: True)
     fake_tools = SimpleNamespace(
         all_specs=lambda **_kwargs: [_spec("search"), _spec("weather"),
+                                     _spec("tracking"), _spec("calc"),
                                      _spec("local_exec"), _spec("reminder_set")],
         read_only_specs=lambda specs: [x for x in specs
             if x["function"]["name"] in {"search", "weather", "tracking", "calc"}],
@@ -55,6 +56,7 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
             invoke_result if isinstance(invoke_result, brain_tools.ReadOnlyToolResult)
             else brain_tools.ReadOnlyToolResult(True, invoke_result)),
         readonly_failure=brain_tools.readonly_failure,
+        validate_readonly_arguments=brain_tools.validate_readonly_arguments,
         is_smalltalk=lambda _text: False,
     )
     context_module = SimpleNamespace(
@@ -98,7 +100,8 @@ def test_readonly_stream_shows_text_deltas_and_executes_only_audited_tool():
             "usage": {"prompt_tokens": 8, "completion_tokens": 3}}}],
     ])
     assert "tools" in payloads[0]
-    assert {x["function"]["name"] for x in payloads[0]["tools"]} == {"search", "weather"}
+    assert {x["function"]["name"] for x in payloads[0]["tools"]} == {
+        "search", "weather", "tracking", "calc"}
     assert "reminder_set" not in payloads[0]["tools"]
     assert "local_exec" not in payloads[0]["tools"]
     assert [event["type"] for event in emitted if event["type"] in ("text", "done")] == [

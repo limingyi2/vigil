@@ -45,6 +45,9 @@ class CloudProvider(ModelProvider):
         self.api_key = current(cfg)['api_key']
         self.model = str(cfg.get("model") or "")
         self.provider = str(cfg.get("provider") or "").strip().lower()
+        overrides = cfg.get('model_capabilities') or {}
+        if isinstance(overrides, dict):
+            self.supports_tools = overrides.get('native_tool_calls') is not False
         if (not self.provider
                 and self.api_base.lower() == "https://api.xiaomimimo.com/v1"):
             # Older configs may predate the provider field. The exact
@@ -52,14 +55,15 @@ class CloudProvider(ModelProvider):
             # remain unsupported for the XML compatibility path.
             self.provider = "xiaomi"
         # MiMo's OpenAI-compatible endpoint accepts the tools schema, but
-        # some MiMo versions emit their tool request in the documented
-        # XML-like response form instead of message.tool_calls. Keep this
+        # some deployed MiMo versions emit complete XML-like tool requests in
+        # content alongside incomplete message.tool_calls (see wire evidence).
+        # Keep this
         # opt-in narrowly bound to the first-party provider and model family;
         # arbitrary custom endpoints must never gain a text execution path.
         self.supports_xml_tools = (
             self.provider == "xiaomi"
             and self.model.lower().startswith("mimo-")
-            and cfg.get("allow_xml_tool_fallback", True) is not False
+            and str(cfg.get("allow_xml_tool_fallback", True)).lower() not in ('false', '0', 'off', 'no')
         )
         # MiMo documents the OpenAI-compatible reasoning_effort field.  Keep
         # this knowledge inside the adapter; arbitrary custom gateways do not
@@ -68,7 +72,8 @@ class CloudProvider(ModelProvider):
                 and not isinstance(cfg.get('model_capabilities'), dict)):
             self._cap_cfg = dict(cfg)
             self._cap_cfg['model_capabilities'] = {
-                'reasoning': True, 'reasoning_parameter': 'reasoning_effort'}
+                'reasoning': True, 'reasoning_parameter': 'reasoning_effort',
+                'reasoning_history_field': 'reasoning_content'}
 
     def _url(self):
         return self.api_base + "/chat/completions"

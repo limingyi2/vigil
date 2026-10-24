@@ -1115,7 +1115,9 @@ class Brain:
             }
             provider_supports_tools = bool(
                 getattr(mp, "supports_tools", False)
-                or getattr(mp, "supports_xml_tools", False))
+                or (getattr(mp, "supports_xml_tools", False) and str(
+                    _api0.get('allow_xml_tool_fallback', True)).lower()
+                    not in ('false', '0', 'off', 'no')))
             if tool_specs and not provider_supports_tools:
                 tool_specs = None
                 parts.append(
@@ -1182,6 +1184,7 @@ class Brain:
         used = []
         readonly_calls = 0
         readonly_seen = set()
+        readonly_search_failed = False
 
         # P17 诊断：把请求开始的时刻和本轮配置快照存到 self 上。
         # 存 self 而不是靠局部变量，是因为 finally 里要读 —— 而这个函数有
@@ -1288,6 +1291,20 @@ class Brain:
                 # from a normal content field would bypass the provider contract.
                 _raw_content = msg.get("content") or ""
                 _xml_mode = False
+                if (tool_policy == 'readonly' and tcs
+                        and getattr(mp, 'supports_xml_tools', False)
+                        and str(_api0.get('allow_xml_tool_fallback', True)).lower()
+                        not in ('false', '0', 'off', 'no') and '<tool_call' in _raw_content.lower()):
+                    try:
+                        for _tc in tcs:
+                            _fn0 = _tc.get('function') or {}
+                            _args0 = json.loads(_fn0.get('arguments') or '{}')
+                            if not isinstance(_args0, dict):
+                                raise ValueError('arguments must be an object')
+                            if _fn0.get('name') in _tools.READ_ONLY_TOOL_NAMES:
+                                _tools.validate_readonly_arguments(_fn0['name'], _args0)
+                    except (ValueError, TypeError, AttributeError):
+                        tcs = []  # MiMo can emit native stubs plus complete XML.
                 if not tcs and _raw_content:
                     _xml_flag = _api0.get("allow_xml_tool_fallback", True)
                     if isinstance(_xml_flag, str):
@@ -1304,8 +1321,17 @@ class Brain:
                             str((item.get("function") or {}).get("name") or "")
                             for item in (tool_specs or [])
                         }
-                        _xml_tcs = _parse_xml_tool_calls(
-                            _raw_content, allowed_names=_allowed_names)
+                        if tool_policy == 'readonly':
+                            from model_providers.tool_protocol import ToolTextBoundary
+                            _boundary = ToolTextBoundary()
+                            _boundary.feed(_raw_content, final=True)
+                            try:
+                                _xml_tcs = _boundary.calls(_allowed_names)
+                            except ValueError:
+                                _xml_tcs = []
+                        else:
+                            _xml_tcs = _parse_xml_tool_calls(
+                                _raw_content, allowed_names=_allowed_names)
                         if not _xml_tcs:
                             self.last_err = "模型返回了无法识别的工具调用，请重试或切换支持 tools 的模型"
                             self.last_tools_used = []
@@ -1322,11 +1348,27 @@ class Brain:
                     self.last_ms = int((time.time() - _t0) * 1000)
                     self.last_usage = {"in": _uin, "out": _uout}
                     raw = _raw_content
+                    if readonly_search_failed and 'search' not in used:
+                        raw = '联网搜索调用失败，本次没有成功获取搜索结果。'
                     # 思考过程提取（react.on_reply 从 self.last_think 读）：
                     # 优先用原生 reasoning_content 字段，回退到 <think> 正则
                     self.last_think = _extract_reasoning(msg, raw)
                     self.last_tools_used = used
                     return _clean(raw, keep_newlines=True)
+
+                if tool_policy == 'readonly':
+                    try:
+                        for _tc in tcs:
+                            _function = _tc.get('function') or {}
+                            _arguments = json.loads(_function.get('arguments') or '{}')
+                            if not isinstance(_arguments, dict):
+                                raise ValueError('arguments must be an object')
+                            if _function.get('name') in _tools.READ_ONLY_TOOL_NAMES:
+                                _tools.validate_readonly_arguments(_function['name'], _arguments)
+                    except (ValueError, TypeError, AttributeError):
+                        self.last_err = '工具调用参数解析失败，本次未执行查询。'
+                        self.last_tools_used = used
+                        return self.last_err
 
                 # Keep the legacy audit behavior for execution-capable turns.
                 # Read-only turns record a tool only after its structured result
@@ -1353,9 +1395,16 @@ class Brain:
                     if tool_policy == "readonly":
                         _outcome = None
                         _key = (_name, json.dumps(_args, ensure_ascii=False, sort_keys=True))
-                        if _name not in _tools.READ_ONLY_TOOL_NAMES:
+                        if not provider_supports_tools:
+                            _outcome = _tools.readonly_failure(
+                                '当前模型不支持已授权工具的调用协议，本次未执行查询。')
+                        elif _name not in _tools.READ_ONLY_TOOL_NAMES:
                             _outcome = _tools.readonly_failure(
                                 "该工具不在普通聊天只读白名单内，未执行。")
+                        elif _name not in available_names:
+                            _outcome = _tools.readonly_failure(
+                                "该只读工具在当前渠道未启用，未执行。")
+                            _next_no_tools = True
                         elif _key in readonly_seen:
                             _outcome = _tools.readonly_failure(
                                 "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。")
@@ -1373,9 +1422,13 @@ class Brain:
                             else:
                                 readonly_calls += 1
                                 _outcome = _tools.invoke_readonly_spec(_name, _args, ctx)
+                                if not _outcome.ok and _name == 'search':
+                                    readonly_search_failed = True
                         if _outcome.ok and _name not in used:
                             used.append(_name)
                         _result = _outcome.for_model()
+                        if readonly_search_failed:
+                            _result += '\n联网搜索调用失败，本次没有成功获取搜索结果。工具仍已授权。'
                     else:
                         _result = _tools.invoke_spec(_name, _args, ctx)
                     _tool_results.append((_fn.get("name") or "", _result))
@@ -1390,10 +1443,12 @@ class Brain:
                     msgs.append({
                         "role": "user",
                         "content": "（系统提示：以下是你刚才调用工具的返回结果，"
-                                   "请根据结果用你自己的话回答他，不要再调用工具。）\n"
+                                   + ("请按结果回答，必要时只能继续调用已授权的只读工具。）\n"
+                                      if tool_policy == 'readonly' else
+                                      "请根据结果用你自己的话回答他，不要再调用工具。）\n")
                                    + _result_text,
                     })
-                    _next_no_tools = True
+                    _next_no_tools = tool_policy != 'readonly'
                 else:
                     # 原生 FC 模式：OpenAI 格式回灌
                     # 1) 原样回传带 tool_calls 的 assistant 消息
@@ -1449,6 +1504,8 @@ class Brain:
                     return self.last_err
                 _msg = _j["choices"][0]["message"]
                 raw = _msg.get("content") or ""
+                if readonly_search_failed and 'search' not in used:
+                    raw = '联网搜索调用失败，本次没有成功获取搜索结果。'
                 self.last_ms = int((time.time() - _t0) * 1000)
                 self.last_usage = {"in": _uin, "out": _uout}
                 self.last_tools_used = used
@@ -1745,7 +1802,14 @@ class Brain:
             parts.append(
                 "\n当前渠道没有启用只读查询工具。不得声称已联网、查天气或核实实时信息；"
                 "需要实时数据时明确说明当前无法查询。")
-        if tool_specs and not getattr(provider, "supports_tools", False):
+        authorized_names = {str((x.get("function") or {}).get("name") or "")
+                            for x in (tool_specs or [])}
+        xml_allowed = bool(getattr(provider, "supports_xml_tools", False)) and str(
+            api_snapshot.get("allow_xml_tool_fallback", True)).lower() not in ('false', '0', 'off', 'no')
+        provider_tools = bool(getattr(provider, "supports_tools", False) or xml_allowed)
+        capability_status = ('tool_unavailable' if not tool_specs else
+                             'available' if provider_tools else 'provider_unsupported')
+        if tool_specs and not provider_tools:
             tool_specs = None
             parts.append(
                 "\n当前模型不支持 Function Calling，不能执行只读查询。不得声称已联网"
@@ -1783,6 +1847,22 @@ class Brain:
         self.last_cloud_seconds = 0.0
         self.last_tools_used = []
         self.last_err = ""
+        search_failed = False
+        search_failure_text = "联网搜索调用失败，本次没有成功获取搜索结果。"
+
+        def validated_calls(calls):
+            parsed = []
+            for call in calls:
+                fn = call.get('function') or {}
+                name = str(fn.get('name') or '')
+                args = json.loads(fn.get('arguments') or '{}')
+                if not isinstance(args, dict):
+                    raise ValueError('arguments must be an object')
+                if name in _tools.READ_ONLY_TOOL_NAMES:
+                    _tools.validate_readonly_arguments(name, args)
+                parsed.append((call, name, args))
+            return parsed
+
         try:
             from model_providers.execution import (
                 prepare, completion_events, ERROR_MESSAGES,
@@ -1790,7 +1870,10 @@ class Brain:
             )
             from conversation_context import output_reserve
             from agent_context import usage_record
-            yield {"type": "model_request_started"}
+            from model_providers.tool_protocol import ToolTextBoundary
+            from model_providers.base import ProviderResponseError
+            yield {"type": "model_request_started", "tool_status": capability_status,
+                   "available_tools": sorted(authorized_names)}
             for round_index in range(max_rounds + 1):
                 final_only = round_index == max_rounds
                 payload = {
@@ -1811,6 +1894,7 @@ class Brain:
                     payload, api_snapshot, provider,
                     "balanced" if _is_knowledge_q(user_text) else "fast")
                 current_text, current_think = [], []
+                boundary = ToolTextBoundary() if xml_allowed else None
                 result = None
                 request_started = time.monotonic()
                 self.last_cloud_requests += 1
@@ -1822,26 +1906,68 @@ class Brain:
                         current_think.append(event["text"])
                         yield {"type": "think", "text": event["text"]}
                     elif event["type"] == "text_delta":
-                        current_text.append(event["text"])
-                        yield {"type": "text", "text": event["text"]}
+                        try:
+                            visible = boundary.feed(event["text"]) if boundary else event["text"]
+                        except ProviderResponseError:
+                            self.last_err = "工具调用协议超过限制，本次未执行查询。"
+                            yield {"type": "error", "class": "tool_protocol_error", "msg": self.last_err}
+                            return
+                        current_text.append(visible)
+                        if visible and not (search_failed and "search" not in tools_used):
+                            yield {"type": "text", "text": visible}
                     elif event["type"] == "completion":
                         result = event["result"]
                 request_seconds += max(0.0, time.monotonic() - request_started)
+                if boundary:
+                    tail = boundary.feed('', final=True)
+                    current_text.append(tail)
+                    if tail and not (search_failed and "search" not in tools_used):
+                        yield {"type": "text", "text": tail}
+                    if boundary.malformed and result and result.get('reason') != 'connection_lost':
+                        self.last_err = "工具调用协议未闭合，本次未执行查询。"
+                        yield {"type": "error", "class": "tool_protocol_error", "msg": self.last_err}
+                        return
                 if not result or not result.get("complete"):
                     reason = (result or {}).get("reason") or "connection_lost"
                     self.last_err = ERROR_MESSAGES.get(reason, "模型响应不完整")
-                    yield {"type": "error", "class": reason, "msg": self.last_err}
+                    yield {"type": "error", "class": "model_request_failed", "reason": reason,
+                           "msg": self.last_err}
                     return
                 usage = result.get("usage") or {}
                 input_tokens += int(usage.get("prompt_tokens") or 0)
                 output_tokens += int(usage.get("completion_tokens") or 0)
                 tool_calls = result.get("tool_calls") or []
+                xml_mode = False
+                # Validate the whole batch before dispatching even the first call.
+                # XML and native calls share the same narrow parameter contract.
+                try:
+                    try:
+                        parsed_calls = validated_calls(tool_calls)
+                    except (ValueError, TypeError, AttributeError):
+                        if not (boundary and boundary.blocks):
+                            raise
+                        parsed_calls = None
+                    if boundary and boundary.blocks and (not tool_calls or parsed_calls is None):
+                        # Some MiMo responses carry incomplete native argument
+                        # stubs alongside complete XML. Only its explicit XML
+                        # opt-in allows the complete, validated XML to win here.
+                        tool_calls = boundary.calls()
+                        parsed_calls = validated_calls(tool_calls)
+                        xml_mode = True
+                except (ValueError, TypeError, AttributeError):
+                    self.last_err = "工具调用参数解析失败，本次未执行查询。"
+                    yield {"type": "error", "class": "tool_protocol_error", "msg": self.last_err}
+                    return
                 if final_only and tool_calls:
                     self.last_err = "只读工具轮次已结束，未执行额外调用。"
-                    yield {"type": "error", "class": "tool_limit", "msg": self.last_err}
+                    yield {"type": "error", "class": "tool_protocol_error", "reason": "tool_limit",
+                           "msg": self.last_err}
                     return
                 if not tool_calls:
                     final_text = "".join(text_parts + current_text)
+                    if search_failed and "search" not in tools_used:
+                        final_text = search_failure_text
+                        yield {"type": "text", "text": final_text}
                     final_think = "".join(think_parts + current_think)
                     self.last_think = final_think
                     self.last_ms = int((time.time() - started) * 1000)
@@ -1864,33 +1990,39 @@ class Brain:
                            "token_rate": token_rate}
                     return
 
-                messages.append(assistant_history_message(
-                    provider, {"content": "".join(current_text),
-                               "tool_calls": tool_calls}, tool_calls=tool_calls))
-                for call in tool_calls:
-                    fn = call.get("function") or {}
-                    name = str(fn.get("name") or "")
-                    try:
-                        args = json.loads(fn.get("arguments") or "{}")
-                    except Exception:
-                        args = None
-                    if not isinstance(args, dict):
-                        result_text = "工具参数结构错误，未执行查询。"
+                if not xml_mode:
+                    messages.append(assistant_history_message(
+                        provider, {"content": "".join(current_text),
+                                   "reasoning_content": "".join(current_think),
+                                   "tool_calls": tool_calls}, tool_calls=tool_calls))
+                xml_results = []
+                for call, name, args in parsed_calls:
+                    error_class = None
+                    if not provider_tools:
+                        error_class = 'provider_unsupported'
+                        result_text = "当前模型不支持已授权工具的调用协议，本次未执行查询。"
                     elif name not in _tools.READ_ONLY_TOOL_NAMES:
+                        error_class = 'tool_unavailable'
                         result_text = "该工具不在普通聊天只读白名单内，未执行。"
+                    elif name not in authorized_names:
+                        error_class = 'tool_unavailable'
+                        result_text = "该只读工具在当前渠道未启用，未执行。"
                     else:
                         key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
                         if key in seen:
+                            error_class = 'tool_protocol_error'
                             outcome = _tools.readonly_failure(
                                 "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。")
                             result_text = outcome.for_model()
                         else:
                             seen.add(key)
                             if not _tools.static_tool_enabled(name, src or self._cur_src):
+                                error_class = 'tool_unavailable'
                                 outcome = _tools.readonly_failure(
                                     "该只读工具在当前渠道未启用，未执行。")
                                 result_text = outcome.for_model()
                             elif tool_calls_count >= 4:
+                                error_class = 'tool_protocol_error'
                                 outcome = _tools.readonly_failure(
                                     "本轮只读工具调用次数已达上限，未继续执行。")
                                 result_text = outcome.for_model()
@@ -1906,20 +2038,37 @@ class Brain:
                                         "只读工具执行异常，未核实查询结果。")
                                 tool_ok = outcome.ok
                                 result_text = outcome.for_model()
+                                if not tool_ok:
+                                    error_class = 'tool_execution_failed'
+                                    if name == 'search':
+                                        search_failed = True
+                                        result_text += "\n" + search_failure_text + (
+                                            "工具仍已授权；这次是执行失败，不是没有联网搜索功能。")
                                 yield {"type": "tool", "tool": name, "state": "returned",
-                                       "error": not tool_ok}
+                                       "error": not tool_ok, "class": error_class}
                                 if tool_ok and name not in tools_used:
                                     tools_used.append(name)
-                    messages.append({"role": "tool", "tool_call_id": call.get("id"),
-                                     "content": str(result_text)})
+                    if error_class and error_class != 'tool_execution_failed':
+                        yield {"type": "tool", "tool": name, "state": "denied",
+                               "error": True, "class": error_class}
+                    if xml_mode:
+                        xml_results.append("【工具结果 %s】\n%s" % (name, result_text))
+                    else:
+                        messages.append({"role": "tool", "tool_call_id": call.get("id"),
+                                         "content": str(result_text)})
+                if xml_mode:
+                    messages.append({"role": "user", "content":
+                        "（系统提示：以下是刚才只读工具的返回结果。按结果回答；"
+                        "执行失败不能解释成工具未授权。如仍需查询，只能使用已授权工具。）\n"
+                        + "\n".join(xml_results)})
                 text_parts.extend(current_text)
                 think_parts.extend(current_think)
             self.last_err = "只读工具查询达到轮次上限，未声称查询成功。"
             yield {"type": "error", "class": "tool_limit", "msg": self.last_err}
         except Exception as exc:
-            self.last_err = str(exc)[:300]
-            yield {"type": "error", "class": "service_error",
-                   "msg": self.last_err or "只读查询失败，未核实实时信息。"}
+            self.last_err = "模型请求失败或连接中断，本次未能完成回答。"
+            yield {"type": "error", "class": "model_request_failed",
+                   "reason": type(exc).__name__, "msg": self.last_err}
 
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,

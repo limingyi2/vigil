@@ -225,7 +225,7 @@ def normalize(data):
         elif finish in ('content_filter', 'refusal') or message.get('refusal'):
             result['reason'] = 'refusal'
         elif calls:
-            result['reason'] = 'tool_calls'
+            result.update(reason='tool_calls', complete=True)
         elif finish not in (None, 'stop', 'end_turn'):
             result['reason'] = 'service_error'
         elif content.strip():

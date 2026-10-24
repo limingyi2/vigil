@@ -1,0 +1,48 @@
+{
+  "utc": "2026-10-24T03:40:51.365788+00:00",
+  "provider": "xiaomi",
+  "model": "mimo-v2.6-flash",
+  "request_limit": 2,
+  "search_limit": 1,
+  "retries": 0,
+  "requests": [
+    {
+      "request": 1,
+      "native_tool_deltas": 2,
+      "xml_tool_blocks": null,
+      "instrumentation_note": "XML block count was not captured in this initial probe; do not interpret as zero.",
+      "usage": {
+        "prompt_tokens": 537,
+        "completion_tokens": 41,
+        "total_tokens": 578
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "tool_invocations": [],
+  "normalizations": [
+    {
+      "complete": true,
+      "reason": "tool_calls",
+      "tool_calls": [
+        {
+          "id": "call_dcd939f6486d4694a22dba01",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"query\": "
+          }
+        }
+      ]
+    }
+  ],
+  "elapsed_seconds": 1.531,
+  "sse_raw_xml_leaked": false,
+  "tool_states": [],
+  "terminal": {
+    "type": "error",
+    "class": "tool_protocol_error",
+    "msg": "工具调用参数解析失败，本次未执行查询。"
+  },
+  "history_raw_xml_leaked": false
+}

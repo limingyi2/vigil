@@ -83,13 +83,13 @@ class ToolTextBoundary:
             self.block = None
         return visible
 
-    def calls(self, allowed):
+    def calls(self, allowed=None):
         if self.malformed:
             raise ValueError('工具协议未闭合')
         result = []
         for block in self.blocks:
             match = re.fullmatch(r'<tool_call>\s*<function=([\w.-]+)>\s*(.*?)\s*</function>\s*</tool_call\s*>', block, re.S | re.I)
-            if not match or match[1] not in allowed:
+            if not match or (allowed is not None and match[1] not in allowed):
                 raise ValueError('工具协议结构或工具名称无效')
             params, rest = {}, match[2]
             while rest.strip():
