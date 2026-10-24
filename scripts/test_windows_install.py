@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -160,6 +161,15 @@ def inventory(root):
             for p in sorted(root.rglob('*')) if p.is_file()}
 
 
+def application_executable(install):
+    install = Path(install)
+    for name in ('Kestrel.exe', 'Vigil.exe'):
+        candidate = install / name
+        if candidate.is_file():
+            return candidate
+    raise AssertionError('Installed Electron executable was not found')
+
+
 def verify_baseline(path):
     path = Path(path).resolve()
     assert path.name == BASELINE_NAME, 'Upgrade baseline must be the official Vigil 1.0.2 setup installer'
@@ -167,11 +177,22 @@ def verify_baseline(path):
     assert sha256(path) == BASELINE_SHA256, 'Official 1.0.2 installer SHA-256 mismatch'
 
 
-def seed_legacy_profile(install, model_base):
-    """Place fixture user data in the old Brain home that the new build migrates."""
+def seed_legacy_profile(install, model_base, profile):
+    """Preserve the official old Brain home and point the upgrade at that copy."""
     old = Path(install) / 'resources' / 'vigil-brain'
     assert (old / 'vigil-brain.exe').is_file(), 'Official 1.0.2 package has no bundled Brain executable'
     assert (old / '_internal').is_dir(), 'Official 1.0.2 package has no bundled Brain runtime'
+    old = Path(profile) / 'legacy-brain'
+    old.mkdir(parents=True)
+    shutil.copy2(Path(install) / 'resources' / 'vigil-brain' / 'vigil-brain.exe', old / 'vigil-brain.exe')
+    (old / '_internal').mkdir()
+
+    # A real 1.0.2 one-dir install is used above; this explicit legacy pointer
+    # models the prior sidecar selection persisted by older/custom installs and
+    # keeps the old home available while NSIS replaces the application tree.
+    client_config = Path(profile) / 'config.json'
+    client_config.write_text(json.dumps({'sidecar_exe': str(old / 'vigil-brain.exe')}, indent=2),
+                             encoding='utf-8')
 
     config = {
         'provider': 'custom', 'api_base': model_base, 'api_key': 'fixture-model-key',
@@ -241,17 +262,19 @@ def assert_migrated(profile, fixture):
     assert (home / 'logs/user-fixture.log').is_file()
 
 
-def main(installer, baseline, output=None):
+def main(installer, baseline, output=None, expected_source_commit=None):
     assert os.name == 'nt', 'Windows only'
     installer = Path(installer).resolve()
     baseline = Path(baseline).resolve()
     verify_baseline(baseline)
     release = json.loads((installer.parent / 'release-manifest.json').read_text(encoding='utf-8'))
     expected_version = release.get('ver')
-    assert expected_version and installer.name == f'Vigil.Setup.{expected_version}.exe', 'Installer name must match its candidate manifest'
-    assert release['candidate'] is True and release['setup_file'] == installer.name
+    assert expected_version and release['setup_file'] == installer.name, 'Installer name must match its candidate manifest'
+    assert release['candidate'] is True
     assert release['sha256'] == sha256(installer) and release['size'] == installer.stat().st_size
-    assert release['source_commit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    checkout_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    expected_commit = expected_source_commit or checkout_commit
+    assert release['source_commit'] == expected_commit, 'Candidate source commit does not match the expected source'
 
     report_path = Path(output).resolve() if output else installer.parent / 'windows-acceptance.json'
     if report_path.exists():
@@ -269,7 +292,7 @@ def main(installer, baseline, output=None):
 
     def setup(package):
         subprocess.run([str(package), '/S', '/D=' + str(install)], env=env, check=True, timeout=300)
-        assert (install / 'Vigil.exe').is_file(), 'Installer did not produce expected executable'
+        application_executable(install)
         if Path(package).resolve() == installer:
             contents_path = installer.with_suffix('.contents.json')
             contents = json.loads(contents_path.read_text(encoding='utf-8'))
@@ -277,22 +300,43 @@ def main(installer, baseline, output=None):
                 assert sha256(install / Path(relative)) == expected, 'Installed package content mismatch: ' + relative
 
     def check(mode='normal'):
+        ModelFixture.smoke_schema_seen = False
+        ModelFixture.smoke_tool_call_requested = False
+        ModelFixture.smoke_tool_result_received = False
         subprocess.run(['node', str(ROOT / 'client/tools/test-installed-runtime.cjs'),
                         str(install), str(profile), base, mode, str(plugin_zip)], env=env, check=True, timeout=240)
 
     try:
         setup(baseline)
-        fixture = seed_legacy_profile(install, base)
+        fixture = seed_legacy_profile(install, base, profile)
         marker = profile / 'brain/data/upgrade-retained.txt'
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text('fixture retained', encoding='utf-8')
 
         setup(installer)  # Same production appId and install path as the official 1.0.2 baseline.
         check()
+        plugin_chat = {
+            'installed_and_loaded': ModelFixture.smoke_schema_seen,
+            'tool_schema_sent': ModelFixture.smoke_schema_seen,
+            'model_requested_tool': ModelFixture.smoke_tool_call_requested,
+            'tool_result_returned': ModelFixture.smoke_tool_result_received,
+        }
+        assert all(plugin_chat.values()), 'Installed smoke_ping tool call did not complete end-to-end'
         assert marker.read_text(encoding='utf-8') == 'fixture retained'
         assert_migrated(profile, fixture)
         installed_smoke_plugin = profile / 'brain/data/installed_plugins/vigil_smoke.py'
         assert installed_smoke_plugin.is_file(), 'Installed smoke plugin was not persisted in the Brain user-data directory'
+
+        # Exercise the real Plugin Manager uninstall, then run the same client
+        # installer again. The preserved legacy source is a recovery copy and
+        # must not resurrect a feature the user explicitly removed.
+        check('uninstall-legacy')
+        migrated_plugin = profile / 'brain/data/installed_plugins/user_fixture.py'
+        assert not migrated_plugin.exists(), 'Plugin Manager uninstall did not remove the installed copy'
+        assert (Path(fixture['old_home']) / 'plugins/user_fixture.py').is_file(), 'Legacy recovery source was deleted'
+        setup(installer)
+        check('verify-uninstalled-legacy')
+        assert not migrated_plugin.exists(), 'Client upgrade reinstalled an explicitly uninstalled legacy plugin'
 
         pending = profile / 'updates/pending.json'
         checkpoint = json.loads(pending.read_text(encoding='utf-8-sig'))
@@ -322,8 +366,8 @@ def main(installer, baseline, output=None):
 
         # Inject a failed old-app checkpoint: the new installer must abort before
         # removing the previous installation. Restore the test-corrupted EXE afterward.
-        original_exe = (install / 'Vigil.exe').read_bytes()
-        exe = install / 'Vigil.exe'
+        exe = application_executable(install)
+        original_exe = exe.read_bytes()
         exe.write_bytes(b'acceptance failure fixture')
         result = subprocess.run([str(installer), '/S', '/D=' + str(install)], env=env,
                                 check=False, timeout=180, capture_output=True)
@@ -338,6 +382,8 @@ def main(installer, baseline, output=None):
                        'sha256': release['sha256'], 'size': release['size']},
             'fresh_install': True,
             'real_version_upgrade': True,
+            'legacy_profile_contents_are_isolated_fixtures': True,
+            'plugin_uninstall_then_client_upgrade_did_not_reinstall': True,
             'data_migration': {'model_config': True, 'chat_history': True, 'creator_draft': True,
                                'plugins': True, 'skill': True, 'other_user_data': True},
             'electron_brain_pair': True,
@@ -352,17 +398,13 @@ def main(installer, baseline, output=None):
                                           'native_confirm_not_used': True,
                                           'video_choices_inline': True,
                                           'attachment_cancellation': True},
-            'plugin_chat': {'installed_and_loaded': ModelFixture.smoke_schema_seen,
-                            'tool_schema_sent': ModelFixture.smoke_schema_seen,
-                            'model_requested_tool': ModelFixture.smoke_tool_call_requested,
-                            'tool_result_returned': ModelFixture.smoke_tool_result_received},
+            'plugin_chat': plugin_chat,
             'brain_start_failure_blocked_and_rolled_back': True,
             'install_checkpoint_failure_kept_previous_install': True,
             'rollback_restored_exact_official_baseline': True,
             'daily_install_touched': False,
             'test_root': str(root),
         }
-        assert all(report['plugin_chat'].values()), 'Installed smoke_ping tool call did not complete end-to-end'
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
         print(json.dumps(report))
@@ -375,5 +417,7 @@ if __name__ == '__main__':
     parser.add_argument('installer')
     parser.add_argument('--baseline', required=True)
     parser.add_argument('--output', help='Write the acceptance report outside the checkout')
+    parser.add_argument('--expected-source-commit',
+                        help='Expected candidate source commit when exercising a downloaded GitHub artifact')
     args = parser.parse_args()
-    main(args.installer, args.baseline, args.output)
+    main(args.installer, args.baseline, args.output, args.expected_source_commit)

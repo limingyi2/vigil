@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""插件加载器：把 brain/plugins/ 下的每个 .py 当成独立功能块挂进她的链路。
+"""能力加载器：把 brain/core_features/ 下的核心能力适配器与 data/installed_plugins/ 下的用户扩展接进运行链路。
 
 **为什么有这个**：以前加一个功能（比如闹钟提醒）要新建 alarm.py、改 reply.py、
 改 server.py、改 persona_store 的提示词，四处都动 —— 改多了 reply.py 就成一堆
 if-else，改一个功能还可能弄坏别的。插件化之后，核心只认下面这几个钩子，
-新功能只需要往 plugins/ 里丢一个文件，核心代码一行不改。
+核心能力由 core_features/ 提供；可选扩展必须安装到 data/installed_plugins/，不从源码仓库目录直接加载。
 
 ## 一个插件文件长什么样
 
@@ -47,13 +47,15 @@ import threading
 import traceback
 
 try:
-    from paths import PLUGINS_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
-    _DIR = str(PLUGINS_DIR)
+    from paths import CORE_FEATURES_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
+    _DIR = str(CORE_FEATURES_DIR)
+    _CORE_PLUGIN_ROOT = str(CORE_FEATURES_DIR)
     _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)
     _DDIR = str(PLUGIN_DATA_DIR)
     _ROOT = str(CONFIG_DIR)
 except Exception:
-    _DIR = r"C:\vigil\plugins"
+    _DIR = r"C:\vigil\core_features"
+    _CORE_PLUGIN_ROOT = _DIR
     _INSTALLED_DIR = r"C:\vigil\data\installed_plugins"
     _DDIR = r"C:\vigil\data\plugins"
     _ROOT = r"C:\vigil\config"
@@ -61,6 +63,7 @@ except Exception:
 # 钩子名 → 必需参数个数。用于参数个数不对时打一行日志而不是抛 TypeError
 # 到调用方栈里（插件作者看到的应该是"你这里少传了参数"，不是她的调用栈）。
 _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
+_CORE_PLUGIN_FILES = frozenset({"plugin_market.py", "remote.py", "skill.py"})
 
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()
@@ -257,7 +260,7 @@ def re_name_ok(n):
     return bool(n) and all(c.isalnum() or c in "_-" for c in n)
 
 
-def _scan_plugin_directory(directory):
+def _scan_plugin_directory(directory, allowed_files=None):
     """Read plugin source files from one directory without mixing it with user installs."""
     found = {}
     try:
@@ -277,6 +280,8 @@ def _scan_plugin_directory(directory):
         # Single-file plugin.
         if not fn.endswith(".py") or fn.startswith("_"):
             continue
+        if allowed_files is not None and fn not in allowed_files:
+            continue
         plugin = _load_one(fpath)
         if plugin:
             found[plugin.name] = plugin
@@ -284,10 +289,13 @@ def _scan_plugin_directory(directory):
 
 
 def _plugin_entry_path(name):
-    """Find one plugin entry without importing unrelated plugin modules."""
+    """Find one core-feature or installed-plugin entry without importing unrelated modules."""
     name = str(name or "").strip()
     for directory in (_INSTALLED_DIR, _DIR):
         if not directory:
+            continue
+        if (os.path.abspath(directory) == os.path.abspath(_CORE_PLUGIN_ROOT)
+                and name + ".py" not in _CORE_PLUGIN_FILES):
             continue
         package_init = os.path.join(directory, name, "__init__.py")
         if os.path.isfile(package_init):
@@ -299,10 +307,10 @@ def _plugin_entry_path(name):
 
 
 def load(force=False, only=None):
-    """Load core plugins first, then runtime-installed plugins as overrides.
+    """Load core capability adapters first, then user-installed extensions as overrides.
 
-    Market installs live under data/installed_plugins, never in the tracked source
-    directory. That directory is intentionally excluded from release packaging.
+    Optional extensions are read only from data/installed_plugins. The tracked
+    brain/plugins source tree is never scanned by the runtime or included in releases.
     """
     global _loaded
     with _lock:
@@ -321,7 +329,9 @@ def load(force=False, only=None):
             _loaded = True
             _sync_features()
             return dict(_registry)
-        found = _scan_plugin_directory(_DIR)
+        core_allowlist = (_CORE_PLUGIN_FILES if os.path.abspath(_DIR) ==
+                          os.path.abspath(_CORE_PLUGIN_ROOT) else None)
+        found = _scan_plugin_directory(_DIR, core_allowlist)
         if os.path.abspath(_INSTALLED_DIR) != os.path.abspath(_DIR):
             # Installed plugins override a same-named core plugin intentionally.
             found.update(_scan_plugin_directory(_INSTALLED_DIR))

@@ -5,8 +5,9 @@
 新代码一律从这里 import，不要再自己拼 os.path.join。
 
 config/  config.json 主配置、world.json 世界设定、personas/ 人设
-plugins/ 插件：每个 .py 是一个功能块（reminder 闹钟、calc 算数…），
-         加新功能只往这里丢文件，核心代码不改
+core_features/ 随核心发布的能力适配器（计算、知识库、Agent 本地操控等）
+data/installed_plugins/ 由插件市场安装的可选扩展，独立于客户端安装包
+plugins/ 旧版本扩展目录，仅用于升级迁移，不作为新版本内置插件源
 data/    memory 记忆库、her_life 经历流、
          chat_history.jsonl 聊天存档、upload 手机发来的图、run 运行时标记
 logs/watchdog.log 看门狗日志        archive/ 备份与旧数据
@@ -36,7 +37,9 @@ CONFIG_DIR = os.path.join(ROOT, "config")
 DATA_DIR = os.path.join(ROOT, "data")
 LOGS_DIR = os.path.join(ROOT, "logs")
 ARCHIVE_DIR = os.path.join(ROOT, "archive")
-# 核心插件源码目录：随项目版本管理，但市场下载的插件不写入这里。
+# 核心能力源码目录：随 Brain 发布，但不承载可选市场插件。
+CORE_FEATURES_DIR = os.path.join(ROOT, "core_features")
+# 旧版本用户插件目录：新版本安装包不包含此目录，仅在升级时迁移其用户内容。
 PLUGINS_DIR = os.path.join(ROOT, "plugins")
 # 市场安装目录：属于运行时数据，开发源码与安装包均不收录这里的内容。
 PLUGIN_INSTALL_DIR = os.path.join(DATA_DIR, "installed_plugins")
@@ -158,7 +161,7 @@ WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
 # 会自动建出来的目录
 _DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR,
          MEMORY_DIR, LIFE_DIR, UPLOAD_DIR,
-         STICKERS_DIR, RUN_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR,
+         STICKERS_DIR, RUN_DIR, CORE_FEATURES_DIR, PLUGIN_DATA_DIR, KB_DIR,
          CONTEXT_COMPACTION_DIR, DB_DIR)
 
 

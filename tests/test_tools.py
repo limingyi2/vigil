@@ -14,7 +14,7 @@ class TestToolSafety(unittest.TestCase):
         self.assertIsNone(tools.TOOL_TAG_ANY_RE.search('ordinary text'))
 
     def test_builtin_registry_and_unknown_names(self):
-        self.assertEqual(sorted(tools.TOOLS), ['tracking', 'weather'])
+        self.assertEqual(sorted(tools.TOOLS), ['calc', 'tracking', 'weather'])
         self.assertIsNone(tools.invoke_spec('unknown_fixture', {}))
         self.assertIsNone(tools.invoke_spec(None, {}))
 

@@ -20,4 +20,28 @@ function verifyTree(root, manifest) {
   }
   if (!manifest.files || !manifest.files['vigil-brain.exe']) throw new Error('缺少 Brain 文件清单');
 }
-module.exports = {read, compatible, hash, verifyTree, REQUIRED};
+function verifyNoBundledPluginPaths(files) {
+  const offenders = (files || []).filter(file => {
+    const normalized = String(file).replace(/\\/g, '/').replace(/^\/+/, '');
+    return /(?:^|\/)plugins\/.+/i.test(normalized)
+      || /(?:^|\/)installed_plugins\/.+/i.test(normalized);
+  });
+  if (offenders.length) {
+    throw new Error('Client package contains extension plugin payload: ' + offenders.slice(0, 8).join(', '));
+  }
+  return true;
+}
+function verifyNoBundledPluginManifests(entries) {
+  const offenders = (entries || []).filter(entry => {
+    try {
+      const manifest = typeof entry.content === 'string' ? JSON.parse(entry.content) : entry.content;
+      return manifest && manifest.schema === 'vigil.brain-plugin/v1';
+    } catch (_) { return false; }
+  }).map(entry => entry.path);
+  if (offenders.length) {
+    throw new Error('Client package contains extension plugin manifest: ' + offenders.slice(0, 8).join(', '));
+  }
+  return true;
+}
+module.exports = {read, compatible, hash, verifyTree, verifyNoBundledPluginPaths,
+  verifyNoBundledPluginManifests, REQUIRED};

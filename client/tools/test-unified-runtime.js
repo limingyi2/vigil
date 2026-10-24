@@ -57,6 +57,7 @@ test('rollback snapshot preserves a complete pair, checks hashes, never contains
   fs.writeFileSync(path.join(install,'resources/brain.bin'),'old-brain');
   const snapshot=tx.checkpoint(install,home,identity,'Kestrel.exe');
   assert.ok(snapshot,'Current product executable name is accepted by the installer checkpoint');
+  assert.equal(snapshot.appExecutable,'Kestrel.exe','The rollback record names the product executable to restore');
   assert.equal(tx.pending(home).status,'prepared');
   assert.deepEqual(tx.inventory(snapshot.backupDir),snapshot.files);
   assert.equal(tx.canRollback(home,identity),true,'Only the matching pending update can roll back');
@@ -77,4 +78,11 @@ test('NSIS checkpoint targets the product executable declared by electron-builde
   const nsis=fs.readFileSync(path.join(__dirname,'installer.nsh'),'utf8');
   assert.ok(nsis.includes('$INSTDIR\\${APP_EXECUTABLE_FILENAME}'),'Upgrade backup must launch the actual installed product executable');
   assert.equal(nsis.includes('$INSTDIR\\Vigil.exe'),false,'The old product name must not gate Kestrel backup creation');
+});
+test('rollback helper uses the recorded product executable instead of a historical app name',()=>{
+  const script=fs.readFileSync(path.join(__dirname,'../electron/rollback.ps1'),'utf8');
+  assert.ok(script.includes('$request.appExecutable'),'Rollback must read the executable recorded at checkpoint time');
+  assert.ok(script.includes('$install $appExecutable'),'Rollback relaunch must use the restored executable');
+  assert.equal(script.includes("Join-Path $backup 'Vigil.exe'"),false);
+  assert.equal(script.includes("Join-Path $install 'Vigil.exe'"),false);
 });

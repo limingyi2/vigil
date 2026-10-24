@@ -8,10 +8,10 @@
      exe 所在目录就是她的"家"：config/ data/ logs/ 都落这儿。
 
 设计决定（spike 版）：
-- brain/plugins/ 只包含随核心发布的内置插件源码；市场插件源放在仓库 market/，
-  不进入 Brain 包。运行时下载的插件写入 data/installed_plugins，也不进入包。
-- 内置插件按文件路径动态加载（spec_from_file_location），必须给真实 .py；
-- kb 包只被插件动态 import，静态分析够不着 → 全部列进 hiddenimports；
+- brain/core_features/ 仅包含随 Brain 发布的核心能力适配器；brain/plugins/ 是旧版/开发期扩展源，不进入制品。
+- 可选扩展只从 data/installed_plugins/ 加载；市场制品与客户端安装包独立分发。
+- 核心能力按文件路径动态加载（spec_from_file_location），必须给真实 .py；
+- kb 包只被核心能力适配器动态 import，静态分析够不着 → 全部列进 hiddenimports；
 - fastembed/onnxruntime 排除：懒加载失败会自动降级，记忆嵌入走云端 API。
 """
 import os
@@ -19,29 +19,41 @@ import subprocess
 
 BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 
-# 带插件源码及目录型插件的前端/附属资源（运行时文件不进包）。
-plugin_data = []
-plugins_src = os.path.join(BLOCK, "plugins")
+# 仅打包核心能力适配器。brain/plugins/ 是旧版/开发期扩展源，不进入发布制品。
+core_feature_data = []
+CORE_FEATURE_ALLOWLIST = {
+    "__init__.py", "plugin_market.py", "remote.py", "skill.py",
+}
+seen_core_features = set()
+features_src = os.path.join(BLOCK, "core_features")
 repo_root = os.path.dirname(BLOCK)
-tracked_plugins = subprocess.check_output(
-    ["git", "ls-files", "-z", "--", "brain/plugins"], cwd=repo_root
-).decode("utf-8").split("\0")
-for tracked in sorted(p for p in tracked_plugins if p):
-    if not tracked.startswith("brain/plugins/"):
-        raise RuntimeError("Unexpected plugin build path: " + tracked)
-    rel_file = tracked[len("brain/plugins/"):]
+tracked_features = subprocess.check_output(
+    ["git", "ls-files", "-z", "--", "brain/core_features"], cwd=repo_root
+).decode("utf-8").split(chr(0))
+for tracked in sorted(p for p in tracked_features if p):
+    if not tracked.startswith("brain/core_features/"):
+        raise RuntimeError("Unexpected core feature build path: " + tracked)
+    rel_file = tracked[len("brain/core_features/"):]
+    if rel_file not in CORE_FEATURE_ALLOWLIST:
+        raise RuntimeError("Unapproved core feature in release package: " + rel_file)
+    seen_core_features.add(rel_file)
     source = os.path.join(repo_root, *tracked.split("/"))
     if not os.path.isfile(source) or os.path.islink(source):
-        raise RuntimeError("Tracked plugin source is missing or linked: " + tracked)
+        raise RuntimeError("Tracked core feature source is missing or linked: " + tracked)
     if rel_file.endswith((".pyc", ".pyo", ".log")) or os.path.basename(rel_file) == "_registry.json":
         continue
     rel_dir = os.path.dirname(rel_file) or "."
-    # Top-level loader only recognizes standalone plugin .py files; underscore
-    # files are developer/test helpers and must never enter the runtime package.
-    if rel_dir == "." and (not rel_file.endswith(".py") or os.path.basename(rel_file).startswith("_")):
+    # Top-level loader only recognizes standalone .py files and package directories.
+    # Keep __init__.py so core_features is importable by capability_registry.
+    if rel_dir == "." and (not rel_file.endswith(".py") or
+                           (os.path.basename(rel_file).startswith("_") and rel_file != "__init__.py")):
         continue
-    dest = "plugins" if rel_dir == "." else os.path.join("plugins", rel_dir)
-    plugin_data.append((source, dest))
+    dest = "core_features" if rel_dir == "." else os.path.join("core_features", rel_dir)
+    core_feature_data.append((source, dest))
+
+if seen_core_features != CORE_FEATURE_ALLOWLIST:
+    missing = sorted(CORE_FEATURE_ALLOWLIST - seen_core_features)
+    raise RuntimeError("Required core feature source is missing: " + ", ".join(missing))
 
 # 带 skill_host（Node.js 技能宿主）：server.js + start_host.bat + skills/ 下所有技能
 skill_host_data = []
@@ -59,13 +71,13 @@ a = Analysis(
     [os.path.join(BLOCK, "server_launch.py")],
     pathex=[BLOCK],
     binaries=[],
-    datas=plugin_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
+    datas=core_feature_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
     hiddenimports=[
         "websocket",  # Optional Hub Bridge imports websocket-client lazily.
         "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",
         "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",
-        # 插件按文件路径动态加载（不在静态分析图里），它们 import 的
-        # 顶层模块必须手动带进包 —— localtools 只被 remote 插件用
+        # 核心能力适配器按文件路径动态加载（不在静态分析图里），它们 import 的
+        # 顶层模块必须手动带进包 —— localtools 只被 remote 能力用
         "localtools", "devices", "agent_runs",
         # 运行模式切换门（Ollama 生命周期）：只在路由/作业里按需 import
         "run_modes",

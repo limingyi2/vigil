@@ -18,7 +18,18 @@ foreach ($item in $request.files.PSObject.Properties) {
   if (-not $file.StartsWith(($backup + '\'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe backup entry' }
   if ((Get-Sha256 $file) -ne $item.Value) { throw 'Backup hash mismatch' }
 }
-if (-not (Test-Path -LiteralPath (Join-Path $backup 'Vigil.exe'))) { throw 'Incomplete backup' }
+$appExecutable = [string]$request.appExecutable
+if ($appExecutable -notmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]*\.exe$') {
+  $rootExecutables = @($request.files.PSObject.Properties |
+    Where-Object { $_.Name -notmatch '[\\/]' -and $_.Name -match '\.exe$' -and $_.Name -notmatch '^Uninstall\b' })
+  if ($rootExecutables.Count -ne 1) { throw 'Incomplete backup: app executable is ambiguous' }
+  $appExecutable = $rootExecutables[0].Name
+}
+$appRecord = $request.files.PSObject.Properties |
+  Where-Object { $_.Name -ceq $appExecutable }
+if (-not $appRecord -or -not (Test-Path -LiteralPath (Join-Path $backup $appExecutable))) {
+  throw 'Incomplete backup: app executable is missing'
+}
 $stage = $install + '.restore-' + $request.id
 $failed = $install + '.failed-' + $request.id
 if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $failed)) { throw 'Recovery staging already exists' }
@@ -33,4 +44,4 @@ try { Move-Item -LiteralPath $stage -Destination $install }
 catch { Move-Item -LiteralPath $failed -Destination $install; throw }
 $request.status = 'rolled_back'
 $request | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $homeDir 'updates\pending.json') -Encoding UTF8
-if (-not $NoLaunch) { Start-Process -FilePath (Join-Path $install 'Vigil.exe') -WindowStyle Hidden }
+if (-not $NoLaunch) { Start-Process -FilePath (Join-Path $install $appExecutable) -WindowStyle Hidden }

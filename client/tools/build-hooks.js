@@ -18,6 +18,21 @@ exports.afterPack=async context=>{
   const asar=require('@electron/asar');
   const archive=path.join(resources,'app.asar');
   const files=asar.listPackage(archive).map(file=>file.replace(/\\/g,'/'));
+  contract.verifyNoBundledPluginPaths(files);
+  contract.verifyNoBundledPluginManifests(files.filter(file=>/\/manifest\.json$/i.test(file)).map(file=>({
+    path:file,content:asar.extractFile(archive,file.replace(/^\//,'')).toString('utf8')
+  })));
+  // extraResources lives outside app.asar and needs the same extension checks.
+  const resourceFiles=[];
+  const walk=dir=>{for(const item of fs.readdirSync(dir,{withFileTypes:true})){
+    const full=path.join(dir,item.name),rel=path.relative(resources,full).replace(/\\/g,'/');
+    if(item.isDirectory())walk(full);else resourceFiles.push({path:rel,full});
+  }};
+  walk(resources);
+  contract.verifyNoBundledPluginPaths(resourceFiles.map(item=>item.path));
+  contract.verifyNoBundledPluginManifests(resourceFiles.filter(item=>/\/manifest\.json$/i.test(item.path)).map(item=>({
+    path:item.path,content:fs.readFileSync(item.full,'utf8')
+  })));
   const required=['src/js/pages.js','src/js/pages/data.js','src/js/pages/plugin-market.js','src/js/pages/video-workbench.js'];
   for(const file of required)if(!files.includes('/'+file))throw new Error('Packaged client module is missing: '+file);
   const html=asar.extractFile(archive,'src/index.html').toString();
@@ -32,5 +47,8 @@ exports.afterPack=async context=>{
   if(dependencies.some(([before,after])=>before<0||after<0||before>=after))throw new Error('Packaged client script loading order is invalid.');
   const client=JSON.parse(asar.extractFile(archive,'build-info.json'));
   const root=path.join(resources,'vigil-brain'),brain=contract.read(path.join(root,'brain-manifest.json'));
+  for(const rel of ['plugins','_internal/plugins']) {
+    if(fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain contains a plugin source tree: '+rel);
+  }
   contract.compatible(client,brain);contract.verifyTree(root,brain);
 };

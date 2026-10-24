@@ -2,10 +2,10 @@
 """sidecar 薄启动壳 —— PyInstaller 的入口（也支持源码直跑）。
 
 职责只有四件：
-1. 把打包时带进来的 plugins/ 种到 exe 旁边的家目录（首次启动）
+1. 把打包时带进来的 core_features/ 种到 exe 旁边的家目录（首次启动）
 2. 启动技能宿主（skill_host，端口 8790），跟云端 server_run.bat 保持一致
 3. 选一个空闲端口，经 VIGIL_PORT 环境变量交给 server.py
-4. /api/health 探活通过后往 stdout 打一行就绪标记（Electron 靠它拿端口）
+4. 把候选端口和进程身份交给 Electron，由 Electron 验证 API 后确认就绪
 
 大脑本体一律不碰：import server 之后 main() 会像云端一样自己转起来。
 """
@@ -14,8 +14,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import time
-import urllib.request
 
 FROZEN = bool(getattr(sys, "frozen", False))
 CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
@@ -23,41 +21,33 @@ CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
 HOME_DIR = os.path.abspath(os.environ.get('VIGIL_HOME') or
     (os.path.dirname(os.path.abspath(sys.executable)) if FROZEN else CODE_DIR))
 
-READY_TAG = "VIGIL_BRAIN_READY"
 
 
-def _seed_plugins():
-    """把随包分发的插件铺到家目录 plugins/。
-
-    逐个插件补齐：已存在的插件不覆盖，避免用户后来装/改的内容被
-    每次启动回滚；目录型插件缺失时复制整个目录（包括前端资源）。
-    复制失败不致命：少几个功能，不影响聊天。
-    """
+def _seed_core_features():
+    """把随核心发布的能力适配器铺到 exe 旁边；绝不从安装包种入可选插件。"""
     if not FROZEN:
         return
-    src = os.path.join(CODE_DIR, "plugins")
-    if os.environ.get('VIGIL_MANAGED') == '1':
-        import json
-        from home_migration import seed_plugins
-        seed_plugins(src, HOME_DIR, json.loads(os.environ.get('VIGIL_LEGACY_HOMES', '[]')))
-        return
-    dst = os.path.join(HOME_DIR, "plugins")
+    src = os.path.join(CODE_DIR, "core_features")
     if not os.path.isdir(src):
-        return
+        raise RuntimeError("Required core feature payload is missing: " + src)
+    import json
+    from home_migration import seed_core_features, migrate_legacy_plugins
+    legacy_roots = []
+    if os.environ.get("VIGIL_MANAGED") == "1":
+        legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
     try:
-        os.makedirs(dst, exist_ok=True)
-        for name in os.listdir(src):
-            source = os.path.join(src, name)
-            target = os.path.join(dst, name)
-            if os.path.exists(target):
-                continue
-            if os.path.isdir(source):
-                shutil.copytree(source, target)
-            elif name.endswith(".py") and not name.startswith("_"):
-                shutil.copy2(source, target)
-        print("[sidecar] 已铺开随包插件 -> %s" % dst, flush=True)
-    except Exception as e:
-        print("[sidecar] 铺插件失败（不影响聊天）：%s" % e, flush=True)
+        migrated = migrate_legacy_plugins(HOME_DIR, legacy_roots)
+        if migrated.get("copied"):
+            print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
+                  migrated["copied"], flush=True)
+        for error in migrated.get("errors", []):
+            print("[sidecar] 旧版插件迁移未完成，原文件已保留：%s" % error, flush=True)
+    except Exception as exc:
+        # Plugin migration is best-effort. A full disk or an unreadable legacy
+        # directory must not prevent the Brain from starting with user data intact.
+        print("[sidecar] 旧版插件迁移失败，Brain 继续启动；原文件已保留：%s" %
+              str(exc)[:180], flush=True)
+    seed_core_features(src, HOME_DIR, legacy_roots)
 
 
 def _start_skill_host():
@@ -160,19 +150,17 @@ def _pick_port(exclude=()):
         s.close()
 
 
-def _wait_health(port, timeout=180):
-    """轮询 /api/health 直到 200。首次启动可能要下载嵌入模型，放宽到 3 分钟。"""
-    url = "http://127.0.0.1:%d/api/health" % port
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.5)
-    return False
+def _write_candidate_ready(port):
+    """Publish identity and a candidate port; Electron verifies API health."""
+    ready = os.environ.get('VIGIL_READY_FILE')
+    if not ready:
+        return False
+    import json
+    import build_identity
+    with open(ready + '.tmp', 'w', encoding='utf-8') as stream:
+        json.dump(dict(build_identity.runtime(), port=port), stream)
+    os.replace(ready + '.tmp', ready)
+    return True
 
 
 def main():
@@ -195,7 +183,7 @@ def main():
         os.environ['VIGIL_BIND_HOST'] = '127.0.0.1'
     os.makedirs(HOME_DIR, exist_ok=True)
     os.chdir(HOME_DIR)          # 大脑里所有相对路径的家都在这儿
-    _seed_plugins()
+    _seed_core_features()
     _start_skill_host()         # 先起技能宿主，大脑加载插件时技能已可用
     managed = os.environ.get('VIGIL_MANAGED') == '1'
     skill_port = int(os.environ.get('ZX_SKILL_PORT') or 0) if managed else 0
@@ -204,25 +192,10 @@ def main():
 
     import server               # 大脑本体（导入即完成全部初始化的准备工作）
 
-    # 探活放后台线程：main() 会永远阻塞，等它先跑起来才有得探
-    import threading
-
-    def _announce():
-        if _wait_health(port):
-            if os.environ.get('VIGIL_READY_FILE'):
-                import json
-                import build_identity
-                ready = os.environ['VIGIL_READY_FILE']
-                with open(ready + '.tmp', 'w', encoding='utf-8') as f:
-                    json.dump(dict(build_identity.runtime(), port=port), f)
-                os.replace(ready + '.tmp', ready)
-            print("%s port=%d pid=%d" % (READY_TAG, port, os.getpid()),
-                  flush=True)
-        else:
-            print("%s FAILED port=%d（健康检查超时，看上面的报错）"
-                  % (READY_TAG, port), flush=True)
-
-    threading.Thread(target=_announce, daemon=True).start()
+    # 先发布本进程的候选端口和身份。Electron sidecar 自己探测运行中的
+    # /api/runtime 和关键路由后才会转为 ready；这样单一探活者拥有最终判断，
+    # 不依赖 Brain 内部后台线程写入通知，也不会把文件存在误当成健康。
+    _write_candidate_ready(port)
     server.main()
 
 

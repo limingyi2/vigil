@@ -68,18 +68,22 @@ class TestPluginResource(unittest.TestCase):
                 self.assertEqual(plugin_host.frontend_assets()['plugins'], [])
                 self.assertNotEqual(first, plugin_host.frontend_assets()['version'])
 
-    def test_seed_directory_plugin_into_existing_home_without_overwriting(self):
+    def test_seed_core_features_and_migrate_legacy_plugins_without_bundling_them(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, home = Path(tmp) / 'code', Path(tmp) / 'home'
+            (code / 'core_features').mkdir(parents=True)
+            (code / 'core_features/calc.py').write_text('core')
+            # Simulate an old build carrying plugin payloads: the new seeder must ignore it.
             (code / 'plugins/wallpaper').mkdir(parents=True)
-            (code / 'plugins/wallpaper/frontend.js').write_text('new')
-            (code / 'plugins/existing.py').write_text('bundled')
+            (code / 'plugins/wallpaper/frontend.js').write_text('must not be copied')
             (home / 'plugins').mkdir(parents=True)
             (home / 'plugins/existing.py').write_text('custom')
             with patch.multiple(server_launch, FROZEN=True, CODE_DIR=str(code), HOME_DIR=str(home)):
-                server_launch._seed_plugins()
-                self.assertEqual((home / 'plugins/wallpaper/frontend.js').read_text(), 'new')
+                server_launch._seed_core_features()
+                self.assertEqual((home / 'core_features/calc.py').read_text(), 'core')
+                self.assertFalse((home / 'plugins/wallpaper').exists())
                 self.assertEqual((home / 'plugins/existing.py').read_text(), 'custom')
+                self.assertEqual((home / 'data/installed_plugins/existing.py').read_text(), 'custom')
 
 
 if __name__ == '__main__':

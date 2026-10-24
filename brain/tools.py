@@ -9,8 +9,8 @@
 `TOOL_TAG_ANY_RE` 保留，仅用于 server.py 兜底清扫模型输出里残留的标签文本。
 
 工具分三类：
-- 内置：weather / tracking（本文件实现）
-- 静态插件：calc / search / reminder_*（plugin_host 加载）
+- 内置：weather / tracking / calc（本文件实现）
+- 静态插件：search / reminder_*（plugin_host 加载）
 - 动态技能：`包名__工具名`，运行时从 Node 技能宿主拉取（skill 模块）
 """
 import re
@@ -112,17 +112,42 @@ def _t_tracking(arg):
     return _tracking_result(arg)["text"]
 
 
+def _t_calc(arg):
+    """Evaluate a bounded arithmetic expression without loading an extension."""
+    source = str(arg or "").strip()
+    if not source:
+        return "算不了：没给算式"
+    expr = re.sub(r"\s", "", source).replace("×", "*").replace("÷", "/").replace("^", "**")
+    expr = re.sub(r"(?<![\d.])(\d+(?:\.\d+)?)%", r"(\1/100)", expr)
+    if len(expr) > 200 or not re.fullmatch(r"[0-9+\-*/().]+", expr):
+        return "算不了：只支持加减乘除和括号"
+    try:
+        value = eval(expr, {"__builtins__": {}}, {})  # noqa: S307 - validated arithmetic alphabet
+    except ZeroDivisionError:
+        return "算不了：除以 0 了"
+    except Exception:
+        return "算不了：算式有问题"
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return "算不了：结果不是一个正常数"
+        value = round(value, 6)
+        if value == int(value) and abs(value) < 1e15:
+            value = int(value)
+    return "%s = %s" % (source, value)
+
+
 # 内置工具：名 -> 执行函数（接收字符串参数）
 TOOLS = {
     "weather": _t_weather,
     "tracking": _t_tracking,
+    "calc": _t_calc,
 }
 
 
 def run_tool(name, arg, src=None):
     """执行一个工具调用（字符串参数版）；名字不在册/失败返回 None。
 
-    先问内置三个，再问插件（plugin_host 下各功能块）。
+    先问内置工具，再问插件（plugin_host 下各功能块）。
     插件工具名不要跟内置重名 —— 重名了插件那个永远不会被调到。
 
     src 是渠道（app / wechat）：插件开关按渠道判，不传就退化成"当前渠道"。
@@ -164,9 +189,16 @@ def tool_help_extra(native=False):
     """
     try:
         import plugin_host
-        return plugin_host.tool_help(native=native)
+        extra = plugin_host.tool_help(native=native)
     except Exception:
-        return ""
+        extra = ""
+    try:
+        if _feature_on("calc"):
+            extra += ("\n算式：用 calc 做加减乘除、括号、百分比和幂运算；"
+                      "涉及具体数字时不要心算。")
+    except Exception:
+        pass
+    return extra
 
 
 # ============================================================
@@ -177,8 +209,8 @@ def tool_help_extra(native=False):
 #   params    [("参数名", "参数说明", 是否必填)]；空列表 = 无参
 #   arg_param 模型传 dict，执行时取哪个参数还原成旧函数的字符串 arg；
 #             None = 无参
-# 静态插件工具（calc/search/reminder_*/skill_list）也集中在这里声明，
-# 执行时 run_tool 会自动路由到 plugin_host —— 插件函数无需改动。
+# 静态插件工具（search/reminder_*/skill_list）也集中在这里声明；
+# calc is a core, read-only arithmetic tool and is implemented above.
 
 _STATIC_SPECS = {
     "agent_run_inspect": {

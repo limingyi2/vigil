@@ -8,6 +8,11 @@ import shutil
 import subprocess
 import sys
 
+try:
+    from plugin_package_contract import assert_no_bundled_plugin_tree
+except ModuleNotFoundError:
+    from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'dist/brain-release/vigil-brain'
 BUILD_WORK = ROOT / 'build/brain-release'
@@ -84,6 +89,7 @@ def build_native_window_host():
 
 
 def verify(candidate=False):
+    assert_no_bundled_plugin_tree(OUT)
     build = json.loads((ROOT / 'client/build-info.json').read_text(encoding='utf-8'))
     manifest = json.loads((OUT / 'brain-manifest.json').read_text(encoding='utf-8'))
     if not candidate and (build['candidate'] or git('status', '--porcelain')):
@@ -132,6 +138,7 @@ def build(candidate=False, brain_only=False):
         shutil.rmtree(BUILD_WORK)
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--distpath', str(OUT.parent),
         '--workpath', str(BUILD_WORK), str(ROOT / 'deploy/brain/vigil-brain.spec')], cwd=ROOT, check=True)
+    assert_no_bundled_plugin_tree(OUT)
     files = {p.relative_to(OUT).as_posix(): filehash(p) for p in sorted(OUT.rglob('*')) if p.is_file()}
     (OUT / 'brain-manifest.json').write_text(json.dumps(dict(info, files=files), indent=2), encoding='utf-8')
     verify(candidate)

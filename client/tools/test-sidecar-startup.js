@@ -76,6 +76,36 @@ test('a failed Brain health identity check is classified separately',async t=>{
   assert.match(failed.lastErr,/身份验证失败/);
 });
 
+test('a candidate readiness file waits for authenticated API readiness before becoming ready',async t=>{
+  let child;
+  const h=harness(t,{spawn:()=>{
+    child=new EventEmitter();child.pid=73;child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>{};return child;
+  }});
+  h.api.maybeStart();
+  const status=h.api.status();
+  const readyFile=path.join(h.root,'profile','runtime','ready-'+status.instanceId+'.json');
+  fs.mkdirSync(path.join(h.root,'profile','brain','config'),{recursive:true});
+  fs.writeFileSync(path.join(h.root,'profile','brain','config','config.json'),JSON.stringify({brain_token:'fixture-token'}));
+  const server=require('node:http').createServer();
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const port=server.address().port;
+  await new Promise(resolve=>server.close(resolve));
+  fs.writeFileSync(readyFile,JSON.stringify({...identity,pid:73,instance_id:status.instanceId,port}));
+  // The candidate port is written before the HTTP listener binds.
+  h.interval();
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(h.api.status().status,'starting',JSON.stringify(h.api.status()));
+  server.on('request',(req,res)=>{
+    if(req.url==='/api/runtime')res.end(JSON.stringify({...identity,pid:73,instance_id:status.instanceId}));
+    else res.end('{}');
+  });
+  await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
+  t.after(()=>server.close());
+  h.interval();
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(h.api.status().status,'ready');
+});
+
 test('the 120-second startup deadline has its own failure classification',t=>{
   let now=1000,child;
   const h=harness(t,{clock:()=>now,spawn:()=>{
