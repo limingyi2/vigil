@@ -474,6 +474,11 @@ class Brain:
             "vigil_brain_conversation_%x" % id(self), default=None)
         self._turn_note_context = contextvars.ContextVar(
             "vigil_brain_turn_note_%x" % id(self), default='')
+        self._turn_workspace_status_context = contextvars.ContextVar(
+            "vigil_brain_turn_workspace_status_%x" % id(self),
+            default={"selected": False})
+        self._prompt_environment_context = contextvars.ContextVar(
+            "vigil_brain_prompt_environment_%x" % id(self), default=None)
         # 每个渠道的内存历史**是按哪个人设载入的**。
         # 换人设时靠它判断"这份 hist 能不能留" —— 换了人就不能接着上一段的话说。
         self._hist_persona = {}
@@ -573,7 +578,13 @@ class Brain:
 
     @turn_note.setter
     def turn_note(self, value):
-        self._turn_note_context.set(str(value or ''))
+        note = str(value or '')
+        self._turn_note_context.set(note)
+        self._turn_workspace_status_context.set({"selected": bool(note)})
+
+    @property
+    def turn_workspace_status(self):
+        return dict(self._turn_workspace_status_context.get() or {})
 
     def _hist(self, src, conversation_id=None):
         """取（必要时建）某个渠道的对话历史。每份第一条固定是 system。"""
@@ -589,6 +600,8 @@ class Brain:
         """Bind this request to its local PC conversation."""
         self._cur_src = norm_src(src)
         self._cur_conversation = conversation_id
+        if not self.turn_note:
+            self._turn_workspace_status_context.set({"selected": False})
         return self._cur_src
 
     def hist_for(self, src, conversation_id=None):
@@ -925,12 +938,31 @@ class Brain:
         按通道自己加的（FC 通道加工具态度，router 通道加工具结果）。
         """
         parts = [self.persona_text]
+        try:
+            import host_environment as _host_env
+            runtime_environment = getattr(self, "_prompt_environment_context", None)
+            runtime_environment = runtime_environment.get() if runtime_environment else None
+            if runtime_environment:
+                api_snapshot, provider = runtime_environment
+            else:
+                api_snapshot = self._api_snapshot()
+                try:
+                    provider = self._provider(api_snapshot)
+                except Exception:
+                    provider = None
+            parts.append(_host_env.prompt_summary(
+                self, self._cur_src, api_config=api_snapshot, provider=provider))
+        except Exception as _env_exc:
+            print("[环境快照] 本轮状态未确认：%s" % type(_env_exc).__name__, flush=True)
+            parts.append("\n\n【Vigil 宿主环境快照】当前运行状态未确认；不得根据猜测声称工具或权限可用。")
         # 单轮工作区注记：server 每次请求前按当前会话归属设置，这里用完即弃。
         # 放在人设之后，"此刻该在哪个文件夹里干活"就有了着落。
         turn_note = getattr(self, 'turn_note', '')
         if turn_note:
             parts.append('\n' + turn_note)
-            self.turn_note = ''
+            # Keep the structured selection fact available to the read-only
+            # environment snapshot for the rest of this turn.
+            self._turn_note_context.set('')
         tm = self._time_hint()
         if tm:
             parts.append("\n" + tm)
@@ -967,6 +999,20 @@ class Brain:
         except Exception:
             pass
         return parts, life
+
+    def _build_system_parts_for_runtime(self, user_text, memory_block,
+                                        api_config, provider):
+        """Bind this turn's already-selected model snapshot without changing
+        the long-standing two-argument system-parts hook used by integrations.
+        """
+        context = getattr(self, "_prompt_environment_context", None)
+        if context is None:
+            return self._build_system_parts(user_text, memory_block)
+        token = context.set((api_config, provider))
+        try:
+            return self._build_system_parts(user_text, memory_block)
+        finally:
+            context.reset(token)
 
     # --- 前置路由器用的便宜模型配置（复用 plan_and_execute 的 planner_model）---
     def _router_cfg(self):
@@ -1075,7 +1121,8 @@ class Brain:
                       % str(_e)[:100], flush=True)
 
         # --- system 资料（与 draft 同源）；工具用法不贴标签教学 ---
-        parts, life = self._build_system_parts(user_text, memory_block)
+        parts, life = self._build_system_parts_for_runtime(
+            user_text, memory_block, _api0, mp)
         # 原生 FC 的工具使用态度（语法不用教，API 通道处理）
         parts.append(
             "\n## 工具\n"
@@ -1775,7 +1822,8 @@ class Brain:
         except Exception as exc:
             print("[上下文] 流式记忆检索失败：%s" % str(exc)[:100], flush=True)
 
-        parts, life = self._build_system_parts(user_text, memory_block)
+        parts, life = self._build_system_parts_for_runtime(
+            user_text, memory_block, api_snapshot, provider)
         import tools as _tools
         try:
             import features as _features
@@ -2032,6 +2080,7 @@ class Brain:
                                 try:
                                     from plugin_host import Turn
                                     ctx = Turn(text=user_text, src=src or self._cur_src, brain=self)
+                                    ctx.tool_policy = "readonly"
                                     outcome = _tools.invoke_readonly_spec(name, args, ctx)
                                 except Exception:
                                     outcome = _tools.readonly_failure(
