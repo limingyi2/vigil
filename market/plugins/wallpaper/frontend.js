@@ -30,6 +30,7 @@
   let resizeObserver = null;
   let libraryError = '';
   let readyWatchdog = null;
+  let gpuDiag = null;
   const RENDER_READY_TIMEOUT = 15000;
 
   const api = (method, path, body) => {
@@ -97,6 +98,7 @@
     frame = null; activeUrl = '';
     if (badge) badge.hidden = true;
     if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
+    gpuDiag = null;
   }
   function frameDocument(type, src, fit, sceneFile) {
     // 🔴 mediaBase 不能带尾斜杠：渲染器用 `mediaBase + '/' + src + '/...'`
@@ -120,6 +122,18 @@
         if (e.data.command === 'pause') w.pause?.(); else if (e.data.command === 'resume') w.resume?.();
         else if (e.data.command === 'quality') w.setQuality?.(e.data.value || {}); else if (e.data.command === 'fit') w.setFit?.(e.data.value);
       } catch (_) {} });
+      // GPU 探测：报告 WebGL2 是否可用、用的哪块适配器（镜像渲染器的
+      // 上下文参数），让"显卡不干活"从猜测变成一行确凿诊断。
+      const gpuProbe = () => { try {
+        const c = document.createElement('canvas');
+        const attrs = { premultipliedAlpha: false, antialias: false, alpha: false, preserveDrawingBuffer: true };
+        const gl = c.getContext('webgl2', attrs) || c.getContext('webgl2') || c.getContext('webgl', attrs);
+        if (!gl) { post('gpu', { ok: false, detail: 'WebGL2/WebGL 上下文创建失败（驱动或 Electron GPU 管线）' }); return; }
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+        post('gpu', { ok: true, renderer: String(renderer || '未知适配器').slice(0, 140) });
+      } catch (e) { post('gpu', { ok: false, detail: String(e && e.message || e).slice(0, 120) }); } };
+      gpuProbe();
       const tick = () => { if (dead) return; const w = window.__wp; if (w) { let state = {}; try { state = w.getState?.() || {}; } catch (_) {} const canvas = document.querySelector('canvas');
         if (state.webError) post('error', { message: state.webError }); else if (canvas && canvas.width > 1 && canvas.height > 1) post('ready', { width: canvas.width, height: canvas.height, state });
       } requestAnimationFrame(tick); };
@@ -173,8 +187,11 @@
           readyWatchdog = setTimeout(() => {
             readyWatchdog = null;
             if (disposed || !frame) return;
-            badge.textContent = '渲染器 ' + Math.round(RENDER_READY_TIMEOUT / 1000) + ' 秒未就绪：' +
-              '显卡/WebGL 可能不可用，或场景资源加载失败。可先换视频/图片壁纸验证，或在客户端关闭硬件加速后重试。';
+            const gpu = gpuDiag
+              ? (gpuDiag.ok ? 'GPU 探测正常(' + gpuDiag.renderer + ')' : 'GPU 探测失败：' + gpuDiag.detail)
+              : 'GPU 探测未完成';
+            badge.textContent = '渲染器 ' + Math.round(RENDER_READY_TIMEOUT / 1000) + ' 秒未就绪。' + gpu +
+              '。可先换视频/图片壁纸验证；若 GPU 探测失败，给客户端快捷方式加 --disable-gpu 后重试可确认是否显卡加速问题。';
             badge.hidden = false;
           }, RENDER_READY_TIMEOUT);
         }
@@ -275,6 +292,7 @@
   }
   function onMessage(event) {
     if (!frame || event.source !== frame.contentWindow || !event.data?.vigilWallpaperV4) return;
+    if (event.data.op === 'gpu') { gpuDiag = event.data; return; }
     if (event.data.op === 'ready') {
       if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
       badge.textContent = '实时 ' + typeLabel(active?.type); badge.hidden = false;
