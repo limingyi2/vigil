@@ -1328,11 +1328,14 @@ class Brain:
                     self.last_tools_used = used
                     return _clean(raw, keep_newlines=True)
 
-                # 记录用到的工具
-                for tc in tcs:
-                    _nm = (tc.get("function") or {}).get("name") or ""
-                    if _nm and _nm not in used:
-                        used.append(_nm)
+                # Keep the legacy audit behavior for execution-capable turns.
+                # Read-only turns record a tool only after its structured result
+                # confirms success; a nonempty error message is not success.
+                if tool_policy != "readonly":
+                    for tc in tcs:
+                        _nm = (tc.get("function") or {}).get("name") or ""
+                        if _nm and _nm not in used:
+                            used.append(_nm)
 
                 # 执行所有工具调用，收集结果
                 _tool_results = []
@@ -1348,23 +1351,31 @@ class Brain:
                         return self.last_err
                     _name = str(_fn.get("name") or "")
                     if tool_policy == "readonly":
+                        _outcome = None
                         _key = (_name, json.dumps(_args, ensure_ascii=False, sort_keys=True))
                         if _name not in _tools.READ_ONLY_TOOL_NAMES:
-                            _result = "该工具不在普通聊天只读白名单内，未执行。"
+                            _outcome = _tools.readonly_failure(
+                                "该工具不在普通聊天只读白名单内，未执行。")
                         elif _key in readonly_seen:
-                            _result = "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。"
+                            _outcome = _tools.readonly_failure(
+                                "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。")
                             _next_no_tools = True
                         else:
                             readonly_seen.add(_key)
                             if not _tools.static_tool_enabled(_name, ctx_src or self._cur_src):
-                                _result = "该只读工具在当前渠道未启用，未执行。"
+                                _outcome = _tools.readonly_failure(
+                                    "该只读工具在当前渠道未启用，未执行。")
                                 _next_no_tools = True
                             elif readonly_calls >= 4:
-                                _result = "本轮只读工具调用次数已达上限，未继续执行。请根据已有结果回答。"
+                                _outcome = _tools.readonly_failure(
+                                    "本轮只读工具调用次数已达上限，未继续执行。请根据已有结果回答。")
                                 _next_no_tools = True
                             else:
                                 readonly_calls += 1
-                                _result = _tools.invoke_spec(_name, _args, ctx)
+                                _outcome = _tools.invoke_readonly_spec(_name, _args, ctx)
+                        if _outcome.ok and _name not in used:
+                            used.append(_name)
+                        _result = _outcome.for_model()
                     else:
                         _result = _tools.invoke_spec(_name, _args, ctx)
                     _tool_results.append((_fn.get("name") or "", _result))
@@ -1870,26 +1881,31 @@ class Brain:
                     else:
                         key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
                         if key in seen:
-                            result_text = "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。"
+                            outcome = _tools.readonly_failure(
+                                "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。")
+                            result_text = outcome.for_model()
                         else:
                             seen.add(key)
                             if not _tools.static_tool_enabled(name, src or self._cur_src):
-                                result_text = "该只读工具在当前渠道未启用，未执行。"
+                                outcome = _tools.readonly_failure(
+                                    "该只读工具在当前渠道未启用，未执行。")
+                                result_text = outcome.for_model()
                             elif tool_calls_count >= 4:
-                                result_text = "本轮只读工具调用次数已达上限，未继续执行。"
+                                outcome = _tools.readonly_failure(
+                                    "本轮只读工具调用次数已达上限，未继续执行。")
+                                result_text = outcome.for_model()
                             else:
                                 tool_calls_count += 1
                                 yield {"type": "tool", "tool": name, "state": "started"}
                                 try:
                                     from plugin_host import Turn
                                     ctx = Turn(text=user_text, src=src or self._cur_src, brain=self)
-                                    tool_result = _tools.invoke_spec(name, args, ctx)
+                                    outcome = _tools.invoke_readonly_spec(name, args, ctx)
                                 except Exception:
-                                    tool_result = None
-                                tool_ok = bool(tool_result)
-                                result_text = str(tool_result) if tool_ok else ""
-                                if not tool_ok:
-                                    result_text = "查询失败，照实说明未核实，不要编造查询结果。"
+                                    outcome = _tools.readonly_failure(
+                                        "只读工具执行异常，未核实查询结果。")
+                                tool_ok = outcome.ok
+                                result_text = outcome.for_model()
                                 yield {"type": "tool", "tool": name, "state": "returned",
                                        "error": not tool_ok}
                                 if tool_ok and name not in tools_used:

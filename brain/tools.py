@@ -62,39 +62,53 @@ def _locate():
         return "", ip, True
 
 
-def _t_weather(arg):
-    """某地实时天气；不带参数就自动定位他在的城市。"""
+def _weather_result(arg):
+    """Structured internal status; _t_weather keeps its legacy string protocol."""
     from uapi import fetch_weather
     city = (arg or "").strip()
     if not city:
         city, _ip, _c = _locate()
     if not city:
-        return "查不到：连城市都没定位到，让他说一下他在哪儿"
+        return {"ok": False, "text": "查不到：连城市都没定位到，让他说一下他在哪儿"}
     d = fetch_weather(city, _uapi_token())
     if not d:
-        return "%s的天气查不到（接口失败），别编" % city
+        return {"ok": False, "text": "%s的天气查不到（接口失败），别编" % city}
+    if not any(key in d for key in ("weather", "temperature")):
+        return {"ok": False, "text": "%s的天气查不到（接口返回无效），别编" % city}
     bits = [str(d.get("weather") or "?"), "%s℃" % d.get("temperature")]
     if d.get("wind_direction"):
         bits.append("%s%s" % (d.get("wind_direction"), d.get("wind_power") or ""))
     if d.get("humidity") is not None:
         bits.append("湿度%s%%" % d.get("humidity"))
-    return "%s现在：%s" % (city, "，".join(bits))
+    return {"ok": True, "text": "%s现在：%s" % (city, "，".join(bits))}
+
+
+def _t_weather(arg):
+    """某地实时天气；不带参数就自动定位他在的城市。"""
+    return _weather_result(arg)["text"]
+
+
+def _tracking_result(arg):
+    """Structured internal status; _t_tracking keeps its legacy string protocol."""
+    from uapi import fetch_tracking
+    no = (arg or "").strip().upper()
+    if not no:
+        return {"ok": False, "text": "查不到：得给他单号"}
+    d = fetch_tracking(no, _uapi_token())
+    if not d:
+        return {"ok": False, "text": "单号 %s 查不到物流（可能没揽收或单号不对），照实说" % no}
+    tracks = d.get("tracks") or []
+    latest = str(tracks[0].get("context")) if tracks else ""
+    if not any(key in d for key in ("tracks", "status", "carrier_name")):
+        return {"ok": False, "text": "单号 %s 查不到物流（接口返回无效），照实说" % no}
+    return {"ok": True, "text": "%s（%s）：%s%s" % (
+        no, d.get("carrier_name") or "快递", d.get("status") or "未知",
+        ("，最新一条：" + latest) if latest else "")}
 
 
 def _t_tracking(arg):
     """查某个快递单号的实时物流（不进监控，只答一次）。"""
-    from uapi import fetch_tracking
-    no = (arg or "").strip().upper()
-    if not no:
-        return "查不到：得给他单号"
-    d = fetch_tracking(no, _uapi_token())
-    if not d:
-        return "单号 %s 查不到物流（可能没揽收或单号不对），照实说" % no
-    tracks = d.get("tracks") or []
-    latest = str(tracks[0].get("context")) if tracks else ""
-    return "%s（%s）：%s%s" % (
-        no, d.get("carrier_name") or "快递", d.get("status") or "未知",
-        ("，最新一条：" + latest) if latest else "")
+    return _tracking_result(arg)["text"]
 
 
 # 内置工具：名 -> 执行函数（接收字符串参数）
@@ -373,6 +387,60 @@ def _feature_on(name, src=None):
         return bool(features.on(name, src))
     except Exception:
         return False
+
+
+class ReadOnlyToolResult:
+    """Internal status at the audited read-only execution boundary.
+
+    Legacy tools continue returning their original strings. Only ordinary-chat
+    Function Calling consumes this structured result and its explicit status.
+    """
+    __slots__ = ("ok", "text")
+
+    def __init__(self, ok, text):
+        self.ok = bool(ok)
+        self.text = str(text or "")
+
+    def for_model(self):
+        if self.ok:
+            return self.text
+        return "【查询未核实：只读工具执行失败】\n" + (self.text or "工具没有返回结果。")
+
+
+def readonly_failure(text):
+    """Build an explicit failed outcome for blocked/repeated/limited calls."""
+    return ReadOnlyToolResult(False, text)
+
+
+def invoke_readonly_spec(name, args, ctx=None):
+    """Invoke one audited tool with an internal, structured success status.
+
+    The registered tool APIs remain string-based for compatibility. Each
+    audited implementation exposes a private result helper that reports
+    whether the underlying query/calculation completed successfully.
+    """
+    n = str(name or "").strip()
+    if n not in READ_ONLY_TOOL_NAMES:
+        return readonly_failure("该工具不在普通聊天只读白名单内，未执行。")
+    spec = _STATIC_SPECS.get(n) or {}
+    arg_param = spec.get("arg_param")
+    arg = str((args or {}).get(arg_param) or "").strip() if arg_param else ""
+    try:
+        if n == "search":
+            from plugins.websearch import _search_result
+            outcome = _search_result(arg)
+        elif n == "weather":
+            outcome = _weather_result(arg)
+        elif n == "tracking":
+            outcome = _tracking_result(arg)
+        else:
+            from plugins.calc import _calc_result
+            outcome = _calc_result(arg)
+    except Exception as exc:
+        return readonly_failure("只读工具执行异常（%s），未核实查询结果。" % type(exc).__name__)
+    if not isinstance(outcome, dict) or "ok" not in outcome:
+        return readonly_failure("只读工具没有返回可验证的执行状态。")
+    return ReadOnlyToolResult(outcome["ok"], outcome.get("text"))
 
 
 def _static_tool_array(src=None):

@@ -284,19 +284,56 @@ class TestNativeFunctionCalling(unittest.TestCase):
                     _want("s2", "search", {"query": "Vigil release"}),
                     _say("本轮已经查询过，以下基于已返回的结果。")])
         from unittest.mock import patch
-        with patch.object(tl, "invoke_spec", return_value="release 结果") as invoke:
-            answer = self._brain().draft_native("我看到这个软件更新了什么", "",
-                                                tool_policy="readonly")
+        br = self._brain()
+        with patch.object(tl, "invoke_readonly_spec",
+                          return_value=tl.ReadOnlyToolResult(True, "release 结果")) as invoke:
+            answer = br.draft_native("我看到这个软件更新了什么", "",
+                                     tool_policy="readonly")
         self.assertEqual(len(self.seen), 3)
         self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(br.last_tools_used, ["search"])
+        denied = [m["content"] for m in self.seen[2]["messages"]
+                  if m.get("role") == "tool"]
+        self.assertEqual(len(denied), 2)
+        self.assertTrue(denied[-1].startswith("【查询未核实：只读工具执行失败】"))
         self.assertIn("已返回的结果", answer)
+
+    def test_readonly_failure_is_marked_unverified_and_not_recorded_as_success(self):
+        features.on = lambda key, src=None: True
+        self._stub([_want("s1", "search", {"query": "Vigil release"}),
+                    _say("搜索服务暂不可用，结果未核实。")])
+        from unittest.mock import patch
+        br = self._brain()
+        with patch.object(tl, "invoke_readonly_spec",
+                          return_value=tl.ReadOnlyToolResult(False, "搜索服务连接失败")):
+            answer = br.draft_native("Vigil 最近有什么更新", "", tool_policy="readonly")
+        tool_results = [m["content"] for m in self.seen[1]["messages"]
+                        if m.get("role") == "tool"]
+        self.assertEqual(len(tool_results), 1)
+        self.assertTrue(tool_results[0].startswith("【查询未核实：只读工具执行失败】"))
+        self.assertEqual(br.last_tools_used, [])
+        self.assertTrue(answer)
+
+    def test_readonly_success_is_recorded_only_after_structured_success(self):
+        features.on = lambda key, src=None: True
+        self._stub([_want("c1", "calc", {"expression": "128*3"}),
+                    _say("计算结果是 384。")])
+        from unittest.mock import patch
+        br = self._brain()
+        with patch.object(tl, "invoke_readonly_spec",
+                          return_value=tl.ReadOnlyToolResult(True, "128*3 = 384")):
+            br.draft_native("算一下 128 乘以 3", "", tool_policy="readonly")
+        self.assertEqual(br.last_tools_used, ["calc"])
+        tool_results = [m["content"] for m in self.seen[1]["messages"]
+                        if m.get("role") == "tool"]
+        self.assertEqual(tool_results, ["128*3 = 384"])
 
     def test_readonly_policy_rechecks_channel_feature_before_dispatch(self):
         features.on = lambda key, src=None: key != "websearch"
         self._stub([_want("disabled", "search", {"query": "Vigil release"}),
                     _say("当前搜索功能没有启用。")])
         from unittest.mock import patch
-        with patch.object(tl, "invoke_spec", wraps=tl.invoke_spec) as invoke:
+        with patch.object(tl, "invoke_readonly_spec", wraps=tl.invoke_readonly_spec) as invoke:
             answer = self._brain().draft_native("Vigil 最近有什么更新", "",
                                                 tool_policy="readonly")
         names = {item["function"]["name"] for item in self.seen[0].get("tools", [])}
