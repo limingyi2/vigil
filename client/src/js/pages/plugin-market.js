@@ -81,6 +81,10 @@
         }).join('');
         const localVersion = p.installed ? (p.version || '未知') : '';
         const marketVersion = p.market_version || p.version || '未知';
+        // 非市场条目（内置/本地残留）没有"市场版本"可言，别显示 v未知。
+        const versionLabel = p.in_market === false
+          ? '<span class="muted" style="font-size:12px">本地组件</span>'
+          : '<span class="muted" style="font-size:12px">市场 v' + esc(marketVersion) + '</span>';
         const state = p.state === 'restart_required' ? p.state :
           (p.runtime_state || p.state || (p.installed ? 'unknown' : 'not_installed'));
         const updateAvailable = p.installed && p.update_state === 'update_available';
@@ -103,14 +107,14 @@
           '<div style="display:flex;align-items:center;gap:8px">' +
           '<span class="market-icon" aria-hidden="true">' + icon('puzzle', 'md') + '</span>' +
           '<strong>' + esc(p.name) + '</strong>' +
-          '<span class="muted" style="font-size:12px">市场 v' + esc(marketVersion) + '</span>' +
+          versionLabel +
           badge +
           '</div>' +
           '<div class="muted" style="font-size:12px">' + esc(p.author || '未知') + '</div>' +
           '<div style="flex:1;font-size:13px;line-height:1.5">' + esc(p.desc || '') + '</div>' +
           (p.builtin ? '<div class="market-meta">随 Vigil 程序发布，可停用；不能单独卸载或更新。</div>' : '') +
           '<div style="margin-top:4px">' + tags + '</div>' +
-          (p.installed ? '<div class="market-meta">本地 v' + esc(localVersion) + ' · ' + esc(updateAvailable ? '有可用更新' : (p.update_state === 'ahead' ? '本地版本较新' : '已是最新')) + '</div>' : '') +
+          (p.installed && p.version ? '<div class="market-meta">本地 v' + esc(localVersion) + ' · ' + esc(updateAvailable ? '有可用更新' : (p.update_state === 'ahead' ? '本地版本较新' : '已是最新')) + '</div>' : '') +
           '<div class="market-meta">运行状态：' + esc(state) +
             (p.lifecycle_enabled === false || p.enabled === false ? ' · 全局已停用' : ' · 全局已启用') +
             (p.lifecycle_enabled && p.effective_by_src && p.effective_by_src.pc === false
