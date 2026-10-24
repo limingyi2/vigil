@@ -115,6 +115,18 @@ body.vigil-wallpaper-active .chatwrap .localpop {
   -webkit-backdrop-filter: var(--vigil-wallpaper-frost);
 }
 
+/* 左侧整列背景全透明：去掉面板那层暗色底，只留列表项/按钮玻璃。 */
+body.vigil-wallpaper-active .panel,
+body.vigil-wallpaper-active .gnav,
+body.vigil-wallpaper-active .chatwrap .rp {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 设置窗口不挂壁纸：给一个纯深色底，玻璃组件照常生效。 */
+body.settings-window.vigil-wallpaper-active {
+  background: linear-gradient(160deg, #0d1019 0%, #131725 100%) !important;
+}
 /* 图标栏按钮不再是深色卡片：平时全透明，悬停/选中才起玻璃底。 */
 body.vigil-wallpaper-active .gnav .gbtn,
 body.vigil-wallpaper-active .gnav .gbtn.on {

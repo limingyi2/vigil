@@ -631,7 +631,7 @@ function openSettingsWindow(options) {
     minHeight: 600,
     parent: win && !win.isDestroyed() ? win : undefined,
     frame: false,
-    backgroundColor: '#faf7f2',
+    backgroundColor: '#0d1019',   // 设置窗口走深色主题（插件 CSS 只做适配不挂壁纸），避免闪白
     show: false,
     icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
     webPreferences: {

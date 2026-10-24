@@ -24,12 +24,13 @@
   let badgeTimer = 0;
   // 常态徽章 4 秒自动隐藏；错误文案（含“失败/错误/未就绪”）停留 8 秒再收。
   function showBadge(text) {
-    if (!badge) return;
+    // 只报错误；"实时 Scene"这类成功状态不再显示（用户要求彻底去掉）。
+    if (!badge || !/失败|错误|未就绪|不在当前壁纸库/.test(String(text))) return;
     badge.textContent = text;
-    badge.classList.toggle('is-error', /失败|错误|未就绪|不在当前壁纸库/.test(text));
+    badge.classList.add('is-error');
     badge.hidden = false;
     clearTimeout(badgeTimer);
-    badgeTimer = setTimeout(() => { badge.hidden = true; }, /失败|错误|未就绪|不在当前壁纸库/.test(text) ? 8000 : 4000);
+    badgeTimer = setTimeout(() => { badge.hidden = true; }, 8000);
   }
   let frame = null;
   let generation = 0;
@@ -339,6 +340,16 @@
     disposed = true; clearStage(); if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } messageHandler && window.removeEventListener('message', messageHandler); visibilityHandler && document.removeEventListener('visibilitychange', visibilityHandler); objectUrls.forEach((url) => URL.revokeObjectURL(url)); objectUrls.clear(); locals = []; library = []; active = null; document.body.classList.remove('vigil-wallpaper-active', 'vwp-active'); document.documentElement.style.removeProperty('--vigil-wallpaper-blur'); root?.remove(); badge?.remove(); window.__vigilWallpaperV4Dispose = null; try { window.vigil?.plugins?.releaseResources?.(); } catch (_) {}
   }
   window.__vigilWallpaperV4Dispose = dispose;
+  // 设置窗口（?window=settings）：只做主题适配——挂上 vigil-wallpaper-active
+  // 类让玻璃变量生效，但不创建壁纸层、不跑渲染器（壁纸属于主窗口）。
+  const IS_SETTINGS_WINDOW = (() => { try { return new URLSearchParams(window.location.search).get('window') === 'settings'; } catch (_) { return false; } })();
+  if (IS_SETTINGS_WINDOW) {
+    document.body.classList.add('vigil-wallpaper-active');
+    window.__vigilWallpaperV4Dispose = () => document.body.classList.remove('vigil-wallpaper-active');
+    window.VigilPlugin?.registerCleanup?.(OWNER, window.__vigilWallpaperV4Dispose);
+    return;
+  }
+
   ensureLayers(); messageHandler = onMessage; window.addEventListener('message', messageHandler); visibilityHandler = onVisibility; document.addEventListener('visibilitychange', visibilityHandler);
   api('GET', '/api/plugin/wallpaper/config').then((r) => { if (r?.config) config = { ...DEFAULT, ...r.config }; applyAppearance(); if (config.enabled && config.wallpaper_id) loadLibrary(false).then(() => { if (libraryError) { showBadge('读取壁纸库失败：' + libraryError); } return mount(library.find((x) => x.id === config.wallpaper_id)); }).then(() => scheduleCarousel()); else { loadLibrary(false); scheduleCarousel(); } }).catch((e) => {
     if (badge) { showBadge('壁纸配置读取失败：' + String(e?.message || e).slice(0, 120)); }
