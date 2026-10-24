@@ -121,4 +121,4 @@ def test_readonly_stream_degrades_without_native_function_calling_support():
     system = payloads[0]["messages"][0]["content"]
     assert "不支持 Function Calling" in system
     assert "不得声称已联网" in system
-    assert emitted[-1]["text"] == "当前模型不支持工具调用，无法核实。"\n
+    assert emitted[-1]["text"] == "当前模型不支持工具调用，无法核实。"
