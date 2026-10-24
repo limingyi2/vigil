@@ -1,0 +1,183 @@
+{
+  "utc": "2026-10-24T03:43:06.777538+00:00",
+  "provider": "xiaomi",
+  "model": "mimo-v2.6-flash",
+  "request_limit": 2,
+  "search_limit": 1,
+  "retries": 0,
+  "requests": [
+    {
+      "request": 1,
+      "native_tool_deltas": 2,
+      "xml_tool_blocks": 1,
+      "usage": {
+        "prompt_tokens": 537,
+        "completion_tokens": 41,
+        "total_tokens": 578
+      },
+      "finish_reason": "tool_calls",
+      "tool_deltas": [
+        [
+          {
+            "index": 0,
+            "id": "call_9a77de2416ae489491a51192",
+            "function": {
+              "arguments": "",
+              "name": "search"
+            },
+            "type": "function"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "id": null,
+            "function": {
+              "arguments": "{\"query\": ",
+              "name": null
+            },
+            "type": "function"
+          }
+        ]
+      ],
+      "content": [
+        "<tool_call><function=search><parameter=query>X",
+        "iaomi MiMo",
+        " 官方网站",
+        "</parameter></function",
+        ">",
+        "</tool_call>"
+      ]
+    },
+    {
+      "request": 2,
+      "native_tool_deltas": 0,
+      "xml_tool_blocks": 0,
+      "usage": {
+        "prompt_tokens": 494,
+        "completion_tokens": 198,
+        "total_tokens": 692
+      },
+      "finish_reason": "stop",
+      "tool_deltas": [],
+      "content": [
+        "已",
+        "核实，",
+        "Xiaomi Mi",
+        "Mo 的官方网站链接",
+        "及",
+        "说明",
+        "如下：\n\n-",
+        " **https",
+        "://mimo.x",
+        "iaomi.com/**",
+        " — Xiaomi",
+        " MiMo 官",
+        "方主页",
+        "，介绍其定位",
+        "为小米",
+        "的通用智能平台",
+        "（",
+        "universal",
+        " smart platform），致力于",
+        "让先进的",
+        " AI ",
+        "技术服务",
+        "每一个人。\n",
+        "- **",
+        "https://mimo",
+        ".mi.com/** —",
+        " Xiaomi MiMo Home",
+        "，面向专业人士",
+        "的一",
+        "体化 AI ",
+        "桌面应用",
+        "，涵盖办公、",
+        "设计、编程",
+        "与",
+        "多模态创作",
+        "等",
+        "场景。\n",
+        "- ",
+        "另有",
+        "开发者",
+        "资源",
+        "页",
+        " **",
+        "https://aist",
+        "udio.xiaom",
+        "imimo.com/**",
+        "（Xiaomi",
+        " MiMo Studio，",
+        "文档生成与编辑",
+        "的",
+        " Agent 办",
+        "公闭环",
+        "）及",
+        "开源",
+        "模型",
+        "仓库",
+        " **https://h",
+        "uggingface.co/X",
+        "iaomiMiMo",
+        "**。\n\n",
+        "以上链接",
+        "均来自本次检索",
+        "到",
+        "的真实",
+        "来源，可",
+        "直接访问。"
+      ]
+    }
+  ],
+  "tool_invocations": [
+    {
+      "tool": "search",
+      "ok": true,
+      "result_chars": 881,
+      "seconds": 3.687
+    }
+  ],
+  "normalizations": [
+    {
+      "complete": true,
+      "reason": "tool_calls",
+      "tool_calls": [
+        {
+          "id": "call_9a77de2416ae489491a51192",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"query\": "
+          }
+        }
+      ]
+    },
+    {
+      "complete": true,
+      "reason": "normal",
+      "tool_calls": []
+    }
+  ],
+  "elapsed_seconds": 15.594,
+  "sse_raw_xml_leaked": false,
+  "tool_states": [
+    {
+      "type": "tool",
+      "tool": "search",
+      "state": "started"
+    },
+    {
+      "type": "tool",
+      "tool": "search",
+      "state": "returned",
+      "error": false,
+      "class": null
+    }
+  ],
+  "terminal": {
+    "type": "done",
+    "text": "已核实，Xiaomi MiMo 的官方网站链接及说明如下：\n\n- **https://mimo.xiaomi.com/** — Xiaomi MiMo 官方主页，介绍其定位为小米的通用智能平台（universal smart platform），致力于让先进的 AI 技术服务每一个人。\n- **https://mimo.mi.com/** — Xiaomi MiMo Home，面向专业人士的一体化 AI 桌面应用，涵盖办公、设计、编程与多模态创作等场景。\n- 另有开发者资源页 **https://aistudio.xiaomimimo.com/**（Xiaomi MiMo Studio，文档生成与编辑的 Agent 办公闭环）及开源模型仓库 **https://huggingface.co/XiaomiMiMo**。\n\n以上链接均来自本次检索到的真实来源，可直接访问。"
+  },
+  "history_raw_xml_leaked": false
+}

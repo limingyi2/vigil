@@ -92,7 +92,7 @@ class ModelProvider(object):
     def capabilities(self):
         out = {
             "kind": self.kind,
-            "tools": self.supports_tools,
+            "tools": bool(self.supports_tools or self.supports_xml_tools),
             "native_tool_calls": self.supports_tools,
             "xml_tool_text": self.supports_xml_tools,
             "stream": self.supports_stream,

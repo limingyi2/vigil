@@ -412,6 +412,19 @@ def readonly_failure(text):
     return ReadOnlyToolResult(False, text)
 
 
+def validate_readonly_arguments(name, args):
+    """Validate the same narrow argument contract for native and XML calls."""
+    fields = {"search": ("query", True), "weather": ("location", False),
+              "tracking": ("tracking_number", True), "calc": ("expression", True)}
+    if name not in fields or not isinstance(args, dict):
+        raise ValueError("只读工具参数必须是已知工具的对象")
+    field, required = fields[name]
+    if any(key != field or not isinstance(value, str) for key, value in args.items()):
+        raise ValueError("只读工具参数字段或类型错误")
+    if required and not str(args.get(field) or "").strip():
+        raise ValueError("只读工具缺少必需参数")
+
+
 def invoke_readonly_spec(name, args, ctx=None):
     """Invoke one audited tool with an internal, structured success status.
 

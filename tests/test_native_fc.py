@@ -369,6 +369,40 @@ class TestNativeFunctionCalling(unittest.TestCase):
                       provider.payloads[0]["messages"][0]["content"])
         self.assertIn("无法联网核实", answer)
 
+    def test_readonly_mimo_uses_strict_xml_when_native_arguments_are_incomplete(self):
+        features.on = lambda key, src=None: True
+        xml = '<tool_call><function=search><parameter=query>Vigil release</parameter></function></tool_call>'
+        self._stub([{'choices': [{'message': {'content': xml, 'tool_calls': [{
+            'id': 'stub', 'type': 'function', 'function': {
+                'name': 'search', 'arguments': '{"query": '}}]}}]}, _say('已查到版本。')])
+        from model_providers.cloud import CloudProvider
+        from unittest.mock import patch
+        br = self._brain()
+        provider = CloudProvider(br.api)
+        provider.supports_xml_tools = True
+        br._provider = lambda *_args: provider
+        with patch.object(tl, 'invoke_readonly_spec',
+                          return_value=tl.ReadOnlyToolResult(True, 'version v2')) as invoke:
+            answer = br.draft_native('查一下版本', '', tool_policy='readonly')
+        self.assertEqual(invoke.call_count, 1)
+        self.assertIn('已查到版本', answer)
+        self.assertFalse(any(m['role'] == 'tool' for m in self.seen[1]['messages']))
+        self.assertIn('version v2', self.seen[1]['messages'][-1]['content'])
+
+    def test_readonly_mimo_malformed_xml_never_dispatches(self):
+        features.on = lambda key, src=None: True
+        self._stub([_say('<tool_call><function=search><parameter=query>x</parameter></tool_call>')])
+        from model_providers.cloud import CloudProvider
+        from unittest.mock import patch
+        br = self._brain()
+        provider = CloudProvider(br.api)
+        provider.supports_xml_tools = True
+        br._provider = lambda *_args: provider
+        with patch.object(tl, 'invoke_readonly_spec') as invoke:
+            br.draft_native('查一下版本', '', tool_policy='readonly')
+        invoke.assert_not_called()
+        self.assertTrue(br.last_err)
+
 
 class TestSchemaNeeded(unittest.TestCase):
     """schema_needed 的判据：只在明确是寒暄时才省，宁可不省。"""

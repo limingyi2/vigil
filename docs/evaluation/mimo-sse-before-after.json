@@ -1,0 +1,67 @@
+{
+  "baseline": "ac09d7eaf2f07011d945f0e3e5740988bcb829f4",
+  "model_requests": 0,
+  "service_requests": 0,
+  "cases": {
+    "xml_cross_chunk": {
+      "before": {
+        "fixture_model_requests": 1,
+        "fixture_tool_calls": 0,
+        "sse_xml_leaked": true,
+        "history_xml_leaked": true,
+        "terminal_type": "done",
+        "terminal_class": null,
+        "final_text": "<tool_call><function=search><parameter=query>Vigil release</parameter></function></tool_call>"
+      },
+      "after": {
+        "fixture_model_requests": 2,
+        "fixture_tool_calls": 1,
+        "sse_xml_leaked": false,
+        "history_xml_leaked": false,
+        "terminal_type": "done",
+        "terminal_class": null,
+        "final_text": "查询完成。"
+      }
+    },
+    "native_fc": {
+      "before": {
+        "fixture_model_requests": 1,
+        "fixture_tool_calls": 0,
+        "sse_xml_leaked": false,
+        "history_xml_leaked": false,
+        "terminal_type": "error",
+        "terminal_class": "tool_calls",
+        "final_text": null
+      },
+      "after": {
+        "fixture_model_requests": 2,
+        "fixture_tool_calls": 1,
+        "sse_xml_leaked": false,
+        "history_xml_leaked": false,
+        "terminal_type": "done",
+        "terminal_class": null,
+        "final_text": "查询完成。"
+      }
+    },
+    "mimo_mixed_response": {
+      "before": {
+        "fixture_model_requests": 1,
+        "fixture_tool_calls": 0,
+        "sse_xml_leaked": true,
+        "history_xml_leaked": false,
+        "terminal_type": "error",
+        "terminal_class": "tool_calls",
+        "final_text": null
+      },
+      "after": {
+        "fixture_model_requests": 2,
+        "fixture_tool_calls": 1,
+        "sse_xml_leaked": false,
+        "history_xml_leaked": false,
+        "terminal_type": "done",
+        "terminal_class": null,
+        "final_text": "查询完成。"
+      }
+    }
+  }
+}

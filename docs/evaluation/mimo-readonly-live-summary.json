@@ -1,0 +1,15 @@
+{
+  "controlled_runs": 4,
+  "model_requests": 5,
+  "tool_invocations": 1,
+  "transport_retries": 0,
+  "prompt_tokens": 2642,
+  "completion_tokens": 403,
+  "total_tokens": 3045,
+  "evidence_files": [
+    "mimo-readonly-live-initial.json",
+    "mimo-readonly-live-native-invalid.json",
+    "mimo-readonly-live-mixed-before.json",
+    "mimo-readonly-live-evidence.json"
+  ]
+}
