@@ -20,6 +20,7 @@ from contextlib import contextmanager
 import paths
 import tools
 import httpx
+import run_modes
 from model_providers import get_provider
 from model_providers.base import ProviderHTTPError, ProviderResponseError, ProviderUnavailable
 from model_providers.execution import prepare, completion_events, ERROR_MESSAGES
@@ -2012,6 +2013,7 @@ def _coding_json_completion(provider, cfg, messages, strategy='balanced'):
     raise ValueError('coding model output is not valid JSON')
 
 
+@run_modes.with_model_lease
 def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
     """Run a provider backed CodingHarness and persist its evidence in the ledger."""
     import coding_harness
@@ -2238,6 +2240,7 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
                 _save(db, current)
 
 
+@run_modes.with_model_lease
 def _run(rid, owner, cfg, brain=None, sender_id='', messages=None, workflow_scope=None):
     with LOCK, _db() as db:
         initial = _get(db, rid, owner)
