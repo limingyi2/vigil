@@ -73,13 +73,24 @@ class TestNativeFunctionCalling(unittest.TestCase):
         # This contract test is about native tool dispatch, independent of the
         # developer's local per-channel feature preferences.
         features.on = lambda key, src=None: (
-            True if key == "calc" else self._real_features_on(key, src))
+            True if key == "weather" else self._real_features_on(key, src))
+        # calc 已在 P21.2 下线，工具链路测试改用 weather 当样例；把它的
+        # 网络出口钉成桩，测试不依赖 UAPI 凭据和网络。
+        import uapi
+        self._real_fetch_weather = uapi.fetch_weather
+        self._real_uapi_token = tl._uapi_token
+        uapi.fetch_weather = lambda location, token=None: {
+            "weather": "晴", "temperature": 23}
+        tl._uapi_token = lambda: "fixture"
         # 模型出口虽收口到 model_providers，但 CloudProvider 经 brain.httpx
         # 取传输层（见 cloud._active_http），所以桩 B.httpx 一处即可。
 
     def tearDown(self):
         B.httpx = self._real_httpx
         features.on = self._real_features_on
+        import uapi
+        uapi.fetch_weather = self._real_fetch_weather
+        tl._uapi_token = self._real_uapi_token
 
     def _stub(self, payloads):
         """按顺序返回响应；用完之后一直重复最后一个。
@@ -136,15 +147,15 @@ class TestNativeFunctionCalling(unittest.TestCase):
     # --- 2. 多轮 + role:tool 配对 ---
     def test_multi_round_pairs_tool_results(self):
         self._stub([
-            _want("c1", "calc", {"expression": "128*3"}),
-            _want("c2", "calc", {"expression": "7+8"}),
-            _say("128×3 是 384，7+8 是 15。"),
+            _want("c1", "weather", {"location": "上海"}),
+            _want("c2", "weather", {"location": "北京"}),
+            _say("上海晴，北京也晴。"),
         ])
         br = self._brain()
         ans = br.draft_native("算两个数", "")
         self.assertEqual(len(self.seen), 3, "应该 2 轮工具 + 1 轮正文")
-        self.assertTrue(ans and "384" in ans, "最终正文没拿到：%r" % ans)
-        self.assertEqual(br.last_tools_used, ["calc"])
+        self.assertTrue(ans and "上海" in ans, "最终正文没拿到：%r" % ans)
+        self.assertEqual(br.last_tools_used, ["weather"])
 
         msgs = self.seen[1]["messages"]
         wants = [m for m in msgs
@@ -155,7 +166,7 @@ class TestNativeFunctionCalling(unittest.TestCase):
         # OpenAI 格式：每个 tool_call 必须配一条同 id 的 role:tool，
         # 配错了下一次请求会 400
         self.assertEqual(results[0].get("tool_call_id"), "c1")
-        self.assertIn("384", results[0].get("content") or "")
+        self.assertIn("上海", results[0].get("content") or "")
         # 每一轮都要挂着工具表，否则第二轮模型没法再调
         self.assertIn("tools", self.seen[0])
         self.assertIn("tools", self.seen[1])
@@ -163,10 +174,10 @@ class TestNativeFunctionCalling(unittest.TestCase):
     def test_parallel_calls_in_one_round_all_get_results(self):
         self._stub([
             {"choices": [{"message": {"content": "", "tool_calls": [
-                _tool_call("a", "calc", {"expression": "1+1"}),
-                _tool_call("b", "calc", {"expression": "2+2"}),
+                _tool_call("a", "weather", {"location": "上海"}),
+                _tool_call("b", "weather", {"location": "北京"}),
             ]}}]},
-            _say("1+1 是 2，2+2 是 4。"),
+            _say("上海北京都晴。"),
         ])
         br = self._brain()
         ans = br.draft_native("算两个", "")
@@ -204,7 +215,7 @@ class TestNativeFunctionCalling(unittest.TestCase):
         所以这里按实际上限来构造桩：前 N 轮一直要工具，第 N+1 轮给正文。
         """
         N = self._max_rounds()
-        loop = _want("c", "calc", {"expression": "1+1"})
+        loop = _want("c", "weather", {"location": "上海"})
         self._stub([loop] * N + [_say("查完了，就是 2。")])
         br = self._brain()
         ans = br.draft_native("死循环", "")
@@ -342,17 +353,17 @@ class TestNativeFunctionCalling(unittest.TestCase):
 
     def test_readonly_success_is_recorded_only_after_structured_success(self):
         features.on = lambda key, src=None: True
-        self._stub([_want("c1", "calc", {"expression": "128*3"}),
-                    _say("计算结果是 384。")])
+        self._stub([_want("c1", "weather", {"location": "上海"}),
+                    _say("上海晴。")])
         from unittest.mock import patch
         br = self._brain()
         with patch.object(tl, "invoke_readonly_spec",
-                          return_value=tl.ReadOnlyToolResult(True, "128*3 = 384")):
-            br.draft_native("算一下 128 乘以 3", "", tool_policy="readonly")
-        self.assertEqual(br.last_tools_used, ["calc"])
+                          return_value=tl.ReadOnlyToolResult(True, "上海现在 晴 23°C")):
+            br.draft_native("上海天气怎么样", "", tool_policy="readonly")
+        self.assertEqual(br.last_tools_used, ["weather"])
         tool_results = [m["content"] for m in self.seen[1]["messages"]
                         if m.get("role") == "tool"]
-        self.assertEqual(tool_results, ["128*3 = 384"])
+        self.assertEqual(tool_results, ["上海现在 晴 23°C"])
 
     def test_readonly_policy_rechecks_channel_feature_before_dispatch(self):
         features.on = lambda key, src=None: key != "websearch"

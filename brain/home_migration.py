@@ -15,7 +15,9 @@ DIRECTORIES = ('config', 'data', 'plugins', 'logs', 'archive', 'skill_host/skill
 CORE_FEATURE_NAMES = frozenset({
     "plugin_market.py", "remote.py", "skill.py",
 })
-LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"calc.py", "gate.py", "kb.py", "react.py", "websearch.py"})
+# calc 已在 P21.2 下线：旧安装里的 calc.py 不再往新 home 搬，否则它会以
+# 用户插件的身份复活一个已经被删掉的功能。
+LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"gate.py", "kb.py", "react.py", "websearch.py"})
 # 外部插件由插件市场装到 data/installed_plugins，绝不从安装包种入。
 # 打包 spec 是第一道防线；这里是纵深防御，旧包或误打包也带不进用户家目录。
 EXTERNAL_PLUGIN_NAMES = frozenset({"wallpaper"})
@@ -142,6 +144,72 @@ def _matches_bundled_dir(src, bundled):
         if not child.is_file() or child.is_symlink() or _sha256(child) != digest:
             return False
     return True
+
+
+_IGNORED_INSTALL_SUFFIXES = (".pyc", ".pyo", ".log")
+
+
+def _strict_dir_equals_bundled(src, bundled):
+    """True only when the install directory is exactly the shipped file set.
+
+    Unlike _matches_bundled_dir this also rejects extra files, so a user who
+    dropped anything into a shipped package keeps it (and keeps overriding).
+    """
+    prefix = src.name + "/"
+    expected = {k[len(prefix):]: v for k, v in bundled.items() if k.startswith(prefix)}
+    if not expected:
+        return False
+    found = set()
+    for path in src.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = path.relative_to(src)
+        if "__pycache__" in rel.parts or path.name.endswith(_IGNORED_INSTALL_SUFFIXES):
+            continue
+        rel_name = rel.as_posix()
+        found.add(rel_name)
+        if expected.get(rel_name) != _sha256(path):
+            return False
+    return found == set(expected)
+
+
+def retire_superseded_installs(home):
+    """Move unmodified copies of previously shipped plugins out of the install dir.
+
+    P21.0 briefly copied unchanged bundled plugins into data/installed_plugins,
+    where they shadow the newer bundled version after this release ships them
+    again. Anything byte-identical to what that release shipped is moved to
+    installed_plugins/_retired (kept, never deleted); a user-edited copy stays
+    and keeps overriding the bundled plugin, which is the intended precedence.
+    """
+    home = Path(home).resolve()
+    installed = home / "data" / "installed_plugins"
+    bundled = _read_json(home / "data/run/bundled-plugins.json")
+    result = {"retired": 0, "errors": []}
+    if not bundled or not installed.is_dir():
+        return result
+    retired_root = installed / "_retired"
+    for src in sorted(installed.iterdir()):
+        if src.name == "_retired" or src.is_symlink():
+            continue
+        if src.is_file() and src.suffix == ".py":
+            same_as_shipped = bool(bundled.get(src.name)) and _sha256(src) == bundled.get(src.name)
+        elif src.is_dir() and (src / "__init__.py").is_file():
+            same_as_shipped = _strict_dir_equals_bundled(src, bundled)
+        else:
+            continue
+        if not same_as_shipped:
+            continue
+        try:
+            retired_root.mkdir(parents=True, exist_ok=True)
+            target = retired_root / src.name
+            if target.exists():
+                target = retired_root / (src.name + "." + uuid.uuid4().hex[:8])
+            os.replace(src, target)
+            result["retired"] += 1
+        except Exception as exc:
+            result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
+    return result
 
 
 def migrate_legacy_plugins(home, legacy_roots=()):

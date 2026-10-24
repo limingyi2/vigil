@@ -8,7 +8,7 @@ ReAct 是一步看一步的，复杂任务容易漏：「算一下这个再搜�
 只在 should_plan() 判为复杂任务时走；闲聊直接走原来的 ReAct，不花 token。
 
 步骤是模型输出的 JSON 数组，tool 为 null 的那步是"不用工具，组织语言"的收尾：
-    [{"step": "计算 128×256", "tool": "calc", "arg": "128*256"},
+    [{"step": "搜一下上证指数", "tool": "search", "arg": "上证指数"},
      {"step": "整理回答", "tool": null, "arg": null}]
 
 任何一步出问题（调不通、解析不出、没配 key）都返回 None，由调用方回退 ReAct。

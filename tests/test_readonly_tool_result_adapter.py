@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 
 import tools
-from plugins import calc, websearch
+from plugins import websearch
 
 
 def _invoke(name, args):
@@ -92,14 +92,11 @@ def test_weather_and_tracking_success_are_structured_without_changing_legacy_tex
     assert "运输中" in tracking.text
 
 
-def test_calc_success_and_errors_have_structured_status():
-    success = _invoke("calc", {"expression": "128*3"})
-    failure = _invoke("calc", {"expression": "1/0"})
-    assert success.ok is True
-    assert "384" in success.text
-    assert failure.ok is False
-    assert "除以 0" in failure.for_model()
-    assert isinstance(calc._t_calc("128*3"), str)
+def test_retired_calc_cannot_be_invoked_through_the_readonly_adapter():
+    """calc 已在 P21.2 下线；旧客户端/旧会话再点它的名字必须被挡在名单外。"""
+    result = _invoke("calc", {"expression": "128*3"})
+    assert result.ok is False
+    assert "未执行" in result.for_model()
 
 
 def test_unknown_tool_cannot_cross_readonly_adapter_boundary():

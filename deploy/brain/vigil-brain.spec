@@ -57,9 +57,8 @@ if seen_core_features != CORE_FEATURE_ALLOWLIST:
     raise RuntimeError("Required core feature source is missing: " + ", ".join(missing))
 
 # 内置插件随包发布，唯一的例外是 wallpaper：它由市场装到 data/installed_plugins。
-# 与 core_features 重名的镜像文件，以及已内联进 tools.py 的 calc，都不进包，
-# 否则同一能力会以两份源码存在。
-BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py", "calc.py"}
+# 与 core_features 重名的镜像文件不进包，否则同一能力会以两份源码存在。
+BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py"}
 plugins_data = []
 tracked_plugins = subprocess.check_output(
     ["git", "ls-files", "-z", "--", "brain/plugins"], cwd=repo_root

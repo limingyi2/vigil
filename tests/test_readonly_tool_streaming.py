@@ -46,8 +46,8 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
 
     feature_module = SimpleNamespace(on=lambda *_args, **_kwargs: True)
     all_specs = [_spec("search"), _spec("weather"), _spec("tracking"),
-                 _spec("calc"), _spec("local_exec"), _spec("reminder_set")]
-    readonly_names = {"search", "weather", "tracking", "calc"}
+                 _spec("local_exec"), _spec("reminder_set")]
+    readonly_names = {"search", "weather", "tracking"}
     if include_capability:
         all_specs.append(_spec("capability_status"))
         readonly_names.add("capability_status")
@@ -111,7 +111,7 @@ def test_readonly_stream_shows_text_deltas_and_executes_only_audited_tool():
     ])
     assert "tools" in payloads[0]
     assert {x["function"]["name"] for x in payloads[0]["tools"]} == {
-        "search", "weather", "tracking", "calc"}
+        "search", "weather", "tracking"}
     assert "reminder_set" not in payloads[0]["tools"]
     assert "local_exec" not in payloads[0]["tools"]
     assert [event["type"] for event in emitted if event["type"] in ("text", "done")] == [
@@ -168,17 +168,17 @@ def test_readonly_stream_failed_tool_is_reported_and_not_recorded_as_success(nam
     assert tool_messages[0].startswith("【查询未核实：只读工具执行失败】")
 
 
-def test_readonly_stream_calc_success_and_disabled_duplicate_or_limit_are_not_false_success():
+def test_readonly_stream_tool_success_and_disabled_duplicate_or_limit_are_not_false_success():
     emitted, payloads, _fake_tools, instance = _run([
-        [_completion(calls=[_call("calc", {"expression": "128*3"})])],
-        [_completion("计算结果是 384。")],
-    ], invoke_result=brain_tools.ReadOnlyToolResult(True, "128*3 = 384"))
-    assert instance.last_tools_used == ["calc"]
+        [_completion(calls=[_call("weather", {"location": "上海"})])],
+        [_completion("上海现在晴。")],
+    ], invoke_result=brain_tools.ReadOnlyToolResult(True, "上海现在 晴 23°C"))
+    assert instance.last_tools_used == ["weather"]
     assert any(event.get("type") == "tool" and event.get("error") is False
                for event in emitted)
     success_content = [message["content"] for message in payloads[1]["messages"]
                        if message.get("role") == "tool"]
-    assert success_content == ["128*3 = 384"]
+    assert success_content == ["上海现在 晴 23°C"]
 
     emitted, payloads, _fake_tools, instance = _run([
         [_completion(calls=[_call("search", {"query": "disabled"})])],
@@ -230,7 +230,7 @@ def test_stream_readonly_turn_carries_exact_tool_policy_and_schema():
     assert len(turns) == 1
     assert turns[0].tool_policy == "readonly"
     allowed = {item["function"]["name"] for item in turns[0].allowed_tool_specs}
-    assert allowed == {"search", "weather", "tracking", "calc", "capability_status"}
+    assert allowed == {"search", "weather", "tracking", "capability_status"}
     assert "local_exec" not in allowed
     assert "reminder_set" not in allowed
     assert "capability_call" not in allowed

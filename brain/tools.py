@@ -9,7 +9,7 @@
 `TOOL_TAG_ANY_RE` 保留，仅用于 server.py 兜底清扫模型输出里残留的标签文本。
 
 工具分三类：
-- 内置：weather / tracking / calc（本文件实现）
+- 内置：weather / tracking（本文件实现）
 - 静态插件：search / reminder_*（plugin_host 加载）
 - 动态技能：`包名__工具名`，运行时从 Node 技能宿主拉取（skill 模块）
 """
@@ -23,7 +23,7 @@ TOOL_TAG_ANY_RE = re.compile(r"\[tool[:：][^\]]*\]", re.IGNORECASE)
 # Audited pure or externally read-only tools available during ordinary chat.
 # Names are only identifiers here: this exact set was reviewed against each
 # implementation and is also enforced immediately before dispatch in Brain.
-READ_ONLY_TOOL_NAMES = frozenset({"search", "weather", "tracking", "calc",
+READ_ONLY_TOOL_NAMES = frozenset({"search", "weather", "tracking",
                                  "capability_status"})
 
 
@@ -112,35 +112,10 @@ def _t_tracking(arg):
     return _tracking_result(arg)["text"]
 
 
-def _t_calc(arg):
-    """Evaluate a bounded arithmetic expression without loading an extension."""
-    source = str(arg or "").strip()
-    if not source:
-        return "算不了：没给算式"
-    expr = re.sub(r"\s", "", source).replace("×", "*").replace("÷", "/").replace("^", "**")
-    expr = re.sub(r"(?<![\d.])(\d+(?:\.\d+)?)%", r"(\1/100)", expr)
-    if len(expr) > 200 or not re.fullmatch(r"[0-9+\-*/().]+", expr):
-        return "算不了：只支持加减乘除和括号"
-    try:
-        value = eval(expr, {"__builtins__": {}}, {})  # noqa: S307 - validated arithmetic alphabet
-    except ZeroDivisionError:
-        return "算不了：除以 0 了"
-    except Exception:
-        return "算不了：算式有问题"
-    if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
-            return "算不了：结果不是一个正常数"
-        value = round(value, 6)
-        if value == int(value) and abs(value) < 1e15:
-            value = int(value)
-    return "%s = %s" % (source, value)
-
-
 # 内置工具：名 -> 执行函数（接收字符串参数）
 TOOLS = {
     "weather": _t_weather,
     "tracking": _t_tracking,
-    "calc": _t_calc,
 }
 
 
@@ -192,12 +167,6 @@ def tool_help_extra(native=False):
         extra = plugin_host.tool_help(native=native)
     except Exception:
         extra = ""
-    try:
-        if _feature_on("calc"):
-            extra += ("\n算式：用 calc 做加减乘除、括号、百分比和幂运算；"
-                      "涉及具体数字时不要心算。")
-    except Exception:
-        pass
     return extra
 
 
@@ -209,8 +178,7 @@ def tool_help_extra(native=False):
 #   params    [("参数名", "参数说明", 是否必填)]；空列表 = 无参
 #   arg_param 模型传 dict，执行时取哪个参数还原成旧函数的字符串 arg；
 #             None = 无参
-# 静态插件工具（search/reminder_*/skill_list）也集中在这里声明；
-# calc is a core, read-only arithmetic tool and is implemented above.
+# 静态插件工具（search/reminder_*/skill_list）也集中在这里声明。
 
 _STATIC_SPECS = {
     "agent_run_inspect": {
@@ -261,11 +229,6 @@ _STATIC_SPECS = {
         "multi_args": True,
     },
     # --- 静态插件（执行路由到 plugin_host）---
-    "calc": {
-        "desc": "数学计算（加减乘除、括号、百分比、幂）。涉及具体数字一律用它，不要自己心算。",
-        "params": [("expression", "要计算的算式，如 128*3、(12+8)/2、15%", True)],
-        "arg_param": "expression",
-    },
     "search": {
         "desc": "联网搜索实时信息：新闻、股价、最新版本、近期事件等训练数据里没有或会过时的东西。"
                 "**报价、套餐配置、优惠券规则、资格与适用条件、买哪个更划算**这类也要用它 —— "
@@ -409,7 +372,6 @@ def _plugin_specs(src=None):
 _STATIC_FEATURE_MAP = {
     "weather": "weather",
     "tracking": "packages",
-    "calc": "calc",
     "search": "websearch",
     "reminder_set": "reminder",
     "reminder_list": "reminder",
@@ -452,7 +414,7 @@ def readonly_failure(text):
 def validate_readonly_arguments(name, args):
     """Validate the same narrow argument contract for native and XML calls."""
     fields = {"search": ("query", True), "weather": ("location", False),
-              "tracking": ("tracking_number", True), "calc": ("expression", True),
+              "tracking": ("tracking_number", True),
               "capability_status": ("capability", False)}
     if name not in fields or not isinstance(args, dict):
         raise ValueError("只读工具参数必须是已知工具的对象")
@@ -490,8 +452,8 @@ def invoke_readonly_spec(name, args, ctx=None):
                 host_environment.capability_status(ctx, arg),
                 ensure_ascii=False, sort_keys=True)}
         else:
-            from plugins.calc import _calc_result
-            outcome = _calc_result(arg)
+            # 名单里还有名字没接上实现就是真 bug，不能静默当成"查不到"。
+            return readonly_failure("只读工具没有对应实现：%s" % n)
     except Exception as exc:
         return readonly_failure("只读工具执行异常（%s），未核实查询结果。" % type(exc).__name__)
     if not isinstance(outcome, dict) or "ok" not in outcome:

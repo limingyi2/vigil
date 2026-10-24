@@ -6,6 +6,10 @@ import subprocess
 
 NAME = "branch-atlas"
 DESC = "只读查看本地 Git 仓库的分支、提交拓扑和工作区状态"
+# 可选功能：只在开发者看仓库时才有用，对聊天主线毫无价值，而且 0.1.0 还没做完
+# （只有只读视图，没有 diff / 检出 / 提交）。所以声明 FEATURE 并**默认关**：
+# 开关出现在「能力 → 功能开关」，打开了才装载界面入口和路由。
+FEATURE = "branch-atlas"
 
 _MAX_PATH_CHARS = 4096
 _MAX_BRANCHES = 100

@@ -68,7 +68,7 @@ class TestDeviceMatrix(unittest.TestCase):
                   "/api/features", "/api/chatty",
                   "/api/memory/edit", "/api/memory/delete",
                   "/api/proactive", "/api/packages/del",
-                  "/api/gen", "/api/stickers/collect-x"):
+                  "/api/gen", "/api/chat/stream-x"):
             self.assertFalse(server._device_path_allowed("POST", p), p)
 
     def test_GET_敏感接口默认拒绝(self):

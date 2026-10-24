@@ -64,9 +64,9 @@ except Exception:
 # 到调用方栈里（插件作者看到的应该是"你这里少传了参数"，不是她的调用栈）。
 _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
 # brain/plugins/ 里的这几个文件是历史镜像，实际来源另有其一：
-# 前三个随核心从 core_features/ 加载，calc 已内联进 tools.py。
+# 前三个随核心从 core_features/ 加载。
 # 打包时它们也不进制品，这里排除是为开发态不出现同名双份。
-_SHADOWED_BUILTINS = frozenset({"plugin_market.py", "remote.py", "skill.py", "calc.py"})
+_SHADOWED_BUILTINS = frozenset({"plugin_market.py", "remote.py", "skill.py"})
 
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()

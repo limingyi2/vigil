@@ -52,10 +52,10 @@ def test_semantic_search_and_weather_examples_have_the_readonly_tool_available()
 def test_readonly_entry_exposes_no_unreviewed_plugin_or_execution_schema():
     specs = [
         {"type": "function", "function": {"name": name}}
-        for name in ("search", "weather", "tracking", "calc", "local_file_read",
+        for name in ("search", "weather", "tracking", "local_file_read",
                      "local_exec", "reminder_set", "plugin_install", "capability_call",
                      "skill__execute")
     ]
     assert {item["function"]["name"] for item in tools.read_only_specs(specs)} == {
-        "search", "weather", "tracking", "calc"
+        "search", "weather", "tracking"
     }

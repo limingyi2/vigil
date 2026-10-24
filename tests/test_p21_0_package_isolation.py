@@ -215,6 +215,69 @@ def test_seed_plugins_keeps_directory_package_resources(tmp_path):
     assert (home / "plugins" / "branch-atlas" / "frontend.js").is_file()
 
 
+def _write_marker(home, mapping):
+    marker = home / "data/run/bundled-plugins.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps(mapping), encoding="utf-8")
+
+
+def test_retire_superseded_installs_only_removes_unmodified_shipped_copies(tmp_path):
+    """P21.0 把随包插件复制进了 installed_plugins，升级后会反向盖掉新版内置。"""
+    from home_migration import retire_superseded_installs
+
+    home = tmp_path / "home"
+    installed = home / "data" / "installed_plugins"
+    (installed / "branch-atlas").mkdir(parents=True)
+    kb_copy = installed / "kb.py"
+    kb_copy.write_text("kb-v1", encoding="utf-8")
+    (installed / "branch-atlas" / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
+    _write_marker(home, {
+        "kb.py": hashlib.sha256(b"kb-v1").hexdigest(),
+        "branch-atlas/__init__.py": hashlib.sha256(b"NAME='branch-atlas'").hexdigest(),
+        "gate.py": hashlib.sha256(b"gate-v1").hexdigest(),
+    })
+
+    result = retire_superseded_installs(home)
+
+    assert result["retired"] == 2
+    assert result["errors"] == []
+    # 内置目录清空，副本留在 _retired 而不是被删除。
+    assert not kb_copy.exists()
+    assert not (installed / "branch-atlas").exists()
+    assert (installed / "_retired" / "kb.py").read_text(encoding="utf-8") == "kb-v1"
+    assert (installed / "_retired" / "branch-atlas" / "__init__.py").is_file()
+    # 幂等：再跑一次无事发生，也不会重复搬进 _retired。
+    again = retire_superseded_installs(home)
+    assert again == {"retired": 0, "errors": []}
+
+
+def test_retire_superseded_installs_keeps_user_modified_copy(tmp_path):
+    """用户改过的副本按既有优先级继续覆盖内置，不得搬走。"""
+    from home_migration import retire_superseded_installs
+
+    home = tmp_path / "home"
+    installed = home / "data" / "installed_plugins"
+    (installed / "branch-atlas").mkdir(parents=True)
+    (installed / "kb.py").write_text("user-edited", encoding="utf-8")
+    (installed / "branch-atlas" / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
+    (installed / "branch-atlas" / "extra.py").write_text("# user", encoding="utf-8")
+    (installed / "wallpaper").mkdir(parents=True)
+    (installed / "wallpaper" / "__init__.py").write_text("NAME='wallpaper'", encoding="utf-8")
+    _write_marker(home, {
+        "kb.py": hashlib.sha256(b"kb-v1").hexdigest(),
+        "branch-atlas/__init__.py": hashlib.sha256(b"NAME='branch-atlas'").hexdigest(),
+    })
+
+    result = retire_superseded_installs(home)
+
+    assert result["retired"] == 0
+    assert (installed / "kb.py").read_text(encoding="utf-8") == "user-edited"
+    assert (installed / "branch-atlas" / "extra.py").is_file()
+    # 外部插件不在台账里，绝不能被当成随包副本。
+    assert (installed / "wallpaper" / "__init__.py").is_file()
+    assert not (installed / "_retired").exists()
+
+
 def test_release_spec_ships_bundled_plugins_and_isolates_wallpaper():
     spec = (ROOT / "deploy/brain/vigil-brain.spec").read_text(encoding="utf-8")
     launcher = (ROOT / "brain/server_launch.py").read_text(encoding="utf-8")
@@ -227,8 +290,8 @@ def test_release_spec_ships_bundled_plugins_and_isolates_wallpaper():
     assert 'if rel_file == "wallpaper" or rel_file.startswith("wallpaper/")' in spec
     assert "datas=core_feature_data + plugins_data + skill_host_data" in spec
     assert '"kb.py", "gate.py", "react.py", "websearch.py"' in spec
-    # 与 core_features 重名的镜像与已内联的 calc 不进包。
-    assert 'BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py", "calc.py"}' in spec
+    # 与 core_features 重名的镜像不进包。
+    assert 'BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py"}' in spec
     # 核心适配器仍是允许清单制。
     assert "CORE_FEATURE_ALLOWLIST = {" in spec
     assert "if seen_core_features != CORE_FEATURE_ALLOWLIST" in spec

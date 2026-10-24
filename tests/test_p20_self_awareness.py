@@ -74,8 +74,7 @@ def test_pc_host_identity_and_environment_summary_are_channel_scoped(monkeypatch
     monkeypatch.setattr(Brain, "_time_hint", lambda _self: "")
     monkeypatch.setattr(Brain, "_life_block", lambda _self: "")
     for module_name, attr, value in (
-            ("agenda", "block", ""), ("stickers", "block", ""),
-            ("plugin_host", "prompt_block", "")):
+            ("agenda", "block", ""), ("plugin_host", "prompt_block", "")):
         module = __import__(module_name)
         monkeypatch.setattr(module, attr, lambda *a, _value=value, **k: _value)
 
@@ -137,7 +136,7 @@ def test_tool_detail_does_not_confuse_enabled_switch_with_request_availability(m
     monkeypatch.setattr(features, "on", lambda _name, _src=None: True)
     monkeypatch.setattr(tools, "static_tool_enabled", lambda *_args: True)
     monkeypatch.setattr(tools, "all_specs", lambda **_kwargs: [
-        {"function": {"name": "calc"}}])
+        {"function": {"name": "weather"}}])
 
     compact = host_environment._tool_detail(
         _Brain({}), "pc", provider_info, summary_only=True)
@@ -152,9 +151,9 @@ def test_tool_detail_does_not_confuse_enabled_switch_with_request_availability(m
 
     normal = host_environment._tool_detail(
         _Brain({}), "pc", provider_info,
-        tool_specs=[{"function": {"name": "calc"}}], specs_supplied=True)
+        tool_specs=[{"function": {"name": "weather"}}], specs_supplied=True)
     assert normal["state"] == "confirmed_available"
-    assert normal["available"] == [{"name": "calc", "state": "confirmed_available"}]
+    assert normal["available"] == [{"name": "weather", "state": "confirmed_available"}]
 
 
 def test_tool_detail_reports_unknown_provider_and_registry_read_failure(monkeypatch):
@@ -163,11 +162,11 @@ def test_tool_detail_reports_unknown_provider_and_registry_read_failure(monkeypa
     monkeypatch.setattr(features, "on", lambda _name, _src=None: True)
     monkeypatch.setattr(tools, "static_tool_enabled", lambda *_args: True)
     monkeypatch.setattr(tools, "all_specs", lambda **_kwargs: [
-        {"function": {"name": "calc"}}])
+        {"function": {"name": "weather"}}])
     unknown_provider = {"supports_tool_calls": {"value": None, "state": "unconfirmed"}}
     unknown = host_environment._tool_detail(
         _Brain({}), "pc", unknown_provider,
-        tool_specs=[{"function": {"name": "calc"}}], specs_supplied=True)
+        tool_specs=[{"function": {"name": "weather"}}], specs_supplied=True)
     assert unknown["state"] == "unconfirmed"
     assert unknown["available"] == []
 
@@ -186,7 +185,7 @@ def test_tool_detail_disabled_switch_is_not_reported_as_available(monkeypatch):
     monkeypatch.setattr(features, "on", lambda _name, _src=None: False)
     disabled = host_environment._tool_detail(_Brain({}), "pc", {
         "supports_tool_calls": {"value": True, "state": "confirmed"}},
-        tool_specs=[{"function": {"name": "calc"}}], specs_supplied=True)
+        tool_specs=[{"function": {"name": "weather"}}], specs_supplied=True)
     assert disabled["feature_switch"]["value"] is False
     assert disabled["state"] == "registered_but_disabled"
     assert disabled["available"] == []
@@ -201,12 +200,12 @@ def test_capability_status_intersects_request_schema_with_live_tool_switches(mon
     monkeypatch.setattr(host_environment, "_extension_status", lambda: {
         "plugins": {"state": "unconfirmed"}, "skills": {"mechanism": "unconfirmed"}})
     specs = [{"function": {"name": name}} for name in
-             ("search", "calc", "capability_call", "local_exec")]
+             ("search", "weather", "capability_call", "local_exec")]
     snap = host_environment.snapshot(
         _Brain({"model_mode": "cloud", "model": "m"}), provider=_Provider(),
         tool_specs=specs, detailed=True, turn_snapshot=True, tool_policy="readonly")
     available = {item["name"] for item in snap["tooling"]["available"]}
-    assert available == {"calc"}
+    assert available == {"weather"}
     assert "search" not in available
     assert "capability_call" not in available
     assert "local_exec" not in available
@@ -311,7 +310,7 @@ def test_workspace_selection_is_independent_of_note_and_session_scoped():
 
 
 def test_only_readonly_capability_query_is_added_to_allowlist():
-    assert tools.READ_ONLY_TOOL_NAMES == frozenset({"search", "weather", "tracking", "calc",
+    assert tools.READ_ONLY_TOOL_NAMES == frozenset({"search", "weather", "tracking",
                                                     "capability_status"})
     readonly_names = {item["function"]["name"]
                       for item in tools.read_only_specs(tools._static_tool_array(src="pc"))}

@@ -58,8 +58,7 @@ except Exception:
 DEFAULTS = {
         # 🔴 这里曾有一个 "hotboard": True（热搜进她的世界），现已移除。
     # 已经删掉：那套 hotboard_cache + 抖音榜被「百度热梗榜」取代了，
-    # 数据由 meme 插件现拉（hot_list / hot_note）。开关也归 meme 自己那个 FEATURE，
-    # 两个开关管同一件事 = 迟早有人关了一个还纳闷为什么没生效。
+    # 后来又随 meme 插件一起下线（P21.2 删插件），这里不再保留开关。
     "weather": True,          # 天气进她的世界
     "weather_alert": True,    # 天气变化主动提醒
     "packages": True,         # 快递监控与提醒
@@ -71,6 +70,9 @@ DEFAULTS = {
     # 显式打开，且仍要过 localtools.clearance() 的 owner/群聊矩阵。
     # 不能靠"没登记的 key on() 默认 True"那套 fail-open —— 安全闸必须 fail-closed。
     "remote_control": False,
+    # 可选插件：仓库拓扑查看（branch-atlas）是开发者工具，0.1.0 只做了只读视图。
+    # 默认关 —— 界面上不留一个对聊天没用的入口；要看去设置里打开。
+    "branch-atlas": False,
 }
 
 _cache = {"t": 0.0, "d": dict(DEFAULTS), "by": {}}

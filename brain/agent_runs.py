@@ -80,7 +80,7 @@ def _strip_xml_calls(text):
 READ_ONLY_TOOLS = frozenset({'local_system_info', 'local_file_list', 'local_file_read',
     'agent_run_inspect', 'diagnostic_queue_status',
     'local_file_find', 'local_file_grep', 'local_file_recent', 'local_process_list',
-    'local_active_window', 'local_clipboard_read', 'calc', 'weather', 'tracking', 'search'})
+    'local_active_window', 'local_clipboard_read', 'weather', 'tracking', 'search'})
 MESSAGES = dict(ERROR_MESSAGES,
     budget_exhausted='执行预算已用尽，已停止后续派发；已完成的步骤和内容都保留在上面。'
                      '可以在 agent_execution 里调高 max_steps/max_requests/max_tool_calls/max_seconds 后重跑这项任务',

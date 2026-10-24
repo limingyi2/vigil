@@ -997,13 +997,6 @@ class Brain:
         except Exception:
             pass
         try:
-            import stickers
-            sb = stickers.block()
-            if sb:
-                parts.append("\n" + sb)
-        except Exception:
-            pass
-        try:
             import plugin_host
             # native=True：跳过工具类插件的标签教学，只留 react/gate 行为引导
             pb = plugin_host.prompt_block(native=True)

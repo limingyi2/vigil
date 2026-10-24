@@ -13,7 +13,7 @@ _datas = [
 ]
 
 # 内置插件随包发布；wallpaper 是市场外部插件，不进制品。
-_SHADOWED = {'plugin_market.py', 'remote.py', 'skill.py', 'calc.py',
+_SHADOWED = {'plugin_market.py', 'remote.py', 'skill.py',
              '_registry.json', '_pending_restart.json'}
 _plugins_root = os.path.join(SPECPATH, 'plugins')
 for _root, _dirs, _files in os.walk(_plugins_root):

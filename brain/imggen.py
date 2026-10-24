@@ -221,28 +221,12 @@ def _her_look():
         return ""
 
 
-def _sticker_path(name):
-    """文件名 -> 本地路径（stickers.py 惰性加载，出错给空串）。"""
-    try:
-        import stickers
-        return stickers.path_of(name)
-    except Exception:
-        return ""
+def _cloud_image_blob(name):
+    """聊天存档图片的二进制（App 要显示图）。找不到返回 None。
 
-
-def _cloud_sticker(name):
-    """表情包 / 聊天存档图片的二进制（App 要显示图）。找不到返回 None。
-
-    name 既可以是表情包库文件名，也可以是聊天记录里存的图片路径
-    （绝对路径，或 data 目录下的相对路径）。
+    name 是聊天记录里存的图片路径：绝对路径，或 data 目录下的相对路径。
+    （表情包库已在 P21.2 下线，这里不再查 data/stickers。）
     """
-    try:
-        p = _sticker_path(name)
-        if p and os.path.exists(p):
-            with open(p, "rb") as f:
-                return f.read()
-    except Exception:
-        pass
     try:
         from paths import DATA_DIR
         data_root = os.path.abspath(str(DATA_DIR))

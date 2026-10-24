@@ -59,8 +59,7 @@ from selfie import (_SELFIE_STRONG, _SELFIE_MISS, _SELFIE_THING_RE,
                     _looks_like_selfie, _hour_seg,
                     _wear_for, _selfie_prompt, _selfie_caption)
 from imggen import (GEN_NEGATIVE, _cloud_gen_image, _cloud_gen_selfie,
-                    _cloud_sticker, _her_look, _look_ref_path, _look_ref_uri,
-                    _sticker_path)
+                    _cloud_image_blob, _her_look, _look_ref_path, _look_ref_uri)
 from proactive import (PROACTIVE_RULES, note_client_ip, _his_ip,
                        _proactive_conf, _in_quiet, _proactive_stats_load,
                        _proactive_note_sent, _proactive_note_user,
@@ -77,8 +76,8 @@ __all__ = [
     "_SELFIE_STRONG", "_SELFIE_MISS", "_SELFIE_THING_RE",
     "_looks_like_selfie", "_hour_seg", "_wear_for", "_selfie_prompt",
     "_selfie_caption", "GEN_NEGATIVE", "_cloud_gen_image", "_cloud_gen_selfie",
-    "_cloud_sticker", "_her_look", "_look_ref_path", "_look_ref_uri",
-    "_sticker_path", "PROACTIVE_RULES", "note_client_ip", "_his_ip",
+    "_cloud_image_blob", "_her_look", "_look_ref_path", "_look_ref_uri",
+    "PROACTIVE_RULES", "note_client_ip", "_his_ip",
     "_proactive_conf", "_in_quiet", "_proactive_stats_load",
     "_proactive_note_sent", "_proactive_note_user",
     "_proactive_interval_multiplier", "_proactive_used_today",
@@ -314,7 +313,6 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/plugins",                     # 桥接/启动器的存活探针
     "/api/plugins/frontend",            # 客户端要拉插件前端资源
     "/api/packages",
-    "/api/stickers",
     "/api/voice",
     "/api/img",
     "/api/attachments/capabilities",
@@ -344,7 +342,6 @@ DEVICE_POST_ALLOW = frozenset({
     "/api/attachments/upload",
     "/api/attachments/frames",
     "/api/logs",                         # 客户端上报错误
-    "/api/stickers/collect",
     "/api/sync/flush",                   # 客户端「立即同步」
     "/api/device/list",
     "/api/device/revoke",                # 只能解绑自己（路由内再校验）
@@ -2877,43 +2874,6 @@ def start_remote_api(brain):
                         errlog.log_exc("api/models/key/delete", e)
                         self._json(500, {"ok": False, "err": "删除密钥失败"})
                     return
-                if path == "/api/stickers/collect":
-                    # 表情包改版（2026-10-09）：桥接把聊天里**每张**图送进
-                    # 图库（不再只有"触发对话的图"才入库）。云端按内容哈希
-                    # 去重；新图才花一次视觉调用打标签 —— 收藏是副业，
-                    # 不能每张图都白烧一次 vision。
-                    _b64 = str(body.get("img") or "").strip()
-                    _csrc = str(body.get("src") or "").strip()[:20]
-                    if not _b64:
-                        self._json(400, {"ok": False, "err": "没给 img"})
-                        return
-                    try:
-                        _blob = base64.b64decode(_b64)
-                    except Exception:
-                        self._json(400, {"ok": False, "err": "img 不是 base64"})
-                        return
-                    import stickers as _stk
-                    _name = _stk.save_bytes(_blob, src=_csrc)
-                    if not _name:
-                        self._json(200, {"ok": False, "err": "不是可识别的图片"})
-                        return
-                    # 没标签就打一次（新图、以及早期入库没打上标签的老图都
-                    # 能借这条路补齐）。打过的直接复用，不重复烧 vision。
-                    _desc = _stk.describe_of(_name)
-                    _labeled = bool(_desc)
-                    if not _desc:
-                        try:
-                            import vision as _vis
-                            _desc = str(_vis.describe_bytes(_blob, API_CFG) or "")
-                            if _desc:
-                                _stk.set_desc(_name, _desc)
-                                _labeled = True
-                        except Exception as e:
-                            print("[表情包] 打标签失败（不影响收藏）：%s"
-                                  % str(e)[:80], flush=True)
-                    self._json(200, {"ok": True, "name": _name,
-                                     "new": bool(_labeled), "desc": _desc})
-                    return
                 if path == "/api/chat":
                     _in_text = str(body.get("text") or "")
                     _disp = _in_text          # 存档用原文，注入的系统提示不带
@@ -4722,16 +4682,6 @@ def start_remote_api(brain):
                     self._json(200, {"items": packages.list_all()})
                 except Exception as e:
                     self._json(200, {"items": [], "err": str(e)[:80]})
-            elif path == "/api/stickers":
-                # 只回表情包库（data/stickers）；upload 里是聊天/自拍图，倒进来
-                # App 面板会塞满他没添加过的图
-                names = []
-                try:
-                    import stickers
-                    names = list(stickers.all_names())
-                except Exception:
-                    names = []
-                self._json(200, {"names": names})
             elif path == "/api/voice":
                 # 她发的语音条（voice.py 合成，文件在 data/voice/）
                 name = _query_param(self.path, "name")
@@ -4764,7 +4714,7 @@ def start_remote_api(brain):
                 return
             elif path == "/api/img":
                 name = _query_param(self.path, "name")
-                blob = _cloud_sticker(name)
+                blob = _cloud_image_blob(name)
                 if blob is None:
                     self._json(404, {"err": "no such image"})
                     return

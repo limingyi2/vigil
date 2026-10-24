@@ -114,6 +114,7 @@ def _refresh_world_caches():
             # 榜单只在"她那一轮聊天"有用，后台刷一遍省不下什么，
             # 却要多一套缓存文件 + 一个过期判断要维护。
             # hotboard_cache（抖音榜）就是这么来的，已经删了。
+            # 热梗榜后来随 meme 插件一起下线（P21.2），后台更没有可刷的东西。
     except Exception:
         pass
 

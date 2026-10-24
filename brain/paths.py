@@ -53,7 +53,6 @@ PERSONA_DIR = os.path.join(CONFIG_DIR, "personas")
 MEMORY_DIR = os.path.join(DATA_DIR, "memory")
 LIFE_DIR = os.path.join(DATA_DIR, "her_life")
 UPLOAD_DIR = os.path.join(DATA_DIR, "upload")
-STICKERS_DIR = os.path.join(DATA_DIR, "stickers")    # 她收藏的表情包
 PLUGIN_DATA_DIR = os.path.join(DATA_DIR, "plugins")  # 插件自己的持久化
 KB_DIR = os.path.join(DATA_DIR, "kb")                # 本地知识库：语料块 + 向量索引
 DEVICES_PATH = os.path.join(DATA_DIR, "devices.json")  # 已绑定设备表（只存 token 哈希）
@@ -161,7 +160,7 @@ WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
 # 会自动建出来的目录
 _DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR,
          MEMORY_DIR, LIFE_DIR, UPLOAD_DIR,
-         STICKERS_DIR, RUN_DIR, CORE_FEATURES_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR,
+         RUN_DIR, CORE_FEATURES_DIR, PLUGINS_DIR, PLUGIN_DATA_DIR, KB_DIR,
          CONTEXT_COMPACTION_DIR, DB_DIR)
 
 
