@@ -44,7 +44,7 @@
     },
     {
       "path": "version.json",
-      "sha256": "402de8e7a2c85cf39f197f6a228395081ce50530dfaae6bf08282e2f5cb8ae4a"
+      "sha256": "08ae9a52b545954798904a14e974b1fa3713bb78aa4481674f3b63642667d1ce"
     }
   ],
   "dependencies": []
