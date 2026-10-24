@@ -226,6 +226,41 @@
       return {card,action:req.state,request:req};
     });
   }
-  const api={step,elapsed,redact,codingSummary,approvalCard,approvalResolutions};root.VigilAgentView=api;
+  // 历史审批查询的纯决策核心(可 Node 测试):
+  // fetchMap(withSession) 由调用方提供,可能 reject(断网/超时)、返回
+  // {ok:false}(HTTP 401/403/500)或格式异常——这些**一律是查询失败**,
+  // 返回 null,调用方保持卡片原样;绝不能当成"空审批列表"把缺失的
+  // request_id 误判成 stale。只有成功拿到有效列表(且必要的回退查询也
+  // 成功)时,才返回映射交给 approvalResolutions 做缺失 ID 的 stale 判定。
+  async function approvalHistory(cards, fetchMap) {
+    const toMap = (r) => {
+      if (!r || r.ok !== true || !Array.isArray(r.requests)) {
+        throw new Error('approval_history_invalid: ' +
+          String((r && (r._err || r.err)) || '格式异常').slice(0, 80));
+      }
+      const map = {};
+      for (const item of r.requests) {
+        if (item && item.request_id) map[String(item.request_id)] = item;
+      }
+      return map;
+    };
+    let sessionMap;
+    try {
+      sessionMap = toMap(await fetchMap(true));
+    } catch (_) {
+      return null;                       // 查询失败:不产生任何处置
+    }
+    const needsFallback = (cards || []).some((card) =>
+      card.dataset && !card.dataset.capDecorated && card.dataset.capRequestId
+      && !sessionMap[card.dataset.capRequestId]);
+    if (!needsFallback) return sessionMap;
+    try {
+      const all = toMap(await fetchMap(false));
+      return Object.assign({}, sessionMap, all);
+    } catch (_) {
+      return null;                       // 回退查询失败:同样不判定 stale
+    }
+  }
+  const api={step,elapsed,redact,codingSummary,approvalCard,approvalResolutions,approvalHistory};root.VigilAgentView=api;
   if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

@@ -1405,22 +1405,17 @@
     async function decorateCapabilityApprovals(sessionId) {
       const cards = [...msgs.querySelectorAll('.cap-approval[data-cap-request-id]')];
       if (!cards.length) return;
-      const fetchMap = async (withSession) => {
-        const path = '/api/capabilities/requests'
-          + (withSession && sessionId
-            ? '?session=' + encodeURIComponent(sessionId) : '');
-        const r = pick(await get(path));
-        const map = {};
-        for (const item of (r && r.requests) || []) map[item.request_id] = item;
-        return map;
-      };
+      const fetchMap = async (withSession) => pick(await get('/api/capabilities/requests'
+        + (withSession && sessionId
+          ? '?session=' + encodeURIComponent(sessionId) : '')));
+      // 失败语义收口在 approvalHistory:{ok:false}({ok:false} 即 HTTP
+      // 401/403/500)、断网、格式异常都返回 null —— 只有两次必要查询都
+      // 成功拿到有效列表,缺失的 request_id 才允许被判成失效。
       let byId = null;
       try {
-        byId = await fetchMap(true);
-        if (cards.some((card) => !byId[card.dataset.capRequestId])) {
-          byId = Object.assign({}, byId, await fetchMap(false));
-        }
-      } catch (_) { return; }
+        byId = await global.VigilAgentView.approvalHistory(cards, fetchMap);
+      } catch (_) { byId = null; }
+      if (!byId) return;
       for (const { card, action, request } of global.VigilAgentView.approvalResolutions(cards, byId)) {
         if (action === 'skip') continue;
         card.dataset.capDecorated = '1';

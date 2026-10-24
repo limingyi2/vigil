@@ -92,3 +92,82 @@ test('approvalResolutions: transient query failure produces no decisions', () =>
   assert.deepEqual(av.approvalResolutions(cards, null), []);
   assert.deepEqual(av.approvalResolutions(cards, undefined), []);
 });
+
+
+// ---- P20.2 终修:approvalHistory 查询失败语义 ----
+// {ok:false}、HTTP 401/403/500、断网、超时、格式异常都必须视为查询失败
+// (返回 null,卡片保持原样),不能当成空审批列表把缺失 ID 误判成 stale。
+
+function fixtureCards() {
+  return [
+    { dataset: { capRequestId: 'r1' } },
+    { dataset: { capRequestId: 'r2' } },
+  ];
+}
+
+test('approvalHistory: {ok:false} is a query failure, not an empty list', async () => {
+  const fetchMap = async () => ({ ok: false, _status: 403, _err: '需要管理员权限' });
+  assert.equal(await av.approvalHistory(fixtureCards(), fetchMap), null);
+});
+
+test('approvalHistory: HTTP 401 / 500 responses never produce decisions', async () => {
+  for (const status of [401, 500]) {
+    const fetchMap = async () => ({ ok: false, _status: status });
+    assert.equal(await av.approvalHistory(fixtureCards(), fetchMap), null, 'status ' + status);
+  }
+});
+
+test('approvalHistory: server down / timeout rejects produce no decisions', async () => {
+  const fetchMap = async () => { throw new Error('断网'); };
+  assert.equal(await av.approvalHistory(fixtureCards(), fetchMap), null);
+});
+
+test('approvalHistory: malformed responses are query failures', async () => {
+  for (const junk of [undefined, null, {}, { ok: true }, { ok: true, requests: 'nope' }, { ok: false, requests: [] }]) {
+    assert.equal(await av.approvalHistory(fixtureCards(), async () => junk), null, JSON.stringify(junk));
+  }
+});
+
+test('approvalHistory: successful empty requests is valid; missing ids then resolve stale', async () => {
+  // Brain 重启后的真实形态:查询成功但列表为空 → 允许 stale 判定。
+  const fetchMap = async () => ({ ok: true, requests: [] });
+  const map = await av.approvalHistory(fixtureCards(), fetchMap);
+  assert.notEqual(map, null);
+  const out = av.approvalResolutions(fixtureCards(), map);
+  assert.deepEqual(out.map(o => o.action), ['stale', 'stale']);
+});
+
+test('approvalHistory: first query ok, fallback query fails -> no stale decisions', async () => {
+  // 第一次有结果(但缺 r2),回退查询失败:整体视为查询失败。
+  const calls = [];
+  const fetchMap = async (withSession) => {
+    calls.push(withSession);
+    if (withSession) return { ok: true, requests: [{ request_id: 'r1', state: 'pending' }] };
+    throw new Error('回退查询失败');
+  };
+  assert.equal(await av.approvalHistory(fixtureCards(), fetchMap), null);
+  assert.deepEqual(calls, [true, false]);
+});
+
+test('approvalHistory: fallback succeeds -> merged map decides states', async () => {
+  const fetchMap = async (withSession) => withSession
+    ? { ok: true, requests: [{ request_id: 'r1', state: 'completed', result: { ok: true } }] }
+    : { ok: true, requests: [{ request_id: 'r2', state: 'denied' }] };
+  const map = await av.approvalHistory(fixtureCards(), fetchMap);
+  assert.notEqual(map, null);
+  const out = av.approvalResolutions(fixtureCards(), map);
+  assert.deepEqual(out.map(o => o.action), ['completed', 'denied']);
+});
+
+test('approvalHistory: entries without request_id are skipped, valid ones indexed', async () => {
+  const fetchMap = async () => ({ ok: true, requests: [
+    { state: 'pending' },                      // 无 request_id:跳过
+    { request_id: 'r1', state: 'pending' },
+  ] });
+  const map = await av.approvalHistory(fixtureCards(), fetchMap);
+  assert.deepEqual(Object.keys(map), ['r1']);
+  // r1 在列 → 无缺失 → 不需要回退查询
+  let calls = 0;
+  await av.approvalHistory([{ dataset: { capRequestId: 'r1' } }], async () => { calls++; return { ok: true, requests: [{ request_id: 'r1', state: 'pending' }] }; });
+  assert.equal(calls, 1);
+});
