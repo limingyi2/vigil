@@ -118,7 +118,8 @@
         +(ok?'已确认并执行成功':'已确认，但执行未成功')
         +(detail?'<pre>'+esc(detail)+'</pre>':'')+'</div></div>';
     }
-    if(state==='executing'){
+    if(state==='executing' || state==='approved'){
+      // approved 是历史残留值：审批已受理、正在执行 —— 不能再显示按钮。
       return head+'<div class="cap-approval-state cap-running">正在执行…</div></div>';
     }
     // pending：只有真正等待用户拍板时才出现按钮。

@@ -1376,27 +1376,59 @@
             + esc(String(r.error || '原因未知').slice(0, 120)) + '</div>';
           return;
         }
+        if (action === 'approve' && r && r.ok === false && r.error === 'request_in_flight') {
+          // 另一个审批动作正在执行：不是失败，是进行中。
+          const actions2 = card.querySelector('.cap-approval-actions');
+          if (actions2) actions2.innerHTML = '<div class="cap-approval-state cap-running">正在执行…（另一个确认已受理）</div>';
+          card.dataset.capDecorated = '1';
+          return;
+        }
         renderCapabilityOutcome(card, action, r);
       } catch (err) {
         if (actions) actions.innerHTML = '<div class="cap-approval-state cap-fail">请求失败：'
           + esc(String((err && err.message) || err).slice(0, 120)) + '</div>';
       }
     });
-    // 历史会话回填：卡片的当前状态以 Brain 里的审批请求为准（等待授权
-    // 才有按钮；已执行/已拒绝显示真实结果），拿不到状态就保持原样不猜。
-    async function decorateCapabilityApprovals() {
+    // 历史会话回填：卡片的当前状态以 Brain 里的审批请求为准 ——
+    // pending 才有按钮；executing/approved 显示执行中（不可重复操作）；
+    // completed 显示真实结果；denied 显示已拒绝。查询带当前会话过滤，
+    // 拿不到对应状态时回退一次全量（管理员可见全部），不猜状态。
+    async function decorateCapabilityApprovals(sessionId) {
       const cards = [...msgs.querySelectorAll('.cap-approval[data-cap-request-id]')];
       if (!cards.length) return;
+      const fetchRequests = async (withSession) => {
+        const path = '/api/capabilities/requests'
+          + (withSession && sessionId
+            ? '?session=' + encodeURIComponent(sessionId) : '');
+        const r = pick(await get(path));
+        const map = {};
+        for (const item of (r && r.requests) || []) map[item.request_id] = item;
+        return map;
+      };
       let byId = {};
       try {
-        const r = pick(await get('/api/capabilities/requests'));
-        for (const item of (r && r.requests) || []) byId[item.request_id] = item;
+        byId = await fetchRequests(true);
+        const missing = cards.some((card) =>
+          !card.dataset.capDecorated && !byId[card.dataset.capRequestId]);
+        if (missing) byId = await fetchRequests(false);
       } catch (_) { return; }
       for (const card of cards) {
         if (card.dataset.capDecorated) continue;
         const req = byId[card.dataset.capRequestId];
-        if (!req || req.state === 'pending' || req.state === 'approved') continue;
-        renderCapabilityOutcome(card, req.state === 'denied' ? 'deny' : 'approve', req.result || {});
+        if (!req || req.state === 'pending') continue;
+        card.dataset.capDecorated = '1';
+        if (req.state === 'executing' || req.state === 'approved') {
+          const actions = card.querySelector('.cap-approval-actions');
+          if (actions) actions.innerHTML = '<div class="cap-approval-state cap-running">正在执行…</div>';
+          continue;
+        }
+        if (req.state === 'denied') {
+          renderCapabilityOutcome(card, 'deny', req.result || {});
+          continue;
+        }
+        if (req.state === 'completed') {
+          renderCapabilityOutcome(card, 'approve', req.result || {});
+        }
       }
     }
 
@@ -2386,7 +2418,7 @@
           '</div></div></div>';
       }).join('');
       renderedDraftConversationId = loadConversationId;
-      void decorateCapabilityApprovals();
+      void decorateCapabilityApprovals(loadConversationId);
       for (const button of msgs.querySelectorAll('.agent-cancel')) {
         button.onclick = async () => {
           button.disabled = true;

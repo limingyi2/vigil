@@ -394,7 +394,8 @@ class CapabilityRegistry:
                        "fingerprint": fingerprint,
                        "task_id": str(task_id or ""), "state": "pending",
                        "created_at": time.time(), "result": None,
-                       "approved_by": "", "approved_at": 0.0}
+                       "approved_by": "", "approved_at": 0.0,
+                       "execution_token": None}
             self._requests[rid] = request
             self._publish_locked("capability_authorization_requested", key,
                                  {"operation": op, "request_id": rid,
@@ -439,7 +440,7 @@ class CapabilityRegistry:
             return {k: ("[已省略]" if str(k).lower() in cls._SENSITIVE_ARG_KEYS
                         else cls._sanitize_value(v)) for k, v in value.items()}
         if isinstance(value, list):
-            return value[:20]
+            return [cls._sanitize_value(v) for v in value[:20]]
         text = str(value)
         if len(text) > cls._ARG_VALUE_LIMIT:
             return text[:cls._ARG_VALUE_LIMIT] + "…[截断]"
@@ -455,23 +456,26 @@ class CapabilityRegistry:
                 result["receipts"] = result["receipts"][:8]
             out["result"] = cls._sanitize_value(result)
         out.pop("fingerprint", None)
+        # 执行令牌绝不出端点：拿到它等于拿到一次免审批执行权。
+        out.pop("execution_token", None)
         return out
 
     def approve(self, request_id: str, *, approved_by: str = "") -> dict[str, Any]:
         """Approve a pending request and execute it exactly once.
 
-        🔴 执行授权不再经过 registry 的 grant（grant→invoke→revoke 有窗口：
-        执行期间同作用域的并发 invoke 能借到还活着的授权）。授权就是这一
-        个请求的 approved 状态本身——:meth:`invoke` 带上请求编号，校验
-        请求/参数/身份完全匹配后才跑 handler，并发调用无从借力。
+        🔴 执行授权不经过 registry 的 grant 表。approve 在**同一次加锁内**
+        把请求置为 executing 并签发一次性执行令牌；:meth:`invoke` 校验
+        令牌 + 完整参数 + 身份/会话/目标严格相等后**原子消费**令牌再跑
+        handler —— 并发重放（哪怕拿着同一个请求号）最多进入 handler 一次。
 
         - 范围（identity/session/target/完整参数）锁死在请求产生时的值上；
           审批主体只签名（approved_by 进审计字段），**不能**改写原任务的
           身份、会话或目标，也不能扩大执行范围。
         - 执行异常时请求收尾为 completed + 未知状态回执：绝不把状态留在
-          approved，也绝不宣称"执行成功"或"未执行"。
+          executing，也绝不宣称"执行成功"或"未执行"。
         """
         rid = str(request_id or "")
+        token = uuid.uuid4().hex
         with self._lock:
             request = self._requests.get(rid)
             if not request:
@@ -481,18 +485,19 @@ class CapabilityRegistry:
             if request["state"] == "completed":
                 return copy.deepcopy(request.get("result")
                                      or {"ok": False, "error": "already_completed"})
-            if request["state"] == "approved":
+            if request["state"] == "executing":
                 # 另一个审批动作已在执行这一请求。重复提交必须在这里挡下，
                 # 否则同一个副作用操作会被跑两遍。
                 return {"ok": False, "error": "request_in_flight", "request_id": rid}
-            request["state"] = "approved"
+            request["state"] = "executing"
+            request["execution_token"] = token
             request["approved_by"] = str(approved_by or "")
             request["approved_at"] = time.time()
         try:
             result = self.invoke(request["capability"], request["operation"],
                                  request["args"], identity=request["identity"],
                                  session=request["session"], target=request["target"],
-                                 _via_request=rid)
+                                 _via_request=rid, _via_token=token)
         except Exception as exc:
             detail = "%s: %s" % (type(exc).__name__, str(exc)[:240])
             result = {"ok": False, "status": RUN_UNKNOWN,
@@ -501,8 +506,12 @@ class CapabilityRegistry:
                                                  request["operation"],
                                                  RUN_UNKNOWN, reason="exception",
                                                  detail=detail)]}
+        finally:
+            with self._lock:
+                request["execution_token"] = None
         with self._lock:
-            request["state"] = "completed"
+            if request["state"] != "completed":
+                request["state"] = "completed"
             request["result"] = copy.deepcopy(result)
         return result
 
@@ -515,7 +524,7 @@ class CapabilityRegistry:
             if request["state"] == "denied":
                 # 幂等：重复拒绝返回同一个结果。
                 return {"ok": True, "request_id": rid, "state": "denied"}
-            if request["state"] == "approved":
+            if request["state"] in ("executing", "approved"):
                 # 执行中：既不能说"拒绝且未执行"（可能已经生效），也不能
                 # 把 completed 之后的状态覆盖掉。如实拒绝这次操作。
                 return {"ok": False, "error": "request_in_flight", "request_id": rid}
@@ -537,7 +546,8 @@ class CapabilityRegistry:
 
     def invoke(self, name: str, operation: str, args: Mapping[str, Any] | None = None,
                *, identity: str = "", session: str = "", target: str = "",
-               task_id: str = "", _via_request: str = "") -> dict[str, Any]:
+               task_id: str = "", _via_request: str = "",
+               _via_token: str = "") -> dict[str, Any]:
         """Run one capability operation and report a unified receipt.
 
         🔴 There is no ``authorized`` parameter.  The caller's identity is an
@@ -552,20 +562,29 @@ class CapabilityRegistry:
         key, op = str(name or "").strip(), str(operation or "").strip()
         tid = str(task_id or ("capt_" + uuid.uuid4().hex[:12]))
         if _via_request:
+            # 🔴 一次性执行令牌：approve 签发（同一次加锁内写入），这里
+            # 校验后**原子消费**。两个线程并发重放同一请求时，令牌只能被
+            # 消费一次 —— handler 最多执行一次。identity/session/target
+            # 必须与请求创建时的绑定值**严格相等**（空绑定只接受空调用方，
+            # 不存在"空 = 任意"）。
             with self._lock:
                 req = self._requests.get(str(_via_request))
                 args_norm = copy.deepcopy(dict(args or {}))
                 valid = bool(
-                    req and req["state"] == "approved"
+                    req and req.get("state") == "executing"
+                    and str(req.get("execution_token") or "") == str(_via_token or "")
+                    and bool(_via_token)
                     and req["capability"] == key and req["operation"] == op
                     and req["args"] == args_norm
-                    and str(req["identity"] or "") in ("", str(identity or ""))
-                    and str(req["session"] or "") in ("", str(session or ""))
-                    and str(req["target"] or "") in ("", str(target or "")))
+                    and str(req["identity"] or "") == str(identity or "")
+                    and str(req["session"] or "") == str(session or "")
+                    and str(req["target"] or "") == str(target or ""))
+                if valid:
+                    req["execution_token"] = None
             if not valid:
                 receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
                                          reason="request_mismatch",
-                                         detail="执行参数与审批请求不一致")
+                                         detail="执行参数与审批请求不一致，或授权已被消费")
                 return {"ok": False, "task_id": tid, "capability": key, "operation": op,
                         "status": RUN_DENIED, "error": "request_mismatch",
                         "receipts": [receipt]}

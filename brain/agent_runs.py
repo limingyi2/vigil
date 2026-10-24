@@ -2005,6 +2005,15 @@ def _tool(rid, owner, started, call, ctx):
                                               or (op_args.get('name') if isinstance(op_args, dict) else '') or ''),
                                 'args': _caps.CapabilityRegistry._sanitize_value(
                                     op_args if isinstance(op_args, dict) else {})}
+            # 竞态窗口：审批请求在 CapabilityRegistry 里创建之后、审批 ID
+            # 落进步骤之前，run 可能已被取消。这时迟到的待审批请求必须
+            # 在服务端安全拒绝（deny 真状态，不是只改前端显示），否则会
+            # 留下一张几小时后还能执行副作用的僵尸卡片。
+            if item['status'] != 'running':
+                _deny_pending_approvals({'steps': [step]})
+                step['approval']['state'] = 'denied'
+            else:
+                step['approval'].setdefault('state', 'pending')
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)

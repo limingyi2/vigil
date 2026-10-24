@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -69,7 +70,8 @@ class ApprovalSemanticsTests(unittest.TestCase):
         req = self.r.request_authorization('fixture', 'write_op', {'name': 'A'},
                                            identity='owner:pc')
         with self.r._lock:
-            self.r._requests[req['request_id']]['state'] = 'approved'
+            self.r._requests[req['request_id']]['state'] = 'executing'
+            self.r._requests[req['request_id']]['execution_token'] = 'TOK'
         out = self.r.approve(req['request_id'])
         self.assertFalse(out.get('ok'))
         self.assertEqual(out.get('error'), 'request_in_flight')
@@ -550,10 +552,11 @@ class FingerprintTests(unittest.TestCase):
         req = r.request_authorization('t', 'w', {'name': 'A', 'purge_data': False},
                                       identity='owner:pc')
         with r._lock:
-            r._requests[req['request_id']]['state'] = 'approved'
+            r._requests[req['request_id']]['state'] = 'executing'
+            r._requests[req['request_id']]['execution_token'] = 'TOK'
         # 审批的是 purge_data=False；换参数执行必须被拒
         out = r.invoke('t', 'w', {'name': 'A', 'purge_data': True},
-                       identity='owner:pc', _via_request=req['request_id'])
+                       identity='owner:pc', target='A', _via_request=req['request_id'], _via_token='TOK')
         self.assertEqual(out['status'], 'denied')
         self.assertEqual(out['error'], 'request_mismatch')
         self.assertFalse(calls)
@@ -583,13 +586,17 @@ class ScopeBindingTests(unittest.TestCase):
         req = self.r.request_authorization('t', 'w', {'name': 'A'},
                                            identity='owner:pc', session='conv1')
         with self.r._lock:
-            self.r._requests[req['request_id']]['state'] = 'approved'
-        for kwargs in ({'identity': 'device:wechat', 'session': 'conv1'},
-                       {'identity': 'owner:pc', 'session': 'conv2'},
-                       {'identity': 'owner:pc', 'session': 'conv1', 'target': 'B'}):
-            out = self.r.invoke('t', 'w', {'name': 'A'}, _via_request=req['request_id'],
-                                **kwargs)
-            self.assertEqual(out['error'], 'request_mismatch', kwargs)
+            self.r._requests[req['request_id']]['state'] = 'executing'
+            self.r._requests[req['request_id']]['execution_token'] = 'TOK'
+        base = {'target': 'A', '_via_token': 'TOK', '_via_request': req['request_id'],
+                'identity': 'owner:pc', 'session': 'conv1'}
+        for override in ({'identity': 'device:wechat'},
+                         {'session': 'conv2'},
+                         {'target': 'B'},
+                         {'_via_token': 'WRONG'}):
+            kwargs = dict(base, **override)
+            out = self.r.invoke('t', 'w', {'name': 'A'}, **kwargs)
+            self.assertEqual(out['error'], 'request_mismatch', override)
         self.assertFalse(self.calls)
 
     def test_approver_cannot_rewrite_task_scope(self):
@@ -718,3 +725,179 @@ class MiMoThinkLeadTests(unittest.TestCase):
         content, moved = _extract_inline_think('先说think:不是调试', '')
         self.assertEqual(content, '先说think:不是调试')
         self.assertEqual(moved, '')
+
+
+class TokenReplayTests(unittest.TestCase):
+    """反例：同一审批的并发重放最多进入 handler 一次；空绑定不接受任意身份。"""
+
+    def _prepare(self, r, args, identity='', session='', target=''):
+        req = r.request_authorization('t', 'w', args, identity=identity,
+                                      session=session, target=target)
+        rid = req['request_id']
+        with r._lock:
+            r._requests[rid]['state'] = 'executing'
+            r._requests[rid]['execution_token'] = 'TOK'
+        return rid, req
+
+    def test_concurrent_via_request_replay_executes_once(self):
+        import threading
+        r = _registry()
+        calls = []
+
+        def handler(a):
+            calls.append(a)
+            time.sleep(0.05)
+            return {'ok': True}
+
+        r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write', 'handler': handler}})
+        rid, _req = self._prepare(r, {'name': 'A'}, identity='owner:pc',
+                                  session='s1', target='A')
+        barrier = threading.Barrier(2)
+        results = []
+
+        def call():
+            barrier.wait()
+            results.append(r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc',
+                                    session='s1', target='A',
+                                    _via_request=rid, _via_token='TOK'))
+
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(5)
+        ok = [x for x in results if x.get('status') == 'succeeded']
+        mismatch = [x for x in results if x.get('error') == 'request_mismatch']
+        self.assertEqual(len(ok), 1, results)
+        self.assertEqual(len(mismatch), 1, results)
+        self.assertEqual(len(calls), 1)
+
+    def test_empty_binding_rejects_any_caller_identity(self):
+        r = _registry()
+        calls = []
+        r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write',
+                  'handler': lambda a: dict(calls.append(1) or {'ok': True})}})
+        # 原始绑定为空（无 target 派生）：不接受任意身份/会话/目标
+        rid, _req = self._prepare(r, {'x': 1})
+        out = r.invoke('t', 'w', {'x': 1}, identity='owner:x',
+                       _via_request=rid, _via_token='TOK')
+        self.assertEqual(out['error'], 'request_mismatch')
+        self.assertFalse(calls)
+        # 只有完全相等的空调用方才能执行
+        out2 = r.invoke('t', 'w', {'x': 1}, identity='',
+                        _via_request=rid, _via_token='TOK')
+        self.assertEqual(out2['status'], 'succeeded')
+        self.assertEqual(len(calls), 1)
+
+    def test_missing_or_blank_token_refused(self):
+        r = _registry()
+        calls = []
+        r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write',
+                  'handler': lambda a: dict(calls.append(1) or {'ok': True})}})
+        rid, _req = self._prepare(r, {'name': 'A'}, identity='owner:pc',
+                                  session='s1', target='A')
+        for token in ('', 'WRONG'):
+            out = r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc',
+                           session='s1', target='A',
+                           _via_request=rid, _via_token=token)
+            self.assertEqual(out['error'], 'request_mismatch', token)
+        self.assertFalse(calls)
+
+    def test_read_and_delegated_unaffected(self):
+        r = _registry()
+        r.register('t', status={'connected': True}, operations={
+            'r': {'permission': 'read', 'handler': lambda a: {'ok': True}},
+            'd': {'permission': 'delegated', 'handler': lambda a: {'ok': True}}})
+        self.assertEqual(r.invoke('t', 'r', {}, identity='x')['status'], 'succeeded')
+        self.assertEqual(r.invoke('t', 'd', {}, identity='x')['status'], 'succeeded')
+
+
+class CancelRaceTests(unittest.TestCase):
+    """反例：请求创建后、审批 ID 落入任务步骤前发生取消 —— 迟到的
+    待审批请求必须在服务端被拒绝，run 终态保持 cancelled。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = patch.object(runs.paths, 'DATA_DIR', self.tmp.name)
+        self.home.start()
+        runs.INITIALIZED.clear()
+        runs.TRANSIENT.clear()
+        self.body = dict(request_id='request_p202_race', intent='disable plugin x', src='pc')
+
+    def tearDown(self):
+        self.home.stop()
+        self.tmp.cleanup()
+
+    def test_cancel_between_request_creation_and_step_save(self):
+        pending = caps.REGISTRY.request_authorization(
+            'plugins_skills', 'disable', {'name': 'calc'}, identity='owner:pc')
+        rid = pending['request_id']
+        spec = [{'type': 'function', 'function': {'name': 'capability_call', 'parameters': {
+            'type': 'object', 'properties': {'capability': {'type': 'string'},
+                                             'operation': {'type': 'string'},
+                                             'args': {'type': 'string'}},
+            'required': ['capability', 'operation'], 'additionalProperties': False}}}]
+        call = {'id': 'c1', 'type': 'function', 'function': {
+            'name': 'capability_call',
+            'arguments': json.dumps({'capability': 'plugins_skills',
+                                     'operation': 'disable',
+                                     'args': '{"name": "calc"}'})}}
+        first = {'choices': [{'message': {'content': '', 'tool_calls': [call],
+                                          'reasoning_content': ''},
+                              'finish_reason': 'tool_calls'}]}
+        second = {'choices': [{'message': {'content': '好的', 'tool_calls': [],
+                                           'reasoning_content': ''},
+                               'finish_reason': 'stop'}]}
+        awaiting = json.dumps({'ok': False, 'status': 'awaiting_authorization',
+                               'error': 'authorization_required',
+                               'request_id': rid, 'target': 'calc'})
+        item = runs.create(dict(self.body), {}, 'owner', start=False)
+
+        def invoke_and_cancel(*a, **k):
+            # 竞态点：审批请求已经创建（上面），run 步骤还没保存 ——
+            # 此刻取消。迟到的请求必须被安全拒绝。
+            runs.cancel(item['run_id'], 'owner')
+            return awaiting
+
+        provider = _Provider([first, second])
+        with patch.object(runs, 'get_provider', return_value=provider), \
+             patch.object(runs.tools, 'all_specs', return_value=spec), \
+             patch.object(runs.tools, 'invoke_spec', side_effect=invoke_and_cancel):
+            runs._run(item['run_id'], 'owner', {})
+
+        snap = runs.snapshot(item['run_id'], 'owner')
+        # run 终态保持 cancelled：迟到回执不能把它改回 succeeded
+        self.assertEqual(snap['status'], 'cancelled')
+        # 迟到的待审批请求已被服务端拒绝，无法再执行
+        states = {v['request_id']: v['state'] for v in caps.REGISTRY.requests()}
+        self.assertEqual(states[rid], 'denied')
+        out = caps.REGISTRY.approve(rid)
+        self.assertFalse(out['ok'])
+        self.assertEqual(out['error'], 'request_denied')
+        # 台账里保留了审批凭据（带 denied 状态），历史卡片可如实展示
+        tool_steps = [s for s in snap['steps'] if s.get('kind') == 'tool']
+        self.assertEqual(len(tool_steps), 1)
+        self.assertEqual(tool_steps[0]['approval']['request_id'], rid)
+        self.assertEqual(tool_steps[0]['approval'].get('state'), 'denied')
+
+
+class NestedSanitizeTests(unittest.TestCase):
+    """脱敏必须递归处理列表中的字典和嵌套结构。"""
+
+    def test_nested_lists_and_dicts(self):
+        r = _registry()
+        r.request_authorization('plugins_skills', 'skill_install',
+                                {'items': [{'zip_b64': 'A' * 500, 'note': 'n'},
+                                           [{'token': 'T' * 400}, 'plain',
+                                            {'deep': {'password': 'P' * 300}}]]},
+                                identity='owner:pc')
+        args = r.requests(public=True)[0]['args']
+        items = args['items']
+        self.assertEqual(items[0]['zip_b64'], '[已省略]')
+        self.assertEqual(items[0]['note'], 'n')
+        self.assertEqual(items[1][0]['token'], '[已省略]')
+        self.assertEqual(items[1][1], 'plain')
+        self.assertEqual(items[1][2]['deep']['password'], '[已省略]')
