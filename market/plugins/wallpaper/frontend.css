@@ -92,7 +92,11 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
 .vigil-wallpaper-card-meta { font-size: 11px; opacity: .6; }
 .vigil-wallpaper-empty { padding: 28px; border: 1px dashed color-mix(in srgb, currentColor 20%, transparent); border-radius: 14px; opacity: .72; }
 .vigil-wallpaper-error { color: #ffb4ab; font-size: 12px; }
-.vigil-wallpaper-live-badge { position: fixed; left: 14px; bottom: 12px; z-index: 60; padding: 4px 8px; border-radius: 999px; background: #0b1220cc; color: #d9e5ff; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
+/* 跟随应用主题配色（currentColor + 半透明表面），淡入淡出，错误态用暖红。 */
+.vigil-wallpaper-live-badge { position: fixed; left: 14px; bottom: 12px; z-index: 60; padding: 4px 10px; border-radius: 999px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); background: color-mix(in srgb, var(--bg, #141822) 55%, transparent); color: color-mix(in srgb, currentColor 78%, transparent); backdrop-filter: blur(10px); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; opacity: 0; transition: opacity .45s ease; }
+.vigil-wallpaper-live-badge:not([hidden]) { opacity: 1; }
+.vigil-wallpaper-live-badge[hidden] { display: block; visibility: hidden; }
+.vigil-wallpaper-live-badge.is-error { background: color-mix(in srgb, #b3261e 72%, transparent); color: #fff; border-color: transparent; }
 @media (max-width: 860px) { .vigil-wallpaper-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .vigil-wallpaper-controls { grid-template-columns: 1fr; } .vigil-wallpaper-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* dshwe 吸收版:页签 / 预设 / 自动轮播 */

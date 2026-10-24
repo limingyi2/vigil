@@ -21,6 +21,16 @@
   let root = null;
   let scrim = null;
   let badge = null;
+  let badgeTimer = 0;
+  // 常态徽章 4 秒自动隐藏；错误文案（含“失败/错误/未就绪”）停留 8 秒再收。
+  function showBadge(text) {
+    if (!badge) return;
+    badge.textContent = text;
+    badge.classList.toggle('is-error', /失败|错误|未就绪|不在当前壁纸库/.test(text));
+    badge.hidden = false;
+    clearTimeout(badgeTimer);
+    badgeTimer = setTimeout(() => { badge.hidden = true; }, /失败|错误|未就绪|不在当前壁纸库/.test(text) ? 8000 : 4000);
+  }
   let frame = null;
   let generation = 0;
   let activeUrl = '';
@@ -106,7 +116,7 @@
       stage.replaceChildren();
     }
     frame = null; activeUrl = '';
-    if (badge) badge.hidden = true;
+    if (badge) { clearTimeout(badgeTimer); badge.hidden = true; }
     if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
     gpuDiag = null;
   }
@@ -160,9 +170,8 @@
       // 启动恢复时找不到上次的壁纸（已删除/本地媒体重启失效/Workshop
       // 未扫到）必须说出来，静默返回会让用户以为壁纸功能坏了。
       if (item === null && config.enabled && config.wallpaper_id && !disposed) {
-        badge.textContent = '上次选择的壁纸（' + config.wallpaper_id + '）不在当前壁纸库里：' +
-          '可能已取消订阅，或它是重启前选择的本地媒体。请重新选择。';
-        badge.hidden = false;
+        showBadge('上次选择的壁纸（' + config.wallpaper_id + '）不在当前壁纸库里：' +
+          '可能已取消订阅，或它是重启前选择的本地媒体。请重新选择。');
       }
       return;
     }
@@ -171,10 +180,10 @@
       if (item.localUrl) {
         activeUrl = item.localUrl; const node = item.type === 'video' ? document.createElement('video') : document.createElement('img');
         node.autoplay = item.type === 'video'; node.loop = item.type === 'video'; node.muted = true; node.playsInline = true; node.src = item.localUrl;
-        node.addEventListener('error', () => { if (mine === generation) { badge.textContent = '本地媒体加载失败：' + item.file; badge.hidden = false; } });
+        node.addEventListener('error', () => { if (mine === generation) { showBadge('本地媒体加载失败：' + item.file); } });
         stage.appendChild(node);
         if (item.type === 'video') node.play().catch(() => {});
-        badge.textContent = '本地 ' + typeLabel(item.type); badge.hidden = false;
+        showBadge('本地 ' + typeLabel(item.type));
       } else {
         const file = item.file || (item.type === 'scene' ? 'scene.pkg' : item.type === 'web' ? 'index.html' : item.preview);
         const src = await resourceUrl(mediaPath(item, file));
@@ -183,13 +192,13 @@
         if (item.type === 'video' || item.type === 'image' || item.type === 'gif') {
           const node = item.type === 'video' ? document.createElement('video') : document.createElement('img');
           if (item.type === 'video') { node.autoplay = true; node.loop = true; node.muted = config.muted !== false; node.playsInline = true; node.preload = 'auto'; }
-          node.addEventListener('error', () => { if (mine === generation) { badge.textContent = '媒体加载失败：' + item.file; badge.hidden = false; } });
+          node.addEventListener('error', () => { if (mine === generation) { showBadge('媒体加载失败：' + item.file); } });
           node.src = src; node.style.objectFit = config.fit === 'contain' ? 'contain' : config.fit === 'stretch' ? 'fill' : 'cover'; stage.appendChild(node);
           if (item.type === 'video') node.play().catch(() => {});
         } else {
           frame = document.createElement('iframe'); frame.title = 'Vigil Wallpaper Engine ' + typeLabel(item.type); frame.setAttribute('sandbox', 'allow-scripts allow-same-origin'); frame.src = await documentUrl('wallpaper-renderer.html', frameDocument(item.type, src, config.fit, file)); stage.appendChild(frame);
           resizeObserver = new ResizeObserver(() => { try { frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'resize' }, '*'); } catch (_) {} }); resizeObserver.observe(stage);
-          badge.textContent = '实时 ' + typeLabel(item.type); badge.hidden = false;
+          showBadge('实时 ' + typeLabel(item.type));
           // 🔴 渲染失败目前是静默的（渲染器不把加载失败写进 webError）：
           // WebGL 创建失败、场景资源 404 都会让 canvas 永远不就绪。挂一个
           // 看门狗，超时就把诊断顶到徽章上，不让用户对着灰屏猜。
@@ -200,16 +209,15 @@
             const gpu = gpuDiag
               ? (gpuDiag.ok ? 'GPU 探测正常(' + gpuDiag.renderer + ')' : 'GPU 探测失败：' + gpuDiag.detail)
               : 'GPU 探测未完成';
-            badge.textContent = '渲染器 ' + Math.round(RENDER_READY_TIMEOUT / 1000) + ' 秒未就绪。' + gpu +
-              '。可先换视频/图片壁纸验证；若 GPU 探测失败，给客户端快捷方式加 --disable-gpu 后重试可确认是否显卡加速问题。';
-            badge.hidden = false;
+            showBadge('渲染器 ' + Math.round(RENDER_READY_TIMEOUT / 1000) + ' 秒未就绪。' + gpu +
+              '。可先换视频/图片壁纸验证；若 GPU 探测失败，给客户端快捷方式加 --disable-gpu 后重试可确认是否显卡加速问题。');
           }, RENDER_READY_TIMEOUT);
         }
       }
       applyAppearance();
     } catch (e) {
       if (mine !== generation) return;
-      badge.textContent = '壁纸加载失败：' + String(e?.message || e).slice(0, 120); badge.hidden = false;
+      showBadge('壁纸加载失败：' + String(e?.message || e).slice(0, 120));
       console.error('[wallpaper v4]', e);
       applyAppearance();
     }
@@ -305,9 +313,9 @@
     if (event.data.op === 'gpu') { gpuDiag = event.data; return; }
     if (event.data.op === 'ready') {
       if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
-      badge.textContent = '实时 ' + typeLabel(active?.type); badge.hidden = false;
+      showBadge('实时 ' + typeLabel(active?.type));
     }
-    if (event.data.op === 'error') { badge.textContent = '渲染错误：' + String(event.data.message || '未知错误').slice(0, 100); badge.hidden = false; }
+    if (event.data.op === 'error') { showBadge('渲染错误：' + String(event.data.message || '未知错误').slice(0, 100)); }
   }
   function onVisibility() { if (!frame) return; frame.contentWindow?.postMessage({ vigilWallpaper: true, command: document.hidden ? 'pause' : 'resume' }, '*'); }
   function dispose() {
@@ -315,8 +323,8 @@
   }
   window.__vigilWallpaperV4Dispose = dispose;
   ensureLayers(); messageHandler = onMessage; window.addEventListener('message', messageHandler); visibilityHandler = onVisibility; document.addEventListener('visibilitychange', visibilityHandler);
-  api('GET', '/api/plugin/wallpaper/config').then((r) => { if (r?.config) config = { ...DEFAULT, ...r.config }; applyAppearance(); if (config.enabled && config.wallpaper_id) loadLibrary(false).then(() => { if (libraryError) { badge.textContent = '读取壁纸库失败：' + libraryError; badge.hidden = false; } return mount(library.find((x) => x.id === config.wallpaper_id)); }).then(() => scheduleCarousel()); else { loadLibrary(false); scheduleCarousel(); } }).catch((e) => {
-    if (badge) { badge.textContent = '壁纸配置读取失败：' + String(e?.message || e).slice(0, 120); badge.hidden = false; }
+  api('GET', '/api/plugin/wallpaper/config').then((r) => { if (r?.config) config = { ...DEFAULT, ...r.config }; applyAppearance(); if (config.enabled && config.wallpaper_id) loadLibrary(false).then(() => { if (libraryError) { showBadge('读取壁纸库失败：' + libraryError); } return mount(library.find((x) => x.id === config.wallpaper_id)); }).then(() => scheduleCarousel()); else { loadLibrary(false); scheduleCarousel(); } }).catch((e) => {
+    if (badge) { showBadge('壁纸配置读取失败：' + String(e?.message || e).slice(0, 120)); }
   });
   window.VigilPlugin?.registerPage?.({ id: 'wallpaper', name: '壁纸', icon: 'i-img', after: 'market', render: renderSettings, dispose });
   window.VigilPlugin?.registerCleanup?.(OWNER, dispose);
