@@ -38,11 +38,19 @@ def _seed_core_features():
     legacy_roots = []
     if os.environ.get("VIGIL_MANAGED") == "1":
         legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
+    try:
+        migrated = migrate_legacy_plugins(HOME_DIR)
+        if migrated.get("copied"):
+            print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
+                  migrated["copied"], flush=True)
+        for error in migrated.get("errors", []):
+            print("[sidecar] 旧版插件迁移未完成，原文件已保留：%s" % error, flush=True)
+    except Exception as exc:
+        # Plugin migration is best-effort. A full disk or an unreadable legacy
+        # directory must not prevent the Brain from starting with user data intact.
+        print("[sidecar] 旧版插件迁移失败，Brain 继续启动；原文件已保留：%s" %
+              str(exc)[:180], flush=True)
     seed_core_features(src, HOME_DIR, legacy_roots)
-    migrated = migrate_legacy_plugins(HOME_DIR)
-    if migrated.get("copied"):
-        print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
-              migrated["copied"], flush=True)
 
 
 def _start_skill_host():

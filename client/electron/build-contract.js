@@ -23,12 +23,25 @@ function verifyTree(root, manifest) {
 function verifyNoBundledPluginPaths(files) {
   const offenders = (files || []).filter(file => {
     const normalized = String(file).replace(/\\/g, '/').replace(/^\/+/, '');
-    return /^(?:src|electron|assets)\/(?:.*\/)?plugins\/.+/i.test(normalized)
-      || /^(?:src|electron|assets)\/(?:.*\/)?market\/plugins\/.+/i.test(normalized);
+    return /(?:^|\/)plugins\/.+/i.test(normalized)
+      || /(?:^|\/)installed_plugins\/.+/i.test(normalized);
   });
   if (offenders.length) {
     throw new Error('Client package contains extension plugin payload: ' + offenders.slice(0, 8).join(', '));
   }
   return true;
 }
-module.exports = {read, compatible, hash, verifyTree, verifyNoBundledPluginPaths, REQUIRED};
+function verifyNoBundledPluginManifests(entries) {
+  const offenders = (entries || []).filter(entry => {
+    try {
+      const manifest = typeof entry.content === 'string' ? JSON.parse(entry.content) : entry.content;
+      return manifest && manifest.schema === 'vigil.brain-plugin/v1';
+    } catch (_) { return false; }
+  }).map(entry => entry.path);
+  if (offenders.length) {
+    throw new Error('Client package contains extension plugin manifest: ' + offenders.slice(0, 8).join(', '));
+  }
+  return true;
+}
+module.exports = {read, compatible, hash, verifyTree, verifyNoBundledPluginPaths,
+  verifyNoBundledPluginManifests, REQUIRED};

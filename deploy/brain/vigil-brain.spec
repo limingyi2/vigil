@@ -22,8 +22,7 @@ BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 # 仅打包核心能力适配器。brain/plugins/ 是旧版/开发期扩展源，不进入发布制品。
 core_feature_data = []
 CORE_FEATURE_ALLOWLIST = {
-    "__init__.py", "calc.py", "gate.py", "kb.py", "plugin_market.py",
-    "react.py", "remote.py", "skill.py", "websearch.py",
+    "__init__.py", "kb.py", "plugin_market.py", "remote.py", "skill.py",
 }
 seen_core_features = set()
 features_src = os.path.join(BLOCK, "core_features")

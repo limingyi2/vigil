@@ -17,13 +17,23 @@ from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
 
 def test_brain_release_guard_rejects_legacy_plugin_trees(tmp_path):
     (tmp_path / "_internal" / "core_features").mkdir(parents=True)
-    (tmp_path / "_internal" / "core_features" / "calc.py").write_text("core", encoding="utf-8")
+    (tmp_path / "_internal" / "core_features" / "kb.py").write_text("core", encoding="utf-8")
     assert assert_no_bundled_plugin_tree(tmp_path) is True
 
     plugin_dir = tmp_path / "_internal" / "plugins"
     plugin_dir.mkdir()
-    (plugin_dir / "wallpaper.py").write_text("extension", encoding="utf-8")
+    (plugin_dir / "future_plugin.py").write_text("extension", encoding="utf-8")
     with pytest.raises(RuntimeError, match="bundled plugin tree"):
+        assert_no_bundled_plugin_tree(tmp_path)
+
+
+def test_brain_release_guard_rejects_renamed_future_plugin_by_manifest(tmp_path):
+    package = tmp_path / "_internal" / "extensions" / "future_plugin"
+    package.mkdir(parents=True)
+    (package / "manifest.json").write_text(json.dumps({
+        "schema": "vigil.brain-plugin/v1", "name": "future_plugin",
+    }), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="bundled plugin manifest"):
         assert_no_bundled_plugin_tree(tmp_path)
 
 
@@ -57,21 +67,53 @@ def test_legacy_optional_plugins_migrate_as_user_installs_but_core_duplicates_do
     core = home / "core_features"
     legacy.mkdir(parents=True)
     core.mkdir()
-    (core / "calc.py").write_text("current-core", encoding="utf-8")
-    (legacy / "calc.py").write_text("current-core", encoding="utf-8")
+    (core / "kb.py").write_text("current-core", encoding="utf-8")
+    (legacy / "kb.py").write_text("current-core", encoding="utf-8")
     (legacy / "reminder.py").write_text("legacy-optional-plugin", encoding="utf-8")
 
     result = migrate_legacy_plugins(home)
     installed = home / "data" / "installed_plugins"
     assert result["skipped_core"] == 1
     assert result["copied"] == 1
-    assert not (installed / "calc.py").exists()
+    assert not (installed / "kb.py").exists()
     assert (installed / "reminder.py").read_text(encoding="utf-8") == "legacy-optional-plugin"
     assert (legacy / "reminder.py").is_file(), "migration must preserve the source for recovery"
 
-    (legacy / "calc.py").write_text("user-modified-core", encoding="utf-8")
+    (legacy / "kb.py").write_text("user-modified-core", encoding="utf-8")
     result = migrate_legacy_plugins(home)
-    assert (installed / "calc.py").read_text(encoding="utf-8") == "user-modified-core"
+    assert (installed / "kb.py").read_text(encoding="utf-8") == "user-modified-core"
+
+
+def test_failed_legacy_plugin_copy_is_reported_and_keeps_source(monkeypatch, tmp_path):
+    import home_migration
+
+    home = tmp_path / "home"
+    source = home / "plugins" / "legacy.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("NAME='legacy'", encoding="utf-8")
+
+    def fail_copy(*_args, **_kwargs):
+        raise OSError("simulated full disk")
+
+    monkeypatch.setattr(home_migration.shutil, "copy2", fail_copy)
+    result = migrate_legacy_plugins(home)
+    assert result["copied"] == 0
+    assert result["errors"] and "simulated full disk" in result["errors"][0]
+    assert source.read_text(encoding="utf-8") == "NAME='legacy'"
+    assert not (home / "data/installed_plugins/legacy.py").exists()
+
+
+def test_previous_p21_core_feature_copies_migrate_as_optional_plugins(tmp_path):
+    home = tmp_path / "home"
+    old = home / "core_features" / "gate.py"
+    old.parent.mkdir(parents=True)
+    old.write_text("user-adjusted-gate", encoding="utf-8")
+
+    result = migrate_legacy_plugins(home)
+    target = home / "data/installed_plugins/gate.py"
+    assert result["copied"] == 1
+    assert target.read_text(encoding="utf-8") == "user-adjusted-gate"
+    assert old.read_text(encoding="utf-8") == "user-adjusted-gate"
 
 
 def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
@@ -89,6 +131,10 @@ def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
     assert "if rel_file not in CORE_FEATURE_ALLOWLIST" in spec
     assert "if seen_core_features != CORE_FEATURE_ALLOWLIST" in spec
     assert "datas=core_feature_data + skill_host_data" in spec
+    for optional in ("gate.py", "react.py", "websearch.py"):
+        assert optional not in spec
+        assert not (ROOT / "brain/core_features" / optional).exists()
+    assert not (ROOT / "brain/core_features" / "calc.py").exists()
     assert "('core_features', 'core_features')" not in legacy_spec
     assert "('core_features/plugin_market.py', 'core_features')" in legacy_spec
     assert "def _seed_core_features()" in launcher
@@ -98,12 +144,13 @@ def test_release_spec_and_launcher_use_core_features_not_bundled_plugins():
     assert "CORE_FEATURES_DIR" in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
     assert "PLUGINS_DIR" not in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
     assert "from paths import CORE_FEATURES_DIR" in host
+    assert "_CORE_PLUGIN_FILES = frozenset({\"kb.py\", \"plugin_market.py\", \"remote.py\", \"skill.py\"})" in host
     assert "assert_no_bundled_plugin_tree(OUT)" in build
 
 
 def test_client_package_contract_regression_runs_under_python_ci():
     completed = subprocess.run(
         ["node", "--test", "client/tools/test-plugin-package-boundary.js"],
-        cwd=ROOT, capture_output=True, text=True, timeout=30,
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr

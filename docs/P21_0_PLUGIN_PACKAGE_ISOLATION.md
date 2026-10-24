@@ -13,12 +13,21 @@ Status: implementation in progress; this phase is limited to the package boundar
 
 The release package ships core capability adapters under \`core_features/\`; optional extensions are loaded from the user-managed \`data/installed_plugins/\` directory. The release build must reject a Brain payload containing either a root \`plugins/\` tree or \`_internal/plugins/\`, and Electron packaging must reject extension package directories under \`src/\`, \`electron/\`, or \`assets/\`.
 
-Core capability adapters moved out of \`brain/plugins\` in this phase:
+Core runtime adapters shipped with Brain:
 
-- \`calc\`, \`gate\`, \`kb\`, \`plugin_market\`
-- \`react\`, \`remote\`, \`skill\`, \`websearch\`
+- \`kb\`: core knowledge-base integration.
+- \`plugin_market\`: plugin discovery and lifecycle management infrastructure.
+- \`remote\`: P20.2 authorized Agent/device execution integration.
+- \`skill\`: Skill Host management and tool integration; installed skills remain user data.
+- \`calc\`: a read-only arithmetic tool implemented in Brain's core tool registry, outside Plugin Host and marketplace extension packaging.
 
-These are core runtime capabilities/integration adapters, not marketplace extension artifacts. Optional modules remain in the repository as migration/source material but are not part of the new packaged runtime. The marketplace's own management UI and generic resource bridge remain core client code; the plugin packages themselves do not.
+The following modules have a user-facing feature switch and remain source-only under \`brain/plugins\`; they are not copied into \`core_features\` or the Brain sidecar:
+
+- \`gate\`: optional conversation turn gate.
+- \`react\`: optional ReAct reply processing.
+- \`websearch\`: optional web search tool.
+
+Existing installs preserve these modules through legacy-plugin migration. A clean install does not include the three optional features until their independent Manifest v1 market artifacts are published and installed. This is a visible change for new installs; arithmetic, chat, Agent authorization, knowledge base, Plugin Manager/Host, and Skill Host infrastructure remain available. The marketplace's management UI and generic resource bridge remain core client code; plugin packages do not.
 
 ## Upgrade compatibility
 
@@ -37,5 +46,6 @@ These are core runtime capabilities/integration adapters, not marketplace extens
 ## Explicitly not completed by P21.0
 
 - Optional legacy plugins have not all been republished as independent market artifacts yet.
+- The three optional source modules listed above need independent Manifest v1 artifacts and market entries; do not add them to the core allowlist to restore them.
 - Manifest v2, arbitrary nested multi-entry extension packages, market source precedence/override UX, rollback improvements, and automated artifact publishing remain for P21.1–P21.3.
 - The final Windows candidate build and isolated install/upgrade/restart acceptance must pass before P21.0 can be marked complete.

@@ -13,9 +13,9 @@ DIRECTORIES = ('config', 'data', 'plugins', 'logs', 'archive', 'skill_host/skill
 
 
 CORE_FEATURE_NAMES = frozenset({
-    "calc.py", "gate.py", "kb.py", "plugin_market.py",
-    "react.py", "remote.py", "skill.py", "websearch.py",
+    "kb.py", "plugin_market.py", "remote.py", "skill.py",
 })
+LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"calc.py", "gate.py", "react.py", "websearch.py"})
 
 
 def _read_json(path):
@@ -94,13 +94,17 @@ def migrate_legacy_plugins(home):
     home = Path(home).resolve()
     legacy = home / "plugins"
     installed = home / "data/installed_plugins"
-    if not legacy.is_dir() or legacy.is_symlink():
-        return {"copied": 0, "skipped_core": 0, "skipped_links": 0}
+    old_core = home / "core_features"
+    if legacy.is_symlink():
+        return {"copied": 0, "skipped_core": 0, "skipped_links": 0, "errors": []}
+    has_legacy = legacy.is_dir()
+    if not has_legacy and not old_core.is_dir():
+        return {"copied": 0, "skipped_core": 0, "skipped_links": 0, "errors": []}
     bundled = _read_json(home / "data/run/bundled-plugins.json")
-    result = {"copied": 0, "skipped_core": 0, "skipped_links": 0}
+    result = {"copied": 0, "skipped_core": 0, "skipped_links": 0, "errors": []}
     installed.mkdir(parents=True, exist_ok=True)
 
-    for src in sorted(legacy.iterdir()):
+    for src in sorted(legacy.iterdir()) if has_legacy else ():
         if src.is_symlink():
             result["skipped_links"] += 1
             continue
@@ -119,8 +123,17 @@ def migrate_legacy_plugins(home):
                 continue
             if not dst.resolve().is_relative_to(installed):
                 raise ValueError("Legacy plugin target escapes install directory")
-            shutil.copy2(src, dst)
-            result["copied"] += 1
+            temp = dst.with_name(dst.name + ".migration-" + uuid.uuid4().hex)
+            try:
+                shutil.copy2(src, temp)
+                os.replace(temp, dst)
+                result["copied"] += 1
+            except Exception as exc:
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
             continue
 
         if not src.is_dir():
@@ -137,9 +150,37 @@ def migrate_legacy_plugins(home):
             continue
         if not dst.resolve().is_relative_to(installed):
             raise ValueError("Legacy plugin package escapes install directory")
-        shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
-            "__pycache__", "*.pyc", "*.pyo", "*.log", ".host_started"))
-        result["copied"] += 1
+        temp = installed / ("." + src.name + ".migration-" + uuid.uuid4().hex)
+        try:
+            shutil.copytree(src, temp, ignore=shutil.ignore_patterns(
+                "__pycache__", "*.pyc", "*.pyo", "*.log", ".host_started"))
+            os.replace(temp, dst)
+            result["copied"] += 1
+        except Exception as exc:
+            shutil.rmtree(temp, ignore_errors=True)
+            result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
+
+    # P21.0 briefly shipped optional feature modules under core_features/. Copy
+    # them into the user install area before core seeding prunes unchanged files.
+    if old_core.is_dir() and not old_core.is_symlink():
+        for src in sorted(old_core.iterdir()):
+            if (src.name not in LEGACY_OPTIONAL_FEATURE_NAMES or not src.is_file()
+                    or src.is_symlink()):
+                continue
+            dst = installed / src.name
+            if dst.exists():
+                continue
+            temp = dst.with_name(dst.name + ".migration-" + uuid.uuid4().hex)
+            try:
+                shutil.copy2(src, temp)
+                os.replace(temp, dst)
+                result["copied"] += 1
+            except Exception as exc:
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                result["errors"].append("%s: %s" % (src.name, str(exc)[:160]))
     return result
 
 
