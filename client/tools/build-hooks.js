@@ -21,9 +21,15 @@ exports.afterPack=async context=>{
   const required=['src/js/pages.js','src/js/pages/data.js','src/js/pages/plugin-market.js','src/js/pages/video-workbench.js'];
   for(const file of required)if(!files.includes('/'+file))throw new Error('Packaged client module is missing: '+file);
   const html=asar.extractFile(archive,'src/index.html').toString();
-  const order=['js/chart.js','js/pages/video-workbench.js','js/pages/plugin-market.js','js/pages/data.js','js/pages.js','js/app.js']
-    .map(file=>html.indexOf('src="'+file+'"'));
-  if(order.some(index=>index<0)||order.some((index,i)=>i>0&&index<=order[i-1]))throw new Error('Packaged client script loading order is invalid.');
+  const position=file=>html.indexOf('src="'+file+'"');
+  const dependencies=[
+    ['js/chart.js','js/pages/data.js'],
+    ['js/pages/video-workbench.js','js/pages.js'],
+    ['js/pages/plugin-market.js','js/pages.js'],
+    ['js/pages/data.js','js/pages.js'],
+    ['js/pages.js','js/app.js'],
+  ].map(([before,after])=>[position(before),position(after)]);
+  if(dependencies.some(([before,after])=>before<0||after<0||before>=after))throw new Error('Packaged client script loading order is invalid.');
   const client=JSON.parse(asar.extractFile(archive,'build-info.json'));
   const root=path.join(resources,'vigil-brain'),brain=contract.read(path.join(root,'brain-manifest.json'));
   contract.compatible(client,brain);contract.verifyTree(root,brain);
