@@ -371,45 +371,105 @@ class CapabilityRegistry:
 
         The request is what the client shows the user.  It carries no
         permission of its own — it only says "somebody asked".
+
+        去重按**完整请求指纹**（capability/operation/identity/session/target
+        加规范化后的完整参数）判定。参数不同的两个请求（比如同一个插件
+        卸载、purge_data 一个 True 一个 False）是两笔不同的副作用，合并
+        它们会让用户批 A 执行 B。
         """
         with self._lock:
             key, op = str(capability or "").strip(), str(operation or "").strip()
             req_target = str(target or "").strip() or self._target_from_args(args)
+            norm_args = copy.deepcopy(dict(args or {}))
+            fingerprint = self._request_fingerprint(key, op, identity, session,
+                                                    req_target, norm_args)
             for item in self._requests.values():
-                if (item["capability"] == key and item["operation"] == op
-                        and item["identity"] == identity and item["session"] == session
-                        and item["target"] == req_target
+                if (item["fingerprint"] == fingerprint
                         and item["state"] in ("pending", "approved")):
                     return copy.deepcopy(item)
             rid = "capr_" + uuid.uuid4().hex[:12]
             request = {"request_id": rid, "capability": key, "operation": op,
-                       "args": copy.deepcopy(dict(args or {})), "identity": identity,
+                       "args": norm_args, "identity": identity,
                        "session": session, "target": req_target,
+                       "fingerprint": fingerprint,
                        "task_id": str(task_id or ""), "state": "pending",
-                       "created_at": time.time(), "result": None}
+                       "created_at": time.time(), "result": None,
+                       "approved_by": "", "approved_at": 0.0}
             self._requests[rid] = request
             self._publish_locked("capability_authorization_requested", key,
                                  {"operation": op, "request_id": rid,
                                   "identity": identity, "session": session,
-                                  "target": target})
+                                  "target": req_target})
             return copy.deepcopy(request)
 
-    def requests(self, state: str = "") -> list[dict[str, Any]]:
+    @staticmethod
+    def _request_fingerprint(capability: str, operation: str, identity: str,
+                             session: str, target: str,
+                             args: Mapping[str, Any]) -> str:
+        import hashlib
+        import json as _json
+        payload = _json.dumps(
+            {"capability": capability, "operation": operation,
+             "identity": identity, "session": session, "target": target,
+             "args": args},
+            sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+    def requests(self, state: str = "", *, public: bool = False) -> list[dict[str, Any]]:
+        """审批请求清单。
+
+        ``public=True`` 供 HTTP 端点使用：参数做脱敏和截断（zip_b64 这类
+        大体积/敏感内容不回传），避免把一个任务的完整参数暴露给别处。
+        """
         with self._lock:
             items = [copy.deepcopy(v) for v in self._requests.values()]
         if state:
             items = [v for v in items if v["state"] == state]
+        if public:
+            items = [self._public_request(v) for v in items]
         return items
 
-    DEFAULT_GRANT_TTL = 300.0  # 秒。兜底上限：正常情况下授权是一次性的。
+    _SENSITIVE_ARG_KEYS = ("zip_b64", "data", "content", "password", "token",
+                           "secret", "key", "credential", "authorization")
+    _ARG_VALUE_LIMIT = 160
 
-    def approve(self, request_id: str, *, identity: str = "", session: str = "",
-                target: str = "", grant_ttl: float | None = None) -> dict[str, Any]:
-        """Approve a pending request: create the grant, run once, revoke.
+    @classmethod
+    def _sanitize_value(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {k: ("[已省略]" if str(k).lower() in cls._SENSITIVE_ARG_KEYS
+                        else cls._sanitize_value(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return value[:20]
+        text = str(value)
+        if len(text) > cls._ARG_VALUE_LIMIT:
+            return text[:cls._ARG_VALUE_LIMIT] + "…[截断]"
+        return value
 
-        🔴 一次审批只授权**一次**执行。授权在执行后立即作废，无论结果是
-        成功、失败还是未知 —— 残留的授权就是绕过下一次审批的后门。TTL 只是
-        执行异常中断时的兜底，正常路径靠 revoke。
+    @classmethod
+    def _public_request(cls, item: Mapping[str, Any]) -> dict[str, Any]:
+        out = dict(item)
+        out["args"] = cls._sanitize_value(item.get("args") or {})
+        if isinstance(item.get("result"), Mapping):
+            result = dict(item["result"])
+            if "receipts" in result and isinstance(result["receipts"], list):
+                result["receipts"] = result["receipts"][:8]
+            out["result"] = cls._sanitize_value(result)
+        out.pop("fingerprint", None)
+        return out
+
+    def approve(self, request_id: str, *, approved_by: str = "") -> dict[str, Any]:
+        """Approve a pending request and execute it exactly once.
+
+        🔴 执行授权不再经过 registry 的 grant（grant→invoke→revoke 有窗口：
+        执行期间同作用域的并发 invoke 能借到还活着的授权）。授权就是这一
+        个请求的 approved 状态本身——:meth:`invoke` 带上请求编号，校验
+        请求/参数/身份完全匹配后才跑 handler，并发调用无从借力。
+
+        - 范围（identity/session/target/完整参数）锁死在请求产生时的值上；
+          审批主体只签名（approved_by 进审计字段），**不能**改写原任务的
+          身份、会话或目标，也不能扩大执行范围。
+        - 执行异常时请求收尾为 completed + 未知状态回执：绝不把状态留在
+          approved，也绝不宣称"执行成功"或"未执行"。
         """
         rid = str(request_id or "")
         with self._lock:
@@ -419,30 +479,28 @@ class CapabilityRegistry:
             if request["state"] == "denied":
                 return {"ok": False, "error": "request_denied", "request_id": rid}
             if request["state"] == "completed":
-                return dict(request.get("result") or {"ok": False, "error": "already_completed"})
+                return copy.deepcopy(request.get("result")
+                                     or {"ok": False, "error": "already_completed"})
             if request["state"] == "approved":
                 # 另一个审批动作已在执行这一请求。重复提交必须在这里挡下，
                 # 否则同一个副作用操作会被跑两遍。
                 return {"ok": False, "error": "request_in_flight", "request_id": rid}
             request["state"] = "approved"
-            # 授权范围锁死在请求产生时的身份/会话/目标上；审批方传值只能
-            # 收窄（留空），不能改成别人或别的目标。
-            req_identity = str(identity or request["identity"] or "")
-            req_session = str(session or request["session"] or "")
-            req_target = str(target or request["target"] or "")
-        # 双方都不知道身份时维持历史语义（无身份调用方按 "*" 校验）；
-        # 只要知道其中一方，授权就绑定到那个身份，绝不放大成 "*"。
-        grant_identity = req_identity or "*"
-        ttl = self.DEFAULT_GRANT_TTL if grant_ttl is None else float(grant_ttl or 0)
-        grant = self.grant(request["capability"], request["operation"],
-                           identity=grant_identity, session=req_session,
-                           target=req_target, ttl=ttl, source="approval:" + rid)
+            request["approved_by"] = str(approved_by or "")
+            request["approved_at"] = time.time()
         try:
             result = self.invoke(request["capability"], request["operation"],
-                                 request["args"], identity=req_identity,
-                                 session=req_session, target=req_target)
-        finally:
-            self.revoke(grant.grant_id)
+                                 request["args"], identity=request["identity"],
+                                 session=request["session"], target=request["target"],
+                                 _via_request=rid)
+        except Exception as exc:
+            detail = "%s: %s" % (type(exc).__name__, str(exc)[:240])
+            result = {"ok": False, "status": RUN_UNKNOWN,
+                      "error": "approval_execution_error", "detail": detail,
+                      "receipts": [self._receipt(request["capability"],
+                                                 request["operation"],
+                                                 RUN_UNKNOWN, reason="exception",
+                                                 detail=detail)]}
         with self._lock:
             request["state"] = "completed"
             request["result"] = copy.deepcopy(result)
@@ -454,6 +512,16 @@ class CapabilityRegistry:
             request = self._requests.get(rid)
             if not request:
                 return {"ok": False, "error": "request_not_found", "request_id": rid}
+            if request["state"] == "denied":
+                # 幂等：重复拒绝返回同一个结果。
+                return {"ok": True, "request_id": rid, "state": "denied"}
+            if request["state"] == "approved":
+                # 执行中：既不能说"拒绝且未执行"（可能已经生效），也不能
+                # 把 completed 之后的状态覆盖掉。如实拒绝这次操作。
+                return {"ok": False, "error": "request_in_flight", "request_id": rid}
+            if request["state"] == "completed":
+                return {"ok": False, "error": "already_completed", "request_id": rid,
+                        "result": copy.deepcopy(request.get("result") or {})}
             request["state"] = "denied"
             self._publish_locked("capability_authorization_denied", request["capability"],
                                  {"operation": request["operation"], "request_id": rid})
@@ -469,32 +537,57 @@ class CapabilityRegistry:
 
     def invoke(self, name: str, operation: str, args: Mapping[str, Any] | None = None,
                *, identity: str = "", session: str = "", target: str = "",
-               task_id: str = "") -> dict[str, Any]:
+               task_id: str = "", _via_request: str = "") -> dict[str, Any]:
         """Run one capability operation and report a unified receipt.
 
         🔴 There is no ``authorized`` parameter.  The caller's identity is an
         input to the decision, not a way to skip it: a write needs a grant.
+
+        ``_via_request`` 是审批路径的私有入口：approve() 执行时带上请求
+        编号，这里校验"请求处于 approved、capability/operation/完整参数/
+        身份/会话/目标与本次调用完全一致"后才放行 —— 授权不落在共享的
+        grant 表里，执行期间并发 invoke 借不到它。参数对不上（哪怕只差
+        一个 purge_data）一律拒绝。
         """
         key, op = str(name or "").strip(), str(operation or "").strip()
         tid = str(task_id or ("capt_" + uuid.uuid4().hex[:12]))
-        decision = self.check(key, op, identity=identity, session=session, target=target)
-        if not decision.get("allowed"):
-            reason = str(decision.get("reason") or "authorization_required")
-            receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
-                                     reason=reason,
-                                     detail="权限 %s 未获授权" % decision.get("permission"))
-            if reason == "authorization_required":
-                request = self.request_authorization(key, op, args, identity=identity,
-                                                     session=session, target=target, task_id=tid)
-                receipt["reason"] = "authorization_required"
-                receipt["request_id"] = request["request_id"]
+        if _via_request:
+            with self._lock:
+                req = self._requests.get(str(_via_request))
+                args_norm = copy.deepcopy(dict(args or {}))
+                valid = bool(
+                    req and req["state"] == "approved"
+                    and req["capability"] == key and req["operation"] == op
+                    and req["args"] == args_norm
+                    and str(req["identity"] or "") in ("", str(identity or ""))
+                    and str(req["session"] or "") in ("", str(session or ""))
+                    and str(req["target"] or "") in ("", str(target or "")))
+            if not valid:
+                receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
+                                         reason="request_mismatch",
+                                         detail="执行参数与审批请求不一致")
                 return {"ok": False, "task_id": tid, "capability": key, "operation": op,
-                        "status": RUN_AWAITING, "error": "authorization_required",
-                        "permission": decision.get("permission"),
-                        "request_id": request["request_id"],
+                        "status": RUN_DENIED, "error": "request_mismatch",
                         "receipts": [receipt]}
-            return {"ok": False, "task_id": tid, "capability": key, "operation": op,
-                    "status": RUN_UNAVAILABLE, "error": reason, "receipts": [receipt]}
+        else:
+            decision = self.check(key, op, identity=identity, session=session, target=target)
+            if not decision.get("allowed"):
+                reason = str(decision.get("reason") or "authorization_required")
+                receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
+                                         reason=reason,
+                                         detail="权限 %s 未获授权" % decision.get("permission"))
+                if reason == "authorization_required":
+                    request = self.request_authorization(key, op, args, identity=identity,
+                                                         session=session, target=target, task_id=tid)
+                    receipt["reason"] = "authorization_required"
+                    receipt["request_id"] = request["request_id"]
+                    return {"ok": False, "task_id": tid, "capability": key, "operation": op,
+                            "status": RUN_AWAITING, "error": "authorization_required",
+                            "permission": decision.get("permission"),
+                            "request_id": request["request_id"],
+                            "receipts": [receipt]}
+                return {"ok": False, "task_id": tid, "capability": key, "operation": op,
+                        "status": RUN_UNAVAILABLE, "error": reason, "receipts": [receipt]}
 
         with self._lock:
             item = self._items.get(key)

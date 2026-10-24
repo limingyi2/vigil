@@ -1327,19 +1327,28 @@
       if (action === 'deny') {
         html = '<div class="cap-approval-state cap-denied">已拒绝，未执行</div>';
       } else {
-        const ok = !!(r && r.ok);
-        const facts = [];
-        if (r && r.after && typeof r.after === 'object') {
-          facts.push(Object.entries(r.after).filter(([, v]) => v !== undefined && v !== '')
-            .map(([k, v]) => k + '=' + v).join(' · '));
+        const st = String((r && r.status) || '');
+        if (st === 'unknown') {
+          // 结果未知时绝不能显示成成功：副作用可能已经生效。
+          html = '<div class="cap-approval-state cap-unknown">已执行，但结果未知；'
+            + '在确认实际生效情况前不会自动重试'
+            + ((r && r.detail) ? '<pre>' + esc(String(r.detail).slice(0, 300)) + '</pre>' : '')
+            + '</div>';
+        } else {
+          const ok = !!(r && r.ok);
+          const facts = [];
+          if (r && r.after && typeof r.after === 'object') {
+            facts.push(Object.entries(r.after).filter(([, v]) => v !== undefined && v !== '')
+              .map(([k, v]) => k + '=' + v).join(' · '));
+          }
+          if (Array.isArray(r && r.receipts) && r.receipts.length) {
+            facts.push(r.receipts.map((x) => [x.state, x.reason, x.detail].filter(Boolean).join(' ')).join(' | '));
+          }
+          html = '<div class="cap-approval-state ' + (ok ? 'cap-ok' : 'cap-fail') + '">'
+            + (ok ? '已确认并执行成功' : '已确认，但执行未成功：' + esc(String((r && (r.error || r.detail)) || '原因未知').slice(0, 160)))
+            + (facts.length ? '<pre>' + esc(facts.join('\n').slice(0, 400)) + '</pre>' : '')
+            + '</div>';
         }
-        if (Array.isArray(r && r.receipts) && r.receipts.length) {
-          facts.push(r.receipts.map((x) => [x.state, x.reason, x.detail].filter(Boolean).join(' ')).join(' | '));
-        }
-        html = '<div class="cap-approval-state ' + (ok ? 'cap-ok' : 'cap-fail') + '">'
-          + (ok ? '已确认并执行成功' : '已确认，但执行未成功：' + esc(String((r && (r.error || r.detail)) || '原因未知').slice(0, 160)))
-          + (facts.length ? '<pre>' + esc(facts.join('\n').slice(0, 400)) + '</pre>' : '')
-          + '</div>';
       }
       const actions = card.querySelector('.cap-approval-actions');
       if (actions) actions.outerHTML = html;
@@ -1360,6 +1369,13 @@
       try {
         const r = pick(await post('/api/capabilities/' + (action === 'approve' ? 'approve' : 'deny'),
           { request_id: rid }));
+        if (action === 'deny' && r && r.ok === false) {
+          // 拒绝本身没成功（执行中/已完成）：如实说明，不宣称"已拒绝未执行"。
+          const actions2 = card.querySelector('.cap-approval-actions');
+          if (actions2) actions2.innerHTML = '<div class="cap-approval-state cap-fail">拒绝未生效：'
+            + esc(String(r.error || '原因未知').slice(0, 120)) + '</div>';
+          return;
+        }
         renderCapabilityOutcome(card, action, r);
       } catch (err) {
         if (actions) actions.innerHTML = '<div class="cap-approval-state cap-fail">请求失败：'

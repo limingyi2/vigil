@@ -401,5 +401,320 @@ class MiMoThinkLeakTests(unittest.TestCase):
         self.assertEqual(comp['reasoning'], '内部推理')
 
 
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
+class ConcurrencySafetyTests(unittest.TestCase):
+    """反例：执行期间，并发的同作用域 invoke 不得借用正在执行的授权。"""
+
+    def test_concurrent_invoke_cannot_borrow_in_flight_approval(self):
+        import threading
+        r = _registry()
+        release = threading.Event()
+        started = threading.Event()
+        calls = []
+
+        def slow_handler(a):
+            calls.append(a)
+            started.set()
+            release.wait(5)
+            return {'ok': True}
+
+        r.register('slow', status={'connected': True}, operations={
+            'w': {'permission': 'write', 'handler': slow_handler}})
+        first = r.invoke('slow', 'w', {'name': 'A'}, identity='owner:pc')
+        self.assertEqual(first['status'], 'awaiting_authorization')
+
+        approver = threading.Thread(target=lambda: r.approve(first['request_id']))
+        approver.start()
+        self.assertTrue(started.wait(5))
+
+        # 执行期间：同作用域并发 invoke 不得执行（授权不落在共享 grant 表）
+        concurrent = r.invoke('slow', 'w', {'name': 'A'}, identity='owner:pc')
+        self.assertEqual(concurrent['status'], 'awaiting_authorization')
+        self.assertEqual(len(calls), 1)
+        # 执行期间 registry 里不存在任何可借用的 grant
+        self.assertEqual([g for g in r.grants() if not g['expired']], [])
+
+        release.set()
+        approver.join(5)
+        self.assertEqual(len(calls), 1)
+
+
+class StateMachineTests(unittest.TestCase):
+    """反例：审批状态机的非法迁移必须被拒绝且不留错误声明。"""
+
+    def setUp(self):
+        self.r = _registry()
+        self.calls = []
+        self.r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write',
+                  'handler': lambda a: dict(self.calls.append(1) or {'ok': True})}})
+
+    def _request(self):
+        out = self.r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc')
+        self.assertEqual(out['status'], 'awaiting_authorization')
+        return out['request_id']
+
+    def test_deny_during_execution_refused(self):
+        import threading
+        release = threading.Event()
+        started = threading.Event()
+
+        def slow_handler(a):
+            started.set()
+            release.wait(5)
+            return {'ok': True}
+
+        self.r.register('slow2', status={'connected': True}, operations={
+            'w': {'permission': 'write', 'handler': slow_handler}})
+        out = self.r.invoke('slow2', 'w', {'name': 'A'}, identity='owner:pc')
+        rid = out['request_id']
+        approver = threading.Thread(
+            target=lambda: self.r.approve(rid, approved_by='device:reviewer'))
+        approver.start()
+        self.assertTrue(started.wait(5))
+        # 真正执行中：拒绝必须被拒，不能宣称"拒绝且未执行"
+        denied = self.r.deny(rid)
+        self.assertFalse(denied['ok'])
+        self.assertEqual(denied['error'], 'request_in_flight')
+        release.set()
+        approver.join(5)
+        with self.r._lock:
+            self.assertEqual(self.r._requests[rid]['state'], 'completed')
+
+    def test_deny_after_completed_refused(self):
+        rid = self._request()
+        self.r.approve(rid)
+        out = self.r.deny(rid)
+        self.assertFalse(out['ok'])
+        self.assertEqual(out['error'], 'already_completed')
+
+    def test_repeated_deny_idempotent(self):
+        rid = self._request()
+        first = self.r.deny(rid)
+        second = self.r.deny(rid)
+        self.assertTrue(first['ok'] and second['ok'])
+        self.assertEqual(second['state'], 'denied')
+
+    def test_exception_leaves_completed_with_unknown_not_approved(self):
+        rid = self._request()
+        with patch.object(self.r, 'invoke', side_effect=RuntimeError('boom')):
+            result = self.r.approve(rid)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(result['error'], 'approval_execution_error')
+        with self.r._lock:
+            self.assertEqual(self.r._requests[rid]['state'], 'completed')
+
+    def test_approve_rejects_legacy_scope_override(self):
+        # 审批主体不能传 identity/session/target 改写执行范围。
+        rid = self._request()
+        with self.assertRaises(TypeError):
+            self.r.approve(rid, identity='owner:other')
+
+
+class FingerprintTests(unittest.TestCase):
+    """反例：参数不同的请求不得因去重而错配（purge_data 场景）。"""
+
+    def setUp(self):
+        self.r = _registry()
+
+    def test_same_target_different_args_get_distinct_requests(self):
+        a = self.r.request_authorization('plugins_skills', 'uninstall',
+                                         {'name': 'demo', 'purge_data': False},
+                                         identity='owner:pc')
+        b = self.r.request_authorization('plugins_skills', 'uninstall',
+                                         {'name': 'demo', 'purge_data': True},
+                                         identity='owner:pc')
+        self.assertNotEqual(a['request_id'], b['request_id'])
+        self.assertEqual(a['args']['purge_data'], False)
+        self.assertEqual(b['args']['purge_data'], True)
+
+    def test_identical_requests_dedupe(self):
+        a = self.r.request_authorization('plugins_skills', 'disable', {'name': 'demo'},
+                                         identity='owner:pc')
+        b = self.r.request_authorization('plugins_skills', 'disable', {'name': 'demo'},
+                                         identity='owner:pc')
+        self.assertEqual(a['request_id'], b['request_id'])
+
+    def test_via_request_with_modified_args_refused(self):
+        r = _registry()
+        calls = []
+        r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write',
+                  'handler': lambda a: dict(calls.append(a) or {'ok': True})}})
+        req = r.request_authorization('t', 'w', {'name': 'A', 'purge_data': False},
+                                      identity='owner:pc')
+        with r._lock:
+            r._requests[req['request_id']]['state'] = 'approved'
+        # 审批的是 purge_data=False；换参数执行必须被拒
+        out = r.invoke('t', 'w', {'name': 'A', 'purge_data': True},
+                       identity='owner:pc', _via_request=req['request_id'])
+        self.assertEqual(out['status'], 'denied')
+        self.assertEqual(out['error'], 'request_mismatch')
+        self.assertFalse(calls)
+
+
+class ScopeBindingTests(unittest.TestCase):
+    """反例：跨会话/跨身份/跨渠道不得共享审批。"""
+
+    def setUp(self):
+        self.r = _registry()
+        self.calls = []
+        self.r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write',
+                  'handler': lambda a: dict(self.calls.append(a.get('name')) or {'ok': True})}})
+
+    def test_cross_session_invoke_gets_own_request(self):
+        conv1 = self.r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc',
+                              session='conv1')
+        self.assertEqual(conv1['status'], 'awaiting_authorization')
+        conv2 = self.r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc',
+                              session='conv2')
+        self.assertEqual(conv2['status'], 'awaiting_authorization')
+        self.assertNotEqual(conv1['request_id'], conv2['request_id'])
+        self.assertFalse(self.calls)
+
+    def test_via_request_refuses_other_identity_and_session(self):
+        req = self.r.request_authorization('t', 'w', {'name': 'A'},
+                                           identity='owner:pc', session='conv1')
+        with self.r._lock:
+            self.r._requests[req['request_id']]['state'] = 'approved'
+        for kwargs in ({'identity': 'device:wechat', 'session': 'conv1'},
+                       {'identity': 'owner:pc', 'session': 'conv2'},
+                       {'identity': 'owner:pc', 'session': 'conv1', 'target': 'B'}):
+            out = self.r.invoke('t', 'w', {'name': 'A'}, _via_request=req['request_id'],
+                                **kwargs)
+            self.assertEqual(out['error'], 'request_mismatch', kwargs)
+        self.assertFalse(self.calls)
+
+    def test_approver_cannot_rewrite_task_scope(self):
+        req = self.r.request_authorization('t', 'w', {'name': 'A'},
+                                           identity='owner:pc', session='conv1')
+        result = self.r.approve(req['request_id'], approved_by='device:reviewer')
+        self.assertTrue(result['ok'])
+        with self.r._lock:
+            stored = self.r._requests[req['request_id']]
+        # 审批主体只留审计痕迹；任务身份/会话/目标原样不动
+        self.assertEqual(stored['approved_by'], 'device:reviewer')
+        self.assertEqual(stored['identity'], 'owner:pc')
+        self.assertEqual(stored['session'], 'conv1')
+        self.assertEqual(self.calls, ['A'])
+
+
+class CancelApprovalTests(unittest.TestCase):
+    """反例：取消的 run 不得留下可执行的挂起审批。"""
+
+    def test_cancel_denies_pending_approval(self):
+        pending = caps.REGISTRY.request_authorization(
+            'plugins_skills', 'disable', {'name': 'calc'}, identity='owner:pc')
+        rid = pending['request_id']
+
+        item = {'steps': [{'kind': 'tool',
+                           'approval': {'request_id': rid, 'capability': 'plugins_skills',
+                                        'operation': 'disable', 'target': 'calc'}}]}
+        runs._deny_pending_approvals(item)
+        states = {v['request_id']: v['state'] for v in caps.REGISTRY.requests()}
+        self.assertEqual(states[rid], 'denied')
+        # 取消之后审批必然被拒
+        out = caps.REGISTRY.approve(rid)
+        self.assertFalse(out['ok'])
+        self.assertEqual(out['error'], 'request_denied')
+
+
+class PublicRequestsSanitizeTests(unittest.TestCase):
+    """GET /api/capabilities/requests 的脱敏视图。"""
+
+    def test_sensitive_and_large_args_redacted(self):
+        r = _registry()
+        secret = 'Z' * 5000
+        r.request_authorization('plugins_skills', 'skill_install',
+                                {'zip_b64': secret, 'note': 'x' * 300},
+                                identity='owner:pc')
+        public = r.requests(public=True)
+        self.assertEqual(len(public), 1)
+        args = public[0]['args']
+        self.assertEqual(args['zip_b64'], '[已省略]')
+        self.assertTrue(str(args['note']).endswith('…[截断]'))
+        # 完整视图保留原值（仅内部使用）
+        full = r.requests(public=False)
+        self.assertEqual(full[0]['args']['zip_b64'], secret)
+
+    def test_result_receipts_bounded_in_public_view(self):
+        r = _registry()
+        r.request_authorization('t', 'w', {'name': 'A'}, identity='owner:pc')
+        rid = list(r._requests)[0]
+        with r._lock:
+            r._requests[rid]['state'] = 'completed'
+            r._requests[rid]['result'] = {'ok': True,
+                                          'receipts': [{'i': i} for i in range(50)]}
+        public = r.requests(public=True)[0]
+        self.assertLessEqual(len(public['result']['receipts']), 8)
+
+
+class MiMoThinkLeadTests(unittest.TestCase):
+    """验收 10 补充：普通文本 think: 前缀泄漏场景（截图案例）。"""
+
+    def _feed(self, chunks):
+        from model_providers.tool_protocol import ThinkTextBoundary
+        b = ThinkTextBoundary()
+        out = []
+        for c in chunks:
+            out.extend(b.feed(c))
+        out.extend(b.feed('', final=True))
+        return out
+
+    def _joined(self, r, kind):
+        return ''.join(t for k, t in r if k == kind)
+
+    def test_lead_think_prefix_single_chunk(self):
+        r = self._feed(['think:用户问天气，需要查实时数据\n今天北京晴。'])
+        self.assertEqual(self._joined(r, 'think'), '用户问天气，需要查实时数据')
+        self.assertEqual(self._joined(r, 'text'), '今天北京晴。')
+
+    def test_lead_think_prefix_fullwidth_colon(self):
+        r = self._feed(['think：内部推理\n正文'])
+        self.assertEqual(self._joined(r, 'think'), '内部推理')
+        self.assertEqual(self._joined(r, 'text'), '正文')
+
+    def test_lead_think_prefix_split_across_chunks(self):
+        r = self._feed(['thi', 'nk:推理\n回答'])
+        self.assertEqual(self._joined(r, 'think'), '推理')
+        self.assertEqual(self._joined(r, 'text'), '回答')
+
+    def test_think_colon_mid_text_untouched(self):
+        r = self._feed(['我认为think:不是标签。继续'])
+        self.assertEqual(self._joined(r, 'text'), '我认为think:不是标签。继续')
+        self.assertEqual(self._joined(r, 'think'), '')
+
+    def test_think_colon_in_code_fence_untouched(self):
+        r = self._feed(['看代码:\n```\nthink:示例\n```\n完'])
+        self.assertIn('think:示例', self._joined(r, 'text'))
+
+    def test_think_tag_still_works_with_lead(self):
+        r = self._feed(['<think>A</think>B'])
+        self.assertEqual(self._joined(r, 'think'), 'A')
+        self.assertEqual(self._joined(r, 'text'), 'B')
+
+    def test_normalize_lead_prefix(self):
+        from model_providers.execution import _extract_inline_think
+        content, moved = _extract_inline_think('think:调试前缀\n正式回答', '')
+        self.assertEqual(content, '正式回答')
+        self.assertEqual(moved, '调试前缀')
+
+    def test_normalize_lead_plus_block(self):
+        from model_providers.execution import normalize
+        n = normalize({'choices': [{'message': {
+            'content': 'think:推理\n<think>块</think>答案'}, 'finish_reason': 'stop'}]})
+        self.assertEqual(n['content'], '答案')
+        self.assertEqual(n['reasoning'], '推理块')
+
+    def test_normalize_mid_text_think_colon_kept(self):
+        from model_providers.execution import _extract_inline_think
+        content, moved = _extract_inline_think('先说think:不是调试', '')
+        self.assertEqual(content, '先说think:不是调试')
+        self.assertEqual(moved, '')

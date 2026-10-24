@@ -77,8 +77,17 @@
       dispatched:raw.dispatched};
   }
   // 能力审批卡片：等待授权的操作不是失败也不是成功，它要用户拍板。
-  // 展示操作目标/类型/影响说明 + 确认/拒绝；执行证据来自 Brain 的真实
+  // 展示操作目标/类型/实际参数 + 确认/拒绝；执行证据来自 Brain 的真实
   // 回执（approve 响应或 /api/capabilities/requests 的请求状态），不猜。
+  function approvalParams(a){
+    const params=a.args && typeof a.args==='object' ? a.args : null;
+    if(!params || !Object.keys(params).length)return '';
+    const rows=Object.entries(params).map(([k,v])=>{
+      const text=String(redact(v));
+      return '<dt>'+esc(k)+'</dt><dd>'+esc(text.length>160?text.slice(0,160)+'…[截断]':text)+'</dd>';
+    }).join('');
+    return '<dl class="cap-approval-facts cap-approval-params">'+rows+'</dl>';
+  }
   function approvalCard(meta){
     const a=meta.approval;
     if(!a || !a.request_id)return '';
@@ -86,21 +95,25 @@
     const state=String(a.state || 'pending');
     const target=a.target || a.capability || '';
     const op=a.operation || '';
-    const input=meta.input && typeof meta.input==='object' ? (meta.input.args || meta.input) : {};
-    const impact=input.detail || (typeof input==='object' ? JSON.stringify(redact(input)).slice(0,200) : String(input||'').slice(0,200));
     const head='<div class="cap-approval" data-cap-request-id="'+esc(rid)+'">'
       +'<div class="cap-approval-title">需要你的授权</div>'
       +'<dl class="cap-approval-facts">'
       +'<dt>操作</dt><dd><code>'+esc(a.capability||'')+'.'+esc(op)+'</code></dd>'
       +(target?'<dt>目标</dt><dd><code>'+esc(target)+'</code></dd>':'')
-      +(impact?'<dt>说明</dt><dd>'+esc(String(impact).slice(0,200))+'</dd>':'')
-      +'</dl>';
+      +'</dl>'
+      +approvalParams(a);
     if(state==='denied' || a.denied){
       return head+'<div class="cap-approval-state cap-denied">已拒绝，未执行</div></div>';
     }
     if(state==='completed'){
-      const ok=a.result && a.result.ok;
-      const detail=a.result ? JSON.stringify(redact(a.result)).slice(0,400) : '';
+      const r=a.result || {};
+      const st=String(r.status || '');
+      if(st==='unknown'){
+        return head+'<div class="cap-approval-state cap-unknown">已执行，但结果未知；'
+          +'在确认实际生效情况前，不会重试这个操作</div></div>';
+      }
+      const ok=!!r.ok;
+      const detail=JSON.stringify(redact(r)).slice(0,400);
       return head+'<div class="cap-approval-state '+(ok?'cap-ok':'cap-fail')+'">'
         +(ok?'已确认并执行成功':'已确认，但执行未成功')
         +(detail?'<pre>'+esc(detail)+'</pre>':'')+'</div></div>';
@@ -165,7 +178,8 @@
       错误:info ? undefined : meta.error}).filter(([,v])=>v!==undefined && v!=='')
       .map(([title,v])=>'<div class="agent-detail-label">'+title+'</div><pre>'+esc(typeof v==='object'?JSON.stringify(redact(v),null,2):redact(v))+'</pre>').join(''));
     const detail=parts.join('');
-    return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'" data-error="'+esc(info?.category || '')+'" data-tool-cat="'+esc(cat)+'"'+(open?' open':'')+'>'+
+    // 等待授权的步骤必须一眼看见：默认展开，不藏在折叠区里。
+    return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'" data-error="'+esc(info?.category || '')+'" data-tool-cat="'+esc(cat)+'"'+(open || awaiting ?' open':'')+'>'+
       '<summary><svg class="i xs agent-step-icon" aria-hidden="true"><use href="#'+(rule.icon||'i-activity')+'"/></svg><span>'+esc(label)+'</span>'+badge+why+
       (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+'</summary>'+detail+'</details>';
   }

@@ -104,8 +104,9 @@ def test_capability_registry_is_truthful_and_permission_checked():
     again = registry.invoke("video_workbench", "focus", {}, identity="brain", session="s1")
     assert again["status"] == "awaiting_authorization"
 
-    # 批准之后才真的执行
-    approved = registry.approve(denied["request_id"], identity="brain", session="s1")
+    # 批准之后才真的执行；审批主体不携带也不改写执行范围 —— 范围
+    # 锁死在请求产生时的 identity/session/target 上（P20.2）。
+    approved = registry.approve(denied["request_id"])
     assert approved["status"] == "succeeded"
     assert approved["result"]["focused"] is True
     # P20.2：授权是一次性的，执行后立即吊销 —— 一次审批不能变成

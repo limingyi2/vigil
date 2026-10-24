@@ -187,16 +187,25 @@ def is_context_limit_error(exc):
 
 
 _THINK_BLOCK = re.compile(r'^\s*<think>(.*?)</think>\s*', re.S | re.I)
+_THINK_LEAD = re.compile(r'^(\s*)think[:：][ \t]?([^\n]*)(\n?)', re.I)
 
 
 def _extract_inline_think(content, reasoning):
-    """非流式响应：把 content 开头的内联 <think>…</think> 块并入 reasoning。
+    """非流式响应：把 content 开头的内联 think 内容并入 reasoning。
 
-    只搬**成对闭合**的块；没有闭合标签的内容原样保留（保守优先：
-    误删合法正文比多显示一段思考更糟）。流式路径由 ThinkTextBoundary 处理。
+    处理两种形态（流式路径由 ThinkTextBoundary 处理）：
+    1. 成对的 <think>…</think> 块；
+    2. 正文开头的普通文本 ``think:`` 前缀（MiMo 截图泄漏场景）——
+       只处理第一行，冒号后的那一行归思考，换行之后是正文。
+    没有明确边界的内容原样保留（保守优先：误删合法正文比多显示一段
+    思考更糟）。
     """
     moved = []
     rest = content or ''
+    lead = _THINK_LEAD.match(rest)
+    if lead and lead[2].strip():
+        moved.append(lead[2])
+        rest = rest[lead.end():]
     while True:
         match = _THINK_BLOCK.match(rest)
         if not match:

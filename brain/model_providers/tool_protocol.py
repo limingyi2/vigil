@@ -119,11 +119,13 @@ class ThinkTextBoundary:
 
     OPEN = '<think>'
     CLOSE = '</think>'
+    LEAD = ('think:', 'think：')
 
     def __init__(self):
         self.pending = ''
-        self.mode = 'text'      # 'text' | 'think'
+        self.mode = 'text'      # 'text' | 'think' | 'think_line'
         self.code_ticks = 0
+        self.lead = 'pending'   # 'pending' | 'yes' | 'no'：正文开头是否 think: 前缀
         self.complete = True    # 全部内容都得到了明确的通道归属
 
     @staticmethod
@@ -134,11 +136,62 @@ class ThinkTextBoundary:
                 return size
         return 0
 
+    def _check_lead(self, final):
+        """正文开头的普通文本 think:/think： 前缀（截图泄漏场景）。
+
+        只在**任何输出发出之前**判定一次：开头是 think:+冒号（半角/全角）
+        时，前缀本身和该行剩余部分按思考内容处理，换行后回到正文通道。
+        判定依据不足（只收到 "thi" 这类前缀）且流未结束时先缓冲；
+        一旦确认不是这个形态，立刻放行为正文 —— 正文中间出现的
+        "think:" 字样、代码块里的示例一律不受影响。
+        """
+        if self.lead != 'pending' or self.mode != 'text' or self.code_ticks:
+            return
+        stripped = self.pending.lstrip()
+        if not stripped:
+            if final:
+                self.lead = 'no'
+            return
+        low = stripped.lower()
+        if low.startswith('think:') or low.startswith('think：'):
+            match = re.match(r'^\s*think[:：][ \t]?', self.pending, re.I)
+            self.pending = self.pending[match.end():]
+            self.lead = 'yes'
+            self.mode = 'think_line'
+            return
+        partial = any(s.startswith(low) or low.startswith(s[:len(low)])
+                      for s in self.LEAD if len(low) <= len(s))
+        # "think" 的任意前缀（thi/think）都可能长成 think: —— 缓冲等待；
+        # 其余任何形态都放行。
+        if 'think'.startswith(low[:5]) and len(low) <= 5 and not final:
+            return
+        if partial and not final:
+            return
+        self.lead = 'no'
+
     def feed(self, fragment, final=False):
         """吃进一段 content 增量，返回 [(kind, text)]，kind 为 'text'|'think'。"""
         self.pending += fragment or ''
         output = []
+        self._check_lead(final)
+        if self.lead == 'pending' and self.mode == 'text' and not self.code_ticks:
+            # 开头形态还没判定（可能长成 think:），在判定前一个字都不能发。
+            return output
         while self.pending:
+            if self.mode == 'think_line':
+                # think: 前缀的那一行：整行归思考，换行后回正文。
+                idx = self.pending.find('\n')
+                if idx < 0:
+                    if final:
+                        output.append(('think', self.pending))
+                        self.pending = ''
+                        self.complete = False
+                    break
+                if self.pending[:idx]:
+                    output.append(('think', self.pending[:idx]))
+                self.pending = self.pending[idx + 1:]
+                self.mode = 'text'
+                continue
             if self.mode == 'think':
                 low = self.pending.lower()
                 idx = low.find(self.CLOSE)

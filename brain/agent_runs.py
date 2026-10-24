@@ -1307,6 +1307,23 @@ def _workflow_finish_safe(db, item, scope, run_status):
 
 
 
+def _deny_pending_approvals(item):
+    """Run 终态（取消等）时把还没审批的请求一起拒绝。
+
+    不做这一步，聊天流里会留下"等确认"的僵尸卡片：用户几小时后随手
+    点确认，一个已经取消的任务的副作用操作照样执行。
+    """
+    try:
+        import capability_registry as _caps
+        for step in item.get('steps') or []:
+            approval = step.get('approval') if isinstance(step, dict) else None
+            rid = str((approval or {}).get('request_id') or '')
+            if rid:
+                _caps.REGISTRY.deny(rid)
+    except Exception:
+        pass
+
+
 def cancel(rid, owner, workflow_scope=None):
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
@@ -1317,6 +1334,9 @@ def cancel(rid, owner, workflow_scope=None):
                     if step['kind'] == 'model' and step['status'] == 'running':
                         step.update(status='cancelled', finished_at=time.time())
             _finish(db, item, 'cancelled', 'cancelled')
+            # 取消不是失败也不是成功：挂起的审批必须一起作废，宁可让
+            # 用户重新提一次，也不能让取消的任务留下可执行的授权。
+            _deny_pending_approvals(item)
         return item
 
 
@@ -1963,14 +1983,28 @@ def _tool(rid, owner, started, call, ctx):
             step['error'] = error
         if awaiting:
             # 审批凭据进台账：卡片渲染、历史回看和验收测试都认这个字段。
-            op_args = awaiting.get('args') if isinstance(awaiting.get('args'), dict) else {}
+            # 实际待执行的参数一并带上（脱敏截断，zip_b64 这类大字段不进
+            # 台账），审批卡片才能展示"你到底在批什么"。
+            try:
+                raw_op_args = args.get('args')
+                if isinstance(raw_op_args, str):
+                    op_args = json.loads(raw_op_args)
+                elif isinstance(raw_op_args, dict):
+                    op_args = raw_op_args
+                else:
+                    op_args = {}
+            except ValueError:
+                op_args = {}
+            import capability_registry as _caps
             step['approval'] = {'request_id': str(awaiting.get('request_id') or ''),
                                 'capability': str(args.get('capability') or ''),
                                 'operation': str(args.get('operation') or ''),
                                 'target': str(awaiting.get('target')
-                                              or op_args.get('plugin')
-                                              or op_args.get('skill')
-                                              or op_args.get('name') or '')}
+                                              or (op_args.get('plugin') if isinstance(op_args, dict) else '')
+                                              or (op_args.get('skill') if isinstance(op_args, dict) else '')
+                                              or (op_args.get('name') if isinstance(op_args, dict) else '') or ''),
+                                'args': _caps.CapabilityRegistry._sanitize_value(
+                                    op_args if isinstance(op_args, dict) else {})}
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)

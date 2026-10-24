@@ -2439,9 +2439,11 @@ def start_remote_api(brain):
                             session=_session, target=_target)
                         self._json(200 if out.get('ok') else 409, out)
                     elif path.endswith('/approve'):
+                        # 🔴 审批主体只签名（approved_by 进审计记录）。执行
+                        # 范围锁死在审批请求产生时的 identity/session/target/
+                        # 参数上，审批动作不能改写原任务的身份或扩大范围。
                         out = _caps.REGISTRY.approve(
-                            str(body.get('request_id') or ''),
-                            identity=_identity, session=_session, target=_target)
+                            str(body.get('request_id') or ''), approved_by=_identity)
                         self._json(200 if out.get('ok') else 409, out)
                     elif path.endswith('/deny'):
                         out = _caps.REGISTRY.deny(str(body.get('request_id') or ''))
@@ -4216,12 +4218,19 @@ def start_remote_api(brain):
             if path == '/api/capabilities/requests':
                 # 审批请求状态查询：历史会话里的执行卡片据此显示真实进度
                 # （等待授权 / 已执行 / 已拒绝），不靠客户端本地猜。
+                # 返回脱敏视图：zip_b64 这类大体积/敏感参数不回传；
+                # 带 session 参数时只返回该会话的请求，避免把其他任务的
+                # 参数暴露给无关上下文。
                 if not self._is_admin():
                     self._json(403, {"ok": False, "err": "需要管理员权限"})
                     return
                 import capability_registry as _caps
                 _caps.bootstrap(API_CFG)
-                self._json(200, {"ok": True, "requests": _caps.REGISTRY.requests()})
+                items = _caps.REGISTRY.requests(public=True)
+                req_session = str(_query_param(self.path, 'session') or '')
+                if req_session:
+                    items = [v for v in items if v.get('session') == req_session]
+                self._json(200, {"ok": True, "requests": items})
                 return
             if path.startswith("/api/agent-center/"):
                 import codex_adapter as _codex_center
