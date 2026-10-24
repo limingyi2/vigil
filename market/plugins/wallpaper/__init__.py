@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 NAME = "wallpaper"
-VERSION = "4.0.0"
+VERSION = "4.1.1"
 DESC = "独立 Wallpaper Engine 壁纸：Scene/WebGL、视频、网页与高质量界面适配"
 FEATURE = "wallpaper"
 
@@ -40,6 +40,10 @@ _DEFAULT_CONFIG = {
     "quality": "high",
     "transparent": True,
     "we_path": None,
+    # dshwe「壁纸库与自动轮播」吸收版:轮播由客户端定时器驱动,配置持久化
+    "carousel_enabled": False,
+    "carousel_minutes": 30,
+    "carousel_shuffle": False,
 }
 
 
@@ -61,6 +65,7 @@ def _load_config() -> dict[str, Any]:
     cfg["scrim"] = _bounded_float(cfg.get("scrim"), 0.0, 1.0, 0.24)
     cfg["blur"] = _bounded_int(cfg.get("blur"), 0, 32, 0)
     cfg["quality"] = cfg["quality"] if cfg["quality"] in {"low", "medium", "high"} else "high"
+    cfg["carousel_minutes"] = _bounded_int(cfg.get("carousel_minutes"), 5, 720, 30)
     return cfg
 
 
@@ -282,7 +287,7 @@ def api_config_post(body: dict[str, Any], query: dict[str, str]) -> dict[str, An
         for key, value in body.items():
             if key not in _DEFAULT_CONFIG or value is None:
                 continue
-            if key in {"enabled", "muted", "transparent"}:
+            if key in {"enabled", "muted", "transparent", "carousel_enabled", "carousel_shuffle"}:
                 if isinstance(value, bool):
                     cfg[key] = value
             elif key in {"wallpaper_id", "wallpaper_type", "wallpaper_file", "we_path"}:
@@ -300,6 +305,8 @@ def api_config_post(body: dict[str, Any], query: dict[str, str]) -> dict[str, An
                 cfg[key] = _bounded_int(value, 0, 32, cfg[key])
             elif key == "fps":
                 cfg[key] = _bounded_int(value, 15, 120, cfg[key])
+            elif key == "carousel_minutes":
+                cfg[key] = _bounded_int(value, 5, 720, cfg[key])
     _save_config(cfg)
     return {"ok": True, "config": cfg}
 

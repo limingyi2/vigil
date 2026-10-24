@@ -390,9 +390,26 @@ def api_list(body, query):
     try:
         import plugin_manager
         known = {str(p.get("name")) for p in plugins}
+        desc_by_name: dict[str, str] = {}
+        try:
+            import plugin_host
+            for row in plugin_host.listing():
+                if row.get("name"):
+                    desc_by_name[str(row["name"])] = str(row.get("desc") or "")
+        except Exception:
+            pass
         for item in plugin_manager.list_plugins(market.get("plugins", [])):
-            if item.get("name") not in known:
-                plugins.append(item)
+            if item.get("name") in known:
+                continue
+            # 🔴 这些条目没有市场元数据；别让界面显示成"未知作者/市场 v未知"。
+            # 内置插件标明身份；版本、作者、描述尽量从运行时补齐。
+            item["in_market"] = False
+            if item.get("builtin") or item.get("source_kind") == "builtin":
+                item["author"] = "Vigil 官方内置"
+            item.setdefault("author", "未知")
+            if not item.get("desc"):
+                item["desc"] = desc_by_name.get(str(item.get("name")), "")
+            plugins.append(item)
     except Exception:
         pass
     return {

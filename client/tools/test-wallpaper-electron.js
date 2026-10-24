@@ -69,9 +69,12 @@ async function main() {
   assert(seen.some(x => x.includes('file=scene.json')));
   const iframeCount = await ev('document.querySelectorAll("#vigil-wallpaper-stage iframe").length');
   assert.equal(iframeCount, 1);
+  // 先在 dispose 之前取得已签发的 URL；dispose 之后再调 url() 会签发新
+  // ticket（必然 approved）——旧断言在这里只会掩盖真实语义。
+  const issuedUrl = await resources.url('/api/plugin/wallpaper/resource?id=123&file=scene.json');
   await ev('window.__dispose()');
   assert.equal(await ev('!!document.getElementById("vigil-wallpaper-root")'), false);
-  assert.equal(resources.isApprovedUrl((await resources.url('/api/plugin/wallpaper/resource?id=123&file=scene.json'))), false);
+  assert.equal(resources.isApprovedUrl(issuedUrl), false);
   console.log('PASS: v4 plugin page, authenticated Scene resource, bundled renderer iframe, live badge and cleanup');
 }
 function json(res, body) { res.writeHead(200, {'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify(body)); }
