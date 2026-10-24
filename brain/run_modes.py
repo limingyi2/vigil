@@ -13,6 +13,9 @@ Ollama 到底能不能跑、模型在不在、显存够不够"，界面上还显
 3. 状态只报事实：没探测就说没探测，不把"配置里写着 local"当成"本地可用"。
 """
 import os
+import contextlib
+import functools
+import uuid
 import shutil
 import subprocess
 import threading
@@ -81,6 +84,26 @@ def acquire(owner, model):
 def release(owner):
     with _LOCK:
         _LEASES.pop(str(owner or ""), None)
+
+
+@contextlib.contextmanager
+def model_lease(model):
+    owner = 'model:' + uuid.uuid4().hex
+    acquire(owner, model)
+    try:
+        yield
+    finally:
+        release(owner)
+
+
+def with_model_lease(fn):
+    @functools.wraps(fn)
+    def wrapped(rid, owner, cfg, *args, **kwargs):
+        if normalize(cfg.get('model_mode')) == 'local':
+            with model_lease(local_model(cfg)):
+                return fn(rid, owner, cfg, *args, **kwargs)
+        return fn(rid, owner, cfg, *args, **kwargs)
+    return wrapped
 
 
 def leases():
@@ -263,23 +286,22 @@ def unload_idle(cfg):
     返回 {"unloaded": [...], "kept": [{model, reason}], "failed": [...]}，
     界面据此如实说明释放了什么、为什么留着。
     """
-    busy = _busy_models()
     with _LOCK:
         targets = sorted(_TOUCHED)
     loaded = set(loaded_models(cfg))
     out = {"unloaded": [], "kept": [], "failed": []}
     for m in targets:
-        if m in busy:
-            out["kept"].append({"model": m, "reason": "还有任务在用"})
-            continue
-        if loaded and m not in loaded:
-            with _LOCK:
+        with _LOCK:
+            if m in _busy_models():
+                out["kept"].append({"model": m, "reason": "还有任务在用"})
+                continue
+            if loaded and m not in loaded:
                 _TOUCHED.discard(m)
-            continue
-        if unload_model(cfg, m):
-            out["unloaded"].append(m)
-        else:
-            out["failed"].append(m)
+                continue
+            if unload_model(cfg, m):
+                out["unloaded"].append(m)
+            else:
+                out["failed"].append(m)
     return out
 
 
@@ -346,11 +368,15 @@ def switch(cfg, target, model=None, active_jobs=None):
     busy = [str(x) for x in (active_jobs or []) if x]
     if busy:
         return {"ok": False, "reason": "busy", "jobs": busy,
-                "err": "还有 %d 个创作任务在跑：等它完成，或先取消再切模式" % len(busy)}
+                "err": "还有 %d 个模型任务在跑：等它完成，或先取消再切模式" % len(busy)}
     current = normalize(cfg.get("model_mode"))
     want_model = str(model or "").strip()
     patch = {"model_mode": mode}
     warnings = []
+
+    if mode in ("cloud", "hybrid") and not cloud_ready(cfg):
+        return {"ok": False, "reason": "cloud_not_ready",
+                "err": "云端模型没配好（缺密钥或模型名）：先在设置里补上"}
 
     if mode in ("local", "hybrid"):
         srv = ensure_service(cfg)
@@ -381,10 +407,6 @@ def switch(cfg, target, model=None, active_jobs=None):
         else:
             # 混合模式主模型仍在云端；本地只做只读委派，不预先占显存。
             warnings.append("混合模式：主模型走云端，本地 %s 只做只读委派" % use_model)
-    else:
-        if not cloud_ready(cfg):
-            return {"ok": False, "reason": "cloud_not_ready",
-                    "err": "云端模型没配好（缺密钥或模型名）：先在设置里补上，再切回云端"}
 
     if mode == current and (not want_model or want_model == local_model(cfg)):
         return {"ok": True, "unchanged": True, "mode": mode, "mode_label": label(mode),
