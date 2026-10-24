@@ -4,10 +4,11 @@
 // with a readable diagnosis, and the user can retry from the UI.
 const {spawn, execFile} = require('child_process');
 const fs = require('fs'), path = require('path'), http = require('http'), crypto = require('crypto');
+const {getSystemErrorName} = require('util');
 const contract = require('./build-contract');
 let app, getter = () => ({}), child = null, timer = null, generation = 0;
 let expected, readyFile = '', checking = false;
-let state = {enabled:false,status:'stopped',exe:'',home:'',port:0,pid:0,restarts:0,lastErr:'',logTail:[]};
+let state = {enabled:false,status:'stopped',exe:'',home:'',port:0,pid:0,restarts:0,lastErr:'',lastFailure:null,failureKind:'',logTail:[]};
 const listeners = new Set();
 const ready = () => state.status === 'ready' && !!state.port;
 const base = () => ready() ? 'http://127.0.0.1:' + state.port : '';
@@ -45,7 +46,34 @@ function probeHealth(port, timeout = 3000, route = '/api/health', auth = '') {
     req.on('timeout',()=>req.destroy());req.on('error',()=>resolve(null));
   });
 }
-function fail(message) { clearInterval(timer);timer=null;state.status='failed';state.lastErr=message;emit(); }
+function errorDetails(error, fallbackPath, cwd) {
+  let systemErrorName = '';
+  if (Number.isInteger(error && error.errno)) {
+    try { systemErrorName = getSystemErrorName(error.errno); } catch (_) {}
+  }
+  return {
+    name: String(error && error.name || 'Error'),
+    message: String(error && error.message || error || 'Unknown error'),
+    code: error && error.code != null ? String(error.code) : '',
+    errno: Number.isInteger(error && error.errno) ? error.errno : null,
+    systemErrorName,
+    syscall: String(error && error.syscall || ''),
+    path: String(error && error.path || fallbackPath || ''),
+    spawnargs: Array.isArray(error && error.spawnargs) ? error.spawnargs.map(String) : [],
+    cwd: String(cwd || ''),
+    win32Error: error && error.win32Error != null ? String(error.win32Error) : ''
+  };
+}
+function formatSpawnFailure(details) {
+  const fields = [`code=${details.code || 'unknown'}`, `errno=${details.errno == null ? 'unknown' : details.errno}`,
+    `syscall=${details.syscall || 'spawn'}`, `path=${details.path || 'unknown'}`, `cwd=${details.cwd || 'unknown'}`];
+  if (details.systemErrorName) fields.push(`system=${details.systemErrorName}`);
+  return `随包 Brain 创建进程失败：${details.message}（${fields.join('；')}）`;
+}
+function fail(message, kind = 'startup', details = null) {
+  clearInterval(timer);timer=null;state.status='failed';state.lastErr=message;
+  state.failureKind=kind;state.lastFailure=details;emit();
+}
 async function checkReady(epoch) {
   if(checking || generation!==epoch)return;
   checking=true;
@@ -65,7 +93,7 @@ async function checkReady(epoch) {
     }
     if(generation!==epoch)return;
     clearInterval(timer);timer=null;state.port=info.port;state.status='ready';state.build=runtime;state.lastErr='';emit();
-  } catch(e) { if(generation===epoch){fail(e.message);if(child)child.kill();} }
+  } catch(e) { if(generation===epoch){fail(e.message,'health_check',{message:String(e.message || e)});if(child)child.kill();} }
   finally { checking=false; }
 }
 function maybeStart(cfg = getter()) {
@@ -80,7 +108,7 @@ function maybeStart(cfg = getter()) {
     const manifest=contract.read(path.join(root,'brain-manifest.json'));
     contract.compatible(expected,manifest);contract.verifyTree(root,manifest);
     state={...state,enabled:true,status:'starting',exe:path.join(root,'vigil-brain.exe'),
-      home:path.join(app.getPath('userData'),'brain'),port:0,pid:0,lastErr:'',logTail:[],instanceId:crypto.randomUUID(),build:null};
+      home:path.join(app.getPath('userData'),'brain'),port:0,pid:0,lastErr:'',lastFailure:null,failureKind:'',logTail:[],instanceId:crypto.randomUUID(),build:null};
     const run=path.join(app.getPath('userData'),'runtime');fs.mkdirSync(run,{recursive:true});
     readyFile=path.join(run,'ready-'+state.instanceId+'.json');
     const previous=require('./update-transaction').pending(app.getPath('userData'));
@@ -93,25 +121,32 @@ function maybeStart(cfg = getter()) {
     // 不再把云端地址/凭据递给本地内核：本地 Brain 不推不拉，记忆和人设只有本机这一份。
     delete env.VIGIL_CLOUD_URL;delete env.VIGIL_CLOUD_TOKEN;
     fs.mkdirSync(state.home,{recursive:true});
-    child=spawn(state.exe,[],{cwd:state.home,windowsHide:true,stdio:['ignore','pipe','pipe'],env});
+    try {
+      child=spawn(state.exe,[],{cwd:state.home,windowsHide:true,stdio:['ignore','pipe','pipe'],env});
+    } catch(e) {
+      state.pid=0;
+      const detail=errorDetails(e,state.exe,state.home);
+      fail(formatSpawnFailure(detail),'process_create',detail);
+      return;
+    }
     state.pid=child.pid || 0;emit();
     child.stdout.on('data',logLine);
     child.stderr.on('data',logLine);
-    child.on('error',(e)=>{if(generation===epoch){logLine(e.message);fail('随包 Brain 启动失败：'+(e.message||'未知原因')+'；请修复 Vigil 安装');}});
+    child.on('error',(e)=>{if(generation===epoch){const detail=errorDetails(e,state.exe,state.home);logLine(e.message);fail(formatSpawnFailure(detail),'process_create',detail);}});
     child.on('exit',(code)=>{
       if(generation!==epoch)return;
       child=null;clearInterval(timer);timer=null;
       if(state.status==='stopped' || state.status==='failed')return;
       state.port=0;
       logLine('Brain 退出，code='+code);
-      if(state.restarts<3){state.restarts++;state.status='starting';emit();setTimeout(()=>{if(generation===epoch)maybeStart(getter());},1500);}
-      else fail('本地 Brain 连续退出（最后退出码 '+code+'），请检查下方输出与安装完整性');
+      if(state.restarts<3){state.restarts++;state.status='starting';state.failureKind='';state.lastFailure=null;emit();setTimeout(()=>{if(generation===epoch)maybeStart(getter());},1500);}
+      else fail('本地 Brain 连续退出（最后退出码 '+code+'），请检查下方输出与安装完整性','process_exit',{exitCode:code});
     });
     const start=Date.now();timer=setInterval(()=>{
-      if(Date.now()-start>120000){fail('本地 Brain 启动超时；未回退到其他地址');if(child)child.kill();return;}
+      if(Date.now()-start>120000){fail('本地 Brain 启动超时；未回退到其他地址','startup_timeout',{timeoutMs:120000,pid:state.pid});if(child)child.kill();return;}
       checkReady(epoch);
     },250);
-  } catch(e) { state.enabled=true;fail(e.message); }
+  } catch(e) { state.enabled=true;fail(e.message,'preflight',{message:String(e.message || e)}); }
 }
 function stop() {
   generation++;clearInterval(timer);timer=null;checking=false;
@@ -126,5 +161,5 @@ function stop() {
 function restart(cfg) {stop();setTimeout(()=>maybeStart(cfg || getter()),1500);}
 function init(electronApp,cfgGetter) {app=electronApp;getter=cfgGetter;app.on('before-quit',stop);app.on('will-quit',stop);}
 module.exports={init,maybeStart,stop,restart,ready,base,token,probeHealth,diagnosis,
-  status:()=>({...state,base:base(),diagnosis:diagnosis()}),
+  status:()=>({...state,base:base(),diagnosis:diagnosis()}),errorDetails,formatSpawnFailure,
   onState:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};

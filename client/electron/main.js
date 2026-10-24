@@ -1236,15 +1236,17 @@ if (!app.requestSingleInstanceLock()) {
     // 旧版配置里可能写着远程地址 / 设备 token / 云端同步：先归档，再启动内核。
     migrateCfg();
     const updates=require('./update-transaction');
+    let currentBuild=null;
+    try { currentBuild=JSON.parse(fs.readFileSync(path.join(__dirname,'../build-info.json'),'utf8')); } catch (_) {}
     let recoveryShown=false;
     sidecar.onState(async s=>{
       send('sidecar:state',s);
       if(s.status==='ready') updates.markHealthy(app.getPath('userData'),s.build);
-      if(s.status==='failed' && !recoveryShown && updates.pending(app.getPath('userData'))){
+      if(s.status==='failed' && !recoveryShown && updates.canRollback(app.getPath('userData'),currentBuild)){
         recoveryShown=true;
         const choice=await dialog.showMessageBox({type:'error',title:'Vigil 更新未就绪',message:s.lastErr,
-          detail:'本地 Brain 没能起来。可恢复备份中的 Electron 与 Brain 整套程序；用户数据保留。',buttons:['保留现场','恢复上一版'],defaultId:0,cancelId:0});
-        if(choice.response===1){updates.launchRollback(app.getPath('userData'));quitting=true;app.quit();}
+          detail:'本地 Brain 没能起来。可恢复本次更新前备份的 Electron 与 Brain 整套程序；用户数据保留。\n\n启动阶段：'+(s.failureKind||'unknown')+'\n诊断：'+JSON.stringify(s.lastFailure||{}),buttons:['保留现场','恢复上一版'],defaultId:0,cancelId:0});
+        if(choice.response===1){updates.launchRollback(app.getPath('userData'),process.pid,currentBuild);quitting=true;app.quit();}
       }
     });
     if (testBrain()) {

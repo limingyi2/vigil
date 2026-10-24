@@ -10,9 +10,9 @@ function inventory(root){
     if(d.isDirectory())visit(p);else files[path.relative(root,p)]=hash(p);
   }}visit(root);return files;
 }
-function checkpoint(installDir,userData,target){
+function checkpoint(installDir,userData,target,appExecutable='Vigil.exe'){
   installDir=path.resolve(installDir);userData=path.resolve(userData);
-  if(!fs.existsSync(path.join(installDir,'Vigil.exe')))return null;
+  if(!path.basename(appExecutable)||!fs.existsSync(path.join(installDir,path.basename(appExecutable))))return null;
   if(contains(installDir,userData) || contains(userData,installDir))throw Error('应用目录与用户数据目录必须分离');
   const root=path.join(userData,'updates'),id=Date.now()+'-'+crypto.randomBytes(4).toString('hex');
   const backupDir=path.join(root,'rollback-'+id);fs.mkdirSync(root,{recursive:true});
@@ -24,13 +24,19 @@ function checkpoint(installDir,userData,target){
   atomic(path.join(root,'pending.json'),value);return value;
 }
 function pending(userData){try{return JSON.parse(fs.readFileSync(path.join(userData,'updates/pending.json'),'utf8').replace(/^\uFEFF/,''));}catch(_){return null;}}
+function canRollback(userData,build){
+  const p=pending(userData);
+  return !!(p && p.status==='prepared' && build && p.target &&
+    p.target.version===build.version && p.target.commit===build.commit &&
+    p.target.source_digest===build.source_digest);
+}
 function markHealthy(userData,build){const p=pending(userData);if(p && p.target.commit===build.commit && p.target.source_digest===build.source_digest){p.status='healthy';atomic(path.join(userData,'updates/pending.json'),p);}}
-function launchRollback(userData,waitPid=process.pid){
-  const p=pending(userData);if(!p)throw Error('没有可恢复的旧版本');
+function launchRollback(userData,waitPid=process.pid,build=null){
+  const p=pending(userData);if(!p || p.status!=='prepared' || (build && !canRollback(userData,build)))throw Error('没有待确认更新的可恢复旧版本');
   const root=path.join(userData,'updates'),script=path.join(root,'restore.ps1'),request=path.join(root,'restore.json');
   fs.copyFileSync(path.join(__dirname,'rollback.ps1'),script);
   atomic(request,{...p,waitPid,userData});
   const c=spawn('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-RequestPath',request],
     {detached:true,windowsHide:true,stdio:'ignore'});c.unref();return c.pid;
 }
-module.exports={checkpoint,pending,markHealthy,launchRollback,inventory};
+module.exports={checkpoint,pending,canRollback,markHealthy,launchRollback,inventory};
