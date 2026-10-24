@@ -84,7 +84,8 @@ async function main() {
   const ev = expression => win.webContents.executeJavaScript(expression).catch(error => { console.error('[eval]', expression.slice(0, 120), error); throw error; });
   await until(() => ev('!!window.__wallpaperPage'));
   await ev(`window.__wallpaperPage.render({view:document.getElementById('view')})`);
-  await until(() => ev('document.querySelectorAll(".vigil-wallpaper-card").length===1'));
+  // 3 张随包内置壁纸 + 夹具里那 1 张 Workshop 壁纸
+  await until(() => ev('document.querySelectorAll(".vigil-wallpaper-card").length===4'));
   await ev(`document.querySelector('[data-wp4-id="123"]').click()`);
   await until(() => ev('document.querySelector("#vigil-wallpaper-stage img")?.complete && document.querySelector("#vigil-wallpaper-stage img")?.naturalWidth===64'));
 

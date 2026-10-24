@@ -23,6 +23,389 @@
   } catch (_) {}
   let library = [];
   let locals = [];
+  // Workshop 扫描结果单独存：本地媒体 / 内置 / 远程三段分开，重建列表时顺序稳定。
+  let remote = [];
+  // ── 内置壁纸（随插件分发，不需要 Wallpaper Engine）───────────────────
+  // 插件安装器只接受 .py/.json/.md/.txt/.js/.css，装不进 .html/.jpg 资源目录，
+  // 所以三张壁纸以「内联 HTML 文档 + data URI 缩略图」的形式活在前端里：文档经
+  // 客户端 documentUrl() 挂到 ticket 化 loopback 上再进 iframe，既不受应用
+  // CSP 的 frame-src/script-src 限制，也不需要任何外部请求或额外权限。
+  const BUILTIN_HTML = {
+    aurora: `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;overflow:hidden;background:#05070e}
+#c{position:fixed;inset:0;width:100%;height:100%;filter:blur(13px) saturate(1.12);transform:scale(1.05)}
+#g{position:fixed;inset:0;opacity:.06;mix-blend-mode:overlay;pointer-events:none}
+#v{position:fixed;inset:0;pointer-events:none;background:radial-gradient(125% 95% at 50% 34%,transparent 40%,rgba(3,6,12,.66) 100%)}
+</style></head><body><canvas id="c"></canvas><div id="g"></div><div id="v"></div><script>
+(function () {
+  'use strict';
+  // 晨雾：三条极光帘 + 一条地平线暖光。整张画布只有 384×216，逐像素算光场，
+  // 再由 CSS 高斯模糊放大 —— 帘幕的细条纹就是这么来的，比画几十个渐变球更像极光。
+  var cv = document.getElementById('c');
+  var ctx = cv.getContext('2d', { alpha: false });
+  var W = 384, H = 216, t = 0, raf = 0, paused = false, img = null, buf = null;
+  var colR, colG, colB, gain, topPix, invThick, prof, rowWarm, rowHaze, wob;
+  var PROF_N = 160, PROF_MAX = 3.2;
+
+  function setup() {
+    var ar = Math.max(.5, innerHeight / Math.max(1, innerWidth));
+    W = 384; H = Math.max(150, Math.round(W * ar));
+    cv.width = W; cv.height = H;
+    img = ctx.createImageData(W, H); buf = img.data;
+    colR = new Float32Array(W); colG = new Float32Array(W); colB = new Float32Array(W);
+    gain = new Float32Array(W); topPix = new Float32Array(W); invThick = new Float32Array(W);
+    prof = new Float32Array(PROF_N); rowWarm = new Float32Array(H); rowHaze = new Float32Array(H);
+    // 每个横向位置的固定“抖动”：给条纹一个不规则的手感，否则正弦条纹太机器味
+    wob = new Float32Array(W);
+    for (var q = 0; q < W; q++) {
+      wob[q] = Math.sin(q * .0419 + 1.7) * .6 + Math.sin(q * .0137 + 4.1) * .3 + Math.sin(q * .0913 + 2.2) * .1;
+    }
+    for (var k = 0; k < PROF_N; k++) {
+      var x = k / (PROF_N - 1) * PROF_MAX;
+      prof[k] = Math.exp(-x * x * 1.15);
+    }
+  }
+  function band(u, c, w) { var d = (u - c) / w; return Math.exp(-d * d * 1.6); }
+  function frame() {
+    var i, x, y, u;
+    // ── 每个横向位置：三条帘的中心、厚度、颜色
+    var c1 = .30 + .075 * Math.sin(t * .118) + .03 * Math.sin(t * .193 + 1.1);
+    var c2 = .545 + .10 * Math.sin(t * .083 + 2.1);
+    var c3 = .72 + .07 * Math.sin(t * .061 + 4.2);
+    var th1 = .030 + .008 * Math.sin(t * .27);
+    var th2 = .040 + .010 * Math.sin(t * .21 + 1.7);
+    for (i = 0; i < W; i++) {
+      u = i / W;
+      var b1 = band(u, c1, .135);            // 主帘：青绿
+      var b2 = band(u, c2, .115);            // 次帘：紫
+      var b3 = band(u, c3, .34) * .70;       // 远层：蓝雾
+      var sum = b1 + b2 + b3 + 1e-5;
+      colR[i] = (b1 * 46 + b2 * 132 + b3 * 30) / sum;
+      colG[i] = (b1 * 226 + b2 * 104 + b3 * 78) / sum;
+      colB[i] = (b1 * 172 + b2 * 234 + b3 * 188) / sum;
+      // 竖向细条纹：两个不同频率的正弦相乘，避免出现规则的第纹
+      var ray = .52 + .48 * (.5 + .5 * Math.sin(u * 118 + t * .62 + wob[i] * 2.4))
+        * (.55 + .45 * Math.sin(u * 41 - t * .37 + 1.3 + wob[i] * 1.2));
+      gain[i] = ray * (b1 * 1.05 + b2 * .82 + b3 * .46);
+      topPix[i] = (.045 + .055 * Math.sin(u * 6.1 + t * .19) + .02 * Math.sin(u * 15.7 - t * .31)) * H;
+      invThick[i] = 1 / Math.max(40, (th1 * b1 + th2 * b2 + th2 * 1.9 * b3) * H + 86);
+    }
+    // ── 地平线暖光：只跟行有关，先算一张表
+    for (y = 0; y < H; y++) {
+      var hy = (y / H - .895) / .085;
+      rowWarm[y] = Math.exp(-hy * hy * 1.6) * .105;
+      var hz = (y / H - .60) / .34;
+      rowHaze[y] = Math.exp(-hz * hz * 1.2) * .085;
+    }
+    // ── 逐像素合成：底色 + 帘幕 + 暖光
+    var p = 0;
+    for (y = 0; y < H; y++) {
+      var vy = y / H;
+      var shear = (Math.sin(vy * 4.1 + t * .31) * 26 + Math.sin(vy * 1.9 - t * .19 + 1.1) * 46) * vy;
+      var baseR = 5 + 6 * vy, baseG = 8 + 9 * vy, baseB = 15 + 13 * vy;
+      var warm = rowWarm[y], haze = rowHaze[y];
+      for (x = 0; x < W; x++) {
+        var j = x + shear;
+        j = j < 0 ? 0 : (j > W - 1 ? W - 1 : j) | 0;   // 最近邻取样，反正整张都要被高斯模糊
+        var d = (y - topPix[j]) * invThick[j];
+        var k = d < 0 ? -d * 2.3 : d;           // 向上衰减更快：帘顶是亮的，上方是暗的
+        k = k > PROF_MAX ? PROF_MAX : k;
+        var a = prof[(k / PROF_MAX * (PROF_N - 1)) | 0] * gain[j];
+        var r = baseR + colR[j] * a + 150 * warm + 26 * haze;
+        var g = baseG + colG[j] * a + 78 * warm + 44 * haze;
+        var b = baseB + colB[j] * a + 40 * warm + 82 * haze;
+        buf[p++] = r > 255 ? 255 : r;
+        buf[p++] = g > 255 ? 255 : g;
+        buf[p++] = b > 255 ? 255 : b;
+        buf[p++] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  var last = 0;
+  function loop(now) {
+    raf = requestAnimationFrame(loop);
+    if (paused || now - last < 33) return;
+    last = now;
+    t = now / 1000;
+    frame();
+  }
+  function grain() {
+    var n = document.createElement('canvas'); n.width = n.height = 96;
+    var g = n.getContext('2d'), d = g.createImageData(96, 96);
+    for (var i = 0; i < d.data.length; i += 4) {
+      var v = 110 + Math.random() * 84;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255;
+    }
+    g.putImageData(d, 0, 0);
+    document.getElementById('g').style.backgroundImage = 'url(' + n.toDataURL() + ')';
+  }
+  addEventListener('resize', function () { setup(); frame(); });
+  addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.vigilWallpaper !== true) return;
+    if (d.command === 'pause') paused = true;
+    else if (d.command === 'resume') { paused = false; t = performance.now() / 1000; }
+  });
+  document.addEventListener('visibilitychange', function () { paused = document.hidden; });
+  setup(); grain(); frame();
+  var reduce = false;
+  try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+  if (!reduce) raf = requestAnimationFrame(loop);
+})();
+</script></body></html>`,
+    star: `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;overflow:hidden;background:#04060d}
+#bg{position:fixed;inset:0;width:100%;height:100%;filter:blur(38px) saturate(1.25);transform:scale(1.08)}
+#c{position:fixed;inset:0;width:100%;height:100%}
+#g{position:fixed;inset:0;opacity:.05;mix-blend-mode:overlay;pointer-events:none}
+#v{position:fixed;inset:0;pointer-events:none;background:radial-gradient(130% 100% at 50% 40%,transparent 45%,rgba(2,4,9,.6) 100%)}
+</style></head><body><canvas id="bg"></canvas><canvas id="c"></canvas><div id="g"></div><div id="v"></div><script>
+(function () {
+  'use strict';
+  var bg = document.getElementById('bg'), bctx = bg.getContext('2d');
+  var cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  var W = 0, H = 0, dpr = 1, t = 0, raf = 0, paused = false;
+  var stars = [], shots = [], nextShot = 5;
+  // 星云：只画一次的低分辨率底图，靠 CSS 模糊出柔光。每帧只更新星点。
+  function nebula() {
+    bg.width = 240; bg.height = Math.max(120, Math.round(240 * H / Math.max(1, W)));
+    var w = bg.width, h = bg.height;
+    bctx.fillStyle = '#04060d'; bctx.fillRect(0, 0, w, h);
+    var clouds = [
+      { x: .24, y: .34, r: .56, c: [40, 62, 132, .30] },
+      { x: .78, y: .62, r: .64, c: [86, 44, 118, .26] },
+      { x: .50, y: .12, r: .42, c: [26, 78, 112, .20] },
+      { x: .12, y: .86, r: .40, c: [18, 34, 78, .24] }
+    ];
+    bctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < clouds.length; i++) {
+      var c = clouds[i], x = c.x * w, y = c.y * h, r = c.r * Math.max(w, h);
+      var g = bctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(' + c.c[0] + ',' + c.c[1] + ',' + c.c[2] + ',' + c.c[3] + ')');
+      g.addColorStop(.6, 'rgba(' + c.c[0] + ',' + c.c[1] + ',' + c.c[2] + ',' + (c.c[3] * .28).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(' + c.c[0] + ',' + c.c[1] + ',' + c.c[2] + ',0)');
+      bctx.fillStyle = g; bctx.fillRect(0, 0, w, h);
+    }
+    bctx.save();
+    bctx.translate(w * .5, h * .52); bctx.rotate(-.52);
+    var band = bctx.createLinearGradient(0, -h * .28, 0, h * .28);
+    band.addColorStop(0, 'rgba(150,178,232,0)');
+    band.addColorStop(.5, 'rgba(168,192,244,.16)');
+    band.addColorStop(1, 'rgba(150,178,232,0)');
+    bctx.fillStyle = band;
+    bctx.fillRect(-w * .85, -h * .28, w * 1.7, h * .56);
+    // 尘带里再撒一层细碎颗粒，模糊之后就是银河的絮状纹理
+    for (var k = 0; k < 260; k++) {
+      var bx = (Math.random() - .5) * w * 1.6, by = (Math.random() - .5) * h * .5;
+      bctx.fillStyle = 'rgba(214,226,255,' + (.05 + Math.random() * .10).toFixed(3) + ')';
+      bctx.beginPath(); bctx.arc(bx, by, .5 + Math.random() * 1.4, 0, 6.2832); bctx.fill();
+    }
+    bctx.restore();
+  }
+  function size() {
+    dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    W = Math.round(innerWidth * dpr); H = Math.round(innerHeight * dpr);
+    cv.width = W; cv.height = H;
+    seed(); nebula(); draw(performance.now() / 1000);
+  }
+  function seed() {
+    var n = Math.round(Math.min(520, Math.max(180, (innerWidth * innerHeight) / 4200)));
+    stars = [];
+    for (var i = 0; i < n; i++) {
+      stars.push({
+        x: Math.random(), y: Math.random(),
+        z: .28 + Math.random() * .72,          // 视差层：近层漂得更快
+        r: .4 + Math.random() * Math.random() * 1.9,
+        p: Math.random() * 6.283,
+        s: .5 + Math.random() * 1.6,
+        hue: Math.random() < .16 ? 1 : 0        // 少量暖色/蓝色星
+      });
+    }
+  }
+  function draw(now) {
+    t = now;
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      // 缓慢向右上漂移，越界回卷 —— 像坐在飞船里看星空平移
+      var x = (s.x + now * 0.0016 * s.z) % 1;
+      var y = (s.y - now * 0.0009 * s.z + 1) % 1;
+      var tw = .55 + .45 * Math.sin(now * .001 * s.s + s.p);
+      var a = (.16 + .84 * tw) * (.30 + .70 * s.z);
+      var px = x * W, py = y * H, r = s.r * dpr;
+      ctx.beginPath();
+      ctx.fillStyle = s.hue ? 'rgba(255,219,186,' + a.toFixed(3) + ')' : 'rgba(206,224,255,' + a.toFixed(3) + ')';
+      ctx.arc(px, py, r, 0, 6.2832);
+      ctx.fill();
+      if (s.r > 1.72) {                        // 亮星给一圈光晕
+        var g = ctx.createRadialGradient(px, py, 0, px, py, r * 7);
+        g.addColorStop(0, 'rgba(190,214,255,' + (a * .30).toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(190,214,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(px - r * 7, py - r * 7, r * 14, r * 14);
+      }
+    }
+    // 偶发流星
+    var sec = now / 1000;
+    if (sec > nextShot) {
+      nextShot = sec + 6 + Math.random() * 9;
+      shots.push({ x: .15 + Math.random() * .5, y: .08 + Math.random() * .3 });
+    }
+    for (var k = shots.length - 1; k >= 0; k--) {
+      var sh = shots[k];
+      var age = (sec - (sh.t0 || (sh.t0 = sec)));
+      if (age > 1.05) { shots.splice(k, 1); continue; }
+      var f = age / 1.05;
+      var hx = (sh.x + f * .34) * W, hy = (sh.y + f * .17) * H;
+      var tx = hx - 92 * dpr, ty = hy - 46 * dpr;
+      var lg = ctx.createLinearGradient(tx, ty, hx, hy);
+      var alpha = Math.sin(Math.PI * f) * .75;
+      lg.addColorStop(0, 'rgba(180,205,255,0)');
+      lg.addColorStop(1, 'rgba(232,242,255,' + alpha.toFixed(3) + ')');
+      ctx.strokeStyle = lg; ctx.lineWidth = 1.6 * dpr; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke();
+    }
+  }
+  var last = 0;
+  function loop(now) {
+    raf = requestAnimationFrame(loop);
+    if (paused || now - last < 33) return;
+    last = now;
+    draw(now);
+  }
+  function start() { if (!raf) raf = requestAnimationFrame(loop); }
+  function grain() {
+    var n = document.createElement('canvas'); n.width = n.height = 96;
+    var g = n.getContext('2d'), d = g.createImageData(96, 96);
+    for (var i = 0; i < d.data.length; i += 4) {
+      var v = 112 + Math.random() * 80;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255;
+    }
+    g.putImageData(d, 0, 0);
+    document.getElementById('g').style.backgroundImage = 'url(' + n.toDataURL() + ')';
+  }
+  addEventListener('resize', function () { size(); });
+  addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.vigilWallpaper !== true) return;
+    if (d.command === 'pause') paused = true;
+    else if (d.command === 'resume') paused = false;
+  });
+  document.addEventListener('visibilitychange', function () { paused = document.hidden; });
+  size(); grain();
+  draw(performance.now());
+  var reduce = false;
+  try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+  if (!reduce) start();
+})();
+</script></body></html>`,
+    ripple: `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
+#c{position:fixed;inset:0;width:100%;height:100%;filter:blur(1.1px) saturate(1.06)}
+#b{position:fixed;inset:0;pointer-events:none;background:linear-gradient(160deg,rgba(34,38,58,.86) 0%,rgba(20,15,18,.9) 46%,rgba(46,26,16,.86) 100%);mix-blend-mode:normal}
+#g{position:fixed;inset:0;opacity:.05;mix-blend-mode:overlay;pointer-events:none}
+#v{position:fixed;inset:0;pointer-events:none;background:radial-gradient(125% 95% at 52% 46%,transparent 40%,rgba(6,4,5,.62) 100%)}
+</style></head><body><div id="b"></div><canvas id="c"></canvas><div id="g"></div><div id="v"></div><script>
+(function () {
+  'use strict';
+  var cv = document.getElementById('c');
+  var ctx = cv.getContext('2d');
+  var W = 0, H = 0, dpr = 1, raf = 0, paused = false;
+  var rings = [], nextSpawn = 0, cx = .5, cy = .5;
+  // 涟漪：一组从缓慢游走的中心荡开的光环。线性渐变的暖/冷交替，
+  // 叠色用 lighter，深底上只留一圈极淡的边 —— 不抢界面的注意力。
+  var WARM = [236, 168, 108], COOL = [126, 168, 214];
+  function size() {
+    dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    W = Math.round(innerWidth * dpr); H = Math.round(innerHeight * dpr);
+    cv.width = W; cv.height = H;
+    draw(performance.now() / 1000);
+  }
+  function draw(now) {
+    var sec = now / 1000;
+    ctx.clearRect(0, 0, W, H);
+    // 中心缓慢游走：呼吸感来自半径、也来自位置
+    var ox = (.5 + .10 * Math.sin(sec * .061) + .04 * Math.sin(sec * .143)) * W;
+    var oy = (.48 + .08 * Math.cos(sec * .047) + .03 * Math.cos(sec * .119)) * H;
+    cx = ox; cy = oy;
+    ctx.globalCompositeOperation = 'lighter';
+    // 中心的一点微光
+    var glowR = Math.max(W, H) * (.30 + .02 * Math.sin(sec * .23));
+    var gg = ctx.createRadialGradient(ox, oy, 0, ox, oy, glowR);
+    gg.addColorStop(0, 'rgba(255,198,150,.16)');
+    gg.addColorStop(.45, 'rgba(226,140,92,.075)');
+    gg.addColorStop(1, 'rgba(180,96,64,0)');
+    ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H);
+    // 生成新环
+    if (sec > nextSpawn) { nextSpawn = sec + .55; rings.push({ t0: sec, cool: rings.length % 3 === 1 }); }
+    var maxR = Math.max(W, H) * .86;
+    for (var i = rings.length - 1; i >= 0; i--) {
+      var r = rings[i];
+      var age = sec - r.t0, life = 5.2;
+      if (age > life) { rings.splice(i, 1); continue; }
+      var f = age / life;
+      var rad = maxR * Math.pow(f, .88);
+      var a = Math.pow(1 - f, 1.8) * .34;
+      var c = r.cool ? COOL : WARM;
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a.toFixed(4) + ')';
+      ctx.lineWidth = (.8 + 2.0 * (1 - f)) * dpr;
+      ctx.arc(ox, oy, Math.max(4, rad), 0, 6.2832);
+      ctx.stroke();
+      // 第二道更淡的外扩边，制造水波的双层感
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (a * .35).toFixed(4) + ')';
+      ctx.lineWidth = (2.6 + 5.2 * (1 - f)) * dpr;
+      ctx.arc(ox, oy, Math.max(4, rad * 1.010), 0, 6.2832);
+      ctx.stroke();
+    }
+  }
+  var last = 0;
+  function loop(now) {
+    raf = requestAnimationFrame(loop);
+    if (paused || now - last < 33) return;
+    last = now;
+    draw(now);
+  }
+  function grain() {
+    var n = document.createElement('canvas'); n.width = n.height = 96;
+    var g = n.getContext('2d'), d = g.createImageData(96, 96);
+    for (var i = 0; i < d.data.length; i += 4) {
+      var v = 116 + Math.random() * 76;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255;
+    }
+    g.putImageData(d, 0, 0);
+    document.getElementById('g').style.backgroundImage = 'url(' + n.toDataURL() + ')';
+  }
+  addEventListener('resize', function () { size(); });
+  addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.vigilWallpaper !== true) return;
+    if (d.command === 'pause') paused = true;
+    else if (d.command === 'resume') paused = false;
+  });
+  document.addEventListener('visibilitychange', function () { paused = document.hidden; });
+  size(); grain();
+  draw(performance.now());
+  var reduce = false;
+  try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+  if (!reduce) raf = requestAnimationFrame(loop);
+})();
+</script></body></html>`,
+  };
+  const BUILTIN = [
+    { id: '91001', key: 'aurora', title: '晨雾', type: 'web',
+      file: 'builtin-aurora.html', builtin: true, preview: 'data:image/jpeg;base64,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' },
+    { id: '91002', key: 'star', title: '星海', type: 'web',
+      file: 'builtin-star.html', builtin: true, preview: 'data:image/jpeg;base64,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' },
+    { id: '91003', key: 'ripple', title: '涟漪', type: 'web',
+      file: 'builtin-ripple.html', builtin: true, preview: 'data:image/jpeg;base64,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' },
+  ];
+  // 内置永远排在库最前面：没装 Wallpaper Engine 的人也一进来就有东西可点。
+  function rebuildLibrary() { library = [...locals, ...BUILTIN, ...remote]; }
+  rebuildLibrary();
   let active = null;
   let stage = null;
   let root = null;
@@ -192,7 +575,26 @@
     }
     active = item;
     try {
-      if (item.localUrl) {
+      if (item.builtin) {
+        // 内置壁纸是我们自己的单文件页面：直接进 iframe，不套 WE 渲染器，
+        // 省掉「取 HTML → 注入 WE shim → blob 重写」这一串可能出错的环节。
+        const html = BUILTIN_HTML[item.key];
+        if (!html) throw new Error('内置壁纸内容缺失：' + item.key);
+        const url = await documentUrl('vigil-wallpaper-' + item.key + '.html', html);
+        if (mine !== generation || disposed) return;
+        activeUrl = url;
+        frame = document.createElement('iframe');
+        frame.title = 'Vigil Wallpaper ' + item.title;
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.style.pointerEvents = 'none';   // 壁纸不吃点击
+        frame.src = url;
+        stage.appendChild(frame);
+        resizeObserver = new ResizeObserver(() => {
+          try { frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'resize' }, '*'); } catch (_) {}
+        });
+        resizeObserver.observe(stage);
+        showBadge('内置 ' + item.title);
+      } else if (item.localUrl) {
         activeUrl = item.localUrl; const node = item.type === 'video' ? document.createElement('video') : document.createElement('img');
         node.autoplay = item.type === 'video'; node.loop = item.type === 'video'; node.muted = true; node.playsInline = true; node.src = item.localUrl;
         node.addEventListener('error', () => { if (mine === generation) { showBadge('本地媒体加载失败：' + item.file); } });
@@ -247,6 +649,8 @@
   function select(item) {
     if (!item) return;
     active = item;
+    // 引导条是"还没选过"才需要的；select 不重绘页面，所以这里手动收掉。
+    document.querySelector('.vigil-wallpaper-hint')?.remove();
     setConfig({ enabled: true, wallpaper_id: item.id, wallpaper_type: item.type, wallpaper_file: item.file || '' }, true);
   }
   function localFile(file) {
@@ -255,7 +659,7 @@
     if (!type) return;
     const url = URL.createObjectURL(file); objectUrls.add(url);
     const item = { id: 'local-' + Math.random().toString(36).slice(2), title: file.name, type, file: file.name, localUrl: url, preview: url };
-    locals = [item, ...locals]; library = [...locals, ...library]; renderSettings(lastContext);
+    locals = [item, ...locals]; rebuildLibrary(); renderSettings(lastContext);
     select(item);
   }
   // ---- 自动轮播(dshwe「壁纸库与自动轮播」的吸收版)----
@@ -292,9 +696,9 @@
     const view = ctx.view || ctx.el || ctx.container;
     const shown = library;
     const carouselOn = !!config.carousel_enabled;
-    view.innerHTML = '<div class="vigil-wallpaper-page"><div class="vigil-wallpaper-head"><div><h2>Wallpaper Engine</h2><p>独立渲染器 · Scene / Web / Video · 支持高质量粒子与 Shader</p></div><div class="vigil-wallpaper-status">' + esc(config.we_path || '未检测到 Steam Workshop') + (libraryError ? '<div class="vigil-wallpaper-error">' + esc(libraryError) + '</div>' : '') + '</div></div>' +
+    view.innerHTML = '<div class="vigil-wallpaper-page"><div class="vigil-wallpaper-head"><div><h2>Wallpaper Engine</h2><p>独立渲染器 · Scene / Web / Video · 支持高质量粒子与 Shader</p></div><div class="vigil-wallpaper-status">' + esc(config.we_path || '未检测到 Steam Workshop · 内置壁纸可用') + (libraryError ? '<div class="vigil-wallpaper-error">' + esc(libraryError) + '</div>' : '') + '</div></div>' +
       '<div class="vigil-wallpaper-tabs"><button type="button" class="vigil-wallpaper-tab is-active" data-wp4-tab="library">壁纸库</button><button type="button" class="vigil-wallpaper-tab" data-wp4-tab="appearance">外观</button><button type="button" class="vigil-wallpaper-tab" data-wp4-tab="playback">播放</button></div>' +
-      '<div class="vigil-wallpaper-panel" data-wp4-panel="library"><div class="vigil-wallpaper-toolbar"><input id="wp4-search" class="input" placeholder="搜索壁纸名称或类型"><select id="wp4-type"><option value="">全部类型</option><option value="scene">Scene</option><option value="web">网页</option><option value="video">视频</option><option value="image">图片</option></select><button class="btn" id="wp4-refresh">刷新 Workshop</button><button class="btn" id="wp4-local">打开本地媒体</button><button class="btn" id="wp4-disable">停用</button></div><input id="wp4-file" type="file" accept="video/*,image/*" hidden><div id="wp4-grid" class="vigil-wallpaper-grid"></div></div>' +
+      '<div class="vigil-wallpaper-panel" data-wp4-panel="library">' + (config.enabled || config.we_path ? '' : '<div class="vigil-wallpaper-hint">还没有 Wallpaper Engine？下面 ' + BUILTIN.length + ' 张是插件自带的内置壁纸，点一张立刻生效，不需要 Steam 也不需要订阅。</div>') + '<div class="vigil-wallpaper-toolbar"><input id="wp4-search" class="input" placeholder="搜索壁纸名称或类型"><select id="wp4-type"><option value="">全部类型</option><option value="scene">Scene</option><option value="web">网页</option><option value="video">视频</option><option value="image">图片</option></select><button class="btn" id="wp4-refresh">刷新 Workshop</button><button class="btn" id="wp4-local">打开本地媒体</button><button class="btn" id="wp4-disable">停用</button></div><input id="wp4-file" type="file" accept="video/*,image/*" hidden><div id="wp4-grid" class="vigil-wallpaper-grid"></div></div>' +
       '<div class="vigil-wallpaper-panel" data-wp4-panel="appearance" hidden><div class="vigil-wallpaper-presets">' + Object.keys(PRESETS).map((k) => '<button type="button" class="btn" data-wp4-preset="' + esc(k) + '">' + esc(k) + '</button>').join('') + '</div><div class="vigil-wallpaper-controls"><div class="vigil-wallpaper-control"><label>壁纸不透明度 <output id="wp4-opacity-v">' + Math.round((config.opacity || 0) * 100) + '%</output></label><input id="wp4-opacity" type="range" min="0" max="100" value="' + Math.round((config.opacity || 0) * 100) + '"></div><div class="vigil-wallpaper-control"><label>遮罩 <output id="wp4-scrim-v">' + Math.round((config.scrim || 0) * 100) + '%</output></label><input id="wp4-scrim" type="range" min="0" max="100" value="' + Math.round((config.scrim || 0) * 100) + '"></div><div class="vigil-wallpaper-control"><label>毛玻璃 <output id="wp4-blur-v">' + (config.blur || 0) + 'px</output></label><input id="wp4-blur" type="range" min="0" max="32" value="' + (config.blur || 0) + '"></div><div class="vigil-wallpaper-control"><label>渲染质量</label><select id="wp4-quality"><option value="low"' + (config.quality === 'low' ? ' selected' : '') + '>低</option><option value="medium"' + (config.quality === 'medium' ? ' selected' : '') + '>中</option><option value="high"' + (config.quality !== 'low' && config.quality !== 'medium' ? ' selected' : '') + '>高</option></select></div></div></div>' +
       '<div class="vigil-wallpaper-panel" data-wp4-panel="playback" hidden><div class="vigil-wallpaper-controls"><div class="vigil-wallpaper-control"><label>Scene FPS <output id="wp4-fps-v">' + (config.fps || 60) + '</output></label><input id="wp4-fps" type="range" min="15" max="120" step="15" value="' + (config.fps || 60) + '"></div><div class="vigil-wallpaper-control"><label>声音</label><select id="wp4-muted"><option value="on"' + (config.muted === false ? '' : ' selected') + '>静音</option><option value="off"' + (config.muted === false ? ' selected' : '') + '>播放声音</option></select></div></div>' +
       '<div class="vigil-wallpaper-carousel"><label style="display:flex;align-items:center;gap:8px"><input id="wp4-carousel" type="checkbox"' + (carouselOn ? ' checked' : '') + '> 自动轮播</label><label>间隔(分钟)<input id="wp4-carousel-min" class="input" type="number" min="5" max="720" value="' + Math.max(5, Number(config.carousel_minutes) || 30) + '"></label><label style="display:flex;align-items:center;gap:8px"><input id="wp4-carousel-shuffle" type="checkbox"' + (config.carousel_shuffle ? ' checked' : '') + '> 随机顺序</label></div><div class="market-meta">轮播在 Vigil 运行期间生效;关闭客户端即暂停,重新打开自动恢复。</div></div>' +
@@ -305,7 +709,7 @@
       view.querySelectorAll('[data-wp4-panel]').forEach((panel) => { panel.hidden = panel.dataset.wp4Panel !== tab.dataset.wp4Tab; });
     }));
     const grid = view.querySelector('#wp4-grid');
-    const filter = () => { const q = view.querySelector('#wp4-search').value.trim().toLowerCase(); const type = view.querySelector('#wp4-type').value; const rows = shown.filter((w) => (!type || w.type === type) && (!q || (w.title + ' ' + w.type).toLowerCase().includes(q))); grid.innerHTML = rows.length ? rows.map((w) => '<button class="vigil-wallpaper-card ' + (active && active.id === w.id ? 'is-active' : '') + '" data-wp4-id="' + esc(w.id) + '"><span class="vigil-wallpaper-thumb">' + (w.preview ? '<img loading="lazy" alt="" data-preview="' + esc(w.id) + '">' : '') + '</span><span class="vigil-wallpaper-card-body"><span class="vigil-wallpaper-card-title">' + esc(w.title) + '</span><span class="vigil-wallpaper-card-meta">' + esc(typeLabel(w.type)) + ' · ' + esc(w.id) + '</span></span></button>').join('') : '<div class="vigil-wallpaper-empty">没有匹配的壁纸。确认 Wallpaper Engine 已安装并订阅了 Workshop 内容。</div>'; grid.querySelectorAll('[data-wp4-id]').forEach((b) => b.addEventListener('click', () => select(shown.find((w) => w.id === b.dataset.wp4Id)))); grid.querySelectorAll('[data-preview]').forEach((img) => { const w = shown.find((x) => x.id === img.dataset.preview); if (!w) return; if (w.localUrl) img.src = w.localUrl; else if (w.preview) resourceUrl(mediaPath(w, w.preview)).then((url) => { if (img.isConnected) img.src = url; }).catch(() => {}); }); };
+    const filter = () => { const q = view.querySelector('#wp4-search').value.trim().toLowerCase(); const type = view.querySelector('#wp4-type').value; const rows = shown.filter((w) => (!type || w.type === type) && (!q || (w.title + ' ' + w.type).toLowerCase().includes(q))); grid.innerHTML = rows.length ? rows.map((w) => '<button class="vigil-wallpaper-card ' + (active && active.id === w.id ? 'is-active' : '') + '" data-wp4-id="' + esc(w.id) + '">' + (w.builtin ? '<span class="vigil-wallpaper-tag">内置</span>' : '') + '<span class="vigil-wallpaper-thumb">' + (w.preview ? '<img loading="lazy" alt="" data-preview="' + esc(w.id) + '">' : '') + '</span><span class="vigil-wallpaper-card-body"><span class="vigil-wallpaper-card-title">' + esc(w.title) + '</span><span class="vigil-wallpaper-card-meta">' + esc(w.builtin ? '内置 · 无需 Wallpaper Engine' : typeLabel(w.type) + ' · ' + w.id) + '</span></span></button>').join('') : '<div class="vigil-wallpaper-empty">没有匹配的壁纸。内置壁纸不需要 Wallpaper Engine；Scene/视频类需要本机已安装 Wallpaper Engine 并订阅了 Workshop 内容。</div>'; grid.querySelectorAll('[data-wp4-id]').forEach((b) => b.addEventListener('click', () => select(shown.find((w) => w.id === b.dataset.wp4Id)))); grid.querySelectorAll('[data-preview]').forEach((img) => { const w = shown.find((x) => x.id === img.dataset.preview); if (!w) return; if (w.localUrl) img.src = w.localUrl; else if (w.builtin && w.preview) img.src = w.preview; else if (w.preview) resourceUrl(mediaPath(w, w.preview)).then((url) => { if (img.isConnected) img.src = url; }).catch(() => {}); }); };
     filter();
     view.querySelector('#wp4-search').addEventListener('input', filter); view.querySelector('#wp4-type').addEventListener('change', filter);
     view.querySelector('#wp4-refresh').addEventListener('click', () => loadLibrary(true)); view.querySelector('#wp4-local').addEventListener('click', () => view.querySelector('#wp4-file').click()); view.querySelector('#wp4-file').addEventListener('change', (e) => localFile(e.target.files?.[0])); view.querySelector('#wp4-disable').addEventListener('click', () => { setConfig({ enabled: false, carousel_enabled: false }, false); active = null; clearStage(); applyAppearance(); renderSettings(ctx); });
@@ -321,7 +725,7 @@
   async function loadLibrary(force) {
     const result = await api('GET', '/api/plugin/wallpaper/library' + (force ? '?refresh=1' : ''));
     if (result?.ok === false) { libraryError = result.err || '读取壁纸库失败'; return; }
-    libraryError = ''; const remote = Array.isArray(result?.wallpapers) ? result.wallpapers : []; config = { ...config, we_path: result?.we_path || null }; library = [...locals, ...remote]; if (lastContext) renderSettings(lastContext);
+    libraryError = ''; remote = Array.isArray(result?.wallpapers) ? result.wallpapers : []; config = { ...config, we_path: result?.we_path || null }; rebuildLibrary(); if (lastContext) renderSettings(lastContext);
   }
   function onMessage(event) {
     if (!frame || event.source !== frame.contentWindow || !event.data?.vigilWallpaperV4) return;
@@ -354,6 +758,8 @@
     disposed = true; clearStage(); if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; } messageHandler && window.removeEventListener('message', messageHandler); visibilityHandler && document.removeEventListener('visibilitychange', visibilityHandler); objectUrls.forEach((url) => URL.revokeObjectURL(url)); objectUrls.clear(); locals = []; library = []; active = null; document.body.classList.remove('vigil-wallpaper-active', 'vwp-active'); document.documentElement.style.removeProperty('--vigil-wallpaper-blur'); root?.remove(); badge?.remove(); window.__vigilWallpaperV4Dispose = null; try { window.vigil?.plugins?.releaseResources?.(); } catch (_) {}
   }
   window.__vigilWallpaperV4Dispose = dispose;
+  // 只读出口：外观契约测试与现场排查用（确认内置壁纸真的随包分发到了）
+  window.__vigilWallpaperBuiltin = BUILTIN.map((x) => ({ id: x.id, key: x.key, title: x.title, type: x.type }));
   // 设置窗口（?window=settings）：壁纸层只属于主窗口，这里既不挂壁纸，也不套
   // 玻璃主题 —— 设置窗口背后没有壁纸，套了只会得到"深色底 + 白内容"的黑框，
   // 而且插件前端是页面加载完之后才注入的，中途换底色正好变成"黑屏闪一下"。

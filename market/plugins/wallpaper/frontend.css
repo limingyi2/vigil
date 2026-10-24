@@ -130,7 +130,7 @@ body.vigil-wallpaper-active .chatwrap .localpop {
 
 /* 直接压在壁纸上的文字给一层极淡的暗投影：浅色壁纸下白字才不会糊成一片。
    收紧到 2px —— 大半径会变成发光，小字反而更脏。 */
-body.vigil-wallpaper-active :is(.panel, .composer-foot, .cbox .cbar) {
+body.vigil-wallpaper-active :is(.panel, .composer-foot, .cbox .cbar, .vigil-wallpaper-head) {
   text-shadow: 0 1px 2px rgba(6, 9, 16, .6);
 }
 /* ── 左侧整列 ──────────────────────────────────────────────
@@ -236,6 +236,18 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
 .vigil-wallpaper-card { display: grid; gap: 8px; text-align: left; padding: 0; overflow: hidden; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--bg, #fff) 62%, transparent); color: inherit; cursor: pointer; transition: transform .16s ease, border-color .16s ease; }
 .vigil-wallpaper-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent, #8ea7ff) 72%, transparent); }
 .vigil-wallpaper-card.is-active { outline: 2px solid var(--accent, #8ea7ff); }
+/* 内置壁纸：卡片左上角一枚"内置"角标（它是随插件分发的，不是 Workshop 内容）。 */
+.vigil-wallpaper-card { position: relative; }
+.vigil-wallpaper-tag { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 3px 8px; border-radius: 999px;
+  font-size: 11px; line-height: 1.3; letter-spacing: .02em; color: #eef3ff;
+  background: rgba(10, 14, 24, .58); border: 1px solid rgba(255, 255, 255, .18);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+/* 首次进入（没装 Wallpaper Engine、也还没启用壁纸）时的引导条。
+   ⚠️ 配色只能用 currentColor 调：浅色主题下是浅灰底深字，壁纸模式下是浅字深底，
+   写死深底/浅底都会有一边变成"灰底黑字"看不清。 */
+.vigil-wallpaper-hint { margin: 0 0 10px; padding: 10px 13px; border-radius: 12px; font-size: 13px; line-height: 1.55;
+  color: inherit; background: color-mix(in srgb, currentColor 7%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
 .vigil-wallpaper-thumb { aspect-ratio: 16 / 9; background: #0a0d15; overflow: hidden; }
 .vigil-wallpaper-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .vigil-wallpaper-card-body { display: grid; gap: 3px; padding: 0 11px 11px; }
