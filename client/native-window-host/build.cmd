@@ -16,5 +16,5 @@ if not exist "%VSROOT%\Common7\Tools\VsDevCmd.bat" (
 if not exist "%ROOT%build\Release" mkdir "%ROOT%build\Release"
 call "%VSROOT%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
 if errorlevel 1 exit /b %errorlevel%
-cl.exe /nologo /std:c++17 /EHsc /W4 /D_WIN32_WINNT=0x0A00 /Fo"%ROOT%build\Release\native_window_host.obj" /Fe"%ROOT%build\Release\native-window-host.exe" "%ROOT%native_window_host.cpp" /link user32.lib shell32.lib
+cl.exe /nologo /std:c++17 /EHsc /W4 /utf-8 /D_WIN32_WINNT=0x0A00 /Fo"%ROOT%build\Release\native_window_host.obj" /Fe"%ROOT%build\Release\native-window-host.exe" "%ROOT%native_window_host.cpp" /link user32.lib shell32.lib
 exit /b %errorlevel%
