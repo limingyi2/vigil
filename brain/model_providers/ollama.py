@@ -230,6 +230,11 @@ class OllamaProvider(ModelProvider):
                           "completion_tokens": data.get("eval_count") or 0}}
 
     def chat(self, payload, timeout=None):
+        import run_modes
+        with run_modes.model_lease(self.model):
+            return self._chat(payload, timeout)
+
+    def _chat(self, payload, timeout=None):
         """发一次对话补全，回 OpenAI 形态的响应 dict。
 
         连不上/超时 → OllamaUnavailable（hybrid 据此回退云端）；
