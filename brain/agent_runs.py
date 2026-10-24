@@ -2293,6 +2293,8 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None, workflow_scop
         # 未配置模型输出上限就不发 max_tokens：由供应商默认值决定，不发明限制。
         reserve_out = output_reserve(cfg, provider)
         specs = tools.all_specs(brain=brain, src=item['src']) if provider.supports_tools else []
+        ctx.tool_policy = "agent_run"
+        ctx.allowed_tool_specs = list(specs)
         # A run owns its transcript; shared Brain/model history is never mutated.
         messages = messages or seed or [{'role': 'system', 'content': DEFAULT_SYSTEM},
                                {'role': 'user', 'content': item['intent']}]

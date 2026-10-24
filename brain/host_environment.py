@@ -20,21 +20,33 @@ _SAFE_STATES = {"available", "unavailable", "online", "offline", "connected",
 
 
 def _safe_model_name(value):
+    if type(value) is not str:
+        return None
     text = str(value or "").strip()
     if not text or not _SAFE_MODEL.fullmatch(text):
         return None
-    if text.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", text):
+    if (text.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", text)
+            or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", text)
+            or re.match(r"^(?:sk-|rk-|pk-|ghp_|github_pat_|bearer\b)", text, re.I)
+            or any(marker in text.lower() for marker in ("api_key", "api-key", "token="))):
         return None
     return text
 
 
 def _safe_identifier(value):
-    text = str(value or "")
-    return text if _SAFE_IDENTIFIER.fullmatch(text) else "unconfirmed"
+    if type(value) is not str:
+        return "unconfirmed"
+    text = value
+    sensitive_label = re.search(
+        r"(?:^|[_-])(?:api[_-]?key|token|secret|password|credential)(?:[_-]|$)",
+        text, re.I)
+    return text if _SAFE_IDENTIFIER.fullmatch(text) and not sensitive_label else "unconfirmed"
 
 
 def _safe_permission(value):
-    text = str(value or "").strip().lower()
+    if type(value) is not str:
+        return "unconfirmed"
+    text = value.strip().lower()
     if text in {"read", "delegated"}:
         return text
     return "requires_explicit_grant" if text else "unconfirmed"
@@ -117,8 +129,23 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
             specs = tools.all_specs(brain=brain, src=src)
         except Exception:
             pass
-    actual_names = sorted({str((s.get("function") or {}).get("name") or "")
-                           for s in specs if (s.get("function") or {}).get("name")})
+    actual_names = sorted({_safe_identifier((s.get("function") or {}).get("name"))
+                           for s in specs if isinstance(s, dict)
+                           and isinstance(s.get("function"), dict)
+                           and s["function"].get("name")})
+    actual_names = [name for name in actual_names if name != "unconfirmed"]
+    try:
+        import tools as _tools
+        if specs_supplied:
+            actual_names = [name for name in actual_names
+                            if (name not in _tools._STATIC_SPECS or
+                                _tools.static_tool_enabled(name, src))]
+            if tool_policy == "readonly":
+                actual_names = [name for name in actual_names
+                                if name in _tools.READ_ONLY_TOOL_NAMES]
+    except Exception:
+        if specs_supplied:
+            actual_names = []
     provider_support = provider_info["supports_tool_calls"]["value"]
     if enabled is False:
         state = "registered_but_disabled"
@@ -128,6 +155,9 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
         available = []
     elif summary_only:
         state = "confirmed_available"
+        available = []
+    elif specs_supplied and not tool_specs:
+        state = "currently_unavailable"
         available = []
     elif specs_supplied and tool_specs is None:
         state = "unconfirmed"
@@ -236,12 +266,6 @@ def snapshot(brain=None, src=None, *, api_config=None, provider=None,
         "workspace": _workspace_status(brain),
         "source": "Vigil Brain runtime and registered host interfaces",
     }
-    if detailed and tool_specs is not None:
-        names = sorted({str((s.get("function") or {}).get("name") or "")
-                        for s in tool_specs if (s.get("function") or {}).get("name")})
-        if env["tooling"]["state"] == "confirmed_available":
-            env["tooling"]["available"] = [
-                {"name": n, "state": "confirmed_available"} for n in names]
     return env
 
 
@@ -288,28 +312,58 @@ def prompt_summary(brain=None, src=None, *, api_config=None, provider=None,
 
 def _safe_capability(item):
     """Project registry data onto a tiny public shape; never return raw metadata/errors."""
+    if not isinstance(item, dict):
+        item = {}
     status = item.get("status") if isinstance(item.get("status"), dict) else {}
     public_status = {}
     for key in ("connected", "state", "model", "tasks", "plugins", "enabled", "unified"):
         value = status.get(key)
         if key == "model":
             value = _safe_model_name(value)
-        elif key == "state" and isinstance(value, str):
-            value = value if value in _SAFE_STATES else "unconfirmed"
-        if isinstance(value, (bool, int)) or (isinstance(value, str) and len(value) <= 120):
-            public_status[key] = value
+            if value is not None:
+                public_status[key] = value
+        elif key == "state":
+            public_status[key] = value if type(value) is str and value in _SAFE_STATES else "unconfirmed"
+        elif key in {"connected", "enabled", "unified"}:
+            if type(value) is bool:
+                public_status[key] = value
+        elif key in {"tasks", "plugins"}:
+            if type(value) is int and 0 <= value <= 1_000_000:
+                public_status[key] = value
     tools = status.get("tools")
     if isinstance(tools, (list, tuple)):
-        public_status["tools"] = [_safe_identifier(x) for x in tools[:100]
-                                   if isinstance(x, (str, int))]
+        public_status["tools"] = [name for name in
+                                   (_safe_identifier(x) for x in tools[:100])
+                                   if name != "unconfirmed"]
+    operations = item.get("operations")
+    if isinstance(operations, dict):
+        operation_names = list(operations.keys())[:100]
+    elif isinstance(operations, (list, tuple)):
+        operation_names = list(operations[:100])
+    else:
+        operation_names = []
+    permissions = item.get("permissions")
+    permissions = permissions if isinstance(permissions, dict) else {}
+    operation_states = item.get("operation_states")
+    operation_states = operation_states if isinstance(operation_states, dict) else {}
+    safe_permissions = {}
+    for key, value in list(permissions.items())[:100]:
+        safe_key = _safe_identifier(key)
+        if safe_key != "unconfirmed":
+            safe_permissions[safe_key] = _safe_permission(value)
+    safe_operation_states = {}
+    for key, value in list(operation_states.items())[:100]:
+        safe_key = _safe_identifier(key)
+        if safe_key != "unconfirmed":
+            safe_operation_states[safe_key] = (
+                value if type(value) is str and value in _SAFE_STATES else "unconfirmed")
     return {
         "name": _safe_identifier(item.get("name")),
         "status": public_status,
-        "operations": [_safe_identifier(x) for x in (item.get("operations") or [])[:100]],
-        "permissions": {_safe_identifier(k): _safe_permission(v)
-                        for k, v in (item.get("permissions") or {}).items()},
-        "operation_states": {_safe_identifier(k): (str(v) if str(v) in _SAFE_STATES else "unconfirmed")
-                             for k, v in (item.get("operation_states") or {}).items()},
+        "operations": [_safe_identifier(x) for x in operation_names
+                       if _safe_identifier(x) != "unconfirmed"],
+        "permissions": safe_permissions,
+        "operation_states": safe_operation_states,
     }
 
 
@@ -320,13 +374,19 @@ def capability_status(ctx=None, capability=""):
     brain = getattr(ctx, "brain", None)
     src = getattr(ctx, "src", None)
     readonly_context = str(getattr(ctx, "tool_policy", "") or "") == "readonly"
+    request_specs = getattr(ctx, "allowed_tool_specs", None)
+    api_config = getattr(ctx, "api_config", None)
+    if not isinstance(api_config, dict) or not api_config:
+        api_config = None
     try:
-        provider = brain._provider(brain._api_snapshot()) if brain is not None else None
-        api_config = brain._api_snapshot() if brain is not None else None
+        if api_config is None and brain is not None:
+            api_config = brain._api_snapshot()
+        provider = brain._provider(api_config) if brain is not None and api_config is not None else None
     except Exception:
         provider, api_config = None, None
     env = snapshot(brain, src, api_config=api_config, provider=provider,
-                   tool_specs=None, detailed=True,
+                   tool_specs=request_specs, detailed=True,
+                   turn_snapshot=request_specs is not None,
                    tool_policy="readonly" if readonly_context else "")
     if capability:
         item = registry.get(capability)
@@ -334,6 +394,11 @@ def capability_status(ctx=None, capability=""):
                 "environment": env,
                 "source": "Vigil Brain capability registry"}
     raw = registry.snapshot()
-    return {"items": [_safe_capability(x) for x in raw.get("items", [])],
-            "cursor": raw.get("cursor", 0), "environment": env,
+    raw_items = raw.get("items") if isinstance(raw, dict) else []
+    if not isinstance(raw_items, (list, tuple)):
+        raw_items = []
+    cursor = raw.get("cursor") if isinstance(raw, dict) else None
+    return {"items": [_safe_capability(x) for x in raw_items],
+            "cursor": cursor if type(cursor) is int and 0 <= cursor <= 2**53 else None,
+            "environment": env,
             "source": "Vigil Brain capability registry"}

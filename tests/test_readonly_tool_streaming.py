@@ -32,7 +32,8 @@ def _call(name, args, call_id="call_1"):
 
 
 def _run(completions, invoke_result="查询到结果", supports_tools=True,
-         tool_enabled=True, max_rounds=18):
+         tool_enabled=True, max_rounds=18, include_capability=False,
+         captured_turns=None):
     instance = brain.Brain(mem=None, api_config={"api_key": "fixture",
         "api_base": "http://fixture.invalid/v1", "model": "fixture"})
     provider = SimpleNamespace(supports_tools=supports_tools, supports_xml_tools=False,
@@ -44,17 +45,26 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
         yield from completions.pop(0)
 
     feature_module = SimpleNamespace(on=lambda *_args, **_kwargs: True)
+    all_specs = [_spec("search"), _spec("weather"), _spec("tracking"),
+                 _spec("calc"), _spec("local_exec"), _spec("reminder_set")]
+    readonly_names = {"search", "weather", "tracking", "calc"}
+    if include_capability:
+        all_specs.append(_spec("capability_status"))
+        readonly_names.add("capability_status")
+
+    def invoke_readonly(_name, _args, ctx):
+        if captured_turns is not None:
+            captured_turns.append(ctx)
+        return (invoke_result if isinstance(invoke_result, brain_tools.ReadOnlyToolResult)
+                else brain_tools.ReadOnlyToolResult(True, invoke_result))
+
     fake_tools = SimpleNamespace(
-        all_specs=lambda **_kwargs: [_spec("search"), _spec("weather"),
-                                     _spec("tracking"), _spec("calc"),
-                                     _spec("local_exec"), _spec("reminder_set")],
+        all_specs=lambda **_kwargs: all_specs,
         read_only_specs=lambda specs: [x for x in specs
-            if x["function"]["name"] in {"search", "weather", "tracking", "calc"}],
-        READ_ONLY_TOOL_NAMES=frozenset({"search", "weather", "tracking", "calc"}),
+            if x["function"]["name"] in readonly_names],
+        READ_ONLY_TOOL_NAMES=frozenset(readonly_names),
         static_tool_enabled=lambda *_args, **_kwargs: tool_enabled,
-        invoke_readonly_spec=lambda *_args, **_kwargs: (
-            invoke_result if isinstance(invoke_result, brain_tools.ReadOnlyToolResult)
-            else brain_tools.ReadOnlyToolResult(True, invoke_result)),
+        invoke_readonly_spec=invoke_readonly,
         readonly_failure=brain_tools.readonly_failure,
         validate_readonly_arguments=brain_tools.validate_readonly_arguments,
         is_smalltalk=lambda _text: False,
@@ -177,6 +187,8 @@ def test_readonly_stream_calc_success_and_disabled_duplicate_or_limit_are_not_fa
     assert instance.last_tools_used == []
     assert not any(event.get("type") == "tool" and event.get("state") == "started"
                    for event in emitted)
+
+
     denied = [message["content"] for message in payloads[1]["messages"]
               if message.get("role") == "tool"]
     assert denied[0].startswith("【查询未核实：只读工具执行失败】")
@@ -208,3 +220,17 @@ def test_readonly_stream_calc_success_and_disabled_duplicate_or_limit_are_not_fa
     assert messages[-1].startswith("【查询未核实：只读工具执行失败】")
     assert sum(event.get("type") == "tool" and event.get("state") == "started"
                for event in emitted) == 4
+
+
+def test_stream_readonly_turn_carries_exact_tool_policy_and_schema():
+    turns = []
+    _run([[_completion(calls=[_call("capability_status", {})])],
+          [_completion("本轮工具状态已读取。")]], include_capability=True,
+         captured_turns=turns)
+    assert len(turns) == 1
+    assert turns[0].tool_policy == "readonly"
+    allowed = {item["function"]["name"] for item in turns[0].allowed_tool_specs}
+    assert allowed == {"search", "weather", "tracking", "calc", "capability_status"}
+    assert "local_exec" not in allowed
+    assert "reminder_set" not in allowed
+    assert "capability_call" not in allowed

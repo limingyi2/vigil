@@ -578,13 +578,19 @@ class Brain:
 
     @turn_note.setter
     def turn_note(self, value):
-        note = str(value or '')
-        self._turn_note_context.set(note)
-        self._turn_workspace_status_context.set({"selected": bool(note)})
+        self._turn_note_context.set(str(value or ''))
 
     @property
     def turn_workspace_status(self):
         return dict(self._turn_workspace_status_context.get() or {})
+
+    def set_turn_workspace_status(self, selected=False, src=None, conversation_id=None):
+        """Bind structured workspace selection to one request/session, without paths."""
+        self._turn_workspace_status_context.set({
+            "selected": bool(selected),
+            "src": norm_src(src or self._cur_src),
+            "conversation_id": conversation_id,
+        })
 
     def _hist(self, src, conversation_id=None):
         """取（必要时建）某个渠道的对话历史。每份第一条固定是 system。"""
@@ -598,10 +604,16 @@ class Brain:
 
     def use_src(self, src, conversation_id=None):
         """Bind this request to its local PC conversation."""
-        self._cur_src = norm_src(src)
+        src = norm_src(src)
+        current_workspace = self.turn_workspace_status
+        if (current_workspace.get("src") != src or
+                current_workspace.get("conversation_id") != conversation_id):
+            self._turn_workspace_status_context.set({
+                "selected": False, "src": src,
+                "conversation_id": conversation_id,
+            })
+        self._cur_src = src
         self._cur_conversation = conversation_id
-        if not self.turn_note:
-            self._turn_workspace_status_context.set({"selected": False})
         return self._cur_src
 
     def hist_for(self, src, conversation_id=None):
@@ -1204,6 +1216,10 @@ class Brain:
                      "content": self._native_user_content(user_text, native_content)})
 
         ctx = _ph.Turn(text=user_text, src=ctx_src or self._cur_src, brain=self)
+        # Bind the request policy and exact tool schema to capability_status.
+        # It must not reconstruct a broader registry view than this request received.
+        ctx.tool_policy = tool_policy or ""
+        ctx.allowed_tool_specs = list(tool_specs or [])
 
         self.last_sizes = {
             "total": sum(len(m.get("content") or "") for m in msgs),
@@ -1287,6 +1303,8 @@ class Brain:
                 if tool_specs and not _next_no_tools:
                     _payload["tools"] = tool_specs
                     _payload["tool_choice"] = "auto"
+                ctx.allowed_tool_specs = list(
+                    tool_specs if tool_specs and not _next_no_tools else [])
                 _tc0 = time.time()
                 self.last_cloud_requests += 1
                 try:
@@ -2081,6 +2099,7 @@ class Brain:
                                     from plugin_host import Turn
                                     ctx = Turn(text=user_text, src=src or self._cur_src, brain=self)
                                     ctx.tool_policy = "readonly"
+                                    ctx.allowed_tool_specs = list(tool_specs or [])
                                     outcome = _tools.invoke_readonly_spec(name, args, ctx)
                                 except Exception:
                                     outcome = _tools.readonly_failure(

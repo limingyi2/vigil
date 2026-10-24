@@ -95,6 +95,26 @@ def test_tool_switch_state_is_read_from_live_feature_status(monkeypatch):
     assert "search" in {x["name"] for x in snap["tooling"]["registered_but_disabled"]}
 
 
+def test_capability_status_intersects_request_schema_with_live_tool_switches(monkeypatch):
+    import features
+
+    monkeypatch.setattr(features, "on", lambda _name, _src=None: True)
+    monkeypatch.setattr(tools, "static_tool_enabled",
+                        lambda name, _src=None: name != "search")
+    monkeypatch.setattr(host_environment, "_extension_status", lambda: {
+        "plugins": {"state": "unconfirmed"}, "skills": {"mechanism": "unconfirmed"}})
+    specs = [{"function": {"name": name}} for name in
+             ("search", "calc", "capability_call", "local_exec")]
+    snap = host_environment.snapshot(
+        _Brain({"model_mode": "cloud", "model": "m"}), provider=_Provider(),
+        tool_specs=specs, detailed=True, turn_snapshot=True, tool_policy="readonly")
+    available = {item["name"] for item in snap["tooling"]["available"]}
+    assert available == {"calc"}
+    assert "search" not in available
+    assert "capability_call" not in available
+    assert "local_exec" not in available
+
+
 def test_capability_status_redacts_paths_errors_and_credentials(monkeypatch):
     import capability_registry
 
@@ -113,6 +133,84 @@ def test_capability_status_redacts_paths_errors_and_credentials(monkeypatch):
     assert "C:\\Users" not in rendered
     assert "hidden" not in rendered
     registry._items.pop("p20_redaction_probe", None)
+
+
+def test_safe_capability_validates_every_projected_field_without_mutating_registry():
+    raw = {
+        "name": "safe_name",
+        "status": {
+            "connected": "C:\\Users\\private\\secret-token",
+            "state": "C:\\private\\error=secret",
+            "model": "sk-proj-supersecret-token-value",
+            "tasks": "secret task list",
+            "plugins": -1,
+            "enabled": "yes secret",
+            "unified": True,
+            "tools": ["search", "C:\\private\\tool", 17],
+        },
+        "operations": {"read": {}, "C:\\private\\operation": {},
+                       "secret_token_abc123": {}},
+        "permissions": {"read": "read", "C:\\private\\permission": "token=secret"},
+        "operation_states": {"read": "ready", "C:\\private\\state": object()},
+        "source": "C:\\private\\source",
+        "metadata": {"token": "secret-token"},
+    }
+    before = json.dumps(raw, default=repr, sort_keys=True)
+    safe = host_environment._safe_capability(raw)
+    rendered = json.dumps(safe, ensure_ascii=False)
+    assert safe["name"] == "safe_name"
+    assert safe["status"]["state"] == "unconfirmed"
+    assert "connected" not in safe["status"]
+    assert "model" not in safe["status"]
+    assert "tasks" not in safe["status"]
+    assert "plugins" not in safe["status"]
+    assert "enabled" not in safe["status"]
+    assert safe["status"]["unified"] is True
+    assert safe["status"]["tools"] == ["search"]
+    assert safe["operations"] == ["read"]
+    assert safe["permissions"] == {"read": "read"}
+    assert safe["operation_states"] == {"read": "ready"}
+    for secret in ("private", "secret", "token", "api-key"):
+        assert secret not in rendered
+    assert json.dumps(raw, default=repr, sort_keys=True) == before
+
+
+def test_safe_capability_preserves_bounded_normal_status_values():
+    safe = host_environment._safe_capability({
+        "name": "model_center",
+        "status": {"connected": True, "state": "ready", "model": "vendor/model-a",
+                   "tasks": 3, "plugins": 2, "enabled": False, "unified": True,
+                   "tools": ["search", "weather"]},
+        "operations": ["status", "list"],
+        "permissions": {"status": "read", "write": "delegated"},
+        "operation_states": {"status": "queryable", "write": "awaiting_authorization"},
+    })
+    assert safe["status"] == {"connected": True, "state": "ready", "model": "vendor/model-a",
+                              "tasks": 3, "plugins": 2, "enabled": False, "unified": True,
+                              "tools": ["search", "weather"]}
+    assert safe["permissions"] == {"status": "read", "write": "delegated"}
+    assert safe["operation_states"]["write"] == "awaiting_authorization"
+
+
+def test_workspace_selection_is_independent_of_note_and_session_scoped():
+    import contextvars
+    from brain import Brain
+
+    brain = Brain(mem=None, api_config={})
+    brain.use_src("pc", "session-a")
+    brain.set_turn_workspace_status(True, src="pc", conversation_id="session-a")
+    brain.turn_note = "工作区注记"
+    brain.turn_note = ""
+    assert brain.turn_workspace_status["selected"] is True
+    agent_run_context = contextvars.copy_context()
+    brain.set_turn_workspace_status(False, src="pc", conversation_id="session-a")
+    assert agent_run_context.run(
+        lambda: host_environment.snapshot(brain)["workspace"]["selected"]["value"]
+    ) is True
+    brain.use_src("pc", "session-a")
+    assert brain.turn_workspace_status["selected"] is False
+    brain.use_src("pc", "session-b")
+    assert brain.turn_workspace_status["selected"] is False
 
 
 def test_only_readonly_capability_query_is_added_to_allowlist():
@@ -142,6 +240,24 @@ def test_readonly_capability_status_returns_current_host_without_enabling_calls(
     assert "capability_status" in available
     assert "capability_call" not in available
     assert "capability_call" in disabled
+
+
+def test_capability_status_uses_agent_run_model_configuration(monkeypatch):
+    config = {"model_mode": "local", "model": "cloud-configured",
+              "ollama": {"model": "run-local-model"}}
+    turn = _Turn()
+    turn.brain = _Brain({"model_mode": "cloud", "model": "global-model"})
+    turn.api_config = config
+    observed = {}
+
+    def snapshot(_brain, _src, **kwargs):
+        observed.update(kwargs)
+        return {"tooling": {"state": "currently_unavailable"}}
+
+    monkeypatch.setattr(host_environment, "snapshot", snapshot)
+    host_environment.capability_status(turn, "missing_for_test")
+    assert observed["api_config"] == config
+    assert observed["provider"] is not None
 
 
 @pytest.fixture(autouse=True)

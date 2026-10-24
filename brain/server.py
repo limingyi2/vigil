@@ -1789,6 +1789,11 @@ def start_remote_api(brain):
                 with _chat_lock():
                     brain.use_src(src, body.get('brain_conversation_id'))
                     text = body.get('intent', body.get('text', ''))
+                    workspace_status_setter = getattr(brain, 'set_turn_workspace_status', None)
+                    if callable(workspace_status_setter):
+                        workspace_status_setter(
+                            selected=bool(workspace_note), src=src,
+                            conversation_id=body.get('brain_conversation_id'))
                     brain.turn_note = workspace_note
                     try:
                         parts, _ = brain._build_system_parts(text, '')
@@ -1849,7 +1854,14 @@ def start_remote_api(brain):
             options = {'brain': brain, 'messages': messages}
             if workflow_scope is not None:
                 options['workflow_scope'] = workflow_scope
-            return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body), **options)
+            try:
+                return agent_runs.create(body, copy.deepcopy(API_CFG), self._display_owner(body), **options)
+            finally:
+                workspace_status_setter = getattr(brain, 'set_turn_workspace_status', None)
+                if callable(workspace_status_setter):
+                    workspace_status_setter(
+                        selected=False, src=src,
+                        conversation_id=body.get('brain_conversation_id'))
 
         def _workflow_scope(self, body=None):
             """Build P18 scope only from authenticated identity and stored conversation data."""
@@ -2907,6 +2919,11 @@ def start_remote_api(brain):
                         _brain_cid = None if _conv['legacy'] else _cid
                         body['session_id'] = _cid
                         brain.turn_note = self._workspace_note(_src, _conv, _conv_owner, _conv_persona)
+                        workspace_status_setter = getattr(brain, 'set_turn_workspace_status', None)
+                        if callable(workspace_status_setter):
+                            workspace_status_setter(
+                                selected=bool(brain.turn_note), src=_src,
+                                conversation_id=_brain_cid)
                         if not body.get('dry_run'):
                             import conversations as _conversations
                             _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _disp)
@@ -3136,6 +3153,11 @@ def start_remote_api(brain):
                         body['session_id'] = _cid
                         body['brain_conversation_id'] = _brain_cid
                         brain.turn_note = self._workspace_note(_src, _conv, _conv_owner, _conv_persona)
+                        workspace_status_setter = getattr(brain, 'set_turn_workspace_status', None)
+                        if callable(workspace_status_setter):
+                            workspace_status_setter(
+                                selected=bool(brain.turn_note), src=_src,
+                                conversation_id=_brain_cid)
                         if not body.get('dry_run'):
                             import conversations as _conversations
                             _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _in_text)
