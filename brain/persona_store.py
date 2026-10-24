@@ -375,6 +375,11 @@ ASSISTANT_RULES = (
 # 走助手底线的渠道。PC 助手可进行自然交流，也能执行 Agent 任务。
 ASSISTANT_SRCS = ("pc",)
 
+
+def is_assistant_src(src):
+    """Whether a channel uses the Vigil desktop assistant identity."""
+    return str(src or "").strip().lower() in ASSISTANT_SRCS
+
 CORE_RULES = (
     "\n\n"
     "【你是谁（优先级最高，和上面任何描述冲突时以这里为准）】\n"
@@ -923,7 +928,7 @@ def build_system_text(p, src="app"):
     if notes:
         txt += "\n\n" + notes
 
-    is_assistant = str(src or "").strip().lower() in ASSISTANT_SRCS
+    is_assistant = is_assistant_src(src)
     # 关系段夹在 notes 和底线之间：它是"她跟他现在什么关系"这个事实，
     # 而底线是"无论什么关系都成立"的 —— 底线要压在最末尾。
     if not is_assistant:

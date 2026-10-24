@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 
 from persona_store import (
     load as load_persona, build_system_text, build_draft_rules,
-    key_from_config, DEFAULT_PERSONA,
+    key_from_config, DEFAULT_PERSONA, is_assistant_src,
 )
 
 # 人设来自 personas/*.json，改那边就行；这两个只作默认值兜底
@@ -950,23 +950,24 @@ class Brain:
         按通道自己加的（FC 通道加工具态度，router 通道加工具结果）。
         """
         parts = [self.persona_text]
-        try:
-            import host_environment as _host_env
-            runtime_environment = getattr(self, "_prompt_environment_context", None)
-            runtime_environment = runtime_environment.get() if runtime_environment else None
-            if runtime_environment:
-                api_snapshot, provider = runtime_environment
-            else:
-                api_snapshot = self._api_snapshot()
-                try:
-                    provider = self._provider(api_snapshot)
-                except Exception:
-                    provider = None
-            parts.append(_host_env.prompt_summary(
-                self, self._cur_src, api_config=api_snapshot, provider=provider))
-        except Exception as _env_exc:
-            print("[环境快照] 本轮状态未确认：%s" % type(_env_exc).__name__, flush=True)
-            parts.append("\n\n【Vigil 宿主环境快照】当前运行状态未确认；不得根据猜测声称工具或权限可用。")
+        if is_assistant_src(self._cur_src):
+            try:
+                import host_environment as _host_env
+                runtime_environment = getattr(self, "_prompt_environment_context", None)
+                runtime_environment = runtime_environment.get() if runtime_environment else None
+                if runtime_environment:
+                    api_snapshot, provider = runtime_environment
+                else:
+                    api_snapshot = self._api_snapshot()
+                    try:
+                        provider = self._provider(api_snapshot)
+                    except Exception:
+                        provider = None
+                parts.append(_host_env.prompt_summary(
+                    self, self._cur_src, api_config=api_snapshot, provider=provider))
+            except Exception as _env_exc:
+                print("[环境快照] 本轮状态未确认：%s" % type(_env_exc).__name__, flush=True)
+                parts.append("\n\n【Vigil 宿主环境快照】当前运行状态未确认；不得根据猜测声称工具或权限可用。")
         # 单轮工作区注记：server 每次请求前按当前会话归属设置，这里用完即弃。
         # 放在人设之后，"此刻该在哪个文件夹里干活"就有了着落。
         turn_note = getattr(self, 'turn_note', '')

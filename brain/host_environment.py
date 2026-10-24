@@ -121,6 +121,7 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
         enabled, feature_state = None, "unconfirmed"
 
     specs = []
+    specs_load_failed = False
     if specs_supplied:
         specs = list(tool_specs or [])
     elif not summary_only:
@@ -128,7 +129,7 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
             import tools
             specs = tools.all_specs(brain=brain, src=src)
         except Exception:
-            pass
+            specs_load_failed = True
     actual_names = sorted({_safe_identifier((s.get("function") or {}).get("name"))
                            for s in specs if isinstance(s, dict)
                            and isinstance(s.get("function"), dict)
@@ -153,14 +154,23 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
     elif provider_support is False:
         state = "currently_unavailable"
         available = []
-    elif summary_only:
-        state = "confirmed_available"
+    elif enabled is None or provider_support is None:
+        state = "unconfirmed"
         available = []
-    elif specs_supplied and not tool_specs:
+    elif summary_only:
+        # The compact prompt summary intentionally does not load the request's
+        # tool schema. A globally enabled switch is not proof that this request
+        # can actually call a tool.
+        state = "unconfirmed"
+        available = []
+    elif specs_load_failed:
+        state = "unconfirmed"
+        available = []
+    elif not specs:
         state = "currently_unavailable"
         available = []
-    elif specs_supplied and tool_specs is None:
-        state = "unconfirmed"
+    elif not actual_names:
+        state = "currently_unavailable"
         available = []
     elif enabled is True and provider_support is True:
         state = "confirmed_available"
@@ -187,6 +197,7 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
         pass
     return {
         "state": state,
+        "feature_switch": {"value": enabled, "state": feature_state},
         "source": "current Brain tool registry, feature switches, and provider support",
         "available": [{"name": name, "state": "confirmed_available"}
                       for name in available],
@@ -286,6 +297,9 @@ def _brief(value):
     current = model.get("current_model", {}).get("value") or "未确认"
     provider = model.get("current_provider", {}).get("value") or "未确认"
     tools = value.get("tooling", {})
+    tool_switch = tools.get("feature_switch", {})
+    switch_text = ("已启用" if tool_switch.get("value") is True else
+                   "未启用" if tool_switch.get("value") is False else "未确认")
     workspace = value.get("workspace", {})
     plugin = value.get("extensions", {}).get("plugins", {}).get("state", "unconfirmed")
     skill = value.get("extensions", {}).get("skills", {}).get("mechanism", "unconfirmed")
@@ -295,7 +309,8 @@ def _brief(value):
     return (
         "\n\n【Vigil 宿主状态｜Brain 读取】"
         f"客户端版本={appver}；Brain={packaged}/{brain_ver}；连接={label(client)}；"
-        f"模型={mode}/{provider}/{current}；工具={label(tools.get('state'))}；"
+        f"模型={mode}/{provider}/{current}；工具开关={switch_text}；"
+        f"本轮工具={label(tools.get('state'))}；"
         f"插件={label(plugin)}；Skill={label(skill)}；Agent 安装=不可用；UI 入口=未确认；"
         f"工作区={selected_text}；文件授权={label((workspace.get('file_access_authorization') or {}).get('state'))}。"
         "状态按可用/未启用/不可用/未确认理解；工具清单与权限按需查 capability_status。"
