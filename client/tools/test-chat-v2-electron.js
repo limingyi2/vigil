@@ -26,7 +26,7 @@ function wallpaperTrace(kind, data={}) {
   if (!wallpaperDiag) return;
   fs.appendFileSync(wallpaperDiagFile, JSON.stringify({t:Date.now(), monotonic:process.hrtime.bigint().toString(), kind, ...data})+'\n');
 }
-const results = [], errors = [], requests = [];
+const results = [], errors = [], requests = [], streamMarkdownPreviews = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win, host, wallpaperExtensions, history = [], failure = false, historyError = false, personaEmpty = false;
 const legacyConversationId = '11111111-1111-4111-8111-111111111111';
@@ -196,7 +196,11 @@ async function setup() {
     }
     event.sender.send('api:stream:event',{type:'think',text:'检查布局'});
     await wait(120);
-    for (const text of [answer.slice(0,100),answer.slice(100)]) { event.sender.send('api:stream:event',{type:'text',text}); await wait(120); }
+    for (const text of [answer.slice(0,100),answer.slice(100)]) {
+      event.sender.send('api:stream:event',{type:'text',text}); await wait(160);
+      streamMarkdownPreviews.push(await event.sender.executeJavaScript(
+        `document.querySelector('.streaming-text')?.innerHTML || ''`));
+    }
     if(activeHistory) activeHistory.push({role:'assistant',text:answer,t:Date.now()});
     event.sender.send('api:stream:event',{type:'done'});
     return {ok:true};
@@ -441,6 +445,10 @@ async function main() {
     await wallpaperSceneRun(); console.log('PASS: window resize only followed by Wallpaper scene first frame'); return;
   }
   assert.equal(await ev(`document.querySelector('#sendBtn').disabled`),true);
+  assert.ok(streamMarkdownPreviews.some(markup=>/<h1\b/i.test(markup) && /执行结果/.test(markup)),
+    'partial streamed Markdown heading should render before the terminal event');
+  assert.ok(streamMarkdownPreviews.some(markup=>/<h2\b/i.test(markup) && /下一步/.test(markup)),
+    'later stream chunks should progressively render headings');
   assert.equal(await ev(`document.querySelector('#rpBtn')`),null);
   assert.equal(await ev(`getComputedStyle(document.querySelector('#gnav')).display`),'none');
   assert.equal(await ev(`document.querySelector('#topbar').textContent.trim()`),'');

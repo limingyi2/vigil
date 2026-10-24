@@ -194,32 +194,30 @@ def _ckey(query, opt):
 
 # --- 工具 ---
 
-def _t_search(arg):
-    """联网搜一个话题。参数就是要搜的话，中文直接写。
-
-    返回一段给模型看的文本：每条一行，标题 + 正文摘要 + 来源。
-    查不到就明说查不到，**别返回空**。
-    """
+def _search_result(arg):
+    """Return structured internal status while preserving _t_search's text API."""
     query, opt = _parse(arg)
     if not query:
-        return "没搜成：你没说要搜什么。把要查的话原样传进来就行。"
+        return {"ok": False, "text": "没搜成：你没说要搜什么。把要查的话原样传进来就行。"}
 
     ck = _ckey(query, opt)
     hit = _mem.get(ck)
     if hit and hit[0] > time.time():
         print("[联网] 命中缓存：%s" % query[:30], flush=True)
-        return hit[1]
+        # Two-field cache records predate structured status; fail closed rather
+        # than treating an unknown cached response as verified search success.
+        return {"ok": bool(hit[2]) if len(hit) > 2 else False, "text": hit[1]}
 
     res = _post(query, opt)
     if res is None:
-        out = ("搜不了：连不上搜索服务。你就按自己知道的说，"
-               "跟他说一声这个现在查不到，别硬编。")
-        _mem[ck] = (time.time() + 60, out)     # 失败只短暂缓存，别把网络抖动放大
-        return out
+        out = ("搜不了：连不上搜索服务。请明确告诉用户这次未能核实，"
+               "不要把训练数据或猜测冒充为搜索结果。")
+        _mem[ck] = (time.time() + 60, out, False)  # 失败短暂缓存，避免放大网络抖动
+        return {"ok": False, "text": out}
     if not res:
         out = "搜了，没搜到「%s」相关的资料。你就直说没查到，别编。" % query[:40]
-        _mem[ck] = (time.time() + _CACHE_TTL, out)
-        return out
+        _mem[ck] = (time.time() + _CACHE_TTL, out, True)
+        return {"ok": True, "text": out}
 
     # 同一页被索引成多条很常见。按 URL 去重，别让同一个来源把结果位占满 ——
     # 让她看见"三条来源"其实是一家博客，比只给她一条更容易误导。
@@ -268,12 +266,17 @@ def _t_search(arg):
         lines.append(one)
     out = "\n".join(lines)
     print("[联网] 搜到 %d 条：%s" % (len(res), query[:30]), flush=True)
-    _mem[ck] = (time.time() + _CACHE_TTL, out)
+    _mem[ck] = (time.time() + _CACHE_TTL, out, True)
     # 只留最近 40 条，防止长跑之后内存里堆一堆再也用不到的
     if len(_mem) > 40:
         for k in sorted(_mem, key=lambda x: _mem[x][0])[:len(_mem) - 40]:
             _mem.pop(k, None)
-    return out
+    return {"ok": True, "text": out}
+
+
+def _t_search(arg):
+    """Legacy tool API: return the same model-facing text as before."""
+    return _search_result(arg)["text"]
 
 
 TOOLS = {"search": _t_search}

@@ -80,16 +80,16 @@ def test_existing_entry_selection_respects_category_and_agent_gate():
     simple = task_intent.classify("修改一个配置文件并检查结果", workspace_authorized=True)
     complex_task = task_intent.classify("检查整个项目、修复问题并运行测试",
                                         workspace_authorized=True)
-    assert task_intent.select_entry(chat, agent_allowed=True) == "chat_no_tools"
+    assert task_intent.select_entry(chat, agent_allowed=True) == "brain_tools"
     assert retrieval["retrieval_mode"] == "history_rag"
-    assert task_intent.select_entry(retrieval, agent_allowed=True) == "history_retrieval"
+    assert task_intent.select_entry(retrieval, agent_allowed=True) == "brain_tools"
     assert news["retrieval_mode"] == "live_tools"
     assert news["required_tool"] == "search"
     assert task_intent.select_entry(news, agent_allowed=True,
                                     live_tool_available=True) == "brain_tools"
     assert weather["required_tool"] == "weather"
     assert task_intent.select_entry(weather, agent_allowed=True,
-                                    live_tool_available=False) == "retrieval_unavailable"
+                                    live_tool_available=False) == "brain_tools"
     assert task_intent.select_entry(simple, agent_allowed=True) == "agent_run"
     assert task_intent.select_entry(complex_task, agent_allowed=True) == "agent_run"
     assert task_intent.select_entry(simple, agent_allowed=False) == "brain_tools"
@@ -117,7 +117,7 @@ def test_uncertain_reference_is_non_executing_and_deterministic():
     second = task_intent.classify("接着改刚才那个模块")
     assert first == second
     assert first["task_category"] == "chat"
-    assert first["target_entry"] == "chat_no_tools"
+    assert first["target_entry"] == "brain_tools"
     assert first["fallback_reason"] == "ambiguous_reference"
 
 
@@ -130,8 +130,8 @@ def test_mixed_explanation_and_ambiguous_followups_never_select_coding_agent():
     ):
         decision = task_intent.classify(text, workspace_authorized=True)
         assert decision["task_category"] == "chat", text
-        assert decision["target_entry"] == "chat_no_tools", text
-        assert task_intent.select_entry(decision, agent_allowed=True) == "chat_no_tools", text
+        assert decision["target_entry"] == "brain_tools", text
+        assert task_intent.select_entry(decision, agent_allowed=True) == "brain_tools", text
 
 
 def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
@@ -159,8 +159,8 @@ def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
         yield
 
     for text, expected_category, expected_no_tools in (
-        ("解释一下 Python 装饰器", "chat", True),
-        ("帮我找出之前讨论的 RAG 方案", "retrieval", True),
+        ("解释一下 Python 装饰器", "chat", False),
+        ("帮我找出之前讨论的 RAG 方案", "retrieval", False),
         ("搜索今天最新的 AI 新闻", "retrieval", False),
         ("查询当前天气", "retrieval", False),
         ("修改启动配置并验证", "simple_execution", True),
@@ -177,6 +177,8 @@ def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
         assert (answer, mode) == ("answer", "offline")
         assert len(brain.calls) == 1
         assert brain.calls[0][1]["no_tools"] is expected_no_tools
+        if expected_category in ("chat", "retrieval"):
+            assert brain.calls[0][1]["tool_policy"] == "readonly"
         assert trace["task_decision"]["task_category"] == expected_category
         if expected_category == "simple_execution":
             assert trace["task_decision"]["fallback_reason"] == "workspace_not_authorized"
@@ -190,7 +192,8 @@ def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
                       side_effect=AssertionError("retrieval must not delegate")):
         answer, mode = server._chat_with_tools(
             "搜索今天最新的 AI 新闻", None, trace_out=trace, src="pc")
-    assert answer == "当前没有启用可用的实时查询工具，无法核实这条信息。"
-    assert mode == "实时检索不可用"
-    assert brain.calls == []
-    assert trace["task_decision"]["fallback_reason"] == "required_live_tool_unavailable"
+    assert answer == "answer"
+    assert mode == "offline"
+    assert brain.calls[0][1]["tool_policy"] == "readonly"
+    assert brain.calls[0][1]["no_tools"] is False
+    assert trace["task_decision"]["fallback_reason"] is None

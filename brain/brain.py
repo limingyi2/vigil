@@ -1023,7 +1023,7 @@ class Brain:
     #   * 它们的提示词还在教 `[tool:...]` 标签，和 tools schema 打架。
     # 一个决策点只留一条路，这类"改一处漏一处"才不会重演。
     def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None,
-                     native_content=None, route_decision=None):
+                     native_content=None, route_decision=None, tool_policy=None):
         """原生 FC 出草稿：工具调用走结构化 tool_calls，时序仍是 ReAct。
 
         和 draft 的区别只在"工具怎么传"：工具表挂在请求的 tools 字段，模型在
@@ -1097,13 +1097,42 @@ class Brain:
                 import features as _feat
                 _tools_on = bool(_feat.on("tools", ctx_src))
             except Exception:
-                _tools_on = True
+                _tools_on = False
             # 明确是寒暄就不挂工具表 —— 省掉这一轮 ~1100 token 的 schema。
             # 判据很保守（见 tools.schema_needed）：短句 + 没有任何"可能要查"的字。
             # 该挂没挂她答不上来（用户看得见），不该挂却挂了只是贵（看不见），
             # 所以宁可多挂。
-            if _tools_on and _tools.schema_needed(user_text):
+            if _tools_on:
                 tool_specs = _tools.all_specs(brain=self, src=ctx_src or self._cur_src)
+                if tool_policy == "readonly":
+                    tool_specs = _tools.read_only_specs(tool_specs)
+                elif not _tools.schema_needed(user_text):
+                    tool_specs = None
+        if tool_policy == "readonly":
+            available_names = {
+                str((item.get("function") or {}).get("name") or "")
+                for item in (tool_specs or [])
+            }
+            provider_supports_tools = bool(
+                getattr(mp, "supports_tools", False)
+                or getattr(mp, "supports_xml_tools", False))
+            if tool_specs and not provider_supports_tools:
+                tool_specs = None
+                parts.append(
+                    "\n当前模型不支持 Function Calling，不能执行只读查询。"
+                    "不得声称已联网或核实实时信息；需要实时数据时请明确说明无法查询。")
+            elif tool_specs:
+                parts.append(
+                    "\n本轮已授权的只读工具：%s。工具列表之外的查询能力未启用，"
+                    "不要用其他工具替代。未调用工具或工具返回失败时，不得声称已核实实时信息；"
+                    "需要的只读工具不可用时请明确说明无法查询。"
+                    % ", ".join(sorted(available_names)))
+            else:
+                unavailable_names = sorted(_tools.READ_ONLY_TOOL_NAMES - available_names)
+                parts.append(
+                    "\n当前渠道没有可用的只读查询工具（未启用：%s）。不得声称已经联网、查天气"
+                    "或核实实时信息；如用户需要实时核实，请明确说明当前无法查询。"
+                    % ", ".join(unavailable_names))
 
         # P8.4：历史段统一走压缩器（摘要注入/预算裁剪），三条入口同一份逻辑。
         # 失败回退旧行为 —— 压缩器任何问题都不能让她说不出话。
@@ -1151,6 +1180,8 @@ class Brain:
         _usage = None
         _model_request_seconds = 0.0
         used = []
+        readonly_calls = 0
+        readonly_seen = set()
 
         # P17 诊断：把请求开始的时刻和本轮配置快照存到 self 上。
         # 存 self 而不是靠局部变量，是因为 finally 里要读 —— 而这个函数有
@@ -1173,6 +1204,8 @@ class Brain:
             # 也是**别把聊天锁占穿**的约束。
             # 这两个值都能在 config 里覆盖，测试也靠它把时间调短。
             _max_rounds = int(self.api.get("tool_max_rounds") or 24)
+            if tool_policy == "readonly":
+                _max_rounds = min(_max_rounds, 4)
             _budget_s = float(self.api.get("tool_budget_seconds") or 270)
             # 知识/技术类问题走"详细回答模式"：max_tokens 放大、思考档位提高，
             # 配合人设规则里的"正经问题不拆短句"例外 —— 不然同一个模型，
@@ -1295,11 +1328,14 @@ class Brain:
                     self.last_tools_used = used
                     return _clean(raw, keep_newlines=True)
 
-                # 记录用到的工具
-                for tc in tcs:
-                    _nm = (tc.get("function") or {}).get("name") or ""
-                    if _nm and _nm not in used:
-                        used.append(_nm)
+                # Keep the legacy audit behavior for execution-capable turns.
+                # Read-only turns record a tool only after its structured result
+                # confirms success; a nonempty error message is not success.
+                if tool_policy != "readonly":
+                    for tc in tcs:
+                        _nm = (tc.get("function") or {}).get("name") or ""
+                        if _nm and _nm not in used:
+                            used.append(_nm)
 
                 # 执行所有工具调用，收集结果
                 _tool_results = []
@@ -1313,8 +1349,35 @@ class Brain:
                     if not isinstance(_args, dict):
                         self.last_err = '工具参数必须为对象，未执行工具'
                         return self.last_err
-                    _result = _tools.invoke_spec(
-                        _fn.get("name") or "", _args, ctx)
+                    _name = str(_fn.get("name") or "")
+                    if tool_policy == "readonly":
+                        _outcome = None
+                        _key = (_name, json.dumps(_args, ensure_ascii=False, sort_keys=True))
+                        if _name not in _tools.READ_ONLY_TOOL_NAMES:
+                            _outcome = _tools.readonly_failure(
+                                "该工具不在普通聊天只读白名单内，未执行。")
+                        elif _key in readonly_seen:
+                            _outcome = _tools.readonly_failure(
+                                "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。")
+                            _next_no_tools = True
+                        else:
+                            readonly_seen.add(_key)
+                            if not _tools.static_tool_enabled(_name, ctx_src or self._cur_src):
+                                _outcome = _tools.readonly_failure(
+                                    "该只读工具在当前渠道未启用，未执行。")
+                                _next_no_tools = True
+                            elif readonly_calls >= 4:
+                                _outcome = _tools.readonly_failure(
+                                    "本轮只读工具调用次数已达上限，未继续执行。请根据已有结果回答。")
+                                _next_no_tools = True
+                            else:
+                                readonly_calls += 1
+                                _outcome = _tools.invoke_readonly_spec(_name, _args, ctx)
+                        if _outcome.ok and _name not in used:
+                            used.append(_name)
+                        _result = _outcome.for_model()
+                    else:
+                        _result = _tools.invoke_spec(_name, _args, ctx)
                     _tool_results.append((_fn.get("name") or "", _result))
 
                 if _xml_mode:
@@ -1461,7 +1524,7 @@ class Brain:
     # **当前没有被 chat() 调用**（线上走 draft_native）。保留是因为它省 token
     # --- 流式聊天：实时产出思考过程和正文 ---
     def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None,
-                    no_tools=False):
+                    no_tools=False, tool_policy=None):
         """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
         产出的事件格式：
@@ -1470,8 +1533,9 @@ class Brain:
           {"type": "done", "text": "..."}    — 完成，带完整正文
           {"type": "error", "msg": "..."}    — 出错
 
-        🔴 当前版本**不支持工具调用**：需要工具时模型会在正文里说明，
-        客户端可降级到非流式 /api/chat。工具调用的流式支持后续再加。
+        默认流式入口不附带工具。普通聊天通过 ``tool_policy="readonly"``
+        进入只读 Function Calling 流式循环；执行任务和显式 no_tools 收尾
+        保持原来的纯文本流式行为。
         """
         # 同 draft_native：provider 与 payload 的 model 必须取自同一份快照
         _api0 = self._api_snapshot()
@@ -1479,6 +1543,11 @@ class Brain:
         self.last_provider_kind = getattr(mp, "kind", "cloud")
         if not self._provider_ready(mp, _api0):
             yield {"type": "error", "msg": "模型没配好（云端 key 或本地模型）"}
+            return
+
+        if tool_policy == "readonly" and not no_tools:
+            yield from self._stream_readonly_tool_chat(
+                user_text, src, conversation_id, native_content, _api0, mp)
             return
 
         self.use_src(src, conversation_id)
@@ -1629,10 +1698,233 @@ class Brain:
         yield {"type": "done", "text": full_text, "think": full_think,
                "token_rate": _token_usage}
 
+    def _stream_readonly_tool_chat(self, user_text, src, conversation_id,
+                                   native_content, api_snapshot, provider):
+        """Stream ordinary chat while allowing only audited read-only tools."""
+        import json
+        import time
+        self.use_src(src, conversation_id)
+        memory_block = ""
+        try:
+            import tools as _tools
+            if not _tools.is_smalltalk(user_text):
+                memory = self._mem_for()
+                cfg = self.api.get("memory_search") or {}
+                if memory is not None and cfg.get("enabled", True):
+                    from storage.query_resolver import bind, for_brain
+                    with bind(for_brain(self)):
+                        memory_block = memory.render(
+                            query=user_text, top_k=5, chan=self._cur_src)
+        except Exception as exc:
+            print("[上下文] 流式记忆检索失败：%s" % str(exc)[:100], flush=True)
+
+        parts, life = self._build_system_parts(user_text, memory_block)
+        import tools as _tools
+        try:
+            import features as _features
+            tools_on = bool(_features.on("tools", src))
+        except Exception:
+            tools_on = False
+        tool_specs = None
+        if tools_on:
+            try:
+                tool_specs = _tools.read_only_specs(
+                    _tools.all_specs(brain=self, src=src or self._cur_src))
+            except Exception as exc:
+                print("[工具] 流式只读工具表不可用：%s" % str(exc)[:100], flush=True)
+                tool_specs = None
+        if tool_specs:
+            names = sorted({str((x.get("function") or {}).get("name") or "")
+                            for x in tool_specs})
+            parts.append(
+                "\n## 只读工具\n根据用户问题判断是否需要查询；无需查询时直接回答。"
+                "可用工具：%s。只有实际调用并收到成功结果后才能说已核实；"
+                "工具失败时照实说明，不能把记忆或猜测说成查询结果。"
+                "不可用的查询工具不能由其他工具替代。" % ", ".join(names))
+        else:
+            parts.append(
+                "\n当前渠道没有启用只读查询工具。不得声称已联网、查天气或核实实时信息；"
+                "需要实时数据时明确说明当前无法查询。")
+        if tool_specs and not getattr(provider, "supports_tools", False):
+            tool_specs = None
+            parts.append(
+                "\n当前模型不支持 Function Calling，不能执行只读查询。不得声称已联网"
+                "或核实实时信息；需要实时数据时明确说明无法查询。")
+        if life:
+            parts.append("\n" + LIFE_RULES)
+
+        try:
+            from conversation_context import build_context as _build_context
+            history, context_info = _build_context(
+                self, user_text, system_text="".join(parts), tool_specs=tool_specs,
+                src=self._cur_src, conversation_id=self._cur_conversation)
+        except Exception as exc:
+            print("[上下文] 流式上下文构建失败：%s" % str(exc)[:100], flush=True)
+            history, context_info = list(self.recent_hist()), {"fallback": True}
+        self.last_context_info = context_info
+        if context_info.get("fixed_overflow"):
+            yield {"type": "error", "reason": "context_overflow",
+                   "msg": "系统提示、工具与当前消息超过输入预算，请缩短输入或调整模型容量"}
+            return
+        messages = [{"role": "system", "content": "".join(parts)}]
+        messages.extend(history)
+        messages.append({"role": "user",
+                         "content": self._native_user_content(user_text, native_content)})
+
+        max_rounds = min(int(self.api.get("tool_max_rounds") or 24), 4)
+        tool_calls_count = 0
+        seen = set()
+        tools_used = []
+        text_parts, think_parts = [], []
+        input_tokens = output_tokens = 0
+        started = time.time()
+        request_seconds = 0.0
+        self.last_cloud_requests = 0
+        self.last_cloud_seconds = 0.0
+        self.last_tools_used = []
+        self.last_err = ""
+        try:
+            from model_providers.execution import (
+                prepare, completion_events, ERROR_MESSAGES,
+                apply_reasoning_strategy, assistant_history_message,
+            )
+            from conversation_context import output_reserve
+            from agent_context import usage_record
+            yield {"type": "model_request_started"}
+            for round_index in range(max_rounds + 1):
+                final_only = round_index == max_rounds
+                payload = {
+                    "model": api_snapshot.get("model") or "deepseek-chat",
+                    "messages": messages,
+                    "temperature": 0.85,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                if tool_specs and not final_only:
+                    payload["tools"] = tool_specs
+                    payload["tool_choice"] = "auto"
+                if final_only:
+                    messages.append({"role": "user", "content":
+                        "（系统提示：只读查询调用已结束。请根据已有信息回答；"
+                        "不要再调用工具，也不要声称未执行的查询已经成功。）"})
+                payload, _reasoning_state = apply_reasoning_strategy(
+                    payload, api_snapshot, provider,
+                    "balanced" if _is_knowledge_q(user_text) else "fast")
+                current_text, current_think = [], []
+                result = None
+                request_started = time.monotonic()
+                self.last_cloud_requests += 1
+                for event in completion_events(provider,
+                        prepare(payload, api_snapshot,
+                                step_tokens=output_reserve(api_snapshot, provider)),
+                        timeout=120):
+                    if event["type"] == "think_delta":
+                        current_think.append(event["text"])
+                        yield {"type": "think", "text": event["text"]}
+                    elif event["type"] == "text_delta":
+                        current_text.append(event["text"])
+                        yield {"type": "text", "text": event["text"]}
+                    elif event["type"] == "completion":
+                        result = event["result"]
+                request_seconds += max(0.0, time.monotonic() - request_started)
+                if not result or not result.get("complete"):
+                    reason = (result or {}).get("reason") or "connection_lost"
+                    self.last_err = ERROR_MESSAGES.get(reason, "模型响应不完整")
+                    yield {"type": "error", "class": reason, "msg": self.last_err}
+                    return
+                usage = result.get("usage") or {}
+                input_tokens += int(usage.get("prompt_tokens") or 0)
+                output_tokens += int(usage.get("completion_tokens") or 0)
+                tool_calls = result.get("tool_calls") or []
+                if final_only and tool_calls:
+                    self.last_err = "只读工具轮次已结束，未执行额外调用。"
+                    yield {"type": "error", "class": "tool_limit", "msg": self.last_err}
+                    return
+                if not tool_calls:
+                    final_text = "".join(text_parts + current_text)
+                    final_think = "".join(think_parts + current_think)
+                    self.last_think = final_think
+                    self.last_ms = int((time.time() - started) * 1000)
+                    self.last_usage = {"in": input_tokens, "out": output_tokens}
+                    self.last_tools_used = tools_used
+                    self.last_cloud_seconds = round(request_seconds, 2)
+                    if final_text.strip():
+                        self._commit_turn(user_text, final_text, src=self._cur_src,
+                                          conversation_id=self._cur_conversation)
+                    token_rate = usage_record(
+                        {"prompt_tokens": input_tokens,
+                         "completion_tokens": output_tokens},
+                        input_text=json.dumps(messages, ensure_ascii=False),
+                        output_text=final_text)
+                    token_rate["request_elapsed_seconds"] = round(max(0.001, request_seconds), 3)
+                    token_rate["tokens_per_second"] = round(
+                        token_rate["output_tokens"] / max(0.001, request_seconds), 2)
+                    token_rate["rate_estimated"] = token_rate["estimated_output"]
+                    yield {"type": "done", "text": final_text, "think": final_think,
+                           "token_rate": token_rate}
+                    return
+
+                messages.append(assistant_history_message(
+                    provider, {"content": "".join(current_text),
+                               "tool_calls": tool_calls}, tool_calls=tool_calls))
+                for call in tool_calls:
+                    fn = call.get("function") or {}
+                    name = str(fn.get("name") or "")
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = None
+                    if not isinstance(args, dict):
+                        result_text = "工具参数结构错误，未执行查询。"
+                    elif name not in _tools.READ_ONLY_TOOL_NAMES:
+                        result_text = "该工具不在普通聊天只读白名单内，未执行。"
+                    else:
+                        key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
+                        if key in seen:
+                            outcome = _tools.readonly_failure(
+                                "相同参数的查询本轮已经执行过，未重复调用。请根据已有结果回答。")
+                            result_text = outcome.for_model()
+                        else:
+                            seen.add(key)
+                            if not _tools.static_tool_enabled(name, src or self._cur_src):
+                                outcome = _tools.readonly_failure(
+                                    "该只读工具在当前渠道未启用，未执行。")
+                                result_text = outcome.for_model()
+                            elif tool_calls_count >= 4:
+                                outcome = _tools.readonly_failure(
+                                    "本轮只读工具调用次数已达上限，未继续执行。")
+                                result_text = outcome.for_model()
+                            else:
+                                tool_calls_count += 1
+                                yield {"type": "tool", "tool": name, "state": "started"}
+                                try:
+                                    from plugin_host import Turn
+                                    ctx = Turn(text=user_text, src=src or self._cur_src, brain=self)
+                                    outcome = _tools.invoke_readonly_spec(name, args, ctx)
+                                except Exception:
+                                    outcome = _tools.readonly_failure(
+                                        "只读工具执行异常，未核实查询结果。")
+                                tool_ok = outcome.ok
+                                result_text = outcome.for_model()
+                                yield {"type": "tool", "tool": name, "state": "returned",
+                                       "error": not tool_ok}
+                                if tool_ok and name not in tools_used:
+                                    tools_used.append(name)
+                    messages.append({"role": "tool", "tool_call_id": call.get("id"),
+                                     "content": str(result_text)})
+                text_parts.extend(current_text)
+                think_parts.extend(current_think)
+            self.last_err = "只读工具查询达到轮次上限，未声称查询成功。"
+            yield {"type": "error", "class": "tool_limit", "msg": self.last_err}
+        except Exception as exc:
+            self.last_err = str(exc)[:300]
+            yield {"type": "error", "class": "service_error",
+                   "msg": self.last_err or "只读查询失败，未核实实时信息。"}
+
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,
              no_tools=False, conversation_id=None, native_content=None,
-             route_decision=None):
+             route_decision=None, tool_policy=None):
         """返回 (她说的话, 模式标签)。模式标签用于排查到底走的哪条路
 
         img：这一轮带的图片路径（有的话会记进聊天存档，手机/App 那边好显示）。
@@ -1701,6 +1993,8 @@ class Brain:
             # 主动搭话的 user_text 是"说/无"那个决策提示词，不是用户的话 ——
             # 那种轮次不会有工具需求，挂上去纯属白花钱。
             _draft_kwargs = dict(no_tools=no_tools or proactive, ctx_src=self._cur_src)
+            if tool_policy is not None:
+                _draft_kwargs["tool_policy"] = tool_policy
             if route_decision is not None:
                 _draft_kwargs['route_decision'] = route_decision
             if native_content is not None:

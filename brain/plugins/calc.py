@@ -13,33 +13,38 @@ DESC = "算数：加减乘除、百分比、幂，她自己算容易错"
 FEATURE = "calc"
 
 
-def _t_calc(arg):
-    """算一个算式。参数就是算式本身：'128*3'、'(12+8)/2'、'15%'。"""
+def _calc_result(arg):
+    """Return a structured internal outcome for the read-only tool adapter."""
     s = str(arg or "").strip()
     if not s:
-        return "算不了：没给算式"
+        return {"ok": False, "text": "算不了：没给算式"}
     # 只留数字和四则运算括号小数点。表达式求值必须先过这道白名单 ——
     # eval 能干的事远不止算数，不能把原始字符串直接丢进去。
     expr = re.sub(r"[\s]", "", s)
     expr = expr.replace("×", "*").replace("÷", "/").replace("^", "**")
     expr = re.sub(r"(?<![\d.])(\d+(?:\.\d+)?)%", r"(\1/100)", expr)
     if not re.fullmatch(r"[0-9+\-*/().]+", expr):
-        return "算不了：只支持加减乘除和括号"
+        return {"ok": False, "text": "算不了：只支持加减乘除和括号"}
     if len(expr) > 200:
-        return "算不了：算式太长了"
+        return {"ok": False, "text": "算不了：算式太长了"}
     try:
         v = eval(expr, {"__builtins__": {}}, {})   # noqa: S307 白名单已过
     except ZeroDivisionError:
-        return "算不了：除以 0 了"
+        return {"ok": False, "text": "算不了：除以 0 了"}
     except Exception:
-        return "算不了：算式有问题"
+        return {"ok": False, "text": "算不了：算式有问题"}
     if isinstance(v, float):
         if v != v or v in (float("inf"), float("-inf")):
-            return "算不了：结果不是一个正常数"
+            return {"ok": False, "text": "算不了：结果不是一个正常数"}
         v = round(v, 6)
         if v == int(v) and abs(v) < 1e15:
             v = int(v)
-    return "%s = %s" % (s, v)
+    return {"ok": True, "text": "%s = %s" % (s, v)}
+
+
+def _t_calc(arg):
+    """Legacy tool API: return the same model-facing text as before."""
+    return _calc_result(arg)["text"]
 
 
 TOOLS = {"calc": _t_calc}

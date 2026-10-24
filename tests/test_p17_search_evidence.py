@@ -33,7 +33,8 @@ def test_a_failed_search_says_so_and_hands_back_no_numbers(monkeypatch):
     monkeypatch.setattr(websearch, "_post", lambda q, o: None)
     text = websearch._t_search("阿里云 300 学生券 能买哪个服务器")
     assert "搜不了" in text
-    assert "别硬编" in text
+    assert "未能核实" in text
+    assert "不要把训练数据" in text
     # 没有结果就没有任何可被当成报价的东西
     assert "元" not in text
     assert "http" not in text
