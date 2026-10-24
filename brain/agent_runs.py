@@ -1307,6 +1307,23 @@ def _workflow_finish_safe(db, item, scope, run_status):
 
 
 
+def _deny_pending_approvals(item):
+    """Run 终态（取消等）时把还没审批的请求一起拒绝。
+
+    不做这一步，聊天流里会留下"等确认"的僵尸卡片：用户几小时后随手
+    点确认，一个已经取消的任务的副作用操作照样执行。
+    """
+    try:
+        import capability_registry as _caps
+        for step in item.get('steps') or []:
+            approval = step.get('approval') if isinstance(step, dict) else None
+            rid = str((approval or {}).get('request_id') or '')
+            if rid:
+                _caps.REGISTRY.deny(rid)
+    except Exception:
+        pass
+
+
 def cancel(rid, owner, workflow_scope=None):
     with LOCK, _db() as db:
         item = _get(db, rid, owner)
@@ -1317,6 +1334,9 @@ def cancel(rid, owner, workflow_scope=None):
                     if step['kind'] == 'model' and step['status'] == 'running':
                         step.update(status='cancelled', finished_at=time.time())
             _finish(db, item, 'cancelled', 'cancelled')
+            # 取消不是失败也不是成功：挂起的审批必须一起作废，宁可让
+            # 用户重新提一次，也不能让取消的任务留下可执行的授权。
+            _deny_pending_approvals(item)
         return item
 
 
@@ -1900,6 +1920,7 @@ def _tool(rid, owner, started, call, ctx):
     raw_chars = 0
     error = None
     raised = False
+    awaiting = None
     _tool_t0 = time.monotonic()
     try:
         import localtools
@@ -1925,6 +1946,19 @@ def _tool(rid, owner, started, call, ctx):
             result, clipped = _clip(result, MAX_TEXT)
         if reason:
             error = _tool_error(reason, receipts, result)
+        elif result.lstrip().startswith('{'):
+            # 能力调用的"等待授权"不是失败：操作还没执行、也不会执行，
+            # 直到用户在客户端点了确认。识别它并把 request_id 带出去，
+            # 客户端才有地方渲染审批卡片；记成失败会诱导 Agent 重试，
+            # 而重试只会再生成一个同样的审批请求。
+            try:
+                parsed = json.loads(result)
+            except ValueError:
+                parsed = None
+            if (isinstance(parsed, dict)
+                    and parsed.get('status') == 'awaiting_authorization'
+                    and parsed.get('request_id')):
+                awaiting = parsed
     except Exception as exc:
         reason = 'tool_unknown'
         raised = True
@@ -1937,7 +1971,7 @@ def _tool(rid, owner, started, call, ctx):
         step = item['steps'][sid-1]
         step.update(status='unknown' if reason == 'tool_unknown' else 'failed' if reason else 'completed',
                     reason=reason, finished_at=time.time(),
-                    result_state=_execution_state(reason, receipts, raised),
+                    result_state='awaiting_authorization' if awaiting else _execution_state(reason, receipts, raised),
                     result='' if reason else result[:MAX_TEXT],
                     result_chars=raw_chars, truncated=bool(clipped),
                     # 收据进台账前统一脱敏：命令输出里带回显的密钥是现实场景
@@ -1947,13 +1981,49 @@ def _tool(rid, owner, started, call, ctx):
                               for r in receipts][:8])
         if error:
             step['error'] = error
+        if awaiting:
+            # 审批凭据进台账：卡片渲染、历史回看和验收测试都认这个字段。
+            # 实际待执行的参数一并带上（脱敏截断，zip_b64 这类大字段不进
+            # 台账），审批卡片才能展示"你到底在批什么"。
+            try:
+                raw_op_args = args.get('args')
+                if isinstance(raw_op_args, str):
+                    op_args = json.loads(raw_op_args)
+                elif isinstance(raw_op_args, dict):
+                    op_args = raw_op_args
+                else:
+                    op_args = {}
+            except ValueError:
+                op_args = {}
+            import capability_registry as _caps
+            step['approval'] = {'request_id': str(awaiting.get('request_id') or ''),
+                                'capability': str(args.get('capability') or ''),
+                                'operation': str(args.get('operation') or ''),
+                                'target': str(awaiting.get('target')
+                                              or (op_args.get('plugin') if isinstance(op_args, dict) else '')
+                                              or (op_args.get('skill') if isinstance(op_args, dict) else '')
+                                              or (op_args.get('name') if isinstance(op_args, dict) else '') or ''),
+                                'args': _caps.CapabilityRegistry._sanitize_value(
+                                    op_args if isinstance(op_args, dict) else {})}
+            # 竞态窗口：审批请求在 CapabilityRegistry 里创建之后、审批 ID
+            # 落进步骤之前，run 可能已被取消。这时迟到的待审批请求必须
+            # 在服务端安全拒绝（deny 真状态，不是只改前端显示），否则会
+            # 留下一张几小时后还能执行副作用的僵尸卡片。
+            # 复用已有请求时（第二次相同 invoke 命中 executing），卡片要
+            # 显示"正在执行"而不是一笔新的待审批 —— 状态取自 registry。
+            if item['status'] != 'running':
+                _deny_pending_approvals({'steps': [step]})
+                step['approval']['state'] = 'denied'
+            else:
+                step['approval']['state'] = str(awaiting.get('request_state') or 'pending')
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
         _event(db, item, 'tool_finished', dict(step_id=sid, call_id=cid, tool=name,
             result_state=step['result_state'], input=step.get('input'),
             output=_safe_event_value(step.get('result') or ''),
-            error=_safe_event_value(step.get('error') or '') if reason else ''))
+            error=_safe_event_value(step.get('error') or '') if reason else '',
+            approval=dict(step['approval']) if step.get('approval') else None))
         # 迟到的结果只能落 step，不能改 run 终态：插话/暂停/取消之后旧 run
         # 已是 stopped，在途工具的回执晚到 —— 把它翻成 failed 会破坏"暂停
         # 可续"的语义，前端也会看到旧任务失败而非暂停。

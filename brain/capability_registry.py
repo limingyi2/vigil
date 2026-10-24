@@ -31,6 +31,7 @@ capability operation was allowed".  The identity of the caller is now an
 from __future__ import annotations
 
 import copy
+import re
 import threading
 import time
 import uuid
@@ -45,6 +46,7 @@ class CapabilityError(RuntimeError):
 # --- permission tiers -------------------------------------------------------
 READ = "read"
 DELEGATED = "delegated"
+WRITE = "write"
 # Everything that is neither READ nor DELEGATED needs a grant.
 
 # --- operation states reported to the Agent ----------------------------------
@@ -347,6 +349,21 @@ class CapabilityRegistry:
                     "gap": bool(cursor and cursor < earliest - 1)}
 
     # --- approval requests -------------------------------------------------
+    @staticmethod
+    def _target_from_args(args: Mapping[str, Any] | None) -> str:
+        """Derive the operation target from the requested arguments.
+
+        审批必须落到具体目标上："禁用某个插件"的授权只对那个插件有效，
+        不能因为没填 target 就退化成对任意资源都有效的授权。
+        """
+        if not isinstance(args, Mapping):
+            return ""
+        for key in ("plugin", "skill", "name", "package", "pkg", "target", "doc", "id"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:100]
+        return ""
+
     def request_authorization(self, capability: str, operation: str,
                               args: Mapping[str, Any] | None = None, *,
                               identity: str = "", session: str = "",
@@ -355,39 +372,137 @@ class CapabilityRegistry:
 
         The request is what the client shows the user.  It carries no
         permission of its own — it only says "somebody asked".
+
+        去重按**完整请求指纹**（capability/operation/identity/session/target
+        加规范化后的完整参数）判定。参数不同的两个请求（比如同一个插件
+        卸载、purge_data 一个 True 一个 False）是两笔不同的副作用，合并
+        它们会让用户批 A 执行 B。
         """
         with self._lock:
             key, op = str(capability or "").strip(), str(operation or "").strip()
+            req_target = str(target or "").strip() or self._target_from_args(args)
+            norm_args = copy.deepcopy(dict(args or {}))
+            fingerprint = self._request_fingerprint(key, op, identity, session,
+                                                    req_target, norm_args)
             for item in self._requests.values():
-                if (item["capability"] == key and item["operation"] == op
-                        and item["identity"] == identity and item["session"] == session
-                        and item["target"] == target
-                        and item["state"] in ("pending", "approved")):
+                # 去重覆盖 pending 与 executing：同一请求正在执行时，
+                # 相同指纹的第二次 invoke 复用原请求（拿到 executing 状态），
+                # 绝不创建第二个可执行审批。completed/denied 不去重 ——
+                # 用户有意重复同一个操作必须能再次发起。
+                if (item["fingerprint"] == fingerprint
+                        and item["state"] in ("pending", "executing")):
                     return copy.deepcopy(item)
             rid = "capr_" + uuid.uuid4().hex[:12]
             request = {"request_id": rid, "capability": key, "operation": op,
-                       "args": copy.deepcopy(dict(args or {})), "identity": identity,
-                       "session": session, "target": target,
+                       "args": norm_args, "identity": identity,
+                       "session": session, "target": req_target,
+                       "fingerprint": fingerprint,
                        "task_id": str(task_id or ""), "state": "pending",
-                       "created_at": time.time(), "result": None}
+                       "created_at": time.time(), "result": None,
+                       "approved_by": "", "approved_at": 0.0,
+                       "execution_token": None}
             self._requests[rid] = request
             self._publish_locked("capability_authorization_requested", key,
                                  {"operation": op, "request_id": rid,
                                   "identity": identity, "session": session,
-                                  "target": target})
+                                  "target": req_target})
             return copy.deepcopy(request)
 
-    def requests(self, state: str = "") -> list[dict[str, Any]]:
+    @staticmethod
+    def _request_fingerprint(capability: str, operation: str, identity: str,
+                             session: str, target: str,
+                             args: Mapping[str, Any]) -> str:
+        import hashlib
+        import json as _json
+        payload = _json.dumps(
+            {"capability": capability, "operation": operation,
+             "identity": identity, "session": session, "target": target,
+             "args": args},
+            sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+    def requests(self, state: str = "", *, public: bool = False) -> list[dict[str, Any]]:
+        """审批请求清单。
+
+        ``public=True`` 供 HTTP 端点使用：参数做脱敏和截断（zip_b64 这类
+        大体积/敏感内容不回传），避免把一个任务的完整参数暴露给别处。
+        """
         with self._lock:
             items = [copy.deepcopy(v) for v in self._requests.values()]
         if state:
             items = [v for v in items if v["state"] == state]
+        if public:
+            items = [self._public_request(v) for v in items]
         return items
 
-    def approve(self, request_id: str, *, identity: str = "", session: str = "",
-                target: str = "", grant_ttl: float = 0.0) -> dict[str, Any]:
-        """Approve a pending request: create the grant, then run the operation."""
+    # 🔴 敏感字段识别按**组成部分**判定，不做裸子串匹配：api_key /
+    # access_token / refresh_token / client_secret 都能命中（api、access、
+    # refresh、client、token 等组成部分），而 keyboard、monkey、keyframe
+    # 这类恰好包含子串的普通字段不受影响。data/content/zip_b64 等整字段
+    # 名保持精确匹配。
+    _SENSITIVE_TOKENS = frozenset({
+        'api', 'access', 'refresh', 'client', 'secret', 'token', 'password',
+        'passwd', 'pwd', 'credential', 'credentials', 'auth', 'authorization',
+        'apikey', 'private', 'b64', 'key'})
+    _SENSITIVE_EXACT = frozenset({
+        'zip_b64', 'data', 'content', 'secret', 'password', 'token',
+        'credential', 'authorization'})
+    _TOKEN_RE = re.compile(r'[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+')
+    _ARG_VALUE_LIMIT = 160
+
+    @classmethod
+    def _is_sensitive_key(cls, name: Any) -> bool:
+        raw = str(name or '').strip()
+        if not raw:
+            return False
+        if raw.lower() in cls._SENSITIVE_EXACT:
+            return True
+        # camelCase / snake_case / kebab-case 统一拆成组成部分
+        tokens = {t.lower() for t in cls._TOKEN_RE.findall(raw)}
+        return bool(tokens & cls._SENSITIVE_TOKENS)
+
+    @classmethod
+    def _sanitize_value(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {k: ('[已省略]' if cls._is_sensitive_key(k) else cls._sanitize_value(v))
+                    for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._sanitize_value(v) for v in value[:20]]
+        text = str(value)
+        if len(text) > cls._ARG_VALUE_LIMIT:
+            return text[:cls._ARG_VALUE_LIMIT] + '…[截断]'
+        return value
+
+    @classmethod
+    def _public_request(cls, item: Mapping[str, Any]) -> dict[str, Any]:
+        out = dict(item)
+        out["args"] = cls._sanitize_value(item.get("args") or {})
+        if isinstance(item.get("result"), Mapping):
+            result = dict(item["result"])
+            if "receipts" in result and isinstance(result["receipts"], list):
+                result["receipts"] = result["receipts"][:8]
+            out["result"] = cls._sanitize_value(result)
+        out.pop("fingerprint", None)
+        # 执行令牌绝不出端点：拿到它等于拿到一次免审批执行权。
+        out.pop("execution_token", None)
+        return out
+
+    def approve(self, request_id: str, *, approved_by: str = "") -> dict[str, Any]:
+        """Approve a pending request and execute it exactly once.
+
+        🔴 执行授权不经过 registry 的 grant 表。approve 在**同一次加锁内**
+        把请求置为 executing 并签发一次性执行令牌；:meth:`invoke` 校验
+        令牌 + 完整参数 + 身份/会话/目标严格相等后**原子消费**令牌再跑
+        handler —— 并发重放（哪怕拿着同一个请求号）最多进入 handler 一次。
+
+        - 范围（identity/session/target/完整参数）锁死在请求产生时的值上；
+          审批主体只签名（approved_by 进审计字段），**不能**改写原任务的
+          身份、会话或目标，也不能扩大执行范围。
+        - 执行异常时请求收尾为 completed + 未知状态回执：绝不把状态留在
+          executing，也绝不宣称"执行成功"或"未执行"。
+        """
         rid = str(request_id or "")
+        token = uuid.uuid4().hex
         with self._lock:
             request = self._requests.get(rid)
             if not request:
@@ -395,19 +510,35 @@ class CapabilityRegistry:
             if request["state"] == "denied":
                 return {"ok": False, "error": "request_denied", "request_id": rid}
             if request["state"] == "completed":
-                return dict(request.get("result") or {"ok": False, "error": "already_completed"})
-            request["state"] = "approved"
-        grant = self.grant(request["capability"], request["operation"],
-                           identity=identity or request["identity"] or "*",
-                           session=session or request["session"],
-                           target=target or request["target"],
-                           ttl=grant_ttl, source="approval:" + rid)
-        result = self.invoke(request["capability"], request["operation"],
-                             request["args"], identity=identity or request["identity"],
-                             session=session or request["session"],
-                             target=target or request["target"])
+                return copy.deepcopy(request.get("result")
+                                     or {"ok": False, "error": "already_completed"})
+            if request["state"] == "executing":
+                # 另一个审批动作已在执行这一请求。重复提交必须在这里挡下，
+                # 否则同一个副作用操作会被跑两遍。
+                return {"ok": False, "error": "request_in_flight", "request_id": rid}
+            request["state"] = "executing"
+            request["execution_token"] = token
+            request["approved_by"] = str(approved_by or "")
+            request["approved_at"] = time.time()
+        try:
+            result = self.invoke(request["capability"], request["operation"],
+                                 request["args"], identity=request["identity"],
+                                 session=request["session"], target=request["target"],
+                                 _via_request=rid, _via_token=token)
+        except Exception as exc:
+            detail = "%s: %s" % (type(exc).__name__, str(exc)[:240])
+            result = {"ok": False, "status": RUN_UNKNOWN,
+                      "error": "approval_execution_error", "detail": detail,
+                      "receipts": [self._receipt(request["capability"],
+                                                 request["operation"],
+                                                 RUN_UNKNOWN, reason="exception",
+                                                 detail=detail)]}
+        finally:
+            with self._lock:
+                request["execution_token"] = None
         with self._lock:
-            request["state"] = "completed"
+            if request["state"] != "completed":
+                request["state"] = "completed"
             request["result"] = copy.deepcopy(result)
         return result
 
@@ -417,6 +548,16 @@ class CapabilityRegistry:
             request = self._requests.get(rid)
             if not request:
                 return {"ok": False, "error": "request_not_found", "request_id": rid}
+            if request["state"] == "denied":
+                # 幂等：重复拒绝返回同一个结果。
+                return {"ok": True, "request_id": rid, "state": "denied"}
+            if request["state"] in ("executing", "approved"):
+                # 执行中：既不能说"拒绝且未执行"（可能已经生效），也不能
+                # 把 completed 之后的状态覆盖掉。如实拒绝这次操作。
+                return {"ok": False, "error": "request_in_flight", "request_id": rid}
+            if request["state"] == "completed":
+                return {"ok": False, "error": "already_completed", "request_id": rid,
+                        "result": copy.deepcopy(request.get("result") or {})}
             request["state"] = "denied"
             self._publish_locked("capability_authorization_denied", request["capability"],
                                  {"operation": request["operation"], "request_id": rid})
@@ -432,32 +573,70 @@ class CapabilityRegistry:
 
     def invoke(self, name: str, operation: str, args: Mapping[str, Any] | None = None,
                *, identity: str = "", session: str = "", target: str = "",
-               task_id: str = "") -> dict[str, Any]:
+               task_id: str = "", _via_request: str = "",
+               _via_token: str = "") -> dict[str, Any]:
         """Run one capability operation and report a unified receipt.
 
         🔴 There is no ``authorized`` parameter.  The caller's identity is an
         input to the decision, not a way to skip it: a write needs a grant.
+
+        ``_via_request`` 是审批路径的私有入口：approve() 执行时带上请求
+        编号，这里校验"请求处于 approved、capability/operation/完整参数/
+        身份/会话/目标与本次调用完全一致"后才放行 —— 授权不落在共享的
+        grant 表里，执行期间并发 invoke 借不到它。参数对不上（哪怕只差
+        一个 purge_data）一律拒绝。
         """
         key, op = str(name or "").strip(), str(operation or "").strip()
         tid = str(task_id or ("capt_" + uuid.uuid4().hex[:12]))
-        decision = self.check(key, op, identity=identity, session=session, target=target)
-        if not decision.get("allowed"):
-            reason = str(decision.get("reason") or "authorization_required")
-            receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
-                                     reason=reason,
-                                     detail="权限 %s 未获授权" % decision.get("permission"))
-            if reason == "authorization_required":
-                request = self.request_authorization(key, op, args, identity=identity,
-                                                     session=session, target=target, task_id=tid)
-                receipt["reason"] = "authorization_required"
-                receipt["request_id"] = request["request_id"]
+        if _via_request:
+            # 🔴 一次性执行令牌：approve 签发（同一次加锁内写入），这里
+            # 校验后**原子消费**。两个线程并发重放同一请求时，令牌只能被
+            # 消费一次 —— handler 最多执行一次。identity/session/target
+            # 必须与请求创建时的绑定值**严格相等**（空绑定只接受空调用方，
+            # 不存在"空 = 任意"）。
+            with self._lock:
+                req = self._requests.get(str(_via_request))
+                args_norm = copy.deepcopy(dict(args or {}))
+                valid = bool(
+                    req and req.get("state") == "executing"
+                    and str(req.get("execution_token") or "") == str(_via_token or "")
+                    and bool(_via_token)
+                    and req["capability"] == key and req["operation"] == op
+                    and req["args"] == args_norm
+                    and str(req["identity"] or "") == str(identity or "")
+                    and str(req["session"] or "") == str(session or "")
+                    and str(req["target"] or "") == str(target or ""))
+                if valid:
+                    req["execution_token"] = None
+            if not valid:
+                receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
+                                         reason="request_mismatch",
+                                         detail="执行参数与审批请求不一致，或授权已被消费")
                 return {"ok": False, "task_id": tid, "capability": key, "operation": op,
-                        "status": RUN_AWAITING, "error": "authorization_required",
-                        "permission": decision.get("permission"),
-                        "request_id": request["request_id"],
+                        "status": RUN_DENIED, "error": "request_mismatch",
                         "receipts": [receipt]}
-            return {"ok": False, "task_id": tid, "capability": key, "operation": op,
-                    "status": RUN_UNAVAILABLE, "error": reason, "receipts": [receipt]}
+        else:
+            decision = self.check(key, op, identity=identity, session=session, target=target)
+            if not decision.get("allowed"):
+                reason = str(decision.get("reason") or "authorization_required")
+                receipt = self._receipt(key, op, RUN_DENIED, task_id=tid,
+                                         reason=reason,
+                                         detail="权限 %s 未获授权" % decision.get("permission"))
+                if reason == "authorization_required":
+                    request = self.request_authorization(key, op, args, identity=identity,
+                                                         session=session, target=target, task_id=tid)
+                    receipt["reason"] = "authorization_required"
+                    receipt["request_id"] = request["request_id"]
+                    return {"ok": False, "task_id": tid, "capability": key, "operation": op,
+                            "status": RUN_AWAITING, "error": "authorization_required",
+                            "permission": decision.get("permission"),
+                            "request_id": request["request_id"],
+                            # 复用已存在的请求时（比如命中 executing），调用方
+                            # 据此知道这不是一笔新的待审批操作。
+                            "request_state": request["state"],
+                            "receipts": [receipt]}
+                return {"ok": False, "task_id": tid, "capability": key, "operation": op,
+                        "status": RUN_UNAVAILABLE, "error": reason, "receipts": [receipt]}
 
         with self._lock:
             item = self._items.get(key)
@@ -578,8 +757,25 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
             import plugin_host
             REGISTRY.register("plugins_skills", status=_safe_status(lambda: {
                 "connected": True, "state": "ready", "plugins": len(plugin_host.listing()),
-            }), source="brain.plugin_host", operations={
-                "list": {"permission": READ, "handler": lambda _a: plugin_host.listing()},
+            }), source="brain.plugin_manager", operations={
+                # 查询是只读的：插件清单与单个插件的真实状态直接来自
+                # plugin_manager，不经任何缓存或模型转述。
+                "list": {"permission": READ, "handler": _plugin_list_handler},
+                "plugin_status": {"permission": READ,
+                                  "handler": lambda a: _plugin_status_handler(a)},
+                # 启用/禁用/卸载会改变插件生命周期，全部需要审批后的一次性
+                # 授权。实现只委托 plugin_manager 的既有接口，不另起一套。
+                "enable": {"permission": WRITE,
+                           "handler": lambda a: _plugin_lifecycle_handler("enable", a)},
+                "disable": {"permission": WRITE,
+                            "handler": lambda a: _plugin_lifecycle_handler("disable", a)},
+                "uninstall": {"permission": WRITE,
+                              "handler": lambda a: _plugin_lifecycle_handler("uninstall", a)},
+                "skill_status": {"permission": READ, "handler": _skill_status_handler},
+                "skill_list": {"permission": READ, "handler": _skill_list_handler},
+                "skill_install": {"permission": WRITE, "handler": _skill_install_handler},
+                "skill_uninstall": {"permission": WRITE, "handler": _skill_uninstall_handler},
+                "skill_reload": {"permission": WRITE, "handler": _skill_reload_handler},
             })
         except Exception as exc:
             REGISTRY.register("plugins_skills", status={"connected": False, "state": "unavailable",
@@ -816,6 +1012,148 @@ def _kb_reindex_handler(args):
         src=args.get("src") or "pc",
     )
     return {"ok": True, "reindexed": result}
+
+
+# --------------------------------------------------------------------------
+# plugins_skills handlers（P20.2）
+# --------------------------------------------------------------------------
+
+def _plugin_list_handler(args):
+    """插件清单：直接来自 plugin_manager 的真实状态，无缓存无转述。"""
+    import plugin_manager
+    return {"ok": True, "plugins": plugin_manager.list_plugins()}
+
+
+def _plugin_status_handler(args):
+    import plugin_manager
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required",
+                "detail": "要指明插件名才能查状态"}
+    item = plugin_manager.status(name)
+    if not item.get("installed"):
+        return {"ok": False, "error": "not_installed",
+                "detail": "插件不存在：%s" % name}
+    return {"ok": True, "plugin": item}
+
+
+def _plugin_lifecycle_handler(action, args):
+    """启用/禁用/卸载插件：只委托 plugin_manager，内置不可卸载由它保护。"""
+    import plugin_manager
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required", "detail": "要指明插件名"}
+    if action == "enable":
+        ok, detail = plugin_manager.enable(name)
+    elif action == "disable":
+        ok, detail = plugin_manager.disable(name)
+    elif action == "uninstall":
+        ok, detail = plugin_manager.uninstall(name, purge_data=bool(args.get("purge_data")))
+    else:
+        return {"ok": False, "error": "operation_not_supported"}
+    out = dict(detail if isinstance(detail, dict) else {})
+    # plugin_manager 用 err 字段报错；registry 回执统一 error。
+    if not ok:
+        out["ok"] = False
+        out["error"] = str(out.pop("err", "") or action + "_failed")
+    out["ok"] = bool(ok and out.get("ok", True))
+    out["action"] = action
+    # 复核：不信任返回码，重读真实状态作为执行证据。
+    current = plugin_manager.status(name)
+    out["after"] = {k: current.get(k) for k in
+                    ("installed", "enabled", "source_kind", "builtin",
+                     "removable", "state", "runtime_state")}
+    return out
+
+
+def _skill_module():
+    from plugins import skill as _skill
+    return _skill
+
+
+def _skill_host_offline() -> dict[str, Any]:
+    return {"ok": False, "error": "skill_host_offline",
+            "status": RUN_UNAVAILABLE,
+            "detail": "Skill Host（Node）未运行，此操作不会生效，已停止。请先启动技能宿主。"}
+
+
+def _skill_status_handler(args):
+    skill = _skill_module()
+    alive = skill.host_alive()
+    return {"ok": True, "host_alive": alive,
+            "skills": skill.list_skills() if alive else [],
+            "detail": "" if alive else "Skill Host 未运行；技能清单不可用"}
+
+
+def _skill_list_handler(args):
+    skill = _skill_module()
+    return {"ok": True, "skills": skill.list_skills()}
+
+
+def _skill_install_handler(args):
+    """安装 Skill：只接受面板已上传的安装包内容（zip_b64），不接受网址。
+
+    安装 API 返回成功不等于技能可用——装后必须由 Skill Host 清单确认
+    （_host_has_skill），Host 不在线时根本不落盘。
+    """
+    import base64 as _b64
+    skill = _skill_module()
+    raw_b64 = str(args.get("zip_b64") or "").strip()
+    if not raw_b64:
+        return {"ok": False, "error": "zip_b64_required",
+                "detail": "Skill 安装需要上传的安装包内容；不能凭一个网址安装，"
+                          "也不会把任意网址当作可信安装源"}
+    if not skill.host_alive():
+        return _skill_host_offline()
+    try:
+        raw = _b64.b64decode(raw_b64, validate=False)
+    except Exception as exc:
+        return {"ok": False, "error": "invalid_base64", "detail": str(exc)[:160]}
+    result = skill._install_zip(raw, note="capability")
+    out = dict(result if isinstance(result, dict) else {})
+    if "err" in out and "error" not in out:
+        out["error"] = str(out.pop("err"))
+    out["ok"] = bool(out.get("ok"))
+    if out["ok"]:
+        # 装后核验：Host 清单里必须真的看得见这个包，且工具清单非空。
+        verify = skill._host_has_skill(out.get("skill") or "", "")
+        out["verified_on_host"] = bool(verify.get("ok"))
+        if not out["verified_on_host"]:
+            out["ok"] = False
+            out["status"] = RUN_UNKNOWN
+            out["error"] = "install_unverified"
+            out["detail"] = "安装事务成功但 Skill Host 未确认该技能：%s" % (
+                verify.get("err") or "清单中不存在")
+    return out
+
+
+def _skill_uninstall_handler(args):
+    skill = _skill_module()
+    pkg = str(args.get("skill") or args.get("package") or args.get("name") or "").strip()
+    if not pkg:
+        return {"ok": False, "error": "skill_required", "detail": "要指明技能包名"}
+    if not skill.host_alive():
+        return _skill_host_offline()
+    result = skill._uninstall(pkg)
+    out = dict(result if isinstance(result, dict) else {})
+    if "err" in out and "error" not in out:
+        out["error"] = str(out.pop("err"))
+    out["ok"] = bool(out.get("ok"))
+    return out
+
+
+def _skill_reload_handler(args):
+    skill = _skill_module()
+    if not skill.host_alive():
+        return _skill_host_offline()
+    try:
+        d = skill._post_json("/reload", {}, 30)
+        with skill._cache_lock:
+            skill._cache["at"] = 0.0
+            skill._cache["tools"] = []
+        return {"ok": True, "reloaded": d.get("reloaded")}
+    except Exception as exc:
+        return {"ok": False, "error": "reload_failed", "detail": str(exc)[:160]}
 
 
 def _codex_create_task(codex: Any, args: Mapping[str, Any]) -> dict[str, Any]:
