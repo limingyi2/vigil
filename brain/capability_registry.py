@@ -45,6 +45,7 @@ class CapabilityError(RuntimeError):
 # --- permission tiers -------------------------------------------------------
 READ = "read"
 DELEGATED = "delegated"
+WRITE = "write"
 # Everything that is neither READ nor DELEGATED needs a grant.
 
 # --- operation states reported to the Agent ----------------------------------
@@ -347,6 +348,21 @@ class CapabilityRegistry:
                     "gap": bool(cursor and cursor < earliest - 1)}
 
     # --- approval requests -------------------------------------------------
+    @staticmethod
+    def _target_from_args(args: Mapping[str, Any] | None) -> str:
+        """Derive the operation target from the requested arguments.
+
+        审批必须落到具体目标上："禁用某个插件"的授权只对那个插件有效，
+        不能因为没填 target 就退化成对任意资源都有效的授权。
+        """
+        if not isinstance(args, Mapping):
+            return ""
+        for key in ("plugin", "skill", "name", "package", "pkg", "target", "doc", "id"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:100]
+        return ""
+
     def request_authorization(self, capability: str, operation: str,
                               args: Mapping[str, Any] | None = None, *,
                               identity: str = "", session: str = "",
@@ -358,16 +374,17 @@ class CapabilityRegistry:
         """
         with self._lock:
             key, op = str(capability or "").strip(), str(operation or "").strip()
+            req_target = str(target or "").strip() or self._target_from_args(args)
             for item in self._requests.values():
                 if (item["capability"] == key and item["operation"] == op
                         and item["identity"] == identity and item["session"] == session
-                        and item["target"] == target
+                        and item["target"] == req_target
                         and item["state"] in ("pending", "approved")):
                     return copy.deepcopy(item)
             rid = "capr_" + uuid.uuid4().hex[:12]
             request = {"request_id": rid, "capability": key, "operation": op,
                        "args": copy.deepcopy(dict(args or {})), "identity": identity,
-                       "session": session, "target": target,
+                       "session": session, "target": req_target,
                        "task_id": str(task_id or ""), "state": "pending",
                        "created_at": time.time(), "result": None}
             self._requests[rid] = request
@@ -384,9 +401,16 @@ class CapabilityRegistry:
             items = [v for v in items if v["state"] == state]
         return items
 
+    DEFAULT_GRANT_TTL = 300.0  # 秒。兜底上限：正常情况下授权是一次性的。
+
     def approve(self, request_id: str, *, identity: str = "", session: str = "",
-                target: str = "", grant_ttl: float = 0.0) -> dict[str, Any]:
-        """Approve a pending request: create the grant, then run the operation."""
+                target: str = "", grant_ttl: float | None = None) -> dict[str, Any]:
+        """Approve a pending request: create the grant, run once, revoke.
+
+        🔴 一次审批只授权**一次**执行。授权在执行后立即作废，无论结果是
+        成功、失败还是未知 —— 残留的授权就是绕过下一次审批的后门。TTL 只是
+        执行异常中断时的兜底，正常路径靠 revoke。
+        """
         rid = str(request_id or "")
         with self._lock:
             request = self._requests.get(rid)
@@ -396,16 +420,29 @@ class CapabilityRegistry:
                 return {"ok": False, "error": "request_denied", "request_id": rid}
             if request["state"] == "completed":
                 return dict(request.get("result") or {"ok": False, "error": "already_completed"})
+            if request["state"] == "approved":
+                # 另一个审批动作已在执行这一请求。重复提交必须在这里挡下，
+                # 否则同一个副作用操作会被跑两遍。
+                return {"ok": False, "error": "request_in_flight", "request_id": rid}
             request["state"] = "approved"
+            # 授权范围锁死在请求产生时的身份/会话/目标上；审批方传值只能
+            # 收窄（留空），不能改成别人或别的目标。
+            req_identity = str(identity or request["identity"] or "")
+            req_session = str(session or request["session"] or "")
+            req_target = str(target or request["target"] or "")
+        # 双方都不知道身份时维持历史语义（无身份调用方按 "*" 校验）；
+        # 只要知道其中一方，授权就绑定到那个身份，绝不放大成 "*"。
+        grant_identity = req_identity or "*"
+        ttl = self.DEFAULT_GRANT_TTL if grant_ttl is None else float(grant_ttl or 0)
         grant = self.grant(request["capability"], request["operation"],
-                           identity=identity or request["identity"] or "*",
-                           session=session or request["session"],
-                           target=target or request["target"],
-                           ttl=grant_ttl, source="approval:" + rid)
-        result = self.invoke(request["capability"], request["operation"],
-                             request["args"], identity=identity or request["identity"],
-                             session=session or request["session"],
-                             target=target or request["target"])
+                           identity=grant_identity, session=req_session,
+                           target=req_target, ttl=ttl, source="approval:" + rid)
+        try:
+            result = self.invoke(request["capability"], request["operation"],
+                                 request["args"], identity=req_identity,
+                                 session=req_session, target=req_target)
+        finally:
+            self.revoke(grant.grant_id)
         with self._lock:
             request["state"] = "completed"
             request["result"] = copy.deepcopy(result)
@@ -578,8 +615,25 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
             import plugin_host
             REGISTRY.register("plugins_skills", status=_safe_status(lambda: {
                 "connected": True, "state": "ready", "plugins": len(plugin_host.listing()),
-            }), source="brain.plugin_host", operations={
-                "list": {"permission": READ, "handler": lambda _a: plugin_host.listing()},
+            }), source="brain.plugin_manager", operations={
+                # 查询是只读的：插件清单与单个插件的真实状态直接来自
+                # plugin_manager，不经任何缓存或模型转述。
+                "list": {"permission": READ, "handler": _plugin_list_handler},
+                "plugin_status": {"permission": READ,
+                                  "handler": lambda a: _plugin_status_handler(a)},
+                # 启用/禁用/卸载会改变插件生命周期，全部需要审批后的一次性
+                # 授权。实现只委托 plugin_manager 的既有接口，不另起一套。
+                "enable": {"permission": WRITE,
+                           "handler": lambda a: _plugin_lifecycle_handler("enable", a)},
+                "disable": {"permission": WRITE,
+                            "handler": lambda a: _plugin_lifecycle_handler("disable", a)},
+                "uninstall": {"permission": WRITE,
+                              "handler": lambda a: _plugin_lifecycle_handler("uninstall", a)},
+                "skill_status": {"permission": READ, "handler": _skill_status_handler},
+                "skill_list": {"permission": READ, "handler": _skill_list_handler},
+                "skill_install": {"permission": WRITE, "handler": _skill_install_handler},
+                "skill_uninstall": {"permission": WRITE, "handler": _skill_uninstall_handler},
+                "skill_reload": {"permission": WRITE, "handler": _skill_reload_handler},
             })
         except Exception as exc:
             REGISTRY.register("plugins_skills", status={"connected": False, "state": "unavailable",
@@ -816,6 +870,148 @@ def _kb_reindex_handler(args):
         src=args.get("src") or "pc",
     )
     return {"ok": True, "reindexed": result}
+
+
+# --------------------------------------------------------------------------
+# plugins_skills handlers（P20.2）
+# --------------------------------------------------------------------------
+
+def _plugin_list_handler(args):
+    """插件清单：直接来自 plugin_manager 的真实状态，无缓存无转述。"""
+    import plugin_manager
+    return {"ok": True, "plugins": plugin_manager.list_plugins()}
+
+
+def _plugin_status_handler(args):
+    import plugin_manager
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required",
+                "detail": "要指明插件名才能查状态"}
+    item = plugin_manager.status(name)
+    if not item.get("installed"):
+        return {"ok": False, "error": "not_installed",
+                "detail": "插件不存在：%s" % name}
+    return {"ok": True, "plugin": item}
+
+
+def _plugin_lifecycle_handler(action, args):
+    """启用/禁用/卸载插件：只委托 plugin_manager，内置不可卸载由它保护。"""
+    import plugin_manager
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name_required", "detail": "要指明插件名"}
+    if action == "enable":
+        ok, detail = plugin_manager.enable(name)
+    elif action == "disable":
+        ok, detail = plugin_manager.disable(name)
+    elif action == "uninstall":
+        ok, detail = plugin_manager.uninstall(name, purge_data=bool(args.get("purge_data")))
+    else:
+        return {"ok": False, "error": "operation_not_supported"}
+    out = dict(detail if isinstance(detail, dict) else {})
+    # plugin_manager 用 err 字段报错；registry 回执统一 error。
+    if not ok:
+        out["ok"] = False
+        out["error"] = str(out.pop("err", "") or action + "_failed")
+    out["ok"] = bool(ok and out.get("ok", True))
+    out["action"] = action
+    # 复核：不信任返回码，重读真实状态作为执行证据。
+    current = plugin_manager.status(name)
+    out["after"] = {k: current.get(k) for k in
+                    ("installed", "enabled", "source_kind", "builtin",
+                     "removable", "state", "runtime_state")}
+    return out
+
+
+def _skill_module():
+    from plugins import skill as _skill
+    return _skill
+
+
+def _skill_host_offline() -> dict[str, Any]:
+    return {"ok": False, "error": "skill_host_offline",
+            "status": RUN_UNAVAILABLE,
+            "detail": "Skill Host（Node）未运行，此操作不会生效，已停止。请先启动技能宿主。"}
+
+
+def _skill_status_handler(args):
+    skill = _skill_module()
+    alive = skill.host_alive()
+    return {"ok": True, "host_alive": alive,
+            "skills": skill.list_skills() if alive else [],
+            "detail": "" if alive else "Skill Host 未运行；技能清单不可用"}
+
+
+def _skill_list_handler(args):
+    skill = _skill_module()
+    return {"ok": True, "skills": skill.list_skills()}
+
+
+def _skill_install_handler(args):
+    """安装 Skill：只接受面板已上传的安装包内容（zip_b64），不接受网址。
+
+    安装 API 返回成功不等于技能可用——装后必须由 Skill Host 清单确认
+    （_host_has_skill），Host 不在线时根本不落盘。
+    """
+    import base64 as _b64
+    skill = _skill_module()
+    raw_b64 = str(args.get("zip_b64") or "").strip()
+    if not raw_b64:
+        return {"ok": False, "error": "zip_b64_required",
+                "detail": "Skill 安装需要上传的安装包内容；不能凭一个网址安装，"
+                          "也不会把任意网址当作可信安装源"}
+    if not skill.host_alive():
+        return _skill_host_offline()
+    try:
+        raw = _b64.b64decode(raw_b64, validate=False)
+    except Exception as exc:
+        return {"ok": False, "error": "invalid_base64", "detail": str(exc)[:160]}
+    result = skill._install_zip(raw, note="capability")
+    out = dict(result if isinstance(result, dict) else {})
+    if "err" in out and "error" not in out:
+        out["error"] = str(out.pop("err"))
+    out["ok"] = bool(out.get("ok"))
+    if out["ok"]:
+        # 装后核验：Host 清单里必须真的看得见这个包，且工具清单非空。
+        verify = skill._host_has_skill(out.get("skill") or "", "")
+        out["verified_on_host"] = bool(verify.get("ok"))
+        if not out["verified_on_host"]:
+            out["ok"] = False
+            out["status"] = RUN_UNKNOWN
+            out["error"] = "install_unverified"
+            out["detail"] = "安装事务成功但 Skill Host 未确认该技能：%s" % (
+                verify.get("err") or "清单中不存在")
+    return out
+
+
+def _skill_uninstall_handler(args):
+    skill = _skill_module()
+    pkg = str(args.get("skill") or args.get("package") or args.get("name") or "").strip()
+    if not pkg:
+        return {"ok": False, "error": "skill_required", "detail": "要指明技能包名"}
+    if not skill.host_alive():
+        return _skill_host_offline()
+    result = skill._uninstall(pkg)
+    out = dict(result if isinstance(result, dict) else {})
+    if "err" in out and "error" not in out:
+        out["error"] = str(out.pop("err"))
+    out["ok"] = bool(out.get("ok"))
+    return out
+
+
+def _skill_reload_handler(args):
+    skill = _skill_module()
+    if not skill.host_alive():
+        return _skill_host_offline()
+    try:
+        d = skill._post_json("/reload", {}, 30)
+        with skill._cache_lock:
+            skill._cache["at"] = 0.0
+            skill._cache["tools"] = []
+        return {"ok": True, "reloaded": d.get("reloaded")}
+    except Exception as exc:
+        return {"ok": False, "error": "reload_failed", "detail": str(exc)[:160]}
 
 
 def _codex_create_task(codex: Any, args: Mapping[str, Any]) -> dict[str, Any]:
