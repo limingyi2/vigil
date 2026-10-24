@@ -315,6 +315,13 @@ def main(installer, baseline, output=None, expected_source_commit=None):
 
         setup(installer)  # Same production appId and install path as the official 1.0.2 baseline.
         check()
+        plugin_chat = {
+            'installed_and_loaded': ModelFixture.smoke_schema_seen,
+            'tool_schema_sent': ModelFixture.smoke_schema_seen,
+            'model_requested_tool': ModelFixture.smoke_tool_call_requested,
+            'tool_result_returned': ModelFixture.smoke_tool_result_received,
+        }
+        assert all(plugin_chat.values()), 'Installed smoke_ping tool call did not complete end-to-end'
         assert marker.read_text(encoding='utf-8') == 'fixture retained'
         assert_migrated(profile, fixture)
         installed_smoke_plugin = profile / 'brain/data/installed_plugins/vigil_smoke.py'
@@ -375,6 +382,7 @@ def main(installer, baseline, output=None, expected_source_commit=None):
                        'sha256': release['sha256'], 'size': release['size']},
             'fresh_install': True,
             'real_version_upgrade': True,
+            'legacy_profile_contents_are_isolated_fixtures': True,
             'plugin_uninstall_then_client_upgrade_did_not_reinstall': True,
             'data_migration': {'model_config': True, 'chat_history': True, 'creator_draft': True,
                                'plugins': True, 'skill': True, 'other_user_data': True},
@@ -390,17 +398,13 @@ def main(installer, baseline, output=None, expected_source_commit=None):
                                           'native_confirm_not_used': True,
                                           'video_choices_inline': True,
                                           'attachment_cancellation': True},
-            'plugin_chat': {'installed_and_loaded': ModelFixture.smoke_schema_seen,
-                            'tool_schema_sent': ModelFixture.smoke_schema_seen,
-                            'model_requested_tool': ModelFixture.smoke_tool_call_requested,
-                            'tool_result_returned': ModelFixture.smoke_tool_result_received},
+            'plugin_chat': plugin_chat,
             'brain_start_failure_blocked_and_rolled_back': True,
             'install_checkpoint_failure_kept_previous_install': True,
             'rollback_restored_exact_official_baseline': True,
             'daily_install_touched': False,
             'test_root': str(root),
         }
-        assert all(report['plugin_chat'].values()), 'Installed smoke_ping tool call did not complete end-to-end'
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
         print(json.dumps(report))
