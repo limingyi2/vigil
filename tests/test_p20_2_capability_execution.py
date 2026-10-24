@@ -901,3 +901,145 @@ class NestedSanitizeTests(unittest.TestCase):
         self.assertEqual(items[1][0]['token'], '[已省略]')
         self.assertEqual(items[1][1], 'plain')
         self.assertEqual(items[1][2]['deep']['password'], '[已省略]')
+
+
+class ExecutingDedupTests(unittest.TestCase):
+    """反例：executing 状态的请求也必须去重 —— 执行期间相同 invoke
+    不得产生第二个可执行审批；完成后允许有意重复。"""
+
+    def test_executing_request_dedupes_and_allows_intentional_repeat(self):
+        import threading
+        r = _registry()
+        release = threading.Event()
+        started = threading.Event()
+        calls = []
+
+        def slow_handler(a):
+            calls.append(a)
+            started.set()
+            release.wait(5)
+            return {'ok': True}
+
+        r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write', 'handler': slow_handler}})
+        first = r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc')
+        self.assertEqual(first['status'], 'awaiting_authorization')
+
+        approver = threading.Thread(target=lambda: r.approve(first['request_id']))
+        approver.start()
+        self.assertTrue(started.wait(5))
+
+        # 执行期间：相同指纹的第二次 invoke 复用原请求，拿到 executing 状态
+        second = r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc')
+        self.assertEqual(second['request_id'], first['request_id'])
+        self.assertEqual(second['status'], 'awaiting_authorization')
+        # 不存在第二个可执行审批请求
+        pendings = [x for x in r.requests() if x['state'] == 'pending']
+        self.assertEqual(pendings, [])
+
+        release.set()
+        approver.join(5)
+        self.assertEqual(len(calls), 1)
+
+        # 操作完成后：用户有意重复同一操作 → 允许，产生新的 pending 请求
+        third = r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc')
+        self.assertEqual(third['status'], 'awaiting_authorization')
+        self.assertNotEqual(third['request_id'], first['request_id'])
+        pendings = [x for x in r.requests() if x['state'] == 'pending']
+        self.assertEqual(len(pendings), 1)
+        self.assertEqual(pendings[0]['request_id'], third['request_id'])
+
+    def test_executing_request_distinguishes_fingerprints(self):
+        import threading
+        r = _registry()
+        release = threading.Event()
+        started = threading.Event()
+
+        def slow_handler(a):
+            started.set()
+            release.wait(5)
+            return {'ok': True}
+
+        r.register('t', status={'connected': True}, operations={
+            'w': {'permission': 'write', 'handler': slow_handler}})
+        first = r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc',
+                         session='conv1')
+        approver = threading.Thread(target=lambda: r.approve(first['request_id']))
+        approver.start()
+        self.assertTrue(started.wait(5))
+
+        # 不同参数 → 不同请求
+        other_args = r.invoke('t', 'w', {'name': 'B'}, identity='owner:pc',
+                              session='conv1')
+        # 不同身份 → 不同请求
+        other_identity = r.invoke('t', 'w', {'name': 'A'}, identity='device:wechat',
+                                  session='conv1')
+        # 不同会话 → 不同请求
+        other_session = r.invoke('t', 'w', {'name': 'A'}, identity='owner:pc',
+                                 session='conv2')
+        for other in (other_args, other_identity, other_session):
+            self.assertEqual(other['status'], 'awaiting_authorization')
+            self.assertNotEqual(other['request_id'], first['request_id'])
+
+        release.set()
+        approver.join(5)
+        ids = {first['request_id'], other_args['request_id'],
+               other_identity['request_id'], other_session['request_id']}
+        self.assertEqual(len(ids), 4)
+
+
+class CompoundSanitizeTests(unittest.TestCase):
+    """复合敏感字段（api_key/access_token/refresh_token/client_secret）
+    在嵌套字典与多层列表中都被脱敏；普通字段不被误伤。"""
+
+    def _request_with_compound_args(self, r):
+        args = {
+            'api_key': 'A' * 300,
+            'apiKey': 'A2' * 200,
+            'nested': {'access_token': 'B' * 300, 'note': 'keep-me'},
+            'items': [
+                {'refresh_token': 'C' * 300},
+                [{'client_secret': 'D' * 300}, 'plain', {'deep': {'api_key': 'E' * 300}}],
+            ],
+            'keyboard': '普通字段保留',
+            'data_source': '不被误伤',
+        }
+        r.request_authorization('plugins_skills', 'skill_install', args,
+                                identity='owner:pc')
+        return args
+
+    def test_public_view_redacts_compound_keys(self):
+        r = _registry()
+        self._request_with_compound_args(r)
+        args = r.requests(public=True)[0]['args']
+        self.assertEqual(args['api_key'], '[已省略]')
+        self.assertEqual(args['apiKey'], '[已省略]')
+        self.assertEqual(args['nested']['access_token'], '[已省略]')
+        self.assertEqual(args['nested']['note'], 'keep-me')
+        self.assertEqual(args['items'][0]['refresh_token'], '[已省略]')
+        self.assertEqual(args['items'][1][0]['client_secret'], '[已省略]')
+        self.assertEqual(args['items'][1][1], 'plain')
+        self.assertEqual(args['items'][1][2]['deep']['api_key'], '[已省略]')
+        self.assertEqual(args['keyboard'], '普通字段保留')
+        self.assertEqual(args['data_source'], '不被误伤')
+
+    def test_result_view_redacts_too(self):
+        r = _registry()
+        r.request_authorization('t', 'w', {'name': 'A'}, identity='owner:pc')
+        rid = list(r._requests)[0]
+        with r._lock:
+            r._requests[rid]['state'] = 'completed'
+            r._requests[rid]['result'] = {
+                'ok': True,
+                'result': {'api_key': 'LEAK', 'nested': {'client_secret': 'LEAK2'},
+                           'keyboard': 'fine'}}
+        public = r.requests(public=True)[0]
+        self.assertEqual(public['result']['result']['api_key'], '[已省略]')
+        self.assertEqual(public['result']['result']['nested']['client_secret'], '[已省略]')
+        self.assertEqual(public['result']['result']['keyboard'], 'fine')
+
+    def test_internal_view_keeps_original_values(self):
+        r = _registry()
+        original = self._request_with_compound_args(r)
+        full = r.requests(public=False)[0]['args']
+        self.assertEqual(full, original)

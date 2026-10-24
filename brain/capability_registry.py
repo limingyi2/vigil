@@ -31,6 +31,7 @@ capability operation was allowed".  The identity of the caller is now an
 from __future__ import annotations
 
 import copy
+import re
 import threading
 import time
 import uuid
@@ -384,8 +385,12 @@ class CapabilityRegistry:
             fingerprint = self._request_fingerprint(key, op, identity, session,
                                                     req_target, norm_args)
             for item in self._requests.values():
+                # 去重覆盖 pending 与 executing：同一请求正在执行时，
+                # 相同指纹的第二次 invoke 复用原请求（拿到 executing 状态），
+                # 绝不创建第二个可执行审批。completed/denied 不去重 ——
+                # 用户有意重复同一个操作必须能再次发起。
                 if (item["fingerprint"] == fingerprint
-                        and item["state"] in ("pending", "approved")):
+                        and item["state"] in ("pending", "executing")):
                     return copy.deepcopy(item)
             rid = "capr_" + uuid.uuid4().hex[:12]
             request = {"request_id": rid, "capability": key, "operation": op,
@@ -430,20 +435,42 @@ class CapabilityRegistry:
             items = [self._public_request(v) for v in items]
         return items
 
-    _SENSITIVE_ARG_KEYS = ("zip_b64", "data", "content", "password", "token",
-                           "secret", "key", "credential", "authorization")
+    # 🔴 敏感字段识别按**组成部分**判定，不做裸子串匹配：api_key /
+    # access_token / refresh_token / client_secret 都能命中（api、access、
+    # refresh、client、token 等组成部分），而 keyboard、monkey、keyframe
+    # 这类恰好包含子串的普通字段不受影响。data/content/zip_b64 等整字段
+    # 名保持精确匹配。
+    _SENSITIVE_TOKENS = frozenset({
+        'api', 'access', 'refresh', 'client', 'secret', 'token', 'password',
+        'passwd', 'pwd', 'credential', 'credentials', 'auth', 'authorization',
+        'apikey', 'private', 'b64', 'key'})
+    _SENSITIVE_EXACT = frozenset({
+        'zip_b64', 'data', 'content', 'secret', 'password', 'token',
+        'credential', 'authorization'})
+    _TOKEN_RE = re.compile(r'[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+')
     _ARG_VALUE_LIMIT = 160
+
+    @classmethod
+    def _is_sensitive_key(cls, name: Any) -> bool:
+        raw = str(name or '').strip()
+        if not raw:
+            return False
+        if raw.lower() in cls._SENSITIVE_EXACT:
+            return True
+        # camelCase / snake_case / kebab-case 统一拆成组成部分
+        tokens = {t.lower() for t in cls._TOKEN_RE.findall(raw)}
+        return bool(tokens & cls._SENSITIVE_TOKENS)
 
     @classmethod
     def _sanitize_value(cls, value: Any) -> Any:
         if isinstance(value, Mapping):
-            return {k: ("[已省略]" if str(k).lower() in cls._SENSITIVE_ARG_KEYS
-                        else cls._sanitize_value(v)) for k, v in value.items()}
+            return {k: ('[已省略]' if cls._is_sensitive_key(k) else cls._sanitize_value(v))
+                    for k, v in value.items()}
         if isinstance(value, list):
             return [cls._sanitize_value(v) for v in value[:20]]
         text = str(value)
         if len(text) > cls._ARG_VALUE_LIMIT:
-            return text[:cls._ARG_VALUE_LIMIT] + "…[截断]"
+            return text[:cls._ARG_VALUE_LIMIT] + '…[截断]'
         return value
 
     @classmethod
