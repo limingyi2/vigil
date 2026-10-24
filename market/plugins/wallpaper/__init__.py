@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 NAME = "wallpaper"
-VERSION = "4.1.5"
+VERSION = "4.1.6"
 DESC = "独立 Wallpaper Engine 壁纸：Scene/WebGL、视频、网页与高质量界面适配"
 FEATURE = "wallpaper"
 
@@ -58,9 +58,9 @@ def _load_config() -> dict[str, Any]:
     for key, value in raw.items():
         if key in cfg:
             cfg[key] = value
-    # 4.1.5：旧版默认 opacity 0.52 / scrim 0.24 会给整窗蒙一层雾，一次性
+    # 4.1.6：旧版默认 opacity 0.52 / scrim 0.24 会给整窗蒙一层雾，一次性
     # 重置这两项（其余用户自定设置保留），标记文件避免重复打扰。
-    marker = DATA_DIR / ".migrated-4.1.5"
+    marker = DATA_DIR / ".migrated-4.1.6"
     if not marker.exists():
         cfg["opacity"] = 1.0
         cfg["scrim"] = 0.0

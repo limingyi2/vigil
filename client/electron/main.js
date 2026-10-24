@@ -653,8 +653,10 @@ function openSettingsWindow(options) {
   }, 3500);
   created.webContents.once('did-finish-load', () => {
     settingsWinReady = true;
+    // 设置窗口迟到：补注入插件前端（壁纸/玻璃主题），不重复打扰主窗口。
+    injectPluginFrontends(created).catch(() => {});
     if (pendingSettingsTarget && !created.isDestroyed()) {
-      created.webContents.send('settings:navigate', pendingSettingsTarget);
+      settingsWin.webContents.send('settings:navigate', pendingSettingsTarget);
       pendingSettingsTarget = null;
     }
   });
@@ -873,34 +875,44 @@ function startPolling() {
 //  插件 JS 或 XSS 都能借它执行任意脚本）。现在由主进程自己拉
 // /api/plugins/frontend（带服务端 token，渲染层碰不到），只注入
 // 管理员已审核安装的插件代码；渲染层能做的只是"请加载一次"。
+// 把已审核插件的 JS 注入指定窗口（主窗口 + 设置窗口共用）。
+// targets 缺省注入所有窗口；显式传参时只注入给定窗口（设置窗口迟到场景）。
+async function injectPluginFrontends(onlyTarget) {
+  const cfg0 = readCfg();
+  const b = connectionBase(cfg0);
+  if (!b) return { ok: false, loaded: 0, err: '本地 Brain 未就绪' };
+  const token = await getToken();
+  const r = await request('GET', b + '/api/plugins/frontend', null, token, 8000);
+  if (!r.ok || !r.json) return { ok: false, loaded: 0, err: '拉取插件资源失败' };
+  const plugins = Array.isArray(r.json.plugins) ? r.json.plugins : [];
+  let loaded = 0;
+  const errors = [];
+  const targets = onlyTarget ? [onlyTarget] : [win, settingsWin].filter((w) => w && !w.isDestroyed());
+  for (const p of plugins) {
+    if (!p.enabled || !p.js) continue;
+    const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
+    const wrapped =
+      '(function(){\nconst vp=window.VigilPlugin;const prev=vp&&vp._currentOwner;if(vp)vp._currentOwner=' + JSON.stringify(name) + ';\ntry{\n' + String(p.js) +
+      '\n}catch(e){console.error("[插件 ' + name + ' 前端出错]",e);}\nfinally{if(vp)vp._currentOwner=prev;}\n})();';
+    try {
+      for (const target of targets) {
+        await target.webContents.executeJavaScript(wrapped);
+      }
+      loaded += 1;
+    } catch (err) {
+      console.error('[plugins:load] 插件', name, '执行失败:', err);
+      errors.push(name + '（' + String(err && err.message || err).slice(0, 80) + '）');
+    }
+  }
+  return { ok: true, loaded, version: r.json.version || 0, errors };
+}
+
 ipcMain.handle('plugins:load', async () => {
   try {
     if (!win || win.isDestroyed()) return { ok: false, loaded: 0, err: '窗口没准备好' };
-    const cfg0 = readCfg();
     const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
-    const b = connectionBase(cfg0);
-    if (!b) return {ok:false,status:0,err:sidecar.status().lastErr || '本地 Brain 未就绪'};
-    const token = await getToken();
-    const r = await request('GET', b + '/api/plugins/frontend', null, token, 8000);
-    if (!r.ok || !r.json) return { ok: false, loaded: 0, err: '拉取插件资源失败' };
-    const plugins = Array.isArray(r.json.plugins) ? r.json.plugins : [];
-    let loaded = 0;
-    const errors = [];
-    for (const p of plugins) {
-      if (!p.enabled || !p.js) continue;
-      const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
-      const wrapped =
-        '(function(){\nconst vp=window.VigilPlugin;const prev=vp&&vp._currentOwner;if(vp)vp._currentOwner=' + JSON.stringify(name) + ';\ntry{\n' + String(p.js) +
-        '\n}catch(e){console.error("[插件 ' + name + ' 前端出错]",e);}\nfinally{if(vp)vp._currentOwner=prev;}\n})();';
-      try {
-        await win.webContents.executeJavaScript(wrapped);
-        loaded += 1;
-      } catch (err) {
-        console.error('[plugins:load] 插件', name, '执行失败:', err);
-        errors.push(name + '（' + String(err && err.message || err).slice(0, 80) + '）');
-      }
-    }
-    return { ok: true, loaded, version: r.json.version || 0, errors };
+    if (!sidecarOk && !connectionBase(readCfg())) return { ok: false, status: 0, err: sidecar.status().lastErr || '本地 Brain 未就绪' };
+    return await injectPluginFrontends();
   } catch (err) {
     return { ok: false, loaded: 0, err: String(err && err.message || err) };
   }

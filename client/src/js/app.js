@@ -472,7 +472,9 @@
     } else {
       void go(state.page).then(() => perf('first-usable'));
     }
-    if (!settingsWindow) void loadPluginFrontends();
+    // 设置窗口也要加载插件前端：壁纸/玻璃主题需要在设置窗口里同样生效
+    //（此前只有主窗口注入，设置窗口永远是白底硬框）。
+    void loadPluginFrontends();
 
     // 先按存下来的地址连一次；连不上且在 Electron 里就自己再找一遍。
     // 没有这段：换过地址（隧道 ↔ 本机）后会一直停在"未连接"，
@@ -517,8 +519,8 @@
       try {
         const r = await get('/api/plugins/frontend');
         if (r && r.ok && r.json && r.json.version) {
-          if (!settingsWindow && lastPluginVersion === 0) await loadPluginFrontends();
-          else if (!settingsWindow && Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) await loadPluginFrontends();
+          if (lastPluginVersion === 0) await loadPluginFrontends();
+          else if (Array.isArray(r.json.plugins) && pluginFingerprint(r.json.plugins) !== lastPluginVersion) await loadPluginFrontends();
         }
       } catch (_) { /* 静默 */ }
     }, 10000);
