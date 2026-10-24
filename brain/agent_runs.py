@@ -2009,11 +2009,13 @@ def _tool(rid, owner, started, call, ctx):
             # 落进步骤之前，run 可能已被取消。这时迟到的待审批请求必须
             # 在服务端安全拒绝（deny 真状态，不是只改前端显示），否则会
             # 留下一张几小时后还能执行副作用的僵尸卡片。
+            # 复用已有请求时（第二次相同 invoke 命中 executing），卡片要
+            # 显示"正在执行"而不是一笔新的待审批 —— 状态取自 registry。
             if item['status'] != 'running':
                 _deny_pending_approvals({'steps': [step]})
                 step['approval']['state'] = 'denied'
             else:
-                step['approval'].setdefault('state', 'pending')
+                step['approval']['state'] = str(awaiting.get('request_state') or 'pending')
         db.execute('UPDATE calls SET state=?,result=? WHERE run_id=? AND signature=?',
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)

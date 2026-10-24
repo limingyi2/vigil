@@ -1383,20 +1383,29 @@
           card.dataset.capDecorated = '1';
           return;
         }
+        if (action === 'approve' && r && r.ok === false && r.error === 'request_not_found') {
+          // Brain 重启导致内存请求丢失：失效卡片不能保留可点的按钮。
+          const actions2 = card.querySelector('.cap-approval-actions');
+          if (actions2) actions2.outerHTML = '<div class="cap-approval-state cap-stale">审批已失效，请重新发起</div>';
+          card.dataset.capDecorated = '1';
+          return;
+        }
         renderCapabilityOutcome(card, action, r);
       } catch (err) {
         if (actions) actions.innerHTML = '<div class="cap-approval-state cap-fail">请求失败：'
           + esc(String((err && err.message) || err).slice(0, 120)) + '</div>';
       }
     });
-    // 历史会话回填：卡片的当前状态以 Brain 里的审批请求为准 ——
-    // pending 才有按钮；executing/approved 显示执行中（不可重复操作）；
-    // completed 显示真实结果；denied 显示已拒绝。查询带当前会话过滤，
-    // 拿不到对应状态时回退一次全量（管理员可见全部），不猜状态。
+    // 历史会话回填：卡片状态以服务端为准 —— pending 才有按钮；
+    // executing/approved 显示执行中（不可重复操作）；completed 显示真实
+    // 结果；denied 显示已拒绝；服务端查不到 request_id（Brain 重启后内存
+    // 请求丢失）显示"审批已失效"。查询带当前会话过滤，无匹配时回退一次
+    // 全量（管理员可见全部）。两次查询都成功才允许判定失效；查询本身
+    // 失败时保持原样，绝不把未知状态误判成已拒绝或已成功。
     async function decorateCapabilityApprovals(sessionId) {
       const cards = [...msgs.querySelectorAll('.cap-approval[data-cap-request-id]')];
       if (!cards.length) return;
-      const fetchRequests = async (withSession) => {
+      const fetchMap = async (withSession) => {
         const path = '/api/capabilities/requests'
           + (withSession && sessionId
             ? '?session=' + encodeURIComponent(sessionId) : '');
@@ -1405,29 +1414,33 @@
         for (const item of (r && r.requests) || []) map[item.request_id] = item;
         return map;
       };
-      let byId = {};
+      let byId = null;
       try {
-        byId = await fetchRequests(true);
-        const missing = cards.some((card) =>
-          !card.dataset.capDecorated && !byId[card.dataset.capRequestId]);
-        if (missing) byId = await fetchRequests(false);
+        byId = await fetchMap(true);
+        if (cards.some((card) => !byId[card.dataset.capRequestId])) {
+          byId = Object.assign({}, byId, await fetchMap(false));
+        }
       } catch (_) { return; }
-      for (const card of cards) {
-        if (card.dataset.capDecorated) continue;
-        const req = byId[card.dataset.capRequestId];
-        if (!req || req.state === 'pending') continue;
+      for (const { card, action, request } of global.VigilAgentView.approvalResolutions(cards, byId)) {
+        if (action === 'skip') continue;
         card.dataset.capDecorated = '1';
-        if (req.state === 'executing' || req.state === 'approved') {
+        if (action === 'stale') {
+          const actions = card.querySelector('.cap-approval-actions');
+          if (actions) actions.outerHTML = '<div class="cap-approval-state cap-stale">审批已失效，请重新发起</div>';
+          continue;
+        }
+        if (action === 'pending') continue;
+        if (action === 'executing' || action === 'approved') {
           const actions = card.querySelector('.cap-approval-actions');
           if (actions) actions.innerHTML = '<div class="cap-approval-state cap-running">正在执行…</div>';
           continue;
         }
-        if (req.state === 'denied') {
-          renderCapabilityOutcome(card, 'deny', req.result || {});
+        if (action === 'denied') {
+          renderCapabilityOutcome(card, 'deny', request.result || {});
           continue;
         }
-        if (req.state === 'completed') {
-          renderCapabilityOutcome(card, 'approve', req.result || {});
+        if (action === 'completed') {
+          renderCapabilityOutcome(card, 'approve', request.result || {});
         }
       }
     }

@@ -631,6 +631,9 @@ class CapabilityRegistry:
                             "status": RUN_AWAITING, "error": "authorization_required",
                             "permission": decision.get("permission"),
                             "request_id": request["request_id"],
+                            # 复用已存在的请求时（比如命中 executing），调用方
+                            # 据此知道这不是一笔新的待审批操作。
+                            "request_state": request["state"],
                             "receipts": [receipt]}
                 return {"ok": False, "task_id": tid, "capability": key, "operation": op,
                         "status": RUN_UNAVAILABLE, "error": reason, "receipts": [receipt]}

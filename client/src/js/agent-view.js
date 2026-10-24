@@ -105,6 +105,10 @@
     if(state==='denied' || a.denied){
       return head+'<div class="cap-approval-state cap-denied">已拒绝，未执行</div></div>';
     }
+    if(state==='stale' || state==='missing'){
+      // Brain 重启后内存中的审批请求已丢失：不能留下能点的确认按钮。
+      return head+'<div class="cap-approval-state cap-stale">审批已失效，请重新发起</div></div>';
+    }
     if(state==='completed'){
       const r=a.result || {};
       const st=String(r.status || '');
@@ -209,6 +213,19 @@
       '<div class="agent-coding-meta">自动修复 '+esc(coding.repair_count||0)+' 次</div>'+
       (coding.diff?'<details><summary>查看 Diff</summary><pre>'+esc(coding.diff)+'</pre></details>':'')+'</section>';
   }
-  const api={step,elapsed,redact,codingSummary,approvalCard};root.VigilAgentView=api;
+  // 历史回填的纯决策函数：给定卡片集合与服务端请求映射，决定每张卡片
+  // 的处置。服务端查不到的 request_id（Brain 重启后内存请求丢失）按
+  // stale 处置 —— 失效卡片不显示确认按钮；已处置过的跳过。
+  function approvalResolutions(cards, byId){
+    if (!byId) return [];   // 查询失败：不产生任何处置，调用方保持卡片原样
+    return (cards||[]).map((card)=>{
+      const rid=card.dataset && card.dataset.capRequestId;
+      if(card.dataset && card.dataset.capDecorated)return {card,action:'skip'};
+      const req=rid ? byId[rid] : undefined;
+      if(!req)return {card,action:'stale'};
+      return {card,action:req.state,request:req};
+    });
+  }
+  const api={step,elapsed,redact,codingSummary,approvalCard,approvalResolutions};root.VigilAgentView=api;
   if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

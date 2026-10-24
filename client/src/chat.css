@@ -725,3 +725,4 @@ body.settings-window .primary-nav-toggle{display:none}
 .chatwrap .agent-step[data-state="awaiting_authorization"] summary span{color:var(--warn,#b8860b)}
 .chatwrap .cap-approval-state.cap-unknown{color:var(--warn,#b8860b)}
 .chatwrap .cap-approval-params{margin-top:4px;padding-top:4px;border-top:1px dashed var(--line,#ddd)}
+.chatwrap .cap-approval-state.cap-stale{color:var(--muted)}
