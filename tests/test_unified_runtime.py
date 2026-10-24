@@ -12,7 +12,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'brain'))
-from home_migration import migrate, seed_plugins
+from home_migration import migrate, seed_core_features
 
 
 class ManagedMigration(unittest.TestCase):
@@ -82,20 +82,20 @@ class ManagedMigration(unittest.TestCase):
 
 
 class BuildPolicy(unittest.TestCase):
-    def test_shipped_plugin_updates_do_not_overwrite_custom_code(self):
+    def test_shipped_core_feature_updates_do_not_overwrite_custom_code(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             bundle, home = root / 'bundle', root / 'home'
             bundle.mkdir()
             (bundle / 'fixture.py').write_text('old stock')
-            seed_plugins(bundle, home)
+            seed_core_features(bundle, home)
             (bundle / 'fixture.py').write_text('new stock')
-            seed_plugins(bundle, home)
-            self.assertEqual((home / 'plugins/fixture.py').read_text(), 'new stock')
-            (home / 'plugins/fixture.py').write_text('user custom')
+            seed_core_features(bundle, home)
+            self.assertEqual((home / 'core_features/fixture.py').read_text(), 'new stock')
+            (home / 'core_features/fixture.py').write_text('user custom')
             (bundle / 'fixture.py').write_text('newer stock')
-            seed_plugins(bundle, home)
-            self.assertEqual((home / 'plugins/fixture.py').read_text(), 'user custom')
+            seed_core_features(bundle, home)
+            self.assertEqual((home / 'core_features/fixture.py').read_text(), 'user custom')
 
     def test_runtime_contract_does_not_expose_config(self):
         import build_identity

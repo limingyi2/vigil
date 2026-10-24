@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""验react.py：import 修好了没+ 解析逻辑没被改坏。
+"""验 core_features/react.py：import 修好了没+ 解析逻辑没被改坏。
 
 先查 import —— 原来的 bug 是 `from config import ...`，而 brain/ 下
 没有 config.py，异常被 except 吞掉，_cfg() 永远返回 {}，插件静默不干活。
@@ -30,8 +30,8 @@ def chk(ok, label, detail=""):
 
 print("== 1. 模块能导入 ==")
 try:
-    react = importlib.import_module("plugins.react")
-    chk(True, "import plugins.react")
+    react = importlib.import_module("core_features.react")
+    chk(True, "import core_features.react")
 except Exception as exc:
     chk(False, "import plugins.react", "%s: %s" % (type(exc).__name__, exc))
     print("\n导入就炸了，后面的测不了")

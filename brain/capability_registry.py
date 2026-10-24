@@ -1067,7 +1067,7 @@ def _plugin_lifecycle_handler(action, args):
 
 
 def _skill_module():
-    from plugins import skill as _skill
+    from core_features import skill as _skill
     return _skill
 
 

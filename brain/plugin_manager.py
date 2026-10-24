@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""统一插件生命周期管理器。
+"""统一核心能力与用户扩展生命周期管理器。
 
 安装格式由 :mod:`plugin_ops` 继续负责，运行时由 :mod:`plugin_host` 负责；
 本模块是两者之间的唯一生命周期协调层。它保存兼容的注册表元数据，提供
@@ -67,7 +67,7 @@ def _set_state(name, **patch):
 def _source(name, runtime=None):
     """Classify the code currently selected by plugin_host.
 
-    An installed plugin may intentionally override a core plugin with the same
+    An installed extension may intentionally override a core feature with the same
     name. Resolve the loaded path first so that only the user copy is removable.
     """
     try:
@@ -95,7 +95,7 @@ def _source(name, runtime=None):
                 continue
         # Prefer the deepest matching root (installed overlays live beneath a
         # broader application root); on identical roots, default to protected
-        # builtin ownership.
+        # core-feature ownership.
         if matches:
             return sorted(matches, key=lambda item: (item[0], item[1] == "builtin"),
                            reverse=True)[0][1]

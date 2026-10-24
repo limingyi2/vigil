@@ -2,7 +2,7 @@
 """sidecar 薄启动壳 —— PyInstaller 的入口（也支持源码直跑）。
 
 职责只有四件：
-1. 把打包时带进来的 plugins/ 种到 exe 旁边的家目录（首次启动）
+1. 把打包时带进来的 core_features/ 种到 exe 旁边的家目录（首次启动）
 2. 启动技能宿主（skill_host，端口 8790），跟云端 server_run.bat 保持一致
 3. 选一个空闲端口，经 VIGIL_PORT 环境变量交给 server.py
 4. /api/health 探活通过后往 stdout 打一行就绪标记（Electron 靠它拿端口）
@@ -26,38 +26,23 @@ HOME_DIR = os.path.abspath(os.environ.get('VIGIL_HOME') or
 READY_TAG = "VIGIL_BRAIN_READY"
 
 
-def _seed_plugins():
-    """把随包分发的插件铺到家目录 plugins/。
-
-    逐个插件补齐：已存在的插件不覆盖，避免用户后来装/改的内容被
-    每次启动回滚；目录型插件缺失时复制整个目录（包括前端资源）。
-    复制失败不致命：少几个功能，不影响聊天。
-    """
+def _seed_core_features():
+    """把随核心发布的能力适配器铺到 exe 旁边；绝不从安装包种入可选插件。"""
     if not FROZEN:
         return
-    src = os.path.join(CODE_DIR, "plugins")
-    if os.environ.get('VIGIL_MANAGED') == '1':
-        import json
-        from home_migration import seed_plugins
-        seed_plugins(src, HOME_DIR, json.loads(os.environ.get('VIGIL_LEGACY_HOMES', '[]')))
-        return
-    dst = os.path.join(HOME_DIR, "plugins")
+    src = os.path.join(CODE_DIR, "core_features")
     if not os.path.isdir(src):
-        return
-    try:
-        os.makedirs(dst, exist_ok=True)
-        for name in os.listdir(src):
-            source = os.path.join(src, name)
-            target = os.path.join(dst, name)
-            if os.path.exists(target):
-                continue
-            if os.path.isdir(source):
-                shutil.copytree(source, target)
-            elif name.endswith(".py") and not name.startswith("_"):
-                shutil.copy2(source, target)
-        print("[sidecar] 已铺开随包插件 -> %s" % dst, flush=True)
-    except Exception as e:
-        print("[sidecar] 铺插件失败（不影响聊天）：%s" % e, flush=True)
+        raise RuntimeError("Required core feature payload is missing: " + src)
+    import json
+    from home_migration import seed_core_features, migrate_legacy_plugins
+    legacy_roots = []
+    if os.environ.get("VIGIL_MANAGED") == "1":
+        legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
+    seed_core_features(src, HOME_DIR, legacy_roots)
+    migrated = migrate_legacy_plugins(HOME_DIR)
+    if migrated.get("copied"):
+        print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
+              migrated["copied"], flush=True)
 
 
 def _start_skill_host():
@@ -195,7 +180,7 @@ def main():
         os.environ['VIGIL_BIND_HOST'] = '127.0.0.1'
     os.makedirs(HOME_DIR, exist_ok=True)
     os.chdir(HOME_DIR)          # 大脑里所有相对路径的家都在这儿
-    _seed_plugins()
+    _seed_core_features()
     _start_skill_host()         # 先起技能宿主，大脑加载插件时技能已可用
     managed = os.environ.get('VIGIL_MANAGED') == '1'
     skill_port = int(os.environ.get('ZX_SKILL_PORT') or 0) if managed else 0

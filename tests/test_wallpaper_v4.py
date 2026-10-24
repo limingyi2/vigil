@@ -25,7 +25,7 @@ def test_market_manifest_versions_and_hashes_match_installed_assets():
     manifest = json.loads((PLUGIN_DIR / 'manifest.json').read_text(encoding='utf-8'))
     version = json.loads((PLUGIN_DIR / 'version.json').read_text(encoding='utf-8'))
     assert manifest['name'] == 'wallpaper'
-    assert manifest['version'] == version['version'] == '4.0.1'
+    assert manifest['version'] == version['version'] == '4.1.2'
     assert manifest['frontend'] == {'script': 'frontend.js', 'style': 'frontend.css'}
     declared = {entry['path']: entry['sha256'] for entry in manifest['files']}
     assert set(declared) == {path.name for path in PLUGIN_DIR.iterdir() if path.is_file() and path.name != 'manifest.json'}

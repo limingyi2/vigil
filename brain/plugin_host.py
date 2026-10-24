@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""插件加载器：把 brain/plugins/ 下的每个 .py 当成独立功能块挂进她的链路。
+"""能力加载器：把 brain/core_features/ 下的核心能力适配器与 data/installed_plugins/ 下的用户扩展接进运行链路。
 
 **为什么有这个**：以前加一个功能（比如闹钟提醒）要新建 alarm.py、改 reply.py、
 改 server.py、改 persona_store 的提示词，四处都动 —— 改多了 reply.py 就成一堆
 if-else，改一个功能还可能弄坏别的。插件化之后，核心只认下面这几个钩子，
-新功能只需要往 plugins/ 里丢一个文件，核心代码一行不改。
+核心能力由 core_features/ 提供；可选扩展必须安装到 data/installed_plugins/，不从源码仓库目录直接加载。
 
 ## 一个插件文件长什么样
 
@@ -47,13 +47,13 @@ import threading
 import traceback
 
 try:
-    from paths import PLUGINS_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
-    _DIR = str(PLUGINS_DIR)
+    from paths import CORE_FEATURES_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
+    _DIR = str(CORE_FEATURES_DIR)
     _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)
     _DDIR = str(PLUGIN_DATA_DIR)
     _ROOT = str(CONFIG_DIR)
 except Exception:
-    _DIR = r"C:\vigil\plugins"
+    _DIR = r"C:\vigil\core_features"
     _INSTALLED_DIR = r"C:\vigil\data\installed_plugins"
     _DDIR = r"C:\vigil\data\plugins"
     _ROOT = r"C:\vigil\config"
@@ -284,7 +284,7 @@ def _scan_plugin_directory(directory):
 
 
 def _plugin_entry_path(name):
-    """Find one plugin entry without importing unrelated plugin modules."""
+    """Find one core-feature or installed-plugin entry without importing unrelated modules."""
     name = str(name or "").strip()
     for directory in (_INSTALLED_DIR, _DIR):
         if not directory:
@@ -299,10 +299,10 @@ def _plugin_entry_path(name):
 
 
 def load(force=False, only=None):
-    """Load core plugins first, then runtime-installed plugins as overrides.
+    """Load core capability adapters first, then user-installed extensions as overrides.
 
-    Market installs live under data/installed_plugins, never in the tracked source
-    directory. That directory is intentionally excluded from release packaging.
+    Optional extensions are read only from data/installed_plugins. The tracked
+    brain/plugins source tree is never scanned by the runtime or included in releases.
     """
     global _loaded
     with _lock:

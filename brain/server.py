@@ -124,7 +124,7 @@ def build_local_brain(verbose=True):
 
 
 def load_plugins(verbose=False):
-    """装载 brain/plugins/ 下的插件。进程启动时调一次。
+    """装载 core_features/ 下的核心能力与 data/installed_plugins/ 下的用户扩展。进程启动时调一次。
 
     装不上只打一行 —— plugins/ 是空的（大部分时候就是空的）完全不影响聊天。
     装上了就登记成功能开关，App 设置页会自动多出对应条目。

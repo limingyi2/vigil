@@ -174,7 +174,7 @@ class SkillCapabilityTests(unittest.TestCase):
         })
 
     def _patch_skill(self, **attrs):
-        from plugins import skill as skill_mod
+        from core_features import skill as skill_mod
         return patch.multiple(skill_mod, **attrs)
 
     def test_skill_offline_reported_truthfully(self):
@@ -205,7 +205,7 @@ class SkillCapabilityTests(unittest.TestCase):
         self.assertEqual(result['error'], 'zip_b64_required')
 
     def test_install_success_must_be_verified_on_host(self):
-        from plugins import skill as skill_mod
+        from core_features import skill as skill_mod
         with self._patch_skill(
                 host_alive=lambda timeout=3: True,
                 _install_zip=lambda raw, note='': {'ok': True, 'skill': 'demo'},
@@ -221,7 +221,7 @@ class SkillCapabilityTests(unittest.TestCase):
         self.assertEqual(result['status'], 'unknown')
 
     def test_uninstall_refused_when_host_offline(self):
-        from plugins import skill as skill_mod
+        from core_features import skill as skill_mod
         with patch.object(skill_mod, 'host_alive', lambda timeout=3: False), \
              patch.object(skill_mod, '_uninstall',
                           side_effect=AssertionError('宿主离线时不允许卸载')):

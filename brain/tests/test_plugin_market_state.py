@@ -7,7 +7,7 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 import paths
-from plugins import plugin_market as market
+from core_features import plugin_market as market
 
 
 def test_market_repo_is_resolved_from_runtime_config_dir_not_developer_path():
