@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 NAME = "wallpaper"
-VERSION = "4.0.0"
+VERSION = "4.0.2"
 DESC = "独立 Wallpaper Engine 壁纸：Scene/WebGL、视频、网页与高质量界面适配"
 FEATURE = "wallpaper"
 

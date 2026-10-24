@@ -33,18 +33,28 @@ body.vigil-wallpaper-active .gnav,
 body.vigil-wallpaper-active .topbar,
 body.vigil-wallpaper-active .panel,
 body.vigil-wallpaper-active .titlebar,
-body.vigil-wallpaper-active .statusbar {
+body.vigil-wallpaper-active .statusbar,
+body.vigil-wallpaper-active .chat-topbar,
+body.vigil-wallpaper-active .settings-home-topbar,
+body.vigil-wallpaper-active .chatwrap .rp {
   background: var(--vigil-wallpaper-panel) !important;
   backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
   -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.16);
 }
 body.vigil-wallpaper-active :is(.card, .ac-card, .ac-agent-card, .pcard,
   .vigil-wallpaper-control, .vigil-wallpaper-card, .cbox, .input-wrap,
-  .session-row.on, .settings-card) {
+  .session-row.on, .settings-card, .settings-tile, .vigil-confirm) {
   background-color: var(--vigil-wallpaper-surface) !important;
   background-image: none !important;
   backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
   -webkit-backdrop-filter: blur(var(--vigil-wallpaper-blur)) saturate(1.12);
+}
+/* 聊天气泡与思考块：保持可读但让壁纸透出来 */
+body.vigil-wallpaper-active .chatwrap .turn.me .txt {
+  background: color-mix(in srgb, var(--chat-user, #303947) 72%, transparent) !important;
+}
+body.vigil-wallpaper-active .chatwrap .think-content {
+  background: color-mix(in srgb, var(--chat-surface, #292d35) 72%, transparent) !important;
 }
 body.vigil-wallpaper-active :is(input:not([type=range]), select, textarea, .btn, button:not(.vigil-wallpaper-card)) {
   background-color: var(--vigil-wallpaper-surface) !important;
@@ -82,6 +92,6 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
 .vigil-wallpaper-card-meta { font-size: 11px; opacity: .6; }
 .vigil-wallpaper-empty { padding: 28px; border: 1px dashed color-mix(in srgb, currentColor 20%, transparent); border-radius: 14px; opacity: .72; }
 .vigil-wallpaper-error { color: #ffb4ab; font-size: 12px; }
-.vigil-wallpaper-live-badge { position: absolute; left: 14px; bottom: 12px; z-index: 2; padding: 4px 8px; border-radius: 999px; background: #0b1220cc; color: #d9e5ff; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
+.vigil-wallpaper-live-badge { position: fixed; left: 14px; bottom: 12px; z-index: 60; padding: 4px 8px; border-radius: 999px; background: #0b1220cc; color: #d9e5ff; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
 @media (max-width: 860px) { .vigil-wallpaper-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .vigil-wallpaper-controls { grid-template-columns: 1fr; } .vigil-wallpaper-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
