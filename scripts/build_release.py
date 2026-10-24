@@ -62,6 +62,20 @@ def verify_release_manifest(installer, manifest_path, build):
 def build_native_window_host():
     if os.name != 'nt':
         raise RuntimeError('Windows release requires the native window host and a Visual Studio C++ toolchain')
+    exe = ROOT / 'client/native-window-host/build/Release/native-window-host.exe'
+    # VS2022 缺席时允许复用已构建的宿主（源码 8417318 后未再变化，二进制与
+    # 旧安装包内的一致）。必须显式设置 VIGIL_REUSE_NATIVE_HOST=1 才生效，
+    # 防止正式构建在毫不知情的情况下携带过期的原生组件。
+    toolchain = any(
+        (Path(pf) / 'Microsoft Visual Studio/2022' / edition / 'Common7/Tools/VsDevCmd.bat').is_file()
+        for pf in ('C:/Program Files', 'C:/Program Files (x86)')
+        for edition in ('Enterprise', 'Professional', 'Community', 'BuildTools'))
+    if not toolchain:
+        if os.environ.get('VIGIL_REUSE_NATIVE_HOST') == '1' and exe.is_file():
+            print('[release] VS2022 not found; reusing existing native-window-host.exe (VIGIL_REUSE_NATIVE_HOST=1)')
+            return
+        raise RuntimeError('Visual Studio 2022 MSVC x64 工具链未找到；如需复用现有 native-window-host.exe，'
+                           '设置 VIGIL_REUSE_NATIVE_HOST=1')
     script = ROOT / 'client/native-window-host/build.cmd'
     helper = ROOT / 'client/native-window-host/build/Release/native-window-host.exe'
     subprocess.run(['cmd', '/c', str(script)], cwd=ROOT / 'client', check=True)
