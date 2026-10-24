@@ -1,11 +1,9 @@
 import hashlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
-import threading
 
 import pytest
 
@@ -17,33 +15,19 @@ from home_migration import migrate_legacy_plugins, seed_core_features
 from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
 
 
-def test_managed_brain_ready_probe_uses_configured_auth_token(tmp_path, monkeypatch):
+def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, monkeypatch):
     import server_launch
 
-    token = "isolated-ready-token"
-    config = tmp_path / "config" / "config.json"
-    config.parent.mkdir()
-    config.write_text(json.dumps({"brain_token": token}), encoding="utf-8")
-    monkeypatch.setattr(server_launch, "HOME_DIR", str(tmp_path))
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.headers.get("Authorization") != "Bearer " + token:
-                self.send_response(401)
-            else:
-                self.send_response(200)
-            self.end_headers()
-
-        def log_message(self, *_args):
-            pass
-
-    listener = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=listener.serve_forever, daemon=True).start()
-    try:
-        assert server_launch._wait_health(listener.server_port, timeout=2) is True
-    finally:
-        listener.shutdown()
-        listener.server_close()
+    ready = tmp_path / "runtime" / "ready.json"
+    ready.parent.mkdir()
+    monkeypatch.setenv("VIGIL_READY_FILE", str(ready))
+    monkeypatch.setenv("VIGIL_INSTANCE_ID", "fixture-instance")
+    monkeypatch.setattr(server_launch.os, "getpid", lambda: 73)
+    assert server_launch._write_candidate_ready(54321) is True
+    payload = json.loads(ready.read_text(encoding="utf-8"))
+    assert payload["pid"] == 73
+    assert payload["instance_id"] == "fixture-instance"
+    assert payload["port"] == 54321
 
 
 def test_brain_release_guard_rejects_legacy_plugin_trees(tmp_path):

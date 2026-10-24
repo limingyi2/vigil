@@ -5,7 +5,7 @@
 1. 把打包时带进来的 core_features/ 种到 exe 旁边的家目录（首次启动）
 2. 启动技能宿主（skill_host，端口 8790），跟云端 server_run.bat 保持一致
 3. 选一个空闲端口，经 VIGIL_PORT 环境变量交给 server.py
-4. /api/health 探活通过后往 stdout 打一行就绪标记（Electron 靠它拿端口）
+4. 把候选端口和进程身份交给 Electron，由 Electron 验证 API 后确认就绪
 
 大脑本体一律不碰：import server 之后 main() 会像云端一样自己转起来。
 """
@@ -14,8 +14,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import time
-import urllib.request
 
 FROZEN = bool(getattr(sys, "frozen", False))
 CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
@@ -23,7 +21,6 @@ CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
 HOME_DIR = os.path.abspath(os.environ.get('VIGIL_HOME') or
     (os.path.dirname(os.path.abspath(sys.executable)) if FROZEN else CODE_DIR))
 
-READY_TAG = "VIGIL_BRAIN_READY"
 
 
 def _seed_core_features():
@@ -153,29 +150,17 @@ def _pick_port(exclude=()):
         s.close()
 
 
-def _wait_health(port, timeout=180):
-    """轮询 /api/health 直到 200。首次启动可能要下载嵌入模型，放宽到 3 分钟。"""
-    url = "http://127.0.0.1:%d/api/health" % port
-    headers = {}
-    try:
-        import json
-        with open(os.path.join(HOME_DIR, "config", "config.json"), encoding="utf-8-sig") as stream:
-            token = str((json.load(stream) or {}).get("brain_token") or "").strip()
-        if token:
-            headers["Authorization"] = "Bearer " + token
-    except Exception:
-        pass
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            request = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(request, timeout=2) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.5)
-    return False
+def _write_candidate_ready(port):
+    """Publish identity and a candidate port; Electron verifies API health."""
+    ready = os.environ.get('VIGIL_READY_FILE')
+    if not ready:
+        return False
+    import json
+    import build_identity
+    with open(ready + '.tmp', 'w', encoding='utf-8') as stream:
+        json.dump(dict(build_identity.runtime(), port=port), stream)
+    os.replace(ready + '.tmp', ready)
+    return True
 
 
 def main():
@@ -207,25 +192,10 @@ def main():
 
     import server               # 大脑本体（导入即完成全部初始化的准备工作）
 
-    # 探活放后台线程：main() 会永远阻塞，等它先跑起来才有得探
-    import threading
-
-    def _announce():
-        if _wait_health(port):
-            if os.environ.get('VIGIL_READY_FILE'):
-                import json
-                import build_identity
-                ready = os.environ['VIGIL_READY_FILE']
-                with open(ready + '.tmp', 'w', encoding='utf-8') as f:
-                    json.dump(dict(build_identity.runtime(), port=port), f)
-                os.replace(ready + '.tmp', ready)
-            print("%s port=%d pid=%d" % (READY_TAG, port, os.getpid()),
-                  flush=True)
-        else:
-            print("%s FAILED port=%d（健康检查超时，看上面的报错）"
-                  % (READY_TAG, port), flush=True)
-
-    threading.Thread(target=_announce, daemon=True).start()
+    # 先发布本进程的候选端口和身份。Electron sidecar 自己探测运行中的
+    # /api/runtime 和关键路由后才会转为 ready；这样单一探活者拥有最终判断，
+    # 不依赖 Brain 内部后台线程写入通知，也不会把文件存在误当成健康。
+    _write_candidate_ready(port)
     server.main()
 
 

@@ -86,10 +86,14 @@ async function checkReady(epoch) {
     const auth=token();if(!auth)throw Error('本地 Brain 认证未初始化');
     const runtime=await probeHealth(info.port,3000,'/api/runtime',auth);
     if(generation!==epoch)return;
-    if(!runtime || runtime.pid!==state.pid || runtime.instance_id!==state.instanceId)throw Error('Brain 认证或进程身份不匹配');
+    // The readiness file contains only a candidate port. During early startup
+    // the API may not be bound yet, so keep polling until it answers. Identity
+    // mismatches after a response are terminal and never accepted.
+    if(!runtime)return;
+    if(runtime.pid!==state.pid || runtime.instance_id!==state.instanceId)throw Error('Brain 认证或进程身份不匹配');
     contract.compatible(expected,runtime);
     for(const route of ['/api/creator/jobs','/api/agent/runs']) {
-      if(!await probeHealth(info.port,3000,route,auth))throw Error('Brain 缺少关键接口：'+route);
+      if(!await probeHealth(info.port,3000,route,auth))return;
     }
     if(generation!==epoch)return;
     clearInterval(timer);timer=null;state.port=info.port;state.status='ready';state.build=runtime;state.lastErr='';emit();
