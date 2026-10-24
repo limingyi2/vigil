@@ -9,14 +9,14 @@
 !macroend
 
 !macro customInit
-  ${If} ${FileExists} "$INSTDIR\${APP_FILENAME}.exe"
+  ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     InitPluginsDir
     File /oname=$PLUGINSDIR\checkpoint.cjs "${PROJECT_DIR}\tools\installer-checkpoint.cjs"
     File /oname=$PLUGINSDIR\update-transaction.js "${PROJECT_DIR}\electron\update-transaction.js"
     File /oname=$PLUGINSDIR\build-contract.js "${PROJECT_DIR}\electron\build-contract.js"
     File /oname=$PLUGINSDIR\target-build.json "${PROJECT_DIR}\build-info.json"
     System::Call 'kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i.r0'
-    nsExec::ExecToStack '"$INSTDIR\${APP_FILENAME}.exe" "$PLUGINSDIR\checkpoint.cjs" "$INSTDIR" "$PLUGINSDIR\target-build.json"'
+    nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$PLUGINSDIR\checkpoint.cjs" "$INSTDIR" "$PLUGINSDIR\target-build.json"'
     Pop $0
     Pop $1
     System::Call 'kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i.r1'
