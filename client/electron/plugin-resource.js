@@ -47,6 +47,13 @@ function createPluginResources({ getBase, getToken, ticketIdleMs = 30 * 60 * 100
       if (/[\\\x00]/.test(file) || file.startsWith('/') || file.split('/').includes('..')) return fail(400, 'Invalid path');
       if (!ticket.directory && file !== ticket.file) return fail(403, 'Resource scope mismatch');
       ticket.expiresAt = Date.now() + idleMs;
+      if (ticket.content !== undefined) {
+        const headers = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' };
+        res.writeHead(200, headers);
+        res.end(req.method === 'HEAD' ? undefined : ticket.content);
+        return;
+      }
       const upstream = new URL('/api/plugin/' + ticket.plugin + '/resource', getBase());
       upstream.searchParams.set('id', ticket.id);
       upstream.searchParams.set('file', file);
@@ -100,6 +107,27 @@ function createPluginResources({ getBase, getToken, ticketIdleMs = 30 * 60 * 100
       const suffix = item.file.split('/').map(encodeURIComponent).join('/');
       const result = 'http://127.0.0.1:' + port + '/r/' + ticket + '/' + suffix;
       urls.set(key, { ticket, url: result });
+      return result;
+    },
+    // Inline plugin documents (e.g. sandboxed renderer HTML) are served from the
+    // same ticketed loopback origin so the app CSP never needs blob:/data: holes.
+    async document(name, html) {
+      if (typeof name !== 'string' || !/^[\w][\w.-]{0,119}$/.test(name) || !/\.html?$/i.test(name)) {
+        throw new Error('文档名称无效');
+      }
+      if (typeof html !== 'string' || !html.trim() || html.length > 8 * 1024 * 1024) {
+        throw new Error('文档内容无效');
+      }
+      purgeExpired();
+      const key = crypto.createHash('sha256').update(name).update('\0').update(html).digest('hex');
+      const cached = urls.get('doc:' + key);
+      if (cached && tickets.has(cached.ticket)) return cached.url;
+      if (tickets.size >= 1024) throw new Error('插件媒体资源过多，请稍后重试');
+      const port = await ensureServer();
+      const ticket = crypto.randomBytes(24).toString('hex');
+      tickets.set(ticket, { plugin: '__document__', id: '0', file: name, directory: true, content: html, expiresAt: Date.now() + idleMs });
+      const result = 'http://127.0.0.1:' + port + '/r/' + ticket + '/' + encodeURIComponent(name);
+      urls.set('doc:' + key, { ticket, url: result });
       return result;
     },
     isApprovedUrl(raw) {

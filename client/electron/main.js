@@ -909,6 +909,13 @@ ipcMain.handle('plugins:resource-url', async (_e, resource) => {
   try { return { ok: true, url: await pluginResources.url(resource) }; }
   catch (e) { return { ok: false, err: e.message }; }
 });
+// 插件内联文档（如沙箱渲染器 HTML）：主进程把它挂在 ticket 化的
+// loopback 服务上，iframe 直指该 URL，避免 blob:/data: 文档继承
+// 应用 CSP 而被 frame-src / script-src 拦截。
+ipcMain.handle('plugins:document-url', async (_e, name, html) => {
+  try { return { ok: true, url: await pluginResources.document(name, html) }; }
+  catch (e) { return { ok: false, err: e.message }; }
+});
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:instance-id', () => APP_PROCESS_INSTANCE_ID);
 ipcMain.handle('project-picker:directory', async () => {

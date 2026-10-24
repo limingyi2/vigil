@@ -51,6 +51,16 @@
       return r.url;
     });
   };
+  // 渲染器文档必须经主进程挂到 ticket 化 loopback 服务上：blob:/data: 文档
+  // 会继承应用 CSP（frame-src / script-src），实时壁纸会被整页拦截。
+  const documentUrl = (name, html) => {
+    const bridge = window.vigil?.plugins;
+    if (!bridge || typeof bridge.documentUrl !== 'function') return Promise.reject(new Error('客户端过旧，请升级客户端后再使用实时壁纸'));
+    return Promise.resolve(bridge.documentUrl(name, html)).then((r) => {
+      if (!r || !r.ok || !r.url) throw new Error(r?.err || '渲染器文档不可用');
+      return r.url;
+    });
+  };
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const typeLabel = (type) => ({ scene: 'Scene', web: '网页', video: '视频', image: '图片', gif: 'GIF' }[type] || type || '未知');
   function mediaPath(item, file) {
@@ -177,7 +187,7 @@
           node.src = src; node.style.objectFit = config.fit === 'contain' ? 'contain' : config.fit === 'stretch' ? 'fill' : 'cover'; stage.appendChild(node);
           if (item.type === 'video') node.play().catch(() => {});
         } else {
-          frame = document.createElement('iframe'); frame.title = 'Vigil Wallpaper Engine ' + typeLabel(item.type); frame.setAttribute('sandbox', 'allow-scripts allow-same-origin'); frame.src = URL.createObjectURL(new Blob([frameDocument(item.type, src, config.fit, file)], { type: 'text/html' })); stage.appendChild(frame);
+          frame = document.createElement('iframe'); frame.title = 'Vigil Wallpaper Engine ' + typeLabel(item.type); frame.setAttribute('sandbox', 'allow-scripts allow-same-origin'); frame.src = await documentUrl('wallpaper-renderer.html', frameDocument(item.type, src, config.fit, file)); stage.appendChild(frame);
           resizeObserver = new ResizeObserver(() => { try { frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'resize' }, '*'); } catch (_) {} }); resizeObserver.observe(stage);
           badge.textContent = '实时 ' + typeLabel(item.type); badge.hidden = false;
           // 🔴 渲染失败目前是静默的（渲染器不把加载失败写进 webError）：
