@@ -129,10 +129,16 @@ class HTTPTests(unittest.TestCase):
                 self.hist = [{'role': 'system', 'content': 'fixture'}]
 
             def stream_chat(self, text, **kwargs):
-                self.calls.append((text, kwargs))
-                yield {'type': 'text', 'text': 'incremental '}
-                yield {'type': 'text', 'text': 'answer'}
-                yield {'type': 'done', 'text': 'incremental answer'}
+                if kwargs.get('tool_policy') == 'readonly':
+                    self.tool_calls.append((text, kwargs))
+                    yield {'type': 'text', 'text': 'function '}
+                    yield {'type': 'text', 'text': 'answer'}
+                    yield {'type': 'done', 'text': 'function answer'}
+                else:
+                    self.calls.append((text, kwargs))
+                    yield {'type': 'text', 'text': 'incremental '}
+                    yield {'type': 'text', 'text': 'answer'}
+                    yield {'type': 'done', 'text': 'incremental answer'}
 
             def chat(self, *_args, **_kwargs):
                 text, kwargs = _args[0], _kwargs
@@ -143,22 +149,30 @@ class HTTPTests(unittest.TestCase):
         with patch.dict(self.ns['_LOCAL'], {'brain': brain}, clear=True), \
              patch.dict(self.ns['API_CFG'], {'agent_execution': {'enabled': True}}):
             for request_id, text, category in (
-                ('p19_stream_chat_route', '你好，今天怎么样？', 'chat'),
+                ('p19_stream_chat_route', '我见过一个会跳舞的蓝色鱼桌宠，你能找到吗？', 'chat'),
                 ('p19_stream_retrieval_route', '帮我找出之前讨论的 RAG 方案', 'retrieval'),
                 ('p19_stream_unauthorized_edit', '修改启动配置并验证', 'simple_execution'),
             ):
                 code, events = self.request('POST', '/api/chat/stream',
                     {'request_id': request_id, 'text': text, 'src': 'pc'}, sse=True)
                 self.assertEqual(code, 200, events)
-                self.assertEqual([event['type'] for event in events if event['type'] in ('text', 'done')],
-                                 ['text', 'text', 'done'])
-                self.assertEqual(events[-1]['text'], 'incremental answer')
-                self.assertEqual(brain.calls[-1][0], text)
-                self.assertTrue(brain.calls[-1][1]['no_tools'])
+                if category in ('chat', 'retrieval'):
+                    self.assertEqual([event['type'] for event in events if event['type'] in ('text', 'done')],
+                                     ['text', 'text', 'done'])
+                    self.assertEqual(events[-1]['text'], 'function answer')
+                    self.assertEqual(brain.tool_calls[-1][0], text)
+                    self.assertEqual(brain.tool_calls[-1][1]['tool_policy'], 'readonly')
+                    self.assertNotIn('no_tools', brain.tool_calls[-1][1])
+                else:
+                    self.assertEqual([event['type'] for event in events if event['type'] in ('text', 'done')],
+                                     ['text', 'text', 'done'])
+                    self.assertEqual(events[-1]['text'], 'incremental answer')
+                    self.assertEqual(brain.calls[-1][0], text)
+                    self.assertTrue(brain.calls[-1][1]['no_tools'])
                 task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
                 self.assertEqual(task_traces[-1]['task_category'], category)
-                expected_entry = ('history_retrieval' if text == '帮我找出之前讨论的 RAG 方案'
-                                  else 'chat_no_tools' if category in ('chat', 'simple_execution')
+                expected_entry = ('brain_tools' if category in ('chat', 'retrieval')
+                                  else 'chat_no_tools' if category == 'simple_execution'
                                   else 'brain_tools')
                 self.assertEqual(task_traces[-1]['target_entry'], expected_entry)
                 if category == 'simple_execution':
@@ -190,12 +204,11 @@ class HTTPTests(unittest.TestCase):
                     'text': '搜索今天最新的 AI 新闻', 'src': 'pc'}, sse=True)
             self.assertEqual(code, 200, events)
             self.assertEqual(events[-1]['type'], 'done')
-            self.assertIn('无法核实', events[-1]['text'])
-            self.assertEqual(len(brain.tool_calls), before_tools)
+            self.assertEqual(events[-1]['text'], 'function answer')
+            self.assertEqual(len(brain.tool_calls), before_tools + 1)
+            self.assertEqual(brain.tool_calls[-1][1]['tool_policy'], 'readonly')
             self.assertEqual(len(brain.calls), before_streams)
-            self.assertEqual(self.trace_rows[-1]['target_entry'], 'retrieval_unavailable')
-            self.assertEqual(self.trace_rows[-1]['fallback_reason'],
-                             'required_live_tool_unavailable')
+            self.assertEqual(self.trace_rows[-1]['target_entry'], 'brain_tools')
 
             import task_intent
             with patch.object(task_intent, 'classify', side_effect=RuntimeError('fixture')):

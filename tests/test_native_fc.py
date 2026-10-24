@@ -265,6 +265,73 @@ class TestNativeFunctionCalling(unittest.TestCase):
         self.assertIn("tools", self.seen[0],
                       "『北京天气』只有 4 个字但正需要工具，不该被省掉")
 
+    def test_readonly_policy_filters_schema_and_blocks_unsafe_model_calls(self):
+        features.on = lambda key, src=None: True
+        self._stub([_want("unsafe", "reminder_set", {"text": "明天提醒我"}),
+                    _say("我没有创建提醒，因为普通聊天没有这个权限。")])
+        from unittest.mock import patch
+        with patch.object(tl, "invoke_spec", wraps=tl.invoke_spec) as invoke:
+            answer = self._brain().draft_native("帮我设个提醒", "", tool_policy="readonly")
+        names = {item["function"]["name"] for item in self.seen[0]["tools"]}
+        self.assertTrue(names)
+        self.assertTrue(names <= tl.READ_ONLY_TOOL_NAMES, names)
+        invoke.assert_not_called()
+        self.assertIn("没有创建提醒", answer)
+
+    def test_readonly_policy_deduplicates_identical_calls_and_caps_rounds(self):
+        features.on = lambda key, src=None: True
+        self._stub([_want("s1", "search", {"query": "Vigil release"}),
+                    _want("s2", "search", {"query": "Vigil release"}),
+                    _say("本轮已经查询过，以下基于已返回的结果。")])
+        from unittest.mock import patch
+        with patch.object(tl, "invoke_spec", return_value="release 结果") as invoke:
+            answer = self._brain().draft_native("我看到这个软件更新了什么", "",
+                                                tool_policy="readonly")
+        self.assertEqual(len(self.seen), 3)
+        self.assertEqual(invoke.call_count, 1)
+        self.assertIn("已返回的结果", answer)
+
+    def test_readonly_policy_rechecks_channel_feature_before_dispatch(self):
+        features.on = lambda key, src=None: key != "websearch"
+        self._stub([_want("disabled", "search", {"query": "Vigil release"}),
+                    _say("当前搜索功能没有启用。")])
+        from unittest.mock import patch
+        with patch.object(tl, "invoke_spec", wraps=tl.invoke_spec) as invoke:
+            answer = self._brain().draft_native("Vigil 最近有什么更新", "",
+                                                tool_policy="readonly")
+        names = {item["function"]["name"] for item in self.seen[0].get("tools", [])}
+        self.assertNotIn("search", names)
+        invoke.assert_not_called()
+        results = [m["content"] for m in self.seen[1]["messages"]
+                   if m.get("role") == "tool"]
+        self.assertTrue(any("未启用，未执行" in item for item in results))
+        self.assertIn("没有启用", answer)
+
+    def test_readonly_policy_degrades_explicitly_without_function_calling_support(self):
+        features.on = lambda key, src=None: True
+        class NoFunctionCallingProvider:
+            kind = "fixture"
+            supports_tools = False
+            supports_xml_tools = False
+            def __init__(self): self.payloads = []
+            def chat(self, payload, timeout=90):
+                self.payloads.append(payload)
+                return _say("当前模型无法联网核实，请换用支持工具调用的模型。")
+
+        provider = NoFunctionCallingProvider()
+        br = self._brain()
+        br._provider = lambda _cfg=None: provider
+        br._provider_ready = lambda *_args: True
+        answer = br.draft_native("这个软件最近更新了什么？", "",
+                                 tool_policy="readonly")
+        self.assertTrue(provider.payloads)
+        self.assertNotIn("tools", provider.payloads[0])
+        self.assertIn("不支持 Function Calling",
+                      provider.payloads[0]["messages"][0]["content"])
+        self.assertIn("不得声称已联网",
+                      provider.payloads[0]["messages"][0]["content"])
+        self.assertIn("无法联网核实", answer)
+
 
 class TestSchemaNeeded(unittest.TestCase):
     """schema_needed 的判据：只在明确是寒暄时才省，宁可不省。"""

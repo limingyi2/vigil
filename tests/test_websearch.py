@@ -145,7 +145,8 @@ class TestWebSearchOutput(unittest.TestCase):
         ws._post = lambda q, o: None
         r = ws._t_search("测试")
         self.assertIn("搜不了", r)
-        self.assertIn("别硬编", r)
+        self.assertIn("未能核实", r)
+        self.assertIn("不要把训练数据", r)
 
     def test_空结果时明说没查到(self):
         ws._post = lambda q, o: []

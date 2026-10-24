@@ -212,8 +212,8 @@ def _t_search(arg):
 
     res = _post(query, opt)
     if res is None:
-        out = ("搜不了：连不上搜索服务。你就按自己知道的说，"
-               "跟他说一声这个现在查不到，别硬编。")
+        out = ("搜不了：连不上搜索服务。请明确告诉用户这次未能核实，"
+               "不要把训练数据或猜测冒充为搜索结果。")
         _mem[ck] = (time.time() + 60, out)     # 失败只短暂缓存，别把网络抖动放大
         return out
     if not res:

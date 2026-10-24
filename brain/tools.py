@@ -20,6 +20,18 @@ import json
 # 原生 FC 模型偶尔会在正文里写出这种格式（训练数据残留），输出前清掉。
 TOOL_TAG_ANY_RE = re.compile(r"\[tool[:：][^\]]*\]", re.IGNORECASE)
 
+# Audited pure or externally read-only tools available during ordinary chat.
+# Names are only identifiers here: this exact set was reviewed against each
+# implementation and is also enforced immediately before dispatch in Brain.
+READ_ONLY_TOOL_NAMES = frozenset({"search", "weather", "tracking", "calc"})
+
+
+def read_only_specs(specs):
+    """Return only the individually audited read-only tools from an OpenAI list."""
+    return [item for item in (specs or [])
+            if str(((item.get("function") or {}).get("name") or ""))
+            in READ_ONLY_TOOL_NAMES]
+
 
 def _uapi_token():
     from runtime import API_CFG
@@ -355,12 +367,12 @@ _STATIC_FEATURE_MAP = {
 
 
 def _feature_on(name, src=None):
-    """安全版 features.on：任何异常都当开（开关系统坏了不能把工具弄丢）。"""
+    """Fail closed if the channel feature state cannot be verified."""
     try:
         import features
         return bool(features.on(name, src))
     except Exception:
-        return True
+        return False
 
 
 def _static_tool_array(src=None):
@@ -456,7 +468,7 @@ def all_specs(brain=None, src=None):
         if not _feat.on("tools", src):
             return []
     except Exception:
-        pass
+        return []
     tools = _static_tool_array(src)
     if brain is not None:
         tools.extend(_dynamic_tool_array(brain, src))

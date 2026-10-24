@@ -8,7 +8,7 @@ import re
 
 
 _EXPLAIN = re.compile(r"解释|说明|讲讲|说说|是什么|什么意思|怎么理解|原理|区别|为什么")
-_SOCIAL = re.compile(r"你好|您好|今天怎么样|最近怎么样|在吗|晚安|早安|谢谢|辛苦了")
+_SOCIAL = re.compile(r"你好|您好|今天(?:过得)?怎么样|最近怎么样|在吗|晚安|早安|谢谢|辛苦了|陪我聊|聊会儿")
 _REFERENTIAL = re.compile(r"刚才|上次|之前|前面|那个|它|继续|接着|照旧")
 _RETRIEVE = re.compile(r"查找|查一下|查询|查天气|查新闻|查价格|搜索|搜一下|搜|找出|翻一下|回忆|找回|查看|search|web", re.I)
 _HISTORY = re.compile(r"之前|前几天|上次|以前|历史|讨论过|聊过|说过|提到过")
@@ -23,9 +23,9 @@ _CODE = re.compile(
 )
 _EXECUTE = re.compile(
     r"修改|改好|改成|改|调整|协调|确认|修复|修好|修|实现|重构|编辑|整理|创建|新建|写入|写文件|删除|构建|编译|"
-    r"运行|执行|检查|审查|分析|验证|整理|列出|读取|搜索|查找|设置|创建|"
+    r"运行|执行|检查|审查|分析|验证|整理|列出|读取|搜索|查找|设置|创建|保存|安装|"
     r"modify|edit|fix|implement|refactor|build|compile|run|test|inspect|review|"
-    r"create|delete|write|list|read|set",
+    r"create|delete|write|list|read|set|save|install",
     re.I,
 )
 _MULTI = re.compile(r"并|然后|再|同时|逐项|逐一|多个|所有|整个|各个|全部|以及|之后")
@@ -33,7 +33,7 @@ _SAFE_QUESTION = re.compile(r"[?？]|吗$|呢[?？]?$|怎么|如何|为什么|�
 _FILE_TASK = re.compile(r"工作区|仓库|项目|代码库|文件|目录|本地")
 _SCOPED_WORKSPACE = re.compile(r"工作区|仓库|项目|代码库|目录|本地|源码|代码")
 _UNRESOLVED_THIS = re.compile(r"这个|这份|此")
-_REQUEST_FRAME = re.compile(r"请|帮我|替我|为我|能不能|可以帮|我想让你|把.{0,40}(?:改|修|写|删|建)")
+_REQUEST_FRAME = re.compile(r"请|帮我|替我|为我|能不能|可以帮|我想让你|把.{0,40}(?:改|修|写|删|建)|(?:并|然后|再)保存|保存到")
 
 
 def _execution_clauses(text):
@@ -71,10 +71,10 @@ def classify(text, *, workspace_authorized=False):
 
     if _is_ambiguous_reference(normalized):
         return _decision("chat", "指代对象无法从本轮消息安全确定",
-                         "chat_no_tools", "ambiguous_reference")
+                         "brain_tools", "ambiguous_reference")
     if (_SOCIAL.search(normalized) and not _RETRIEVE.search(normalized)
             and not _EXECUTE.search(normalized)):
-        return _decision("chat", "社交问候使用普通回答入口", "chat_no_tools", None)
+        return _decision("chat", "社交问候使用普通回答入口", "brain_tools", None)
 
     historical_query = bool(_HISTORY.search(normalized) and
                             (_RETRIEVE.search(normalized) or _EXPLAIN.search(normalized)))
@@ -136,7 +136,7 @@ def classify(text, *, workspace_authorized=False):
 
     target = ("agent_run" if category in ("simple_execution", "complex_execution")
               and fallback is None else
-              "retrieval" if category == "retrieval" else "chat_no_tools")
+              "brain_tools" if category in ("chat", "retrieval") else "chat_no_tools")
     decision = _decision(category, reason, target, fallback)
     if category == "retrieval":
         # Historical references need Vigil's scoped memory/history RAG. Current
@@ -173,12 +173,16 @@ def select_entry(decision, *, agent_allowed, tools_available=True, existing_run=
     target = str((decision or {}).get("target_entry") or "chat_no_tools")
     if target == "chat_no_tools":
         return "chat_no_tools"
+    if target == "brain_tools":
+        # Chat/retrieval always share the Brain entry. The Brain applies channel
+        # feature gates and tells the model which read-only tools are available.
+        return "brain_tools"
     if target == "agent_run":
         return "agent_run" if agent_allowed else ("brain_tools" if tools_available else "brain_chat")
     if target == "retrieval":
         if decision.get("retrieval_mode") == "history_rag":
-            return "history_retrieval"
+            return "brain_tools"
         if decision.get("retrieval_mode") == "live_tools":
-            return "brain_tools" if live_tool_available else "retrieval_unavailable"
+            return "brain_tools"
         return "retrieval_unavailable"
     return "chat_no_tools"

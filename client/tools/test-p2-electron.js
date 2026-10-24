@@ -7,7 +7,7 @@ const assert = require('assert/strict');
 const client = path.resolve(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-p2-electron-'));
 app.setPath('userData', path.join(tmp, 'userdata'));
-let win, mode = 'success', streams = 0, cancels = 0;
+let win, mode = 'success', streams = 0, cancels = 0, streamMarkdownPreview = '';
 const runs = new Map(), results = [], rendererErrors = [];
 const conversations = [];
 let conversationCounter = 0;
@@ -72,14 +72,17 @@ async function main() {
     const send = (type,extra={})=>{if(!event.sender.isDestroyed())event.sender.send('api:stream:event',{type,run_id:run.run_id,request_id:run.request_id,...extra});};
     send('agent_run');
     send('stage',{stage:'waiting_tool'});
-    send('text',{text:'中间正文'});
-    run.content = '中间正文';
+    send('text',{text:'# 流式标题\n\n- 中间正文'});
+    run.content = '# 流式标题\n\n- 中间正文';
+    await wait(300);
+    streamMarkdownPreview = await event.sender.executeJavaScript(
+      `document.querySelector('.streaming-text')?.innerHTML || ''`);
     if(mode === 'active') { await wait(900); return {ok:true}; }
     await wait(mode === 'cancel' ? 500 : 100);
     if (run.status === 'cancelled') { send('error',{text:run.content,status:'cancelled',msg:'已取消后续调度'}); return {ok:true}; }
-    send('run_snapshot',{text:'中间正文\n快照结果'});
-    send('done',{text:'中间正文\n快照结果\n最终完成'});
-    Object.assign(run,{status:'succeeded',content:'中间正文\n快照结果\n最终完成'});
+    send('run_snapshot',{text:'# 流式标题\n\n- 中间正文\n- 快照结果'});
+    send('done',{text:'# 流式标题\n\n- 中间正文\n- 快照结果\n\n## 最终完成\n\n```txt\nverified\n```'});
+    Object.assign(run,{status:'succeeded',content:'# 流式标题\n\n- 中间正文\n- 快照结果\n\n## 最终完成\n\n```txt\nverified\n```'});
     return {ok:true};
   });
   let cfg = {wizard_done:true,roots:[],base:'http://fixture',device_id:'fixture',src:'pc'};
@@ -93,9 +96,11 @@ async function main() {
   ipcMain.handle('app:instance-id',()=> 'p2-test-process');
   ipcMain.handle('cfg:set',(_,p)=>(cfg={...cfg,...p}));
   win = new BrowserWindow({show:false,width:1300,height:900,webPreferences:{
-    preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+    preload:path.join(client,'electron/preload.js'),sandbox:true,contextIsolation:true,nodeIntegration:false,
+    backgroundThrottling:false}});
   win.webContents.on('console-message',(_e,level,message)=>{if(level===3)rendererErrors.push(message);});
   await win.loadFile(path.join(client,'src/index.html'));
+  win.show();
   await until('document.querySelector("#ta")');
   async function submit(text) {
     await ev(`(()=>{const t=document.querySelector('#ta');t.value=${JSON.stringify(text)};t.dispatchEvent(new Event('input'));document.querySelector('#sendBtn').click()})()`);
@@ -103,7 +108,11 @@ async function main() {
   await submit('P2多步任务');
   await until('document.querySelector("#msgs").textContent.includes("最终完成")');
   assert.equal(await ev('(document.querySelector("#msgs").textContent.match(/中间正文/g)||[]).length'),1);
-  ok('Run snapshot replaces preview; authoritative final text is not duplicated');
+  assert.match(streamMarkdownPreview, /<h1\b/i, `incremental stream should render a heading before done: ${streamMarkdownPreview}`);
+  assert.match(streamMarkdownPreview, /<li\b/i, `incremental stream should render list items before done: ${streamMarkdownPreview}`);
+  assert.equal(await ev('document.querySelector("#msgs .streaming-text h2")?.textContent'), '最终完成');
+  assert.ok(await ev('document.querySelector("#msgs .streaming-text pre code")?.textContent.includes("verified")'));
+  ok('Stream renders partial Markdown and final snapshot replaces preview without duplication');
   mode='transport-failure'; await submit('P2传输失败');
   await until('document.querySelector("#msgs").textContent.includes("fixture timeout")');
   assert.match(await ev('document.querySelector("#msgs").textContent'),/失败/);

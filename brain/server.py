@@ -613,23 +613,6 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
                                           target_entry="brain_tools" if _task_decision.get("target_entry") == "agent_run"
                                           else _task_decision.get("target_entry"))
 
-    # Live-information requests must never fall through to a model answer from
-    # training data when their specific built-in retrieval tool is disabled.
-    if (_task_decision.get("task_category") == "retrieval"
-            and _task_decision.get("retrieval_mode") == "live_tools"):
-        try:
-            import tools as _live_tools
-            _live_available = _live_tools.static_tool_enabled(
-                _task_decision.get("required_tool"), src or 'pc')
-        except Exception:
-            _live_available = False
-        if not _live_available:
-            _task_decision["fallback_reason"] = "required_live_tool_unavailable"
-            _task_decision["target_entry"] = "retrieval_unavailable"
-            if trace_out is not None:
-                trace_out["task_decision"] = dict(_task_decision)
-            return "当前没有启用可用的实时查询工具，无法核实这条信息。", "实时检索不可用"
-
     def _once(t, no_tools=False):
         with _chat_lock():
             b = _LOCAL["brain"]
@@ -638,10 +621,13 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
                 b.seed_history(src=src or 'pc', conversation_id=conversation_id)
             chat_kwargs = dict(img=img_path, log=False, src=src,
                                conversation_id=conversation_id,
-                               no_tools=bool(no_tools or _task_decision.get("task_category") == "chat"
-                                             or _task_decision.get("fallback_reason")
-                                             or (_task_decision.get("task_category") == "retrieval"
-                                                 and _task_decision.get("retrieval_mode") == "history_rag")),
+                               no_tools=bool(no_tools
+                                             or (_task_decision.get("task_category") in
+                                                 ("simple_execution", "complex_execution")
+                                                 and _task_decision.get("fallback_reason"))
+                                             or _task_decision.get("decision_source") == "fallback"),
+                               tool_policy=("readonly" if _task_decision.get("task_category")
+                                            in ("chat", "retrieval") else None),
                                route_decision=_route_decision)
             if native_content is not None:
                 # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
@@ -3236,15 +3222,13 @@ def start_remote_api(brain):
                             tools_available=_task_tools_available,
                             live_tool_available=_live_tool_available,
                             existing_run=bool(_existing_run and _admin_pc))
-                        if _task_entry == 'retrieval_unavailable':
-                            _task_decision['fallback_reason'] = 'required_live_tool_unavailable'
                     except Exception:
                         _task_decision = {"task_category": "chat", "decision_source": "fallback",
                             "reason": "分类异常回退", "target_entry": "chat_no_tools",
                             "fallback_reason": "classification_error"}
                         _task_entry = "agent_run" if (_existing_run and _admin_pc) else "chat_no_tools"
                     _stream_brain_entry = bool(
-                        _task_entry in ('chat_no_tools', 'brain_chat', 'history_retrieval'))
+                        _task_entry in ('chat_no_tools', 'brain_chat'))
                     # Agent Run is one execution location. The P19.1 model
                     # location route stays in route_decision and is not used as
                     # the task category.
@@ -3370,20 +3354,24 @@ def start_remote_api(brain):
                             elif _task_entry == 'retrieval_unavailable':
                                 yield {'type': 'done', 'text':
                                        '当前没有启用可用的实时查询工具，无法核实这条信息。'}
-                            elif _task_entry == 'brain_tools':
-                                _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
-                                if _native_content is not None:
-                                    # 闸门已经确认这一轮走的入口接得住图，
-                                    # 这里就**无条件**带上。旧写法在这里再探一次
-                                    # 签名，探不过就悄悄不带 —— 那就是"上传成功、
-                                    # 模型什么都没看到"的哑弹。
-                                    _chat_kwargs['native_content'] = _native_content
-                                _ans, _mode = _LOCAL['brain'].chat(_in_text, **_chat_kwargs)
-                                if getattr(_LOCAL['brain'], 'last_err', ''):
-                                    yield {'type': 'error', 'class': 'service_error',
-                                           'msg': str(getattr(_LOCAL['brain'], 'last_err', ''))[:300]}
+                            elif _task_entry in ('brain_tools', 'history_retrieval'):
+                                if _task_decision.get('task_category') in ('chat', 'retrieval'):
+                                    _stream_kwargs = dict(src=_src,
+                                        conversation_id=_brain_cid, tool_policy='readonly')
+                                    if _native_content is not None:
+                                        _stream_kwargs['native_content'] = _native_content
+                                    yield from _LOCAL['brain'].stream_chat(
+                                        _in_text, **_stream_kwargs)
                                 else:
-                                    yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
+                                    _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
+                                    if _native_content is not None:
+                                        _chat_kwargs['native_content'] = _native_content
+                                    _ans, _mode = _LOCAL['brain'].chat(_in_text, **_chat_kwargs)
+                                    if getattr(_LOCAL['brain'], 'last_err', ''):
+                                        yield {'type': 'error', 'class': 'service_error',
+                                               'msg': str(getattr(_LOCAL['brain'], 'last_err', ''))[:300]}
+                                    else:
+                                        yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
                             else:
                                 _stream_kwargs = dict(src=_src,
                                                       conversation_id=_brain_cid,

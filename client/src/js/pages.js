@@ -2476,7 +2476,8 @@
       let textBuf = '';
       let streamDone = false;
       let textDirty = false;
-      let rafPending = false;
+      let renderTimer = null;
+      let renderFrame = null;
       let agentRunId = null;
       let lastAgentSeq = 0;
       let reconcileTimer = null;
@@ -2499,20 +2500,29 @@
         }
       };
 
-      // 借鉴 DeepSeek Harness：事件逐个进状态，但按动画帧合并绘制，
-      // 避免每个 token 都重绘导致主线程卡顿
-      function scheduleRender() {
-        if (rafPending) return;
-        rafPending = true;
-        requestAnimationFrame(() => {
-          rafPending = false;
-          if (activeConversationId !== sendConversationId) return;
-          if (textDirty) {
-            textEl.textContent = textBuf;
-            textDirty = false;
-          }
+      // Parse incomplete Markdown into a safe live preview. Token bursts are
+      // coalesced to one DOM update per 100ms, then painted on one animation frame.
+      function renderStreamText(finalFrame = false) {
+        if (!textEl || activeConversationId !== sendConversationId) return;
+        if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+        if (renderFrame !== null) { cancelAnimationFrame(renderFrame); renderFrame = null; }
+        const paint = () => {
+          renderFrame = null;
+          if (!textEl.isConnected || activeConversationId !== sendConversationId) return;
+          textDirty = false;
+          textEl.innerHTML = U.md(textBuf, { codeActions: true });
           msgs.scrollTop = msgs.scrollHeight;
-        });
+        };
+        if (finalFrame) paint();
+        else renderFrame = requestAnimationFrame(paint);
+      }
+
+      function scheduleRender() {
+        if (renderTimer || renderFrame !== null) return;
+        renderTimer = setTimeout(() => {
+          renderTimer = null;
+          renderStreamText(false);
+        }, 100);
       }
 
       // A closed SSE socket says nothing about the durable run.  Ask Brain for
@@ -2706,10 +2716,8 @@
           setComposerMode('send');
           textBuf = evt.result ?? evt.text ?? textBuf;
           remember({content:textBuf,status:'succeeded',error:null});
-          // 强制刷新最后一帧
-          if (textDirty) { textEl.textContent = textBuf; textDirty = false; }
-          // 正文渲染成 Markdown
-          textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true });
+          // 强制刷新最后一帧 Markdown，并取消排队中的预览绘制。
+          renderStreamText(true);
           statusEl.textContent = fmtTime(Date.now(), 'time');
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
@@ -2740,10 +2748,12 @@
           const errDetail = evt.detail
             ? '<br><span style="color:var(--mut);font-size:12px;white-space:pre-wrap">' + esc(evt.detail) + '</span>' : '';
           if (resumable) {
-            textEl.innerHTML = (esc(textBuf || '') + '<br><span style="color:var(--mut)">'
+            renderStreamText(true);
+            textEl.innerHTML = (U.md(textBuf || '', { codeActions: true }) + '<br><span style="color:var(--mut)">'
               + esc(evt.msg || '已暂停') + ' —— 点发送键继续这个任务</span>');
           } else {
-            textEl.innerHTML = esc(textBuf || evt.text || '') + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>' + errDetail;
+            renderStreamText(true);
+            textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true }) + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>' + errDetail;
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
             interrupted:'执行中断'})[evt.status] || '失败';
@@ -2814,6 +2824,7 @@
                 console.warn('[stream] no done event received, textBuf length:', textBuf.length);
                 remember({content:textBuf,status:'interrupted',
                   error:{class:'connection_lost',message:'未收到完整回复'}});
+                renderStreamText(true);
                 textEl.innerHTML = (textBuf ? U.md(textBuf, { codeActions: true }) : '') +
                   '<br><span style="color:var(--err)">连接中断：未收到完整回复（结果不完整）</span>';
                 statusEl.textContent = '执行中断';
