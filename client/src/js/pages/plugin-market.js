@@ -93,15 +93,16 @@
               '<button class="btn" data-action="' + (p.enabled === false ? 'enable' : 'disable') + '" data-name="' + esc(p.name) + '">' + (p.enabled === false ? '启用' : '禁用') + '</button>' +
               (p.removable === false ? '' : '<button class="btn danger" data-action="uninstall" data-name="' + esc(p.name) + '">卸载</button>')))
           : '<button class="btn" data-action="install" data-name="' + esc(p.name) + '">安装</button>';
-        const badge = p.installed
+        const badge = p.builtin
+          ? '<span class="tag" style="margin-left:8px">系统内置 · 不可卸载</span>'
+          : p.installed
           ? '<span class="tag" style="background:var(--ok-bg);color:var(--ok);margin-left:8px">已安装</span>'
-          : '';
+          : '<span class="tag" style="margin-left:8px">未安装</span>';
         return (
           '<div class="card" style="display:flex;flex-direction:column;gap:8px">' +
           '<div style="display:flex;align-items:center;gap:8px">' +
           '<span class="market-icon" aria-hidden="true">' + icon('puzzle', 'md') + '</span>' +
           '<strong>' + esc(p.name) + '</strong>' +
-          (p.builtin ? '<span class="tag">内置</span>' : '') +
           '<span class="muted" style="font-size:12px">市场 v' + esc(marketVersion) + '</span>' +
           badge +
           '</div>' +

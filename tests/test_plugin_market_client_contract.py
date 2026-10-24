@@ -21,6 +21,8 @@ def test_market_client_uses_unified_lifecycle_routes_and_state_fields():
     assert "marketPending" in source
     assert "p.builtin" in source
     assert "p.removable === false" in source
+    assert "系统内置 · 不可卸载" in source
+    assert "未安装" in source
     assert "await load();" in source
 
 

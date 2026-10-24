@@ -290,10 +290,12 @@ def test_update_loaded_but_disabled_plugin_after_restart_is_allowed(tmp_path):
 def test_manager_status_exposes_market_update_state(tmp_path):
     target = tmp_path / "installed"
     target.mkdir()
+    (target / "demo.py").write_text("NAME='demo'\n", encoding="utf-8")
     registry = target / "_registry.json"
     registry.write_text(json.dumps({"version": 1, "plugins": {"demo": {
         "version": "1.0.0", "permissions": ["x"], "enabled": True}}}), encoding="utf-8")
-    with patch.object(plugin_ops, "REGISTRY", str(registry)):
+    with patch.object(plugin_ops, "REGISTRY", str(registry)), \
+         patch.object(plugin_host, "_INSTALLED_DIR", str(target)):
         value = plugin_manager.status("demo", "1.1.0")
     assert value["update_state"] == "update_available"
     assert value["permissions"] == ["x"]
@@ -543,6 +545,37 @@ def test_start_only_disable_persists_until_restart_and_blocks_uninstall(tmp_path
         plugin_host._registry, plugin_host._started = old_registry, old_started
 
 
+def test_uninstall_stop_hook_failure_keeps_files_and_installed_status(tmp_path):
+    user_plugins = tmp_path / "installed"
+    user_plugins.mkdir()
+    entry = user_plugins / "blocked.py"
+    entry.write_text("# fixture", encoding="utf-8")
+    registry = user_plugins / "_registry.json"
+    initial = {"version": 1, "plugins": {"blocked": {"version": "1.0.0", "enabled": True}}}
+    registry.write_text(json.dumps(initial), encoding="utf-8")
+    runtime, _calls = _plugin_fixture("blocked", entry, start=True)
+    def fail_stop():
+        raise RuntimeError("fixture stop failure")
+    runtime.mod.stop = fail_stop
+    old_registry, old_started = plugin_host._registry, plugin_host._started
+    plugin_host._registry, plugin_host._started = {"blocked": runtime}, {"blocked"}
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(user_plugins)), \
+             patch.object(plugin_host, "_DIR", str(tmp_path / "builtin")), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(user_plugins)), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)):
+            ok, result = plugin_manager.uninstall("blocked")
+            assert not ok
+            assert "fixture stop failure" in result["err"]
+            assert result["state"] == "error"
+            assert result["restart_needed"] is False
+            assert entry.exists()
+            assert json.loads(registry.read_text(encoding="utf-8")) == initial
+            assert plugin_manager.status("blocked")["installed"] is True
+    finally:
+        plugin_host._registry, plugin_host._started = old_registry, old_started
+
+
 def test_uninstall_reloads_remaining_plugins_without_missing_target_warning():
     with patch.object(plugin_manager, "_valid_name", return_value=True), \
          patch.object(plugin_manager, "_stop", return_value=(True, "")), \
@@ -551,6 +584,83 @@ def test_uninstall_reloads_remaining_plugins_without_missing_target_warning():
         ok, result = plugin_manager.uninstall("demo")
     assert ok
     assert "runtime_warning" not in result
+
+
+def test_registry_orphan_does_not_report_plugin_as_installed(tmp_path):
+    user_plugins = tmp_path / "installed"
+    builtin_plugins = tmp_path / "builtin"
+    user_plugins.mkdir()
+    builtin_plugins.mkdir()
+    registry = user_plugins / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {
+        "ghost": {"version": "1.0.0", "state": "error"}}}), encoding="utf-8")
+    old_registry = plugin_host._registry
+    plugin_host._registry = {}
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(user_plugins)), \
+             patch.object(plugin_host, "_DIR", str(builtin_plugins)), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(user_plugins)), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)):
+            status = plugin_manager.status("ghost", "2.0.0")
+        assert status["installed"] is False
+        assert status["source_kind"] == "unknown"
+        assert status["removable"] is False
+        assert status["state"] == "not_installed"
+        assert status["update_state"] == "not_installed"
+    finally:
+        plugin_host._registry = old_registry
+
+
+def test_uninstall_user_overlay_restores_builtin_tools_and_routes(tmp_path):
+    user_plugins = tmp_path / "installed"
+    builtin_plugins = tmp_path / "builtin"
+    user_plugins.mkdir()
+    builtin_plugins.mkdir()
+    user_file = user_plugins / "overlay.py"
+    builtin_file = builtin_plugins / "overlay.py"
+    user_file.write_text(
+        'NAME="overlay"\nTOOLS={"user_tool": lambda arg: "user"}\n'
+        'TOOL_SPECS={"user_tool": {"desc":"user", "params":[]}}\n'
+        'ROUTES=[("GET", "/api/user-overlay", lambda body, query: {"ok": True})]\n',
+        encoding="utf-8")
+    builtin_file.write_text(
+        'NAME="overlay"\nTOOLS={"builtin_tool": lambda arg: "builtin"}\n'
+        'TOOL_SPECS={"builtin_tool": {"desc":"builtin", "params":[]}}\n'
+        'ROUTES=[("GET", "/api/builtin-overlay", lambda body, query: {"ok": True})]\n',
+        encoding="utf-8")
+    registry = user_plugins / "_registry.json"
+    registry.write_text(json.dumps({"version": 1, "plugins": {
+        "overlay": {"version": "2.0.0", "enabled": True}}}), encoding="utf-8")
+    old_registry = plugin_host._registry
+    old_started = plugin_host._started
+    old_index = dict(plugin_host._TOOL_INDEX)
+    plugin_host._registry = {}
+    plugin_host._started = set()
+    try:
+        with patch.object(plugin_host, "_INSTALLED_DIR", str(user_plugins)), \
+             patch.object(plugin_host, "_DIR", str(builtin_plugins)), \
+             patch.object(plugin_ops, "_PLUG_DIR", str(user_plugins)), \
+             patch.object(plugin_ops, "REGISTRY", str(registry)):
+            plugin_host.load(force=True, only="overlay")
+            assert plugin_host.get("overlay").path == str(user_file)
+            assert "/api/user-overlay" in [route[1] for route in plugin_host.route_table()]
+            ok, result = plugin_manager.uninstall("overlay")
+            assert ok, result
+            assert not user_file.exists()
+            assert plugin_host.get("overlay").path == str(builtin_file)
+            assert "/api/user-overlay" not in [route[1] for route in plugin_host.route_table()]
+            assert "/api/builtin-overlay" in [route[1] for route in plugin_host.route_table()]
+            assert "user_tool" not in plugin_host.tool_specs()
+            assert "builtin_tool" in plugin_host.tool_specs()
+            assert result["state"] == "builtin_restored"
+            assert result["source_kind"] == "builtin"
+            assert result["installed"] is True
+            assert result["removable"] is False
+    finally:
+        plugin_host._registry = old_registry
+        plugin_host._started = old_started
+        plugin_host._TOOL_INDEX.clear()
+        plugin_host._TOOL_INDEX.update(old_index)
 
 
 def test_targeted_lifecycle_keeps_real_background_plugins_running(tmp_path):

@@ -547,7 +547,16 @@ def uninstall(name, *, purge_data=False):
             result["runtime_warning"] = "插件已卸载，但其他插件运行态未完成重载；请重启 Brain"
     except Exception as exc:
         result["runtime_warning"] = str(exc)[:120]
-    result.update(ok=True, name=name, state="uninstalled", user_data="purged" if purge_data else "preserved")
+    current = status(name)
+    restored_builtin = source == "user" and current.get("source_kind") == "builtin"
+    result.update(ok=True, name=name,
+                  state="builtin_restored" if restored_builtin else "uninstalled",
+                  source_kind=current.get("source_kind", ""),
+                  installed=bool(current.get("installed")),
+                  builtin=bool(current.get("builtin")),
+                  removable=bool(current.get("removable")),
+                  builtin_restored=restored_builtin,
+                  user_data="purged" if purge_data else "preserved")
     return True, result
 
 
@@ -575,8 +584,11 @@ def status(name, latest_version=""):
     reg = _registry()
     item = dict(_meta(reg, name))
     source_kind = _source(name)
-    installed = bool(item) or source_kind in ("builtin", "user")
-    version = item.get("version", "")
+    # Registry metadata is not proof that plugin code still exists. Resolve
+    # installation from the selected runtime/on-disk source so orphaned slots
+    # cannot keep an uninstalled plugin marked as installed.
+    installed = source_kind in ("builtin", "user")
+    version = item.get("version", "") if installed else ""
     try:
         import plugin_host
         runtime = plugin_host.get(name)
@@ -617,10 +629,10 @@ def status(name, latest_version=""):
         update_state = "update_available" if cmp < 0 else ("ahead" if cmp > 0 else "current")
     return {"name": name, "installed": installed, "version": version,
             "latest_version": latest_version, "update_state": update_state,
-            "state": item.get("state", "installed" if installed else "not_installed"),
+            "state": (item.get("state", "installed") if installed else "not_installed"),
             "enabled": enabled, "lifecycle_enabled": enabled,
             "effective_by_src": effective_by_src,
-            "source_kind": source_kind or item.get("source_kind", "user"),
+            "source_kind": source_kind or ("unknown" if item else ""),
             "builtin": source_kind == "builtin", "removable": source_kind == "user",
             "runtime_state": runtime_state, "dependencies": item.get("dependencies", {}),
             "permissions": item.get("permissions", []), "diagnostic": diagnostic,
