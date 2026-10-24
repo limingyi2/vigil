@@ -7,16 +7,21 @@ same generic, expiring resource capability used by every media plugin.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import os
 import re
+import shutil
+import threading
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 NAME = "wallpaper"
-VERSION = "4.1.9"
-DESC = "独立 Wallpaper Engine 壁纸：Scene/WebGL、视频、网页与高质量界面适配"
+VERSION = "4.2.0"
+DESC = "独立 Wallpaper Engine 壁纸：Scene/WebGL、视频、网页，另有内置与在线动态壁纸"
 FEATURE = "wallpaper"
 
 # v4 deliberately uses a new config/cache namespace. Existing v3 files and user
@@ -264,6 +269,14 @@ def _safe_item(query: dict[str, str]) -> tuple[Path, str] | tuple[None, None]:
     parts = Path(file_name).parts
     if file_name.startswith(("/", "\\")) or ".." in parts:
         return None, None
+    # 在线壁纸优先：它们落在 DATA_DIR/cloud，不在 Workshop 目录里。
+    # 文件名必须与清单声明完全一致，避免借 id 越权读同目录的其他文件。
+    cloud = next((x for x in _cloud_items() if x["id"] == wid), None)
+    if cloud:
+        if file_name != cloud["file"]:
+            return None, None
+        cached = _cloud_cached(cloud)
+        return (cached, file_name) if cached else (None, None)
     workshop = _find_workshop()
     if not workshop:
         return None, None
@@ -284,6 +297,274 @@ def api_resource(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
         return {"ok": False, "err": "壁纸资源不存在或路径非法", "_code": 404}
     mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     return {"__file__": str(path), "__mime__": mime, "__cache__": "no-store"}
+
+
+# ── 在线壁纸：按需下载，不随插件打包 ─────────────────────────────────
+#
+# 插件市场安装包有 4 MB 硬上限（brain/plugin_ops.py 的 MAX_ZIP_BYTES），视频壁纸
+# 不可能塞进去。所以插件只装「清单 + 播放器」：画面放在 HTTPS 主机上，用户点一下
+# 才下载，校验 SHA-256 后落盘，之后离线可用。
+# 播放走 Brain 的 __file__ 流式响应（plugin_files.send_file），它已经实现 HTTP
+# Range 206，所以 <video> 既能 seek 也能无缝循环。
+CLOUD_DIR = DATA_DIR / "cloud"
+CLOUD_MANIFEST = Path(os.environ.get("VIGIL_WALLPAPER_CLOUD_MANIFEST")
+                      or (Path(__file__).with_name("cloud-walls.json")))
+# 只允许从这几个主机取画面。清单本身随插件分发、由市场校验 SHA-256，
+# 所以这里是第二道闸，不是唯一闸。
+# GitHub Release 的下载是两跳：github.com/<repo>/releases/download/... 先 302 到
+# release-assets.githubusercontent.com（2026-10 实测），raw 分支才是
+# objects.githubusercontent.com。跳转目标不在白名单会被下面 geturl() 拒掉，
+# 所以两跳的目标主机都必须列进来。jsDelivr 作备源（仓库文件 <100MB 时可用）。
+CLOUD_HOSTS = {
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "cdn.jsdelivr.net",
+}
+# 生产只走 HTTPS。测试会把它换成 {"http","https"} 以便用本地服务跑真下载；
+# 这不是后门——清单里的 URL 仍要过主机白名单和 SHA-256 双闸。
+CLOUD_SCHEMES = {"https"}
+CLOUD_MAX_BYTES = 256 * 1024 * 1024    # 单个壁纸上限
+CLOUD_CHUNK = 256 * 1024               # 边下边算哈希的块大小
+CLOUD_TIMEOUT = 20
+CLOUD_FREE_MARGIN = 64 * 1024 * 1024   # 落盘前要求的最小剩余空间
+
+_CLOUD_LOCK = threading.Lock()
+_CLOUD_STATE: dict[str, dict[str, Any]] = {}
+_CLOUD_QUEUE: list[str] = []
+_CLOUD_WORKER: threading.Thread | None = None
+_cloud_manifest_cache: tuple[float, list[dict[str, Any]]] | None = None
+
+
+def _clean_cloud_entry(entry: Any) -> dict[str, Any] | None:
+    """清单条目是最不可信的输入：id/文件名/URL/哈希/体积全部重新校验。"""
+    if not isinstance(entry, dict):
+        return None
+    wid = str(entry.get("id") or "").strip()
+    name = str(entry.get("file") or "").strip()
+    url = str(entry.get("url") or "").strip()
+    sha = str(entry.get("sha256") or "").strip().lower()
+    if not re.fullmatch(r"\d+", wid) or not name:
+        return None
+    if "/" in name or "\\" in name or name.startswith(".") or "\x00" in name:
+        return None
+    if not re.fullmatch(r"[a-f0-9]{64}", sha):
+        return None
+    try:
+        size = int(entry.get("bytes") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not 0 < size <= CLOUD_MAX_BYTES:
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return None
+    if parsed.scheme not in CLOUD_SCHEMES or (parsed.hostname or "").lower() not in CLOUD_HOSTS:
+        return None
+    kind = _norm_type(entry.get("type")) or "video"
+    if kind not in {"video", "image", "gif"}:
+        return None
+    return {
+        "id": wid,
+        "title": str(entry.get("title") or wid)[:120],
+        "type": kind,
+        "file": name,
+        "url": url,
+        "sha256": sha,
+        "bytes": size,
+        "poster": str(entry.get("poster") or "")[:200000],
+        "credit": str(entry.get("credit") or "")[:160],
+    }
+
+
+def _cloud_items() -> list[dict[str, Any]]:
+    """读清单；按 mtime 缓存，避免每次请求都解析 JSON。"""
+    global _cloud_manifest_cache
+    try:
+        stamp = CLOUD_MANIFEST.stat().st_mtime
+    except OSError:
+        return []
+    if _cloud_manifest_cache and _cloud_manifest_cache[0] == stamp:
+        return _cloud_manifest_cache[1]
+    items: list[dict[str, Any]] = []
+    try:
+        raw = json.loads(CLOUD_MANIFEST.read_text(encoding="utf-8-sig"))
+    except Exception:
+        raw = {}
+    entries = raw.get("items") if isinstance(raw, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        item = _clean_cloud_entry(entry)
+        if item and all(x["id"] != item["id"] for x in items):
+            items.append(item)
+    _cloud_manifest_cache = (stamp, items)
+    return items
+
+
+def _cloud_cached(item: dict[str, Any]) -> Path | None:
+    """已落盘的副本；路径必须仍在 CLOUD_DIR 内（清单里的 file 不可信）。"""
+    try:
+        root = CLOUD_DIR.resolve()
+        path = (CLOUD_DIR / item["file"]).resolve()
+        path.relative_to(root)
+    except (ValueError, OSError):
+        return None
+    return path if path.is_file() else None
+
+
+def _cloud_view(item: dict[str, Any]) -> dict[str, Any]:
+    out = {k: item[k] for k in ("id", "title", "type", "file", "bytes", "poster", "credit")}
+    out["total"] = item["bytes"]
+    # 卡片缩略图沿用本地条目的字段名 preview：清单里内嵌一张小 data URI，
+    # 下载之前就能看见画面，不必为"挑哪张"先下几百 MB。
+    out["preview"] = item["poster"]
+    cached = _cloud_cached(item)
+    if cached:
+        out.update(state="cached", got=cached.stat().st_size, percent=100)
+        return out
+    with _CLOUD_LOCK:
+        st = dict(_CLOUD_STATE.get(item["id"]) or {})
+    state = st.get("state")
+    if state in {"queued", "downloading"}:
+        got = int(st.get("got") or 0)
+        out.update(state=state, got=got,
+                   percent=int(got * 100 / item["bytes"]) if item["bytes"] else 0)
+    elif state == "error":
+        out.update(state="error", got=0, percent=0, err=str(st.get("err") or ""))
+    elif state == "done":
+        # 状态说完成但文件不在：被杀进程/被清盘，退回可重新下载。
+        out.update(state="remote", got=0, percent=0)
+    else:
+        out.update(state="remote", got=0, percent=0)
+    return out
+
+
+def _cloud_set(wid: str, **fields: Any) -> None:
+    with _CLOUD_LOCK:
+        current = dict(_CLOUD_STATE.get(wid) or {})
+        current.update(fields)
+        _CLOUD_STATE[wid] = current
+
+
+def _cloud_fetch_one(item: dict[str, Any]) -> None:
+    """流式下载到 .part，边下边算 SHA-256，校验通过才 rename 成正式文件。"""
+    wid = item["id"]
+    dest = CLOUD_DIR / item["file"]
+    part = dest.with_name(dest.name + ".part")
+    _cloud_set(wid, state="downloading", got=0, err="")
+    try:
+        CLOUD_DIR.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(str(CLOUD_DIR)).free
+        if free < item["bytes"] + CLOUD_FREE_MARGIN:
+            raise ValueError("磁盘空间不足，至少需要 %d MB 空闲"
+                             % ((item["bytes"] + CLOUD_FREE_MARGIN) // 1048576))
+        hasher = hashlib.sha256()
+        got = 0
+        request = urllib.request.Request(item["url"], headers={
+            "User-Agent": "Vigil-Wallpaper/4.2", "Accept-Encoding": "identity"})
+        with urllib.request.urlopen(request, timeout=CLOUD_TIMEOUT) as response, \
+                open(part, "wb") as handle:
+            final = urllib.parse.urlparse(response.geturl())
+            if final.scheme not in CLOUD_SCHEMES or (final.hostname or "").lower() not in CLOUD_HOSTS:
+                raise ValueError("下载被重定向到未授权主机：%s" % (final.hostname or "?"))
+            declared = response.headers.get("Content-Length")
+            if declared and declared.isdigit() and int(declared) > item["bytes"] + 4096:
+                raise ValueError("远端文件比清单声明更大")
+            while True:
+                chunk = response.read(CLOUD_CHUNK)
+                if not chunk:
+                    break
+                got += len(chunk)
+                if got > item["bytes"] + 4096:
+                    raise ValueError("下载体积超过清单声明")
+                hasher.update(chunk)
+                handle.write(chunk)
+                _cloud_set(wid, state="downloading", got=got)
+        if got != item["bytes"]:
+            raise ValueError("体积不符：清单 %d 字节，实际 %d" % (item["bytes"], got))
+        if hasher.hexdigest().lower() != item["sha256"]:
+            raise ValueError("SHA-256 校验失败（托管文件被改动，或清单未同步）")
+        os.replace(part, dest)
+        _cloud_set(wid, state="done", got=got, err="")
+    except Exception as exc:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        _cloud_set(wid, state="error", err="%s: %s" % (type(exc).__name__, str(exc)[:140]))
+
+
+def _cloud_worker() -> None:
+    global _CLOUD_WORKER
+    while True:
+        with _CLOUD_LOCK:
+            wid = _CLOUD_QUEUE.pop(0) if _CLOUD_QUEUE else None
+            if not wid:
+                _CLOUD_WORKER = None
+                return
+            _CLOUD_STATE[wid] = {"state": "downloading", "got": 0}
+        item = next((x for x in _cloud_items() if x["id"] == wid), None)
+        if not item:
+            _cloud_set(wid, state="error", err="清单里没有这个壁纸")
+            continue
+        _cloud_fetch_one(item)
+
+
+def _cloud_enqueue(wid: str) -> str:
+    """返回空字符串表示已入队/已在本地；否则是给用户看的原因。"""
+    global _CLOUD_WORKER
+    item = next((x for x in _cloud_items() if x["id"] == wid), None)
+    if not item:
+        return "清单里没有这个壁纸"
+    if _cloud_cached(item):
+        return ""
+    with _CLOUD_LOCK:
+        if wid in _CLOUD_QUEUE:
+            return ""
+        if (_CLOUD_STATE.get(wid) or {}).get("state") == "downloading":
+            return ""
+        _CLOUD_QUEUE.append(wid)
+        _CLOUD_STATE[wid] = {"state": "queued", "got": 0}
+        if _CLOUD_WORKER is None:
+            _CLOUD_WORKER = threading.Thread(target=_cloud_worker,
+                                             name="wallpaper-cloud", daemon=True)
+            _CLOUD_WORKER.start()
+    return ""
+
+
+def api_cloud(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
+    items = _cloud_items()
+    return {"ok": True, "version": VERSION, "dir": str(CLOUD_DIR), "count": len(items),
+            "wallpapers": [_cloud_view(x) for x in items]}
+
+
+def api_cloud_fetch(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
+    wid = str((body or {}).get("id") or (query or {}).get("id") or "").strip()
+    if not re.fullmatch(r"\d+", wid):
+        return {"ok": False, "err": "壁纸 id 非法", "_code": 400}
+    reason = _cloud_enqueue(wid)
+    if reason:
+        return {"ok": False, "err": reason, "_code": 400}
+    return {"ok": True, "id": wid}
+
+
+def api_cloud_remove(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
+    wid = str((body or {}).get("id") or (query or {}).get("id") or "").strip()
+    if not re.fullmatch(r"\d+", wid):
+        return {"ok": False, "err": "壁纸 id 非法", "_code": 400}
+    item = next((x for x in _cloud_items() if x["id"] == wid), None)
+    if not item:
+        return {"ok": False, "err": "清单里没有这个壁纸", "_code": 400}
+    cached = _cloud_cached(item)
+    if cached:
+        try:
+            cached.unlink()
+        except OSError as exc:
+            return {"ok": False, "err": "删除失败：%s" % str(exc)[:80], "_code": 500}
+    with _CLOUD_LOCK:
+        _CLOUD_STATE.pop(wid, None)
+    return {"ok": True, "id": wid}
 
 
 def api_config_get(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
@@ -328,4 +609,8 @@ ROUTES = [
     ("GET", "/api/plugin/wallpaper/resource", api_resource),
     ("GET", "/api/plugin/wallpaper/config", api_config_get),
     ("POST", "/api/plugin/wallpaper/config", api_config_post),
+    # 在线壁纸（画面不随包分发，按需下载到 DATA_DIR/cloud）
+    ("GET", "/api/plugin/wallpaper/cloud", api_cloud),
+    ("POST", "/api/plugin/wallpaper/cloud/fetch", api_cloud_fetch),
+    ("POST", "/api/plugin/wallpaper/cloud/remove", api_cloud_remove),
 ]

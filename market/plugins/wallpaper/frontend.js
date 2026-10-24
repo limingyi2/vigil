@@ -25,6 +25,9 @@
   let locals = [];
   // Workshop 扫描结果单独存：本地媒体 / 内置 / 远程三段分开，重建列表时顺序稳定。
   let remote = [];
+  // 在线壁纸：画面放在 HTTPS 主机上，插件不打包视频（安装包只有 4MB），
+  // 用户点一下才下载到本机 DATA_DIR/cloud，之后离线可用。
+  let cloudy = [];
   // ── 内置壁纸（随插件分发，不需要 Wallpaper Engine）───────────────────
   // 插件安装器只接受 .py/.json/.md/.txt/.js/.css，装不进 .html/.jpg 资源目录，
   // 所以三张壁纸以「内联 HTML 文档 + data URI 缩略图」的形式活在前端里：文档经
@@ -404,7 +407,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
       file: 'builtin-ripple.html', builtin: true, preview: 'data:image/jpeg;base64,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' },
   ];
   // 内置永远排在库最前面：没装 Wallpaper Engine 的人也一进来就有东西可点。
-  function rebuildLibrary() { library = [...locals, ...BUILTIN, ...remote]; }
+  function rebuildLibrary() { library = [...locals, ...BUILTIN, ...cloudy, ...remote]; }
   rebuildLibrary();
   let active = null;
   let stage = null;
@@ -646,6 +649,95 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
     api('POST', '/api/plugin/wallpaper/config', patch).then((r) => { if (r?.config) config = { ...config, ...r.config }; applyAppearance(); scheduleCarousel(); }).catch(() => {});
     if (remount) mount(active);
   }
+  // ---- 在线壁纸：卡片状态 / 下载 / 轮询 ----
+  let pendingSelect = '';
+  let cloudTimer = 0;
+  function cloudMeta(w) {
+    if (w.state === 'cached') return '在线 · 已缓存，可离线';
+    if (w.state === 'downloading') return '下载中 ' + (w.percent || 0) + '%';
+    if (w.state === 'queued') return '排队中…';
+    if (w.state === 'error') return '下载失败 · 点击重试';
+    return '在线 · 点击下载 ' + Math.max(1, Math.round((w.bytes || 0) / 1048576)) + 'MB';
+  }
+  function cardHtml(w) {
+    const busy = w.cloud && (w.state === 'queued' || w.state === 'downloading');
+    const tag = w.builtin ? '<span class="vigil-wallpaper-tag">内置</span>'
+      : w.cloud ? '<span class="vigil-wallpaper-tag is-cloud">在线</span>' : '';
+    const bar = busy ? '<span class="vigil-wallpaper-progress" style="--p:' + (w.percent || 0) + '%"></span>' : '';
+    const meta = w.builtin ? '内置 · 无需 Wallpaper Engine'
+      : w.cloud ? cloudMeta(w) : typeLabel(w.type) + ' · ' + w.id;
+    return '<button class="vigil-wallpaper-card' + (active && active.id === w.id ? ' is-active' : '')
+      + (busy ? ' is-downloading' : '') + '" data-wp4-id="' + esc(w.id) + '"'
+      + (w.cloud ? ' data-wp4-cloud="' + esc(w.id) + '"' : '') + '>' + tag + bar
+      + '<span class="vigil-wallpaper-thumb">' + (w.preview ? '<img loading="lazy" alt="" data-preview="' + esc(w.id) + '">' : '')
+      + '</span><span class="vigil-wallpaper-card-body"><span class="vigil-wallpaper-card-title">' + esc(w.title)
+      + '</span><span class="vigil-wallpaper-card-meta">' + esc(meta) + '</span></span></button>';
+  }
+  // 轮询只改卡片上的状态文字，不整页重绘——否则搜索框会被清空、滚动位置丢失。
+  function patchCloudCards() {
+    document.querySelectorAll('[data-wp4-cloud]').forEach((btn) => {
+      const w = cloudy.find((x) => x.id === btn.dataset.wp4Cloud);
+      if (!w) return;
+      const meta = btn.querySelector('.vigil-wallpaper-card-meta');
+      if (meta) meta.textContent = cloudMeta(w);
+      const busy = w.state === 'queued' || w.state === 'downloading';
+      btn.classList.toggle('is-downloading', busy);
+      let bar = btn.querySelector('.vigil-wallpaper-progress');
+      if (busy) {
+        if (!bar) { bar = document.createElement('span'); bar.className = 'vigil-wallpaper-progress'; btn.appendChild(bar); }
+        bar.style.setProperty('--p', (w.percent || 0) + '%');
+      } else if (bar) {
+        bar.remove();
+      }
+    });
+  }
+  function startCloudPoll() {
+    if (cloudTimer || disposed) return;
+    // 500ms 足够跟手；没有在途任务就立刻停，别让定时器常驻。
+    cloudTimer = setInterval(() => {
+      api('GET', '/api/plugin/wallpaper/cloud').then((r) => {
+        if (disposed || !r || !r.ok) return;
+        cloudy = (Array.isArray(r.wallpapers) ? r.wallpapers : []).map((w) => ({ ...w, cloud: true }));
+        rebuildLibrary();
+        if (lastContext) patchCloudCards();
+        const waiting = cloudy.find((w) => w.id === pendingSelect);
+        if (waiting && waiting.state === 'cached') {
+          pendingSelect = '';
+          select(waiting);
+          if (lastContext) renderSettings(lastContext);
+        } else if (waiting && waiting.state === 'error') {
+          pendingSelect = '';
+          showBadge('在线壁纸下载失败：' + (waiting.err || '原因未知'));
+        }
+        if (!cloudy.some((w) => w.state === 'downloading' || w.state === 'queued') && !pendingSelect) {
+          clearInterval(cloudTimer); cloudTimer = 0;
+        }
+      }).catch(() => {});
+    }, 500);
+  }
+  async function loadCloud() {
+    const r = await api('GET', '/api/plugin/wallpaper/cloud');
+    if (disposed || !r || !r.ok) return;
+    cloudy = (Array.isArray(r.wallpapers) ? r.wallpapers : []).map((w) => ({ ...w, cloud: true }));
+    rebuildLibrary();
+    if (cloudy.some((w) => w.state === 'downloading' || w.state === 'queued')) startCloudPoll();
+  }
+  // 点了在线壁纸但还没下载 → 先拉，拉完自动挂上；其余情况直接切。
+  function choose(item) {
+    if (!item) return;
+    if (!item.cloud || item.state === 'cached') { select(item); return; }
+    pendingSelect = item.id;
+    // 立刻给反馈：状态要等 500ms 那次轮询才回来，先本地点成「排队中」，
+    // 否则点击后卡片一动不动，用户以为没点上。
+    cloudy = cloudy.map((w) => (w.id === item.id ? { ...w, state: 'queued', percent: 0 } : w));
+    if (item.state === 'remote' || item.state === 'error') {
+      api('POST', '/api/plugin/wallpaper/cloud/fetch', { id: item.id }).then((r) => {
+        if (r && r.ok === false) { pendingSelect = ''; showBadge('在线壁纸下载失败：' + (r.err || '原因未知')); }
+      }).catch(() => { pendingSelect = ''; });
+    }
+    startCloudPoll();
+    if (lastContext) patchCloudCards();
+  }
   function select(item) {
     if (!item) return;
     active = item;
@@ -698,7 +790,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
     const carouselOn = !!config.carousel_enabled;
     view.innerHTML = '<div class="vigil-wallpaper-page"><div class="vigil-wallpaper-head"><div><h2>Wallpaper Engine</h2><p>独立渲染器 · Scene / Web / Video · 支持高质量粒子与 Shader</p></div><div class="vigil-wallpaper-status">' + esc(config.we_path || '未检测到 Steam Workshop · 内置壁纸可用') + (libraryError ? '<div class="vigil-wallpaper-error">' + esc(libraryError) + '</div>' : '') + '</div></div>' +
       '<div class="vigil-wallpaper-tabs"><button type="button" class="vigil-wallpaper-tab is-active" data-wp4-tab="library">壁纸库</button><button type="button" class="vigil-wallpaper-tab" data-wp4-tab="appearance">外观</button><button type="button" class="vigil-wallpaper-tab" data-wp4-tab="playback">播放</button></div>' +
-      '<div class="vigil-wallpaper-panel" data-wp4-panel="library">' + (config.enabled || config.we_path ? '' : '<div class="vigil-wallpaper-hint">还没有 Wallpaper Engine？下面 ' + BUILTIN.length + ' 张是插件自带的内置壁纸，点一张立刻生效，不需要 Steam 也不需要订阅。</div>') + '<div class="vigil-wallpaper-toolbar"><input id="wp4-search" class="input" placeholder="搜索壁纸名称或类型"><select id="wp4-type"><option value="">全部类型</option><option value="scene">Scene</option><option value="web">网页</option><option value="video">视频</option><option value="image">图片</option></select><button class="btn" id="wp4-refresh">刷新 Workshop</button><button class="btn" id="wp4-local">打开本地媒体</button><button class="btn" id="wp4-disable">停用</button></div><input id="wp4-file" type="file" accept="video/*,image/*" hidden><div id="wp4-grid" class="vigil-wallpaper-grid"></div></div>' +
+      '<div class="vigil-wallpaper-panel" data-wp4-panel="library">' + (config.enabled || config.we_path || cloudy.length ? '' : '<div class="vigil-wallpaper-hint">还没有 Wallpaper Engine？下面 ' + BUILTIN.length + ' 张是插件自带的内置壁纸，点一张立刻生效，不需要 Steam 也不需要订阅。</div>') + '<div class="vigil-wallpaper-toolbar"><input id="wp4-search" class="input" placeholder="搜索壁纸名称或类型"><select id="wp4-type"><option value="">全部类型</option><option value="scene">Scene</option><option value="web">网页</option><option value="video">视频</option><option value="image">图片</option></select><button class="btn" id="wp4-refresh">刷新 Workshop</button><button class="btn" id="wp4-local">打开本地媒体</button><button class="btn" id="wp4-disable">停用</button></div><input id="wp4-file" type="file" accept="video/*,image/*" hidden><div id="wp4-grid" class="vigil-wallpaper-grid"></div></div>' +
       '<div class="vigil-wallpaper-panel" data-wp4-panel="appearance" hidden><div class="vigil-wallpaper-presets">' + Object.keys(PRESETS).map((k) => '<button type="button" class="btn" data-wp4-preset="' + esc(k) + '">' + esc(k) + '</button>').join('') + '</div><div class="vigil-wallpaper-controls"><div class="vigil-wallpaper-control"><label>壁纸不透明度 <output id="wp4-opacity-v">' + Math.round((config.opacity || 0) * 100) + '%</output></label><input id="wp4-opacity" type="range" min="0" max="100" value="' + Math.round((config.opacity || 0) * 100) + '"></div><div class="vigil-wallpaper-control"><label>遮罩 <output id="wp4-scrim-v">' + Math.round((config.scrim || 0) * 100) + '%</output></label><input id="wp4-scrim" type="range" min="0" max="100" value="' + Math.round((config.scrim || 0) * 100) + '"></div><div class="vigil-wallpaper-control"><label>毛玻璃 <output id="wp4-blur-v">' + (config.blur || 0) + 'px</output></label><input id="wp4-blur" type="range" min="0" max="32" value="' + (config.blur || 0) + '"></div><div class="vigil-wallpaper-control"><label>渲染质量</label><select id="wp4-quality"><option value="low"' + (config.quality === 'low' ? ' selected' : '') + '>低</option><option value="medium"' + (config.quality === 'medium' ? ' selected' : '') + '>中</option><option value="high"' + (config.quality !== 'low' && config.quality !== 'medium' ? ' selected' : '') + '>高</option></select></div></div></div>' +
       '<div class="vigil-wallpaper-panel" data-wp4-panel="playback" hidden><div class="vigil-wallpaper-controls"><div class="vigil-wallpaper-control"><label>Scene FPS <output id="wp4-fps-v">' + (config.fps || 60) + '</output></label><input id="wp4-fps" type="range" min="15" max="120" step="15" value="' + (config.fps || 60) + '"></div><div class="vigil-wallpaper-control"><label>声音</label><select id="wp4-muted"><option value="on"' + (config.muted === false ? '' : ' selected') + '>静音</option><option value="off"' + (config.muted === false ? ' selected' : '') + '>播放声音</option></select></div></div>' +
       '<div class="vigil-wallpaper-carousel"><label style="display:flex;align-items:center;gap:8px"><input id="wp4-carousel" type="checkbox"' + (carouselOn ? ' checked' : '') + '> 自动轮播</label><label>间隔(分钟)<input id="wp4-carousel-min" class="input" type="number" min="5" max="720" value="' + Math.max(5, Number(config.carousel_minutes) || 30) + '"></label><label style="display:flex;align-items:center;gap:8px"><input id="wp4-carousel-shuffle" type="checkbox"' + (config.carousel_shuffle ? ' checked' : '') + '> 随机顺序</label></div><div class="market-meta">轮播在 Vigil 运行期间生效;关闭客户端即暂停,重新打开自动恢复。</div></div>' +
@@ -709,7 +801,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
       view.querySelectorAll('[data-wp4-panel]').forEach((panel) => { panel.hidden = panel.dataset.wp4Panel !== tab.dataset.wp4Tab; });
     }));
     const grid = view.querySelector('#wp4-grid');
-    const filter = () => { const q = view.querySelector('#wp4-search').value.trim().toLowerCase(); const type = view.querySelector('#wp4-type').value; const rows = shown.filter((w) => (!type || w.type === type) && (!q || (w.title + ' ' + w.type).toLowerCase().includes(q))); grid.innerHTML = rows.length ? rows.map((w) => '<button class="vigil-wallpaper-card ' + (active && active.id === w.id ? 'is-active' : '') + '" data-wp4-id="' + esc(w.id) + '">' + (w.builtin ? '<span class="vigil-wallpaper-tag">内置</span>' : '') + '<span class="vigil-wallpaper-thumb">' + (w.preview ? '<img loading="lazy" alt="" data-preview="' + esc(w.id) + '">' : '') + '</span><span class="vigil-wallpaper-card-body"><span class="vigil-wallpaper-card-title">' + esc(w.title) + '</span><span class="vigil-wallpaper-card-meta">' + esc(w.builtin ? '内置 · 无需 Wallpaper Engine' : typeLabel(w.type) + ' · ' + w.id) + '</span></span></button>').join('') : '<div class="vigil-wallpaper-empty">没有匹配的壁纸。内置壁纸不需要 Wallpaper Engine；Scene/视频类需要本机已安装 Wallpaper Engine 并订阅了 Workshop 内容。</div>'; grid.querySelectorAll('[data-wp4-id]').forEach((b) => b.addEventListener('click', () => select(shown.find((w) => w.id === b.dataset.wp4Id)))); grid.querySelectorAll('[data-preview]').forEach((img) => { const w = shown.find((x) => x.id === img.dataset.preview); if (!w) return; if (w.localUrl) img.src = w.localUrl; else if (w.builtin && w.preview) img.src = w.preview; else if (w.preview) resourceUrl(mediaPath(w, w.preview)).then((url) => { if (img.isConnected) img.src = url; }).catch(() => {}); }); };
+    const filter = () => { const q = view.querySelector('#wp4-search').value.trim().toLowerCase(); const type = view.querySelector('#wp4-type').value; const rows = shown.filter((w) => (!type || w.type === type) && (!q || (w.title + ' ' + w.type).toLowerCase().includes(q))); grid.innerHTML = rows.length ? rows.map(cardHtml).join('') : '<div class="vigil-wallpaper-empty">没有匹配的壁纸。内置壁纸不需要 Wallpaper Engine；Scene/视频类需要本机已安装 Wallpaper Engine 并订阅了 Workshop 内容。</div>'; grid.querySelectorAll('[data-wp4-id]').forEach((b) => b.addEventListener('click', () => choose(shown.find((w) => w.id === b.dataset.wp4Id)))); grid.querySelectorAll('[data-preview]').forEach((img) => { const w = shown.find((x) => x.id === img.dataset.preview); if (!w) return; if (w.localUrl) img.src = w.localUrl; else if ((w.builtin || w.cloud) && w.preview) img.src = w.preview; else if (w.preview) resourceUrl(mediaPath(w, w.preview)).then((url) => { if (img.isConnected) img.src = url; }).catch(() => {}); }); };
     filter();
     view.querySelector('#wp4-search').addEventListener('input', filter); view.querySelector('#wp4-type').addEventListener('change', filter);
     view.querySelector('#wp4-refresh').addEventListener('click', () => loadLibrary(true)); view.querySelector('#wp4-local').addEventListener('click', () => view.querySelector('#wp4-file').click()); view.querySelector('#wp4-file').addEventListener('change', (e) => localFile(e.target.files?.[0])); view.querySelector('#wp4-disable').addEventListener('click', () => { setConfig({ enabled: false, carousel_enabled: false }, false); active = null; clearStage(); applyAppearance(); renderSettings(ctx); });
@@ -725,7 +817,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
   async function loadLibrary(force) {
     const result = await api('GET', '/api/plugin/wallpaper/library' + (force ? '?refresh=1' : ''));
     if (result?.ok === false) { libraryError = result.err || '读取壁纸库失败'; return; }
-    libraryError = ''; remote = Array.isArray(result?.wallpapers) ? result.wallpapers : []; config = { ...config, we_path: result?.we_path || null }; rebuildLibrary(); if (lastContext) renderSettings(lastContext);
+    libraryError = ''; remote = Array.isArray(result?.wallpapers) ? result.wallpapers : []; config = { ...config, we_path: result?.we_path || null }; rebuildLibrary(); if (lastContext) renderSettings(lastContext); loadCloud().then(() => { if (lastContext) renderSettings(lastContext); }).catch(() => {});
   }
   function onMessage(event) {
     if (!frame || event.source !== frame.contentWindow || !event.data?.vigilWallpaperV4) return;

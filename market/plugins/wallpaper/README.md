@@ -16,7 +16,7 @@
 
 ## 安装与卸载
 
-从 Vigil 插件市场安装 `wallpaper` 4.1.9。安装后启用“壁纸”页面；卸载仅移除插件包和 v4 配置命名空间，不触碰用户壁纸素材。
+从 Vigil 插件市场安装 `wallpaper` 4.2.0。安装后启用“壁纸”页面；卸载仅移除插件包和 v4 配置命名空间，不触碰用户壁纸素材。
 
 ## 内置壁纸（4.1.9）
 
@@ -26,3 +26,38 @@
 - 三张都是随插件分发的单文件 Canvas 动画（内联 HTML 文档 + data URI 缩略图），
   不落地任何图片资源、不新增权限，30fps 封顶、窗口隐藏自动暂停；
 - 装了 Wallpaper Engine 之后，Workshop 内容照旧出现在同一个列表里（内置排在最前）。
+
+## 在线壁纸（4.2）
+
+插件市场安装包硬上限 4 MB，一条视频壁纸就顶穿了，所以动态画面**不随插件打包**。
+插件只带一份清单 `cloud-walls.json` 和播放器，画面放在 GitHub Release 上，
+用户点卡片时才下载。
+
+- **下载前就能看见样子**：清单里内嵌一张 240 宽 JPEG 缩略图（data URI），
+  不需要为"挑哪张"先下几百 MB；
+- **下载即校验**：边下边算 SHA-256，并核对字节数与清单声明一致，任何一项不符
+  都会整包丢弃、回到"未下载"态，不会留下半截文件；
+- **域名白名单**：只认 `github.com` / `release-assets.githubusercontent.com` /
+  `objects.githubusercontent.com` / `raw.githubusercontent.com` / `cdn.jsdelivr.net`，
+  且重定向后的目标主机也要过白名单（GitHub Release 是两跳）；
+- **下载后离线可用**：落在 `%USERPROFILE%\.vigil\wallpaper-v4\cloud\`，
+  删除也在这个目录里，不动 Workshop 和用户自己的文件；
+- 单张上限 256 MB，落盘前要求磁盘至少留 64 MB 余量。
+
+### 维护者：加一张在线壁纸
+
+1. 把转好的视频传到 GitHub Release（建议独立仓库 `vigil-walls`，tag 如 `walls-v1`）；
+2. 生成清单：
+
+```bash
+python market/tools/make-cloud-manifest.py \
+  --base https://github.com/<user>/vigil-walls/releases/download/walls-v1 \
+  --credit "作者署名" --verify \
+  _tmp/walls/*.mp4
+```
+
+`--verify` 会联网 HEAD 一遍，确认文件真的在线上、大小对得上。脚本自动抽首帧做
+缩略图、算 SHA-256，并用插件自己的 `_clean_cloud_entry` 复核清单能不能过关。
+
+⚠️ 换过视频文件就必须重跑脚本：哈希对不上时，用户那边下载会被拒。
+

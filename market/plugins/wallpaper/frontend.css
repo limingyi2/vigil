@@ -238,6 +238,11 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
 .vigil-wallpaper-card.is-active { outline: 2px solid var(--accent, #8ea7ff); }
 /* 内置壁纸：卡片左上角一枚"内置"角标（它是随插件分发的，不是 Workshop 内容）。 */
 .vigil-wallpaper-card { position: relative; }
+/* 在线壁纸：左上角「在线」角标 + 卡片底部一条下载进度。 */
+.vigil-wallpaper-tag.is-cloud { background: rgba(22, 38, 76, .66); border-color: rgba(140, 180, 255, .40); }
+.vigil-wallpaper-card.is-downloading { cursor: progress; }
+.vigil-wallpaper-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 0 0 12px 12px;
+  background: linear-gradient(90deg, var(--accent, #8ea7ff) var(--p, 0%), rgba(255, 255, 255, .14) var(--p, 0%)); }
 .vigil-wallpaper-tag { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 3px 8px; border-radius: 999px;
   font-size: 11px; line-height: 1.3; letter-spacing: .02em; color: #eef3ff;
   background: rgba(10, 14, 24, .58); border: 1px solid rgba(255, 255, 255, .18);
