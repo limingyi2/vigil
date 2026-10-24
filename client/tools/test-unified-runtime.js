@@ -75,6 +75,6 @@ test('rollback snapshot preserves a complete pair, checks hashes, never contains
 });
 test('NSIS checkpoint targets the product executable declared by electron-builder',()=>{
   const nsis=fs.readFileSync(path.join(__dirname,'installer.nsh'),'utf8');
-  assert.ok(nsis.includes('$INSTDIR\\${APP_FILENAME}.exe'),'Upgrade backup must launch the actual installed product executable');
+  assert.ok(nsis.includes('$INSTDIR\\${APP_EXECUTABLE_FILENAME}'),'Upgrade backup must launch the actual installed product executable');
   assert.equal(nsis.includes('$INSTDIR\\Vigil.exe'),false,'The old product name must not gate Kestrel backup creation');
 });
