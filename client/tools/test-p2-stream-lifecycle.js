@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 require('./test-video-workbench-lifecycle.js');
+require('./test-wallpaper-settings-isolation.cjs');
 require('./test-plugin-market-lifecycle.js');
 require('./test-data-page-lifecycle.js');
 const vm = require('node:vm');
@@ -320,3 +321,4 @@ test('production chat disposes both terminal events, exceptions, fallback and mi
   }
   assert.doesNotMatch(chat,/console\.log\([^\n]*(evt\.text|apiStream returned)/);
 });
+
