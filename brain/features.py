@@ -9,6 +9,9 @@ DEFAULTS 里除核心功能外，插件声明了 FEATURE 的也会登记进来�
 
 ## 按渠道覆盖（config.json 的 features_by_src）
 
+插件开关只控制已由 Plugin Host 加载的插件。`on()` 对未登记键保留历史默认值，
+不能作为插件已安装的证据；暴露插件工具必须另外检查已加载插件及其工具注册。
+
 同一个功能在不同渠道该有不同的开合 —— 群聊里她不该报天气、不该关心快递，
 那是你和她的私事；群里有人随口说的单号更不该进你的监控。
 所以 `features_by_src.<渠道>` 里可以给某个渠道单独覆盖：
@@ -167,11 +170,11 @@ def all_features(src=None):
 
 
 def on(key, src=None):
-    """某功能开没开。不认识的 key 一律当开。
+    """某功能开没开。不认识的 key 保留兼容默认值；不代表插件已安装。
 
     src 省略时按**当前渠道**算（见 set_current_src / with_channel）——
     聊天链路和后台提醒那些地方都是这么调的，它们只管问"这个功能此刻开没开"，
-    不该各自记着自己是哪个渠道。
+    不该各自记着自己是哪个渠道。工具暴露层还必须由 Plugin Host 验证工具所有者。
     """
     return bool(all_features(src if src is not None else _cur_src.get())
                .get(key, True))

@@ -21,4 +21,4 @@ The plugin only invokes fixed, read-only Git commands. It does not run `checkout
 
 A folder path selected in Electron refers to the **client machine**. A cloud Brain cannot read that path. Use the local Brain on the same machine as the repository; otherwise the plugin reports that the folder is unavailable.
 
-This is a built-in directory plugin, not a Creator-generated single-file chat plugin. Its UI assets are reviewed source files in this directory.
+This is an optional directory plugin, not a Creator-generated single-file chat plugin. Its UI assets are reviewed source files in this directory. The source is not bundled into Kestrel; users need an independently published market package to install it on a clean client. Existing installations migrate their legacy copy into the user plugin directory.

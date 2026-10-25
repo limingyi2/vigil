@@ -6,9 +6,12 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import struct
 import subprocess
+import sys
 import tempfile
 import time
+import urllib.request
 
 
 def sha256(path):
@@ -43,6 +46,121 @@ def failure_detail(result, tail=20):
     if result.stdout:
         lines.append('stdout tail: ' + '\n'.join(result.stdout.strip().splitlines()[-tail:]))
     return '\n'.join(lines)
+
+
+def is_known_unsigned_p212_startup_block(authenticode_status, detail):
+    return (authenticode_status == 'NotSigned' and 'UnicodeEncodeError' in detail and
+            'cp1252' in detail and 'server_launch.py' in detail)
+
+
+def download_verified(url, path, expected_sha256, attempts=4):
+    path = Path(path)
+    temporary = path.with_name(path.name + '.download')
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=90) as response, temporary.open('wb') as output:
+                shutil.copyfileobj(response, output, length=1024 * 1024)
+            if sha256(temporary) != expected_sha256:
+                raise RuntimeError('Downloaded release asset SHA-256 mismatch: ' + path.name)
+            os.replace(temporary, path)
+            return path
+        except Exception as error:
+            last_error = error
+            temporary.unlink(missing_ok=True)
+            if attempt + 1 < attempts:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f'Could not download verified release asset {url}: {last_error}')
+
+
+def authenticode_presence(path):
+    """Report whether a PE has a WIN_CERTIFICATE table without shell modules."""
+    with Path(path).open('rb') as stream:
+        if stream.read(2) != b'MZ':
+            raise RuntimeError('Historical installer is not a PE executable')
+        stream.seek(0x3c)
+        pe_offset = struct.unpack('<I', stream.read(4))[0]
+        stream.seek(pe_offset)
+        if stream.read(4) != b'PE\0\0':
+            raise RuntimeError('Historical installer has an invalid PE signature')
+        coff = stream.read(20)
+        if len(coff) != 20:
+            raise RuntimeError('Historical installer COFF header is truncated')
+        optional_size = struct.unpack_from('<H', coff, 16)[0]
+        optional = stream.read(optional_size)
+        if len(optional) != optional_size or optional_size < 2:
+            raise RuntimeError('Historical installer optional header is truncated')
+    magic = struct.unpack_from('<H', optional)[0]
+    directory_offset = {0x10b: 96, 0x20b: 112}.get(magic)
+    security_offset = directory_offset + 8 * 4 if directory_offset is not None else -1
+    if security_offset < 0 or len(optional) < security_offset + 8:
+        raise RuntimeError('Historical installer has an unsupported PE optional header')
+    certificate_file_offset, certificate_size = struct.unpack_from('<II', optional, security_offset)
+    return 'SignedPresent' if certificate_file_offset and certificate_size else 'NotSigned'
+
+
+def run_historical_upgrade(installer, expected_commit, root):
+    """Use the published P21.2 setup executable, never a synthesized old layout."""
+    old_version = '1.1.9-p21.2.20261025.1'
+    old_source = 'd0a7e90409614961fda3a4a33523e42d4d4b92dc'
+    old_sha = '954ae2096bfc8a1327c35b50165404dc887b674a8ba32e45e079c33e598bcfd6'
+    manifest_sha = '0603ee73c8623c7bda5d9f49b3e4d5beb4c060f349068cb42584283c3d0819d0'
+    release = f'https://github.com/limingyi2/vigil/releases/download/v{old_version}'
+    old_dir = root / 'historical-release'
+    old_dir.mkdir()
+    historical_installer = download_verified(
+        release + f'/Kestrel.Setup.{old_version}.exe',
+        old_dir / f'Kestrel.Setup.{old_version}.exe', old_sha)
+    historical_manifest_path = download_verified(
+        release + '/release-manifest.json', old_dir / 'release-manifest.json', manifest_sha)
+    historical_manifest = json.loads(historical_manifest_path.read_text(encoding='utf-8'))
+    if (historical_manifest.get('source_commit') != old_source or
+            historical_manifest.get('ver') != old_version or
+            historical_manifest.get('candidate') is not False or
+            historical_manifest.get('sha256') != old_sha or
+            historical_manifest.get('size') != 162533456):
+        raise RuntimeError('Published P21.2 release manifest identity mismatch')
+    auth_status = authenticode_presence(historical_installer)
+    output = root / 'historical-upgrade.json'
+    result = subprocess.run([
+        sys.executable, str(Path(__file__).with_name('test_windows_historical_upgrade.py')),
+        str(historical_installer), str(installer),
+        '--expected-old-source-commit', old_source,
+        '--expected-old-version', old_version,
+        '--expected-old-sha256', old_sha,
+        '--expected-new-source-commit', expected_commit,
+        '--authenticode-status', auth_status,
+        '--output', str(output),
+    ], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800)
+    if result.returncode:
+        detail = failure_detail(result)
+        if is_known_unsigned_p212_startup_block(auth_status, detail):
+            # This is a known limitation of the only pinned historical release:
+            # its frozen Python cannot start on the en-US runner before upgrade.
+            # Preserve the exact failure evidence and mark the historical check
+            # BLOCKED; never replace it with a synthetic legacy-layout fixture.
+            print('BLOCKED: signed historical installer upgrade unavailable; '
+                  'published unsigned P21.2 Brain cannot start under runner cp1252')
+            return {
+                'result': 'blocked',
+                'status': 'BLOCKED',
+                'reason': 'The pinned published P21.2 installer is unsigned and its frozen Brain crashes while encoding localized startup output under the Windows runner cp1252 locale.',
+                'historical_release': 'v' + old_version,
+                'historical_source_commit': old_source,
+                'installer': historical_installer.name,
+                'installer_size': historical_installer.stat().st_size,
+                'installer_sha256': old_sha,
+                'authenticode_status': auth_status,
+                'installer_was_actually_installed': True,
+                'historical_electron_brain_start': 'failed_before_upgrade',
+                'failure_evidence': detail[-2500:],
+                'synthetic_fixture_used': False,
+            }
+        raise RuntimeError('Actual historical P21.2 upgrade failed: ' + detail)
+    report = json.loads(output.read_text(encoding='utf-8'))
+    if report.get('result') != 'passed':
+        raise RuntimeError('Historical upgrade report did not pass')
+    return report
 
 
 def main(installer, expected_commit, output, expected_version=None):
@@ -82,6 +200,11 @@ def main(installer, expected_commit, output, expected_version=None):
         file = install / Path(relative)
         assert file.is_file() and sha256(file) == expected, f'Installed core file missing or changed: {relative}'
     assert (install / 'resources/vigil-brain/_internal').is_dir(), 'Bundled Brain runtime is missing'
+    packaged_paths = [p.relative_to(install).as_posix().lower() for p in install.rglob('*')]
+    packaged_plugins = [p for p in packaged_paths
+                        if 'installed_plugins' in p.split('/') or 'plugins' in p.split('/')
+                        or p.endswith('/zxplugin.json')]
+    assert not packaged_plugins, f'Client installation contains a bundled plugin path: {packaged_plugins[:10]}'
 
     runtime_script = Path(__file__).resolve().parents[1] / 'client/tools/test-fresh-installed-runtime.cjs'
     first = run_logged(['node', str(runtime_script), str(install), 'first'], env=env,
@@ -100,6 +223,56 @@ def main(installer, expected_commit, output, expected_version=None):
     assert restart_record['durable_chat_history'] is True
     brain_home = Path(first_record['brain_home'])
     user_data_root = brain_home.parent
+
+    # Exercise an actual NSIS reinstall/upgrade and Brain startup against legacy
+    # plugin locations. These fixture files use the old on-disk layout; the app
+    # and sidecar are the real Windows candidate binaries under test.
+    old_plugin_root = install / 'resources/vigil-brain/_internal/plugins'
+    old_plugin_root.mkdir(parents=True, exist_ok=True)
+    (old_plugin_root / 'p21_upgrade_fixture.py').write_text(
+        "NAME='p21_upgrade_fixture'\nDESC='legacy package fixture'\nTOOLS={}\n", encoding='utf-8')
+    old_plugin_root.mkdir(parents=True, exist_ok=True)
+    (old_plugin_root / 'p21_preserved_fixture.py').write_text(
+        "NAME='p21_preserved_fixture'\nDESC='old bundled shadow'\nTOOLS={}\n", encoding='utf-8')
+    legacy_home_plugins = brain_home / 'plugins'
+    legacy_home_plugins.mkdir(parents=True, exist_ok=True)
+    (legacy_home_plugins / 'p21_home_fixture.py').write_text(
+        "NAME='p21_home_fixture'\nDESC='legacy home fixture'\nTOOLS={}\n", encoding='utf-8')
+    installed_plugins = brain_home / 'data/installed_plugins'
+    installed_plugins.mkdir(parents=True, exist_ok=True)
+    preserved = installed_plugins / 'p21_preserved_fixture.py'
+    preserved.write_text(
+        "NAME='p21_preserved_fixture'\nDESC='existing user version'\nTOOLS={}\n", encoding='utf-8')
+    preserved_hash = sha256(preserved)
+
+    upgrade_log = root / 'nsis-upgrade.log'
+    upgrade = run_logged([str(installer), '/S', '/LOG=' + str(upgrade_log), '/D=' + str(install)], env=env,
+                         log_path=root / 'installer-upgrade.json', timeout=300)
+    assert upgrade.returncode == 0, 'Candidate in-place upgrade failed: ' + failure_detail(upgrade)
+    migrated_runtime = run_logged(['node', str(runtime_script), str(install), 'upgrade'], env=env,
+                                  log_path=root / 'runtime-upgrade.json', timeout=300)
+    assert migrated_runtime.returncode == 0, 'Legacy plugin upgrade/runtime check failed: ' + failure_detail(migrated_runtime)
+    for name in ('p21_upgrade_fixture.py', 'p21_home_fixture.py'):
+        assert (installed_plugins / name).is_file(), f'Legacy plugin was not migrated: {name}'
+    assert sha256(preserved) == preserved_hash, 'Upgrade overwrote an existing user-installed plugin'
+
+    uninstall_plugins = run_logged(['node', str(runtime_script), str(install), 'uninstall-migrated'], env=env,
+                                   log_path=root / 'runtime-plugin-uninstall.json', timeout=300)
+    assert uninstall_plugins.returncode == 0, 'Plugin Manager uninstall failed: ' + failure_detail(uninstall_plugins)
+    for name in ('p21_upgrade_fixture.py', 'p21_home_fixture.py'):
+        assert not (installed_plugins / name).exists(), f'Plugin Manager did not uninstall {name}'
+    assert (legacy_home_plugins / 'p21_home_fixture.py').is_file(), 'Uninstall removed legacy recovery source'
+
+    post_uninstall_upgrade_log = root / 'nsis-post-uninstall-upgrade.log'
+    post_uninstall_upgrade = run_logged(
+        [str(installer), '/S', '/LOG=' + str(post_uninstall_upgrade_log), '/D=' + str(install)], env=env,
+        log_path=root / 'installer-post-uninstall-upgrade.json', timeout=300)
+    assert post_uninstall_upgrade.returncode == 0, 'Upgrade after plugin uninstall failed: ' + failure_detail(post_uninstall_upgrade)
+    post_uninstall_runtime = run_logged(['node', str(runtime_script), str(install), 'post-uninstall-upgrade'], env=env,
+                                        log_path=root / 'runtime-post-uninstall-upgrade.json', timeout=300)
+    assert post_uninstall_runtime.returncode == 0, 'Uninstalled plugins reappeared after upgrade: ' + failure_detail(post_uninstall_runtime)
+    assert sha256(preserved) == preserved_hash, 'Later upgrade overwrote an existing user-installed plugin'
+
     sentinels = {
         brain_home / 'plugins/p8-retention-plugin.py': 'NAME="p8_retention"\n',
         brain_home / 'skill_host/skills/p8-retention/skill.json': '{"id":"p8-retention"}\n',
@@ -146,6 +319,8 @@ def main(installer, expected_commit, output, expected_version=None):
     assert user_data_after == user_data_before, 'Uninstall changed or removed files in the default user-data directory'
     assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
 
+    historical_upgrade = run_historical_upgrade(installer, expected_commit, root)
+
     output.parent.mkdir(parents=True, exist_ok=True)
     logs_dir = output.parent / (output.stem + '-logs')
     logs_dir.mkdir(exist_ok=True)
@@ -154,6 +329,14 @@ def main(installer, expected_commit, output, expected_version=None):
         'nsis_install': nsis_install_log,
         'first_launch': root / 'runtime-first-launch.json',
         'restart': root / 'runtime-restart.json',
+        'upgrade': root / 'installer-upgrade.json',
+        'upgrade_nsis': upgrade_log,
+        'runtime_upgrade': root / 'runtime-upgrade.json',
+        'plugin_uninstall': root / 'runtime-plugin-uninstall.json',
+        'post_uninstall_upgrade': root / 'installer-post-uninstall-upgrade.json',
+        'post_uninstall_upgrade_nsis': post_uninstall_upgrade_log,
+        'post_uninstall_runtime': root / 'runtime-post-uninstall-upgrade.json',
+        'historical_upgrade': root / 'historical-upgrade.json',
         'uninstall': root / 'installer-uninstall.json',
         'nsis_uninstall': nsis_uninstall_log,
     }
@@ -163,8 +346,18 @@ def main(installer, expected_commit, output, expected_version=None):
             extension = '.log' if source.suffix == '.log' else '.json'
             shutil.copy2(source, logs_dir / f'{name}{extension}')
             available_logs[name] = f'{logs_dir.name}/{name}{extension}'
+    historical_logs = root / 'historical-upgrade-logs'
+    if historical_logs.is_dir():
+        shutil.copytree(historical_logs, logs_dir / 'historical-upgrade')
     report = {
-        'result': 'passed',
+        'result': 'blocked' if historical_upgrade.get('result') == 'blocked' else 'passed',
+        'status_by_check': {
+            'candidate_build_and_manifest': 'PASS',
+            'fresh_install_chat_restart_and_uninstall': 'PASS',
+            'plugin_market_lifecycle_and_no_resurrection': 'PASS',
+            'actual_signed_historical_upgrade': historical_upgrade.get('status', 'PASS'),
+            'windows_physical_user_machine': 'WAITING_USER_TEST',
+        },
         'environment': {'os': os.environ.get('RUNNER_OS', 'Windows isolated runner'),
                         'runner_name': os.environ.get('RUNNER_NAME'), 'isolation_root': str(root)},
         'candidate': {'version': manifest['ver'], 'source_commit': manifest['source_commit'],
@@ -174,6 +367,15 @@ def main(installer, expected_commit, output, expected_version=None):
                           'fake_provider_first_chat': True, 'conversation_id': conversation_id},
         'restart_recovery': {'electron_restarted': True, 'chat_history_restored': True,
                              'durable_brain_display_turn_restored_via_api': True},
+        'legacy_plugin_upgrade': {'candidate_reinstalled_in_place': True,
+                                  'legacy_bundle_source_migrated': True,
+                                  'legacy_home_source_migrated': True,
+                                  'existing_user_plugin_hash_preserved': True,
+                                  'plugin_manager_uninstall_api_passed': True,
+                                  'uninstall_survived_later_reinstall': True,
+                                  'legacy_source_preserved': True,
+                                  'old_signed_release_binary_used': False},
+        'actual_historical_upgrade': historical_upgrade,
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),
@@ -216,6 +418,7 @@ if __name__ == '__main__':
                                    ('nsis_install', 'nsis-install.log'),
                                    ('first_launch', 'runtime-first-launch.json'),
                                    ('restart', 'runtime-restart.json'),
+                                   ('historical_upgrade', 'historical-upgrade.json'),
                                    ('uninstall', 'installer-uninstall.json'),
                                    ('nsis_uninstall', 'nsis-uninstall.log')):
                 source = root / filename
@@ -226,6 +429,9 @@ if __name__ == '__main__':
                         continue
                     shutil.copy2(source, destination)
                     logs[name] = f'{logs_dir.name}/{name}{extension}'
+            historical_logs = root / 'historical-upgrade-logs'
+            if historical_logs.is_dir() and not (logs_dir / 'historical-upgrade').exists():
+                shutil.copytree(historical_logs, logs_dir / 'historical-upgrade')
         failure = {'result': 'failed', 'source_commit_expected': args.expected_source_commit,
                    'error': f'{type(error).__name__}: {error}', 'logs': logs}
         output.write_text(json.dumps(failure, indent=2), encoding='utf-8')

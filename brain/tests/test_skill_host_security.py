@@ -18,7 +18,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 TOKEN = "host-security-test-token-0123456789abcdef"
 
 sys.path.insert(0, str(ROOT / "brain"))
-from plugins import skill as skill_bridge
+from core_features import skill as skill_bridge
 
 
 def free_port():

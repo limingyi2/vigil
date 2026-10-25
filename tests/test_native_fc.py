@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(ROOT, "brain"))
 import brain as B  # noqa: E402
 import features  # noqa: E402
 import plugin_host  # noqa: E402
+import plugin_ops  # noqa: E402
 import tools as tl  # noqa: E402
 
 
@@ -66,6 +67,13 @@ def _want(cid, name, args):
 class TestNativeFunctionCalling(unittest.TestCase):
 
     def setUp(self):
+        self._real_installed_plugins = plugin_host._INSTALLED_DIR
+        self._real_plugin_registry_reader = plugin_ops.read_registry
+        self._test_plugin_dir = tempfile.TemporaryDirectory(prefix="native-fc-plugins-")
+        plugin_host._INSTALLED_DIR = self._test_plugin_dir.name
+        shutil.copy2(os.path.join(ROOT, "brain", "plugins", "websearch.py"),
+                     os.path.join(self._test_plugin_dir.name, "websearch.py"))
+        plugin_ops.read_registry = lambda: {"plugins": {}}
         plugin_host.load(force=True)
         self.seen = []
         self._real_httpx = B.httpx
@@ -91,6 +99,10 @@ class TestNativeFunctionCalling(unittest.TestCase):
         import uapi
         uapi.fetch_weather = self._real_fetch_weather
         tl._uapi_token = self._real_uapi_token
+        plugin_host._INSTALLED_DIR = self._real_installed_plugins
+        plugin_ops.read_registry = self._real_plugin_registry_reader
+        self._test_plugin_dir.cleanup()
+        plugin_host.load(force=True)
 
     def _stub(self, payloads):
         """按顺序返回响应；用完之后一直重复最后一个。

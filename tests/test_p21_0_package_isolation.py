@@ -11,8 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 sys.path.insert(0, str(ROOT))
 
-from home_migration import migrate_legacy_plugins, seed_core_features, seed_plugins
-from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
+from home_migration import migrate_legacy_plugins, seed_core_features
+from scripts import build_release
+from scripts.plugin_package_contract import (assert_no_bundled_plugin_tree,
+                                             assert_no_optional_plugin_modules)
 
 
 def test_server_launch_sets_utf8_replacement_before_startup_diagnostics():
@@ -37,6 +39,17 @@ assert err.options == expected, err.options
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
 
 
+def test_release_candidate_requires_consistent_client_version_metadata():
+    version = {"code": 39, "ver": "1.1.9-p21.5.20261025.1"}
+    package = {"version": version["ver"]}
+    lock = {"version": version["ver"], "packages": {"": {"version": version["ver"]}}}
+    assert build_release.assert_client_version_metadata(version, package, lock) == (version["ver"], 39)
+
+    lock["packages"][""]["version"] = "stale-lock-version"
+    with pytest.raises(RuntimeError, match="package-lock.json"):
+        build_release.assert_client_version_metadata(version, package, lock)
+
+
 def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, monkeypatch):
     import server_launch
 
@@ -52,18 +65,12 @@ def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, m
     assert payload["port"] == 54321
 
 
-def test_brain_release_guard_allows_bundled_plugins(tmp_path):
-    """内置插件（kb/react/branch-atlas…）随包发布是预期状态，不该被拦。"""
-    internal = tmp_path / "_internal"
-    (internal / "core_features").mkdir(parents=True)
-    (internal / "core_features" / "skill.py").write_text("core", encoding="utf-8")
-    plugins = internal / "plugins"
-    plugins.mkdir()
-    (plugins / "kb.py").write_text("bundled", encoding="utf-8")
-    package = plugins / "branch-atlas"
-    package.mkdir()
-    (package / "__init__.py").write_text("bundled", encoding="utf-8")
-    assert assert_no_bundled_plugin_tree(tmp_path) is True
+def test_brain_release_guard_rejects_any_plugin_tree_including_future_plugin(tmp_path):
+    plugin = tmp_path / "_internal" / "plugins" / "future_plugin"
+    plugin.mkdir(parents=True)
+    (plugin / "__init__.py").write_text("future", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="plugin source tree"):
+        assert_no_bundled_plugin_tree(tmp_path)
 
 
 def test_brain_release_guard_rejects_wallpaper_payload(tmp_path):
@@ -71,7 +78,7 @@ def test_brain_release_guard_rejects_wallpaper_payload(tmp_path):
     package = tmp_path / "_internal" / "plugins" / "wallpaper"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("external", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="external plugin"):
+    with pytest.raises(RuntimeError, match="plugin source tree"):
         assert_no_bundled_plugin_tree(tmp_path)
 
 
@@ -91,6 +98,54 @@ def test_brain_release_guard_rejects_renamed_future_plugin_by_manifest(tmp_path)
     }), encoding="utf-8")
     with pytest.raises(RuntimeError, match="extension plugin manifest"):
         assert_no_bundled_plugin_tree(tmp_path)
+
+
+def test_pyinstaller_archive_guard_rejects_embedded_future_plugin_without_plugin_path(tmp_path):
+    # This models a PYZ module renamed by import analysis: the artifact has no
+    # plugin directory or manifest, but analysis still records its source tree.
+    brain = tmp_path / "checkout" / "brain"
+    source = brain / "plugins" / "future_plugin.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1", encoding="utf-8")
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "vigil-brain.exe").write_bytes(b"fixture archive")
+    with pytest.raises(RuntimeError, match="optional plugin source"):
+        assert_no_bundled_plugin_tree(
+            artifact, embedded_modules=[("renamed_future_module", str(source), "PYMODULE")],
+            plugin_source_root=brain / "plugins")
+
+
+def test_pyinstaller_archive_guard_rejects_plugin_namespace_from_real_archive():
+    assert_no_optional_plugin_modules(["PYZ-00.pyz", "api.plugins"])
+    with pytest.raises(RuntimeError, match="optional plugin module"):
+        assert_no_optional_plugin_modules(["PYZ-00.pyz", "plugins.future_plugin"])
+
+
+def test_release_archive_inspection_parses_real_recursive_viewer_output(monkeypatch, tmp_path):
+    viewer_output = """Options in 'vigil-brain.exe' (PKG/CArchive):
+ pyi-contents-directory _internal
+Contents of 'vigil-brain.exe' (PKG/CArchive):
+ struct
+ pyimod01_archive
+ PYZ.pyz
+
+Contents of 'PYZ.pyz' (PYZ):
+ brain
+ plugin_host
+ skill
+"""
+    monkeypatch.setattr(build_release.shutil, "which", lambda _name: "pyi-archive_viewer")
+    monkeypatch.setattr(build_release.subprocess, "run",
+                        lambda *_args, **_kwargs: type("Result", (), {"stdout": viewer_output})())
+    entries = build_release.inspect_pyinstaller_archive(tmp_path / "vigil-brain.exe")
+    assert {"brain", "plugin_host", "skill"} <= set(entries)
+
+    bad_output = viewer_output.replace(" plugin_host\n", " plugins.future_plugin\n")
+    monkeypatch.setattr(build_release.subprocess, "run",
+                        lambda *_args, **_kwargs: type("Result", (), {"stdout": bad_output})())
+    with pytest.raises(RuntimeError, match="optional plugin module"):
+        build_release.inspect_pyinstaller_archive(tmp_path / "vigil-brain.exe")
 
 
 def test_core_feature_seeding_never_creates_plugins_directory_and_preserves_user_edits(tmp_path):
@@ -201,40 +256,78 @@ def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_ro
     assert (old_brain / "_internal/core_features/kb.py").is_file()
 
 
-def test_seed_plugins_updates_shipped_code_and_keeps_user_edits(tmp_path):
-    bundle = tmp_path / "bundle"
-    bundle.mkdir()
+def test_p21_2_retired_plugins_are_not_resurrected_from_legacy_or_retired_trees(tmp_path):
     home = tmp_path / "home"
-    home.mkdir()
-    source = bundle / "kb.py"
-    source.write_text("kb-v1", encoding="utf-8")
+    legacy = home / "plugins"
+    retired = home / "data/installed_plugins/_retired"
+    legacy.mkdir(parents=True)
+    retired.mkdir(parents=True)
+    for name in ("calc", "gate", "meme", "sticker_pack"):
+        (legacy / (name + ".py")).write_text("NAME='" + name + "'\n", encoding="utf-8")
+        (retired / (name + ".py")).write_text("NAME='" + name + "'\n", encoding="utf-8")
+    retired_package = retired / "gate.1234abcd"
+    retired_package.mkdir()
+    (retired_package / "__init__.py").write_text("NAME='gate'\n", encoding="utf-8")
 
-    assert seed_plugins(bundle, home)["seeded"] == 1
-    target = home / "plugins" / "kb.py"
-    assert target.read_text(encoding="utf-8") == "kb-v1"
-
-    # 上一版随包内容应被新版覆盖，用户改过的必须保留。
-    source.write_text("kb-v2", encoding="utf-8")
-    seed_plugins(bundle, home)
-    assert target.read_text(encoding="utf-8") == "kb-v2"
-
-    target.write_text("user-edited", encoding="utf-8")
-    source.write_text("kb-v3", encoding="utf-8")
-    seed_plugins(bundle, home)
-    assert target.read_text(encoding="utf-8") == "user-edited"
+    result = migrate_legacy_plugins(home)
+    assert result["copied"] == 0
+    for name in ("calc", "gate", "meme", "sticker_pack"):
+        assert not (home / "data/installed_plugins" / (name + ".py")).exists()
+        assert (legacy / (name + ".py")).is_file()
+        assert (retired / (name + ".py")).is_file()
 
 
-def test_seed_plugins_keeps_directory_package_resources(tmp_path):
-    bundle = tmp_path / "bundle" / "branch-atlas"
-    bundle.mkdir(parents=True)
-    (bundle / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
-    (bundle / "frontend.js").write_text("// ui", encoding="utf-8")
+def test_old_plugin_copy_identical_to_bundled_version_is_migrated(tmp_path):
     home = tmp_path / "home"
-    home.mkdir()
+    legacy = home / "plugins"
+    legacy.mkdir(parents=True)
+    plugin = legacy / "branch-atlas"
+    plugin.mkdir()
+    (plugin / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
+    (plugin / "frontend.js").write_text("// shipped bytes", encoding="utf-8")
+    _write_marker(home, {
+        "branch-atlas/__init__.py": hashlib.sha256(b"NAME='branch-atlas'").hexdigest(),
+        "branch-atlas/frontend.js": hashlib.sha256(b"// shipped bytes").hexdigest(),
+    })
+    result = migrate_legacy_plugins(home)
+    installed = home / "data/installed_plugins/branch-atlas"
+    assert result["copied"] == 1
+    assert (installed / "frontend.js").read_text(encoding="utf-8") == "// shipped bytes"
+    assert (plugin / "__init__.py").exists(), "source stays available for recovery"
+    (installed / "__init__.py").unlink()
+    (installed / "frontend.js").unlink()
+    assert migrate_legacy_plugins(home)["copied"] == 0
 
-    result = seed_plugins(tmp_path / "bundle", home)
-    assert result["seeded"] == 2
-    assert (home / "plugins" / "branch-atlas" / "frontend.js").is_file()
+
+def test_plugin_host_ignores_legacy_source_and_only_loads_core_allowlist_and_installs(tmp_path, monkeypatch):
+    import plugin_host
+
+    legacy = tmp_path / "legacy-plugins"
+    core = tmp_path / "core_features"
+    installed = tmp_path / "data/installed_plugins"
+    for root in (legacy, core, installed):
+        root.mkdir(parents=True)
+    (legacy / "future_plugin.py").write_text("NAME='legacy_future'\n", encoding="utf-8")
+    (core / "skill.py").write_text("NAME='skill'\n", encoding="utf-8")
+    (core / "future_plugin.py").write_text("NAME='core_future'\n", encoding="utf-8")
+    (installed / "wallpaper.py").write_text("NAME='wallpaper'\n", encoding="utf-8")
+
+    old_registry, old_loaded = dict(plugin_host._registry), plugin_host._loaded
+    monkeypatch.setattr(plugin_host, "_DIR", str(legacy))
+    monkeypatch.setattr(plugin_host, "_CORE_PLUGIN_ROOT", str(core))
+    monkeypatch.setattr(plugin_host, "_INSTALLED_DIR", str(installed))
+    try:
+        loaded = plugin_host.load(force=True)
+        assert set(loaded) == {"skill", "wallpaper"}
+        assert "legacy_future" not in loaded
+        assert "core_future" not in loaded
+        assert plugin_host._plugin_entry_path("legacy_future") == ""
+        assert plugin_host._plugin_entry_path("skill") == str(core / "skill.py")
+        assert plugin_host._plugin_entry_path("wallpaper") == str(installed / "wallpaper.py")
+    finally:
+        plugin_host._registry.clear()
+        plugin_host._registry.update(old_registry)
+        plugin_host._loaded = old_loaded
 
 
 def _write_marker(home, mapping):
@@ -243,95 +336,73 @@ def _write_marker(home, mapping):
     marker.write_text(json.dumps(mapping), encoding="utf-8")
 
 
-def test_retire_superseded_installs_only_removes_unmodified_shipped_copies(tmp_path):
-    """P21.0 把随包插件复制进了 installed_plugins，升级后会反向盖掉新版内置。"""
-    from home_migration import retire_superseded_installs
-
+def test_retired_old_bundle_copy_is_restored_without_mutating_recovery_source(tmp_path):
     home = tmp_path / "home"
-    installed = home / "data" / "installed_plugins"
-    (installed / "branch-atlas").mkdir(parents=True)
-    kb_copy = installed / "kb.py"
-    kb_copy.write_text("kb-v1", encoding="utf-8")
-    (installed / "branch-atlas" / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
-    _write_marker(home, {
-        "kb.py": hashlib.sha256(b"kb-v1").hexdigest(),
-        "branch-atlas/__init__.py": hashlib.sha256(b"NAME='branch-atlas'").hexdigest(),
-        "websearch.py": hashlib.sha256(b"websearch-v1").hexdigest(),
-    })
-
-    result = retire_superseded_installs(home)
-
-    assert result["retired"] == 2
-    assert result["errors"] == []
-    # 内置目录清空，副本留在 _retired 而不是被删除。
-    assert not kb_copy.exists()
-    assert not (installed / "branch-atlas").exists()
-    assert (installed / "_retired" / "kb.py").read_text(encoding="utf-8") == "kb-v1"
-    assert (installed / "_retired" / "branch-atlas" / "__init__.py").is_file()
-    # 幂等：再跑一次无事发生，也不会重复搬进 _retired。
-    again = retire_superseded_installs(home)
-    assert again == {"retired": 0, "errors": []}
+    retired = home / "data/installed_plugins/_retired/branch-atlas.1234abcd"
+    retired.mkdir(parents=True)
+    (retired / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
+    result = migrate_legacy_plugins(home)
+    assert result["copied"] == 1
+    assert (home / "data/installed_plugins/branch-atlas/__init__.py").exists()
+    assert (retired / "__init__.py").exists()
+    (home / "data/installed_plugins/branch-atlas/__init__.py").unlink()
+    assert migrate_legacy_plugins(home)["copied"] == 0
 
 
-def test_retire_superseded_installs_keeps_user_modified_copy(tmp_path):
-    """用户改过的副本按既有优先级继续覆盖内置，不得搬走。"""
-    from home_migration import retire_superseded_installs
-
-    home = tmp_path / "home"
-    installed = home / "data" / "installed_plugins"
-    (installed / "branch-atlas").mkdir(parents=True)
-    (installed / "kb.py").write_text("user-edited", encoding="utf-8")
-    (installed / "branch-atlas" / "__init__.py").write_text("NAME='branch-atlas'", encoding="utf-8")
-    (installed / "branch-atlas" / "extra.py").write_text("# user", encoding="utf-8")
-    (installed / "wallpaper").mkdir(parents=True)
-    (installed / "wallpaper" / "__init__.py").write_text("NAME='wallpaper'", encoding="utf-8")
-    _write_marker(home, {
-        "kb.py": hashlib.sha256(b"kb-v1").hexdigest(),
-        "branch-atlas/__init__.py": hashlib.sha256(b"NAME='branch-atlas'").hexdigest(),
-    })
-
-    result = retire_superseded_installs(home)
-
-    assert result["retired"] == 0
-    assert (installed / "kb.py").read_text(encoding="utf-8") == "user-edited"
-    assert (installed / "branch-atlas" / "extra.py").is_file()
-    # 外部插件不在台账里，绝不能被当成随包副本。
-    assert (installed / "wallpaper" / "__init__.py").is_file()
-    assert not (installed / "_retired").exists()
-
-
-def test_release_spec_ships_bundled_plugins_and_isolates_wallpaper():
+def test_release_specs_and_runtime_have_no_plugin_source_fallback():
     spec = (ROOT / "deploy/brain/vigil-brain.spec").read_text(encoding="utf-8")
+    legacy_spec = (ROOT / "brain/vigil-brain.spec").read_text(encoding="utf-8")
     launcher = (ROOT / "brain/server_launch.py").read_text(encoding="utf-8")
     paths = (ROOT / "brain/paths.py").read_text(encoding="utf-8")
     host = (ROOT / "brain/plugin_host.py").read_text(encoding="utf-8")
+    manager = (ROOT / "brain/plugin_manager.py").read_text(encoding="utf-8")
     build = (ROOT / "scripts/build_release.py").read_text(encoding="utf-8")
+    packaged_smoke = (ROOT / "client/tools/test-packaged-brain.py").read_text(encoding="utf-8")
 
-    # 内置插件随包：从 git 取受控文件，显式排除 wallpaper。
-    assert '["git", "ls-files", "-z", "--", "brain/plugins"]' in spec
-    assert 'if rel_file == "wallpaper" or rel_file.startswith("wallpaper/")' in spec
-    assert "datas=core_feature_data + plugins_data + skill_host_data" in spec
-    assert '"kb.py", "react.py", "websearch.py"' in spec
-    # 与 core_features 重名的镜像不进包。
-    assert 'BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py"}' in spec
-    # 核心适配器仍是允许清单制。
-    assert "CORE_FEATURE_ALLOWLIST = {" in spec
-    assert "if seen_core_features != CORE_FEATURE_ALLOWLIST" in spec
-    for optional in ("kb.py", "react.py", "websearch.py"):
-        assert not (ROOT / "brain/core_features" / optional).exists()
-
-    # 启动时先迁移旧 home 再铺内置，顺序反了会用旧文件盖掉新版。
-    assert "def _seed_core_features()" in launcher
-    assert "seed_plugins(bundled, HOME_DIR, legacy_roots)" in launcher
-    assert launcher.index("migrate_legacy_plugins(HOME_DIR, legacy_roots)") < \
-        launcher.index("seed_plugins(bundled, HOME_DIR, legacy_roots)")
-
-    assert "CORE_FEATURES_DIR = os.path.join(ROOT, \"core_features\")" in paths
-    dirs = paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
-    assert "CORE_FEATURES_DIR" in dirs and "PLUGINS_DIR" in dirs
-    assert "from paths import PLUGINS_DIR, CORE_FEATURES_DIR" in host
-    assert "_SHADOWED_BUILTINS = frozenset(" in host
+    assert 'CORE_FEATURE_ALLOWLIST = {' in spec
+    assert 'SKILL_HOST_ALLOWLIST = {"server.js", "start_host.bat"}' in spec
+    assert 'rel_file in {"skills/.gitkeep", ".host_started"}' in spec
+    assert "brain/plugins" in spec and "绝不是打包输入" in spec
+    assert "plugins_data" not in spec and "seed_plugins" not in launcher
+    assert "retire_superseded_installs" not in launcher
+    assert "plugins_data" not in legacy_spec and "os.walk" not in legacy_spec
+    assert "PLUGINS_DIR" not in paths.split("_DIRS = (", 1)[1].split(")", 1)[0]
+    assert "for directory in (_INSTALLED_DIR, _CORE_PLUGIN_ROOT)" in host
+    assert "(_CORE_PLUGIN_ROOT, _DIR)" not in host.split("def load(", 1)[1].split("def _sync_features", 1)[0]
+    assert "_CORE_PLUGIN_ROOT" in manager
     assert "assert_no_bundled_plugin_tree(OUT)" in build
+    assert "optional plugin payload was bundled" in packaged_smoke
+    assert "missing bundled plugin" not in packaged_smoke
+
+
+def test_clean_path_bootstrap_does_not_create_a_legacy_plugin_source(tmp_path, monkeypatch):
+    import paths
+
+    home = tmp_path / "clean-home"
+    monkeypatch.setattr(paths, "ROOT", str(home))
+    for name in ("CONFIG_DIR", "DATA_DIR", "LOGS_DIR", "ARCHIVE_DIR", "PERSONA_DIR",
+                 "MEMORY_DIR", "LIFE_DIR", "UPLOAD_DIR", "RUN_DIR", "CORE_FEATURES_DIR",
+                 "PLUGINS_DIR", "PLUGIN_DATA_DIR", "KB_DIR", "CONTEXT_COMPACTION_DIR", "DB_DIR"):
+        monkeypatch.setattr(paths, name, str(home / name.lower()))
+    monkeypatch.setattr(paths, "PLUGIN_INSTALL_DIR", str(home / "data/installed_plugins"))
+    monkeypatch.setattr(paths, "_DIRS", tuple(getattr(paths, name) for name in (
+        "CONFIG_DIR", "DATA_DIR", "LOGS_DIR", "ARCHIVE_DIR", "PERSONA_DIR",
+        "MEMORY_DIR", "LIFE_DIR", "UPLOAD_DIR", "RUN_DIR", "CORE_FEATURES_DIR",
+        "PLUGIN_DATA_DIR", "KB_DIR", "CONTEXT_COMPACTION_DIR", "DB_DIR")))
+    paths.ensure()
+    assert not Path(paths.PLUGINS_DIR).exists()
+    assert Path(paths.CORE_FEATURES_DIR).is_dir()
+    assert not Path(paths.PLUGIN_INSTALL_DIR).exists()
+
+
+def test_future_plugin_in_actual_artifact_contract_is_rejected(tmp_path):
+    for relative in ("_internal/plugins/future_plugin/__init__.py",
+                     "data/installed_plugins/renamed_plugin/main.py"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("future", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        assert_no_bundled_plugin_tree(tmp_path)
 
 
 def test_client_package_contract_regression_runs_under_python_ci():

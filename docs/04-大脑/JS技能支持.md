@@ -1,6 +1,6 @@
 # JS 技能（skill）支持
 
-知夏除了自己的 Python 插件（`brain/plugins/*.py`），还能用外面下的 **JS 技能包**——
+知夏除了通过明确安装流程安装的 Python 插件（运行时位于 `data/installed_plugins/`），还能用外面下的 **JS 技能包**——
 就是那种带 `skill.json` + `index.js` 的东西（QQ Agent / 某些机器人框架用的那套）。
 
 ## 为什么是两条通道，不是把 .js 塞进插件上传口
@@ -14,7 +14,7 @@ import 失败的假条目：列表里看着有、开关也能点、就是不生�
 所以另开一条通道：
 
 ```
-Python 插件  brain/plugins/*.py     → import 进大脑进程
+Python 插件  data/installed_plugins/* → import 进大脑进程
 JS 技能      skill_host/skills/*/   → Node 侧跑，大脑用 HTTP 调
 ```
 
@@ -24,7 +24,7 @@ JS 技能      skill_host/skills/*/   → Node 侧跑，大脑用 HTTP 调
 |---|---|
 | `brain/skill_host/server.js` | Node 宿主。垫出 QQ Agent 那套 `api`/`ctx` 契约，暴露 HTTP 接口 |
 | `brain/skill_host/skills/` | 装技能的地方。每个技能一个目录 |
-| `brain/plugins/skill.py` | 知夏侧插件。把技能工具接进模型，给模型两个入口 |
+| `brain/core_features/skill.py` | 核心适配器。把已安装技能工具接进模型 |
 
 ### 创作前的静态检查
 

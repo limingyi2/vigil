@@ -2,7 +2,7 @@
 """sidecar 薄启动壳 —— PyInstaller 的入口（也支持源码直跑）。
 
 职责只有四件：
-1. 把打包时带进来的 core_features/ 种到 exe 旁边的家目录（首次启动）
+1. 把打包时带进来的 core_features/ 种到持久家目录（首次启动）
 2. 启动技能宿主（skill_host，端口 8790），跟云端 server_run.bat 保持一致
 3. 选一个空闲端口，经 VIGIL_PORT 环境变量交给 server.py
 4. 把候选端口和进程身份交给 Electron，由 Electron 验证 API 后确认就绪
@@ -10,7 +10,6 @@
 大脑本体一律不碰：import server 之后 main() 会像云端一样自己转起来。
 """
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -34,15 +33,14 @@ HOME_DIR = os.path.abspath(os.environ.get('VIGIL_HOME') or
 
 
 def _seed_core_features():
-    """把随包的能力适配器与内置插件铺到 exe 旁边；wallpaper 等外部插件不由安装包带。"""
+    """Migrate legacy optional plugins, then seed explicitly approved core adapters."""
     if not FROZEN:
         return
     src = os.path.join(CODE_DIR, "core_features")
     if not os.path.isdir(src):
         raise RuntimeError("Required core feature payload is missing: " + src)
     import json
-    from home_migration import (seed_core_features, seed_plugins,
-                                migrate_legacy_plugins, retire_superseded_installs)
+    from home_migration import seed_core_features, migrate_legacy_plugins
     legacy_roots = []
     if os.environ.get("VIGIL_MANAGED") == "1":
         legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
@@ -60,33 +58,9 @@ def _seed_core_features():
         # directory must not prevent the Brain from starting with user data intact.
         print("[sidecar] 旧版插件迁移失败，Brain 继续启动；原文件已保留：%s" %
               str(exc)[:180], flush=True)
-    # 顺序要紧：先迁移旧 home 的 plugins/，再停用 P21.0 遗留的旧随包副本，
-    # 最后铺新版内置；反过来会把旧文件当成"用户改动"复制进 installed，
-    # 从而覆盖掉刚铺好的新版。
-    try:
-        print("[sidecar] phase=retire_superseded_installs:start", flush=True)
-        retired = retire_superseded_installs(HOME_DIR)
-        print("[sidecar] phase=retire_superseded_installs:done", flush=True)
-        if retired.get("retired"):
-            print("[sidecar] 已停用 %d 个旧版随包插件副本（保留在 installed_plugins/_retired）" %
-                  retired["retired"], flush=True)
-        for error in retired.get("errors", []):
-            print("[sidecar] 旧副本停用未完成，原文件已保留：%s" % error, flush=True)
-    except Exception as exc:
-        print("[sidecar] 旧副本停用失败，Brain 继续启动：%s" % str(exc)[:180], flush=True)
     print("[sidecar] phase=seed_core_features_payload:start", flush=True)
     seed_core_features(src, HOME_DIR, legacy_roots)
     print("[sidecar] phase=seed_core_features_payload:done", flush=True)
-    bundled = os.path.join(CODE_DIR, "plugins")
-    if os.path.isdir(bundled):
-        try:
-            print("[sidecar] phase=seed_plugins:start", flush=True)
-            seeded = seed_plugins(bundled, HOME_DIR, legacy_roots)
-            print("[sidecar] phase=seed_plugins:done", flush=True)
-            print("[sidecar] 内置插件已就位 %d 个（跟踪 %d 个文件）" %
-                  (seeded["seeded"], seeded["tracked"]), flush=True)
-        except Exception as exc:
-            print("[sidecar] 内置插件铺设失败，Brain 继续启动：%s" % str(exc)[:180], flush=True)
 
 
 def _start_skill_host():
@@ -110,16 +84,6 @@ def _start_skill_host():
         if not os.path.exists(package):
             with open(package, 'w', encoding='utf-8') as f:
                 f.write('{"type":"module"}')
-        seeds = os.path.join(CODE_DIR, 'skill_host', 'skills')
-        if os.path.isdir(seeds):
-            for name in os.listdir(seeds):
-                dst = os.path.join(skills, name)
-                if not os.path.exists(dst):
-                    src = os.path.join(seeds, name)
-                    if os.path.isdir(src):
-                        shutil.copytree(src, dst)
-                    else:
-                        shutil.copy2(src, dst)
         os.environ['ZX_SKILL_DIR'] = skills
         env = dict(os.environ, ELECTRON_RUN_AS_NODE='1', VIGIL_PARENT_PID=str(os.getpid()))
         subprocess.Popen([os.environ['VIGIL_NODE_EXE'], os.path.join(CODE_DIR, 'skill_host', 'server.js')],

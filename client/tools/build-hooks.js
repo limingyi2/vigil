@@ -47,12 +47,16 @@ exports.afterPack=async context=>{
   if(dependencies.some(([before,after])=>before<0||after<0||before>=after))throw new Error('Packaged client script loading order is invalid.');
   const client=JSON.parse(asar.extractFile(archive,'build-info.json'));
   const root=path.join(resources,'vigil-brain'),brain=contract.read(path.join(root,'brain-manifest.json'));
-  // 内置插件必须随包；只有 wallpaper 这类市场外部插件不许进安装包。
-  for(const rel of ['plugins/wallpaper','_internal/plugins/wallpaper']) {
-    if(fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain contains an external plugin payload: '+rel);
-  }
-  for(const rel of ['_internal/plugins/kb.py','_internal/plugins/react.py','_internal/plugins/websearch.py']) {
-    if(!fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain is missing a bundled plugin: '+rel);
-  }
+  // Inspect every actual Brain sidecar file; future plugin names are rejected too.
+  const brainFiles=[];
+  const walkBrain=dir=>{for(const item of fs.readdirSync(dir,{withFileTypes:true})){
+    const full=path.join(dir,item.name),rel=path.relative(root,full).replace(/\\/g,'/');
+    if(item.isDirectory())walkBrain(full);else brainFiles.push(rel);
+  }};
+  walkBrain(root);
+  contract.verifyNoBundledPluginPaths(brainFiles);
+  contract.verifyNoBundledPluginManifests(brainFiles.filter(file=>/\/manifest\.json$/i.test(file)).map(file=>({
+    path:file,content:fs.readFileSync(path.join(root,file),'utf8')
+  })));
   contract.compatible(client,brain);contract.verifyTree(root,brain);
 };

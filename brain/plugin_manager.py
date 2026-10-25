@@ -81,7 +81,7 @@ def _source(name, runtime=None):
         path = os.path.normcase(os.path.realpath(path))
         roots = (
             ("user", getattr(plugin_host, "_INSTALLED_DIR", "")),
-            ("builtin", getattr(plugin_host, "_DIR", "")),
+            ("builtin", getattr(plugin_host, "_CORE_PLUGIN_ROOT", "")),
         )
         matches = []
         for kind, root in roots:

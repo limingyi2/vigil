@@ -1,20 +1,44 @@
 """Structured result status for ordinary-chat read-only Function Calling."""
 import sys
+import shutil
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 
 import tools
-from plugins import websearch
+import features
+import plugin_host
+import plugin_ops
+
+
+@pytest.fixture(autouse=True)
+def installed_websearch(tmp_path, monkeypatch):
+    installed = tmp_path / "installed_plugins"
+    installed.mkdir()
+    shutil.copy2(ROOT / "brain/plugins/websearch.py", installed / "websearch.py")
+    old_dir = plugin_host._INSTALLED_DIR
+    old_registry = plugin_ops.read_registry
+    monkeypatch.setattr(plugin_host, "_INSTALLED_DIR", str(installed))
+    monkeypatch.setattr(plugin_ops, "read_registry", lambda: {"plugins": {}})
+    monkeypatch.setattr(features, "on", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(features, "register", lambda *_args, **_kwargs: True)
+    plugin_host.load(force=True)
+    yield plugin_host.get_by_tool("search").mod
+    plugin_host._INSTALLED_DIR = old_dir
+    plugin_ops.read_registry = old_registry
+    plugin_host.load(force=True)
 
 
 def _invoke(name, args):
-    return tools.invoke_readonly_spec(name, args)
+    return tools.invoke_readonly_spec(name, args, type("Context", (), {"src": "pc"})())
 
 
-def test_search_success_and_empty_search_are_completed_queries():
+def test_search_success_and_empty_search_are_completed_queries(installed_websearch):
+    websearch = installed_websearch
     websearch._mem.clear()
     with patch.object(websearch, "_post", return_value=[{
         "title": "Vigil release", "url": "https://example.test/release", "snippet": "v2"
@@ -30,7 +54,8 @@ def test_search_success_and_empty_search_are_completed_queries():
     assert "没搜到" in result.text
 
 
-def test_search_connection_failure_is_not_a_successful_verification():
+def test_search_connection_failure_is_not_a_successful_verification(installed_websearch):
+    websearch = installed_websearch
     websearch._mem.clear()
     with patch.object(websearch, "_post", return_value=None):
         result = _invoke("search", {"query": "Vigil release outage"})
@@ -43,7 +68,8 @@ def test_search_connection_failure_is_not_a_successful_verification():
         assert isinstance(websearch._t_search("legacy search"), str)
 
 
-def test_search_cache_without_structured_status_fails_closed():
+def test_search_cache_without_structured_status_fails_closed(installed_websearch):
+    websearch = installed_websearch
     import time
     websearch._mem.clear()
     query, options = websearch._parse("legacy cache entry")

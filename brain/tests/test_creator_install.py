@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Targeted Creator MVP-2 approval/transaction tests.
 
-The fixture uses an isolated temporary data/plugins root.  Skill installation is
-stubbed at the existing ``plugins.skill._install_zip`` boundary because the
+The fixture uses an isolated temporary data/plugins root. Skill installation is
+stubbed at the core Skill Host adapter's ``core_features.skill._install_zip`` boundary because the
 Node Skill Host is an external process; the tests still assert that the exact
 approved archive is delegated to that boundary.
 """
@@ -37,6 +37,8 @@ def isolated(tmp_path, monkeypatch):
     import plugin_ops
     monkeypatch.setattr(plugin_ops, "_PLUG_DIR", str(plugins))
     monkeypatch.setattr(plugin_ops, "REGISTRY", str(plugins / "_registry.json"))
+    import plugin_host
+    monkeypatch.setattr(plugin_host, "_INSTALLED_DIR", str(plugins))
     return tmp_path, drafts, plugins
 
 
@@ -237,7 +239,7 @@ def test_creator_directory_plugin_installs_then_loads_tools_and_frontend(isolate
 def test_skill_archive_uses_existing_skill_transaction_boundary(isolated, monkeypatch):
     root, drafts, _ = isolated
     did = _draft(drafts, kind="skill", name="creator_skill")
-    from plugins import skill as skill_ops
+    from core_features import skill as skill_ops
     skill_root = root / "skills"
     config_path = root / "config.json"
     monkeypatch.setattr(skill_ops, "_skill_dir", lambda: str(skill_root))

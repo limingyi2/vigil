@@ -255,6 +255,33 @@ async function start() {
       turn.content === 'FRESH_INSTALL_CHAT_OK' && turn.status === 'succeeded'),
       'Brain did not restore the persisted successful chat turn from its conversation-scoped display records');
   }
+  if (mode === 'upgrade') {
+    const plugins = await evaluate("vigil.api('GET','/api/plugins')");
+    assert.equal(plugins.status, 200);
+    for (const name of ['p21_upgrade_fixture', 'p21_home_fixture']) {
+      assert.ok((plugins.json.plugins || []).some(plugin => plugin.name === name),
+        `Legacy plugin was not migrated and loaded after installer upgrade: ${name}`);
+    }
+    assert.ok((plugins.json.plugins || []).some(plugin => plugin.name === 'p21_preserved_fixture'),
+      'Existing user installation was not loaded after upgrade');
+  }
+  if (mode === 'uninstall-migrated') {
+    for (const name of ['p21_upgrade_fixture', 'p21_home_fixture']) {
+      const result = await evaluate(`vigil.api('POST','/api/plugins/uninstall',{name:${JSON.stringify(name)}})`);
+      assert.equal(result.status, 200, `Plugin uninstall failed for ${name}: ${JSON.stringify(result.json)}`);
+      assert.equal(result.json.ok, true);
+    }
+  }
+  if (mode === 'post-uninstall-upgrade') {
+    const plugins = await evaluate("vigil.api('GET','/api/plugins')");
+    assert.equal(plugins.status, 200);
+    for (const name of ['p21_upgrade_fixture', 'p21_home_fixture']) {
+      assert.ok(!(plugins.json.plugins || []).some(plugin => plugin.name === name),
+        `Uninstalled legacy plugin was resurrected by a later upgrade: ${name}`);
+    }
+    assert.ok((plugins.json.plugins || []).some(plugin => plugin.name === 'p21_preserved_fixture'),
+      'Unrelated existing user plugin did not survive a later upgrade');
+  }
   console.log(JSON.stringify({ result: 'passed', mode, conversation_id: conversationId, brain_home: home,
     brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored',
     fake_provider_requests: completionRequests,

@@ -235,6 +235,24 @@ def _t_cancel(arg):
 TOOLS = {"reminder_set": _t_set, "reminder_list": _t_list,
          "reminder_cancel": _t_cancel}
 
+TOOL_SPECS = {
+    "reminder_set": {
+        "desc": "设置一个到点主动提醒。传入包含时间和事项的原话。",
+        "params": [("text", "他说的原话，需含时间和提醒事项", True)],
+        "arg_param": "text",
+    },
+    "reminder_list": {
+        "desc": "查看当前尚未到点的提醒。",
+        "params": [],
+        "arg_param": None,
+    },
+    "reminder_cancel": {
+        "desc": "取消匹配关键词的提醒；全部取消请传“全部”。",
+        "params": [("keyword", "提醒关键词，或“全部”", True)],
+        "arg_param": "keyword",
+    },
+}
+
 
 def _route_list(body, query):
     """GET/POST /api/plugin/reminder —— 列出还没到点的提醒（给 App 调试/查看用）。"""

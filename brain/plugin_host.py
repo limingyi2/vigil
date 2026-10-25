@@ -48,7 +48,7 @@ import traceback
 
 try:
     from paths import PLUGINS_DIR, CORE_FEATURES_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
-    _DIR = str(PLUGINS_DIR)                     # 随包内置插件（wallpaper 不在其中）
+    _DIR = str(PLUGINS_DIR)                     # 仅供升级迁移兼容，绝不作为运行时来源
     _CORE_PLUGIN_ROOT = str(CORE_FEATURES_DIR)   # 核心能力适配器
     _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)     # 市场安装的外部插件
     _DDIR = str(PLUGIN_DATA_DIR)
@@ -66,7 +66,28 @@ _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
 # brain/plugins/ 里的这几个文件是历史镜像，实际来源另有其一：
 # 前三个随核心从 core_features/ 加载。
 # 打包时它们也不进制品，这里排除是为开发态不出现同名双份。
-_SHADOWED_BUILTINS = frozenset({"plugin_market.py", "remote.py", "skill.py"})
+_CORE_ADAPTERS = frozenset({"plugin_market.py", "remote.py", "skill.py"})
+
+# Compatibility metadata for already-installed pre-P21.5 plugins. These specs
+# never create tools by themselves: the named plugin must be loaded from the
+# user install directory and own each tool before the schema is returned.
+_LEGACY_TOOL_SPECS = {
+    "websearch": {
+        "search": {"desc": "联网搜索实时公开信息；回答时注明来源并说明未核实内容。",
+                   "params": [("query", "要搜索的内容", True)],
+                   "arg_param": "query"},
+    },
+    "reminder": {
+        "reminder_set": {"desc": "设置一个到点主动提醒，传入包含时间和事项的原话。",
+                         "params": [("text", "包含时间和提醒事项的原话", True)],
+                         "arg_param": "text"},
+        "reminder_list": {"desc": "查看当前尚未到点的提醒。",
+                           "params": [], "arg_param": None},
+        "reminder_cancel": {"desc": "取消匹配关键词的提醒；全部取消请传“全部”。",
+                            "params": [("keyword", "提醒关键词，或“全部”", True)],
+                            "arg_param": "keyword"},
+    },
+}
 
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()
@@ -165,6 +186,11 @@ class Plugin(object):
         raw_tools = getattr(mod, "TOOLS", {}) or {}
         self.generic_tool_names = set()
         self.generic_tool_dispatch = getattr(mod, "call_tool", None)
+        # Optional, internal structured results for audited read-only calls.
+        # This stays inside the normal installed-plugin lifecycle and does not
+        # add a second source-loading path or a Manifest contract.
+        raw_readonly = getattr(mod, "READONLY_TOOLS", {}) or {}
+        self.readonly_tools = (dict(raw_readonly) if isinstance(raw_readonly, dict) else {})
         if isinstance(raw_tools, dict):
             self.tools = dict(raw_tools)
         elif isinstance(raw_tools, (list, tuple, set)):
@@ -292,13 +318,12 @@ def _scan_plugin_directory(directory, exclude_files=None):
 
 
 def _plugin_entry_path(name):
-    """Find one builtin/core-feature/installed entry without importing unrelated modules."""
+    """Find one approved core adapter or explicitly installed user plugin."""
     name = str(name or "").strip()
-    for directory in (_INSTALLED_DIR, _DIR, _CORE_PLUGIN_ROOT):
+    for directory in (_INSTALLED_DIR, _CORE_PLUGIN_ROOT):
         if not directory:
             continue
-        if (name + ".py" in _SHADOWED_BUILTINS
-                and os.path.abspath(directory) == os.path.abspath(_DIR)):
+        if os.path.abspath(directory) == os.path.abspath(_CORE_PLUGIN_ROOT) and name + ".py" not in _CORE_ADAPTERS:
             continue
         package_init = os.path.join(directory, name, "__init__.py")
         if os.path.isfile(package_init):
@@ -310,12 +335,7 @@ def _plugin_entry_path(name):
 
 
 def load(force=False, only=None):
-    """Load core capability adapters, bundled plugins, then installed extensions.
-
-    Bundled plugins ship inside the Brain package (everything except wallpaper);
-    wallpaper and any future optional extension are read only from
-    data/installed_plugins, so an installed copy overrides a bundled one.
-    """
+    """Load approved core adapters and explicitly installed user extensions."""
     global _loaded
     with _lock:
         if only:
@@ -334,11 +354,13 @@ def load(force=False, only=None):
             _sync_features()
             return dict(_registry)
         found = {}
-        # 核心能力适配器（随核心发布的三件）先装，内置插件不得顶掉它们的名字。
-        for directory, skip in ((_CORE_PLUGIN_ROOT, None), (_DIR, _SHADOWED_BUILTINS)):
-            if directory and os.path.abspath(directory) != os.path.abspath(_INSTALLED_DIR):
-                for name, plugin in _scan_plugin_directory(directory, skip).items():
-                    found[name] = plugin
+        # Core adapter allowlist only. Arbitrary files in core_features are not plugins.
+        if _CORE_PLUGIN_ROOT:
+            for filename in sorted(_CORE_ADAPTERS):
+                path = os.path.join(_CORE_PLUGIN_ROOT, filename)
+                plugin = _load_one(path) if os.path.isfile(path) else None
+                if plugin:
+                    found[plugin.name] = plugin
         # Installed plugins override a same-named builtin intentionally.
         for name, plugin in _scan_plugin_directory(_INSTALLED_DIR).items():
             found[name] = plugin
@@ -608,6 +630,39 @@ def get_by_tool(name):
     return _TOOL_INDEX.get(str(name or "").lower())
 
 
+def tool_enabled(name, src=None):
+    """Require a registered, loaded plugin owner and its effective enable state."""
+    key = str(name or "").strip().lower()
+    plugin = get_by_tool(key)
+    return bool(plugin and key in {str(n).lower() for n in plugin.tools}
+                and _enabled(plugin, src))
+
+
+def invoke_readonly_tool(name, arg, src=None):
+    """Call an installed plugin's structured result hook for an audited tool."""
+    key = str(name or "").strip().lower()
+    plugin = get_by_tool(key)
+    if plugin is None or key not in {str(n).lower() for n in plugin.tools}:
+        return {"ok": False, "text": "联网搜索插件未安装或未加载；本次没有执行搜索。"}
+    if not _enabled(plugin, src):
+        return {"ok": False, "text": "联网搜索插件在当前渠道已禁用；本次没有执行搜索。"}
+    fn = plugin.readonly_tools.get(key)
+    if not callable(fn) and key == "search":
+        # P21.0 installs already contain this structured callback but predate
+        # the explicit READONLY_TOOLS map added in P21.5.
+        fn = getattr(plugin.mod, "_search_result", None)
+    if not callable(fn):
+        return {"ok": False, "text": "联网搜索插件未提供可核验的只读结果；本次没有执行搜索。"}
+    try:
+        result = fn(arg)
+    except Exception as exc:
+        _log(plugin.name, "只读工具 %s 失败：%s" % (key, str(exc)[:100]))
+        return {"ok": False, "text": "联网搜索插件执行失败，结果未核实。"}
+    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+        return {"ok": False, "text": "联网搜索插件未返回有效的结构化结果。"}
+    return {"ok": result["ok"], "text": str(result.get("text") or "")}
+
+
 def tool_specs(src=None):
     """插件自报的原生 function calling 规格（name -> spec）。
 
@@ -628,7 +683,10 @@ def tool_specs(src=None):
         if not _enabled(p, src):
             continue
         try:
-            got = getattr(p.mod, "TOOL_SPECS", {}) or {}
+            got = getattr(p.mod, "TOOL_SPECS", None)
+            if got is None:
+                got = _LEGACY_TOOL_SPECS.get(p.name, {})
+            got = got or {}
             # 支持 TOOL_SPECS(src)，供按渠道动态返回工具规格。
             if callable(got):
                 got = got(src)
@@ -676,9 +734,11 @@ def tool_specs(src=None):
                 continue
         except Exception:
             continue
+        registered_tools = {str(tool).strip().lower() for tool in p.tools}
         for n, s in entries:
             key = str(n or "").strip()
             if (key and isinstance(s, dict) and s.get("desc") and key not in out
+                    and key.lower() in registered_tools
                     and (not getattr(p, "generic_tool_names", set()) or key in p.generic_tool_names)):
                 out[key] = s
     return out
