@@ -2796,13 +2796,8 @@
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool') {
-          const toolProgress = evt.state === 'started'
-            ? (evt.purpose || (evt.tool === 'local_exec' ? '执行本机命令' : '正在调用工具 ' + (evt.tool || '工具')))
-            : evt.state === 'awaiting_authorization' ? '等待你审批本次操作'
-            : evt.state === 'denied' ? '本次操作已拒绝，未执行'
-            : ['failed','unknown','not_dispatched'].includes(evt.state) || evt.error ? '本次工具调用未成功'
-            : '工具已返回结果，正在继续';
-          setProgress(toolProgress, evt.state === 'started' ? 'running' : evt.state);
+          const toolProgress = global.VigilAgentView.toolProgress(evt);
+          setProgress(toolProgress.summary, toolProgress.state);
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
           // 'denied' 是被明确拒绝，不算执行失败；'returned' 带 error
           // （执行完但没有任何输出）也不能显示成完成。

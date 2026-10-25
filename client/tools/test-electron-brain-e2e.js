@@ -17,6 +17,9 @@ const token = 'e2e-' + require('node:crypto').randomBytes(24).toString('hex');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-p5-joint-'));
 const home = path.join(root, 'brain-home');
 const profile = path.join(root, 'electron-profile');
+const evidenceDir = path.resolve(process.env.VIGIL_E2E_OUTPUT_DIR || path.join(root, 'evidence'));
+fs.mkdirSync(evidenceDir, { recursive: true });
+console.log('Electron E2E evidence directory: ' + evidenceDir);
 const pluginReleasePath = path.join(root, 'release-blocked-plugin');
 const captureScreenshots = process.argv.includes('--packaged') || process.argv.includes('--screenshots');
 const modelRequests = [];
@@ -449,9 +452,7 @@ async function evaluate(expression) {
 }
 async function screenshot(name) {
   const result = await cdpSend('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
-  const dir = path.join(repo, 'reports', process.env.VIGIL_E2E_SCENARIO==='p12'?'p12-evidence':'p6.1-evidence');
-  fs.mkdirSync(dir, {recursive:true});
-  fs.writeFileSync(path.join(dir, name + '.png'), Buffer.from(result.data, 'base64'));
+  fs.writeFileSync(path.join(evidenceDir, name + '.png'), Buffer.from(result.data, 'base64'), { flag:'wx' });
 }
 async function connectRenderer(debugPort) {
   const deadline = Date.now() + 20000;
@@ -812,7 +813,7 @@ async function run() {
   const modelBase = await startModel();
   if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
     await require('./test-p12-e2e').run({modelBase,startBrain,startElectron,evaluate,waitFor,submit,
-      screenshot,wait,root,home,repo,token,modelRequests,stopBrain:async()=>{await stopChild(brain,true);brain=null;},
+      screenshot,wait,root,home,repo,evidenceDir,token,modelRequests,stopBrain:async()=>{await stopChild(brain,true);brain=null;},
       stopElectron:async()=>{await stopChild(electron,true);electron=null;}});
     return;
   }
