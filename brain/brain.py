@@ -474,6 +474,8 @@ class Brain:
             "vigil_brain_conversation_%x" % id(self), default=None)
         self._turn_note_context = contextvars.ContextVar(
             "vigil_brain_turn_note_%x" % id(self), default='')
+        self._turn_task_context = contextvars.ContextVar(
+            "vigil_brain_task_context_%x" % id(self), default=())
         self._turn_workspace_status_context = contextvars.ContextVar(
             "vigil_brain_turn_workspace_status_%x" % id(self),
             default={"selected": False})
@@ -579,6 +581,13 @@ class Brain:
     @turn_note.setter
     def turn_note(self, value):
         self._turn_note_context.set(str(value or ''))
+
+    @property
+    def turn_tasks(self):
+        return self._turn_task_context.get()
+
+    def set_turn_tasks(self, tasks):
+        self._turn_task_context.set(tuple(tasks or ()))
 
     @property
     def turn_workspace_status(self):
@@ -976,6 +985,10 @@ class Brain:
             # Keep the structured selection fact available to the read-only
             # environment snapshot for the rest of this turn.
             self._turn_note_context.set('')
+        from task_continuity import format_context
+        task_note = format_context(self.turn_tasks)
+        if task_note:
+            parts.append(task_note)
         tm = self._time_hint()
         if tm:
             parts.append("\n" + tm)

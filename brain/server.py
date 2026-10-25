@@ -662,7 +662,7 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
     _route_decision = None
     import task_intent as _task_intent
     try:
-        _task_decision = _task_intent.classify(text)
+        _task_decision = _task_intent.classify(text, recent_tasks=getattr(_LOCAL.get('brain'), 'turn_tasks', ()))
     except Exception:
         _task_decision = {"task_category": "chat", "decision_source": "fallback",
             "reason": "分类异常回退", "target_entry": "chat_no_tools",
@@ -1716,6 +1716,11 @@ def start_remote_api(brain):
                     return item, owner, src, ''
             return item, owner, src, persona
 
+        def _bind_recent_tasks(self, body, brain, src):
+            # owner is derived by the authenticated handler, never from input.
+            from task_continuity import bind
+            return bind(brain, self._display_owner(body), body.get('conversation_id'), src)
+
         def _workspace_note(self, src, conv, conv_owner, persona):
             """会话归属了工作区就把路径注记进这一轮上下文。
 
@@ -1825,6 +1830,8 @@ def start_remote_api(brain):
                         workspace_status_setter(
                             selected=bool(workspace_note), src=src,
                             conversation_id=body.get('brain_conversation_id'))
+                    from task_continuity import bind as _bind_tasks
+                    _bind_tasks(brain, self._display_owner(body), body.get('conversation_id'), src)
                     brain.turn_note = workspace_note
                     try:
                         parts, _ = brain._build_system_parts(text, '')
@@ -1833,11 +1840,7 @@ def start_remote_api(brain):
                     messages = [{'role': 'system', 'content': ''.join(parts)}]
                     if len(brain.hist) <= 1:
                         brain.seed_history(src=src, conversation_id=body.get('brain_conversation_id'))
-                    previous_messages = []
-                    for previous in reversed(agent_runs.listing(self._display_owner(body))[:8]):
-                        if previous['status'] == 'succeeded' and previous.get('result'):
-                            previous_messages.extend([{'role': 'user', 'content': previous['intent']},
-                                                      {'role': 'assistant', 'content': previous['result']}])
+                    previous_messages = []  # Task receipts are in the shared system context.
                     # P8.4：与 draft_native / stream_chat 同一份上下文构建
                     # （含滚动摘要注入）。allow_summarize=False —— 创建
                     # run 时不额外发摘要请求，只用已有状态。
@@ -2934,6 +2937,7 @@ def start_remote_api(brain):
                         if not body.get('dry_run'):
                             import conversations as _conversations
                             _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _disp)
+                    self._bind_recent_tasks(body, brain, _src)
                     _att_meta = body.get("attachments")
                     if not isinstance(_att_meta, list):
                         _att_meta = []
@@ -3177,6 +3181,7 @@ def start_remote_api(brain):
                         if not body.get('dry_run'):
                             import conversations as _conversations
                             _conversations.touch(_conv_owner, _conv_src, str(_conv_persona), _cid, _in_text)
+                    self._bind_recent_tasks(body, brain, _src)
                     try:
                         import features as _feat
                         _feat.set_current_src(_src)
@@ -3246,7 +3251,8 @@ def start_remote_api(brain):
                     try:
                         _task_tools_available = bool(_run_tools.schema_needed(_in_text))
                         _task_decision = _task_intent.classify(
-                            _in_text, workspace_authorized=_task_workspace_authorized)
+                            _in_text, workspace_authorized=_task_workspace_authorized,
+                            recent_tasks=getattr(brain, 'turn_tasks', ()))
                         _live_tool_available = False
                         if (_task_decision.get('task_category') == 'retrieval'
                                 and _task_decision.get('retrieval_mode') == 'live_tools'):

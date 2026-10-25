@@ -298,6 +298,11 @@ def snapshot(brain=None, src=None, *, api_config=None, provider=None,
                                 summary_only=summary_only,
                                 tool_policy=tool_policy),
         "extensions": _extension_status(),
+        "external_software": {
+            "state": "unconfirmed",
+            "inventory_scope": "Vigil plugins and MCP registrations do not enumerate OS/npm CLI installations",
+            "verification": "Use authorized local_exec to locate a command and verify its version/help; verify required engines separately",
+        },
         "workspace": _workspace_status(brain),
         "source": "Vigil Brain runtime and registered host interfaces",
     }
@@ -381,6 +386,9 @@ def _brief(value):
     workspace = value.get("workspace", {})
     plugin = value.get("extensions", {}).get("plugins", {}).get("state", "unconfirmed")
     skill = value.get("extensions", {}).get("skills", {}).get("mechanism", "unconfirmed")
+    install = value.get('extensions', {}).get('plugins', {}).get('agent_installation')
+    install_text = {'available_via_capability_call': '管理操作已注册，需核对本轮调用通道与审批',
+                    'operations_not_registered': '插件安装操作未注册'}.get(install, '未确认')
     selected = (workspace.get("selected") or {})
     selected_text = ("已选择" if selected.get("value") else "未选择") \
         if selected.get("state") != "unconfirmed" else "未确认"
@@ -389,9 +397,11 @@ def _brief(value):
         f"客户端版本={appver}；Brain={packaged}/{brain_ver}；连接={label(client)}；"
         f"模型={mode}/{provider}/{current}；工具开关={switch_text}；"
         f"本轮工具={label(tools.get('state'))}；"
-        f"插件={label(plugin)}；Skill={label(skill)}；Agent 安装=不可用；UI 入口=未确认；"
+        f"插件={label(plugin)}；Skill={label(skill)}；Agent 安装={install_text}；UI 入口=未确认；"
         f"工作区={selected_text}；文件授权={label((workspace.get('file_access_authorization') or {}).get('state'))}。"
         "状态按可用/未启用/不可用/未确认理解；工具清单与权限按需查 capability_status。"
+        "插件列表不包含普通软件/npm CLI；没有同名插件不能证明软件未安装。"
+        "使用命令行软件走任务入口的 local_exec，先验证命令和版本，再检查目标所需引擎。"
     )
 
 

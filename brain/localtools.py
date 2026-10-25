@@ -214,7 +214,8 @@ REMOTE_TOOLS = {
                 "**只有在没有专用工具能完成任务时才用这个**——文件搜索用 local_file_grep，"
                 "文件读取用 local_file_read，列目录用 local_file_list，找文件用 local_file_find，"
                 "看进程用 local_process_list，这些专用工具比 exec 更安全、结果更结构化。"
-                "exec 只用于：安装依赖、跑脚本、git 操作、系统管理等专用工具覆盖不到的场景。"
+                "exec 用于：调用已安装的命令行软件（先查版本/help，再按实际支持的参数调用）、安装依赖、跑脚本、git 操作、系统管理等专用工具覆盖不到的场景。"
+                "npm/系统命令行软件不一定注册为 Vigil 插件或 MCP；插件清单没有同名项不代表未安装，命令存在也不代表全部外部引擎齐全。"
                 "只读命令（ipconfig/tasklist/git status 这类）直接放行。",
         "params": [("cmd", "要执行的命令", True)],
         "arg_param": "cmd",

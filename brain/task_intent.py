@@ -23,7 +23,7 @@ _CODE = re.compile(
 )
 _EXECUTE = re.compile(
     r"修改|改好|改成|改|调整|协调|确认|修复|修好|修|实现|重构|编辑|整理|创建|新建|写入|写文件|删除|构建|编译|"
-    r"运行|执行|检查|审查|分析|验证|整理|列出|读取|搜索|查找|设置|创建|保存|安装|打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|"
+    r"运行|执行|检查|审查|分析|逆向|反编译|拆包|调用|使用|验证|整理|列出|读取|搜索|查找|设置|创建|保存|安装|打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|"
     r"装个|装一下|卸载|卸掉|reinstall|uninstall|"
     r"modify|edit|fix|implement|refactor|build|compile|run|test|inspect|review|open|launch|control|click|type|close|connect|"
     r"create|delete|write|list|read|set|save|install",
@@ -34,7 +34,7 @@ _SAFE_QUESTION = re.compile(r"[?？]|吗$|呢[?？]?$|怎么|如何|为什么|�
 _FILE_TASK = re.compile(r"工作区|仓库|项目|代码库|文件|目录|本地")
 _SCOPED_WORKSPACE = re.compile(r"工作区|仓库|项目|代码库|目录|本地|源码|代码")
 _UNRESOLVED_THIS = re.compile(r"这个|这份|此")
-_REQUEST_FRAME = re.compile(r"请|帮我|替我|为我|能不能|可以帮|我想让你|把.{0,40}(?:改|修|写|删|建)|(?:并|然后|再)保存|保存到")
+_REQUEST_FRAME = re.compile(r"请(?!问)|帮我|替我|为我|能不能|可以帮|我想让你|把.{0,40}(?:改|修|写|删|建)|(?:并|然后|再)保存|保存到")
 # Capability questions are routed before the general action vocabulary.  A
 # question such as "能不能控制浏览器" must inspect status, never execute.
 # Explicit imperative frames ("帮我打开…", "请启动…") remain execution.
@@ -76,6 +76,17 @@ _TOOL_CALL_REQUEST = re.compile(
     re.I,
 )
 
+_NO_EXECUTION = re.compile(r'(?:先别|不要|暂时不|不用|无需).{0,8}(?:执行|运行|操作|安装|逆向|反编译|拆包)|(?:只|仅)(?:讲|解释|说明|给.{0,4}方案)')
+_NAMED_ACTION = re.compile(
+    r'(?:^|[，。；;]|\s)(?:请(?!问)(?:你)?(?:帮我)?|你(?:帮我)?|帮我|替我|为我|现在|直接|我想让你)?\s*'
+    r'(?:调用|使用|用|逆向(?:分析)?|反编译|拆包)\s*[A-Za-z_][A-Za-z0-9_.-]*', re.I)
+
+
+def _named_action(text):
+    # "刚才安装的" qualifies a named tool; it is not an unresolved target.
+    text = re.sub(r'(?:刚才|之前|前面|上次)(?:已经)?(?:安装|装好|下载|配置)(?:成功|完成|好)?的', '', text)
+    return bool(_NAMED_ACTION.search(text))
+
 
 def _execution_clauses(text):
     """Count distinct operational verbs, so scope is not inferred from length."""
@@ -94,12 +105,14 @@ def _is_ambiguous_reference(text):
         return False
     if _HISTORY.search(text) and _RETRIEVE.search(text) and not _SCOPED_WORKSPACE.search(text):
         return False
+    if _named_action(text) and not re.search(r'那个|它|这个|这份', text):
+        return False
     if _REFERENTIAL.search(text):
         return True
     return bool(_UNRESOLVED_THIS.search(text) and not _SCOPED_WORKSPACE.search(text))
 
 
-def classify(text, *, workspace_authorized=False):
+def classify(text, *, workspace_authorized=False, recent_tasks=()):
     """Return a stable, side-effect-free task decision.
 
     ``workspace_authorized`` is a fact supplied by the existing server scope
@@ -110,7 +123,16 @@ def classify(text, *, workspace_authorized=False):
     normalized = re.sub(r"\s+", " ", raw)
     fallback = None
 
-    if _is_ambiguous_reference(normalized):
+    if _NO_EXECUTION.search(normalized):
+        return _decision('chat', '用户要求只解释或暂不执行', 'brain_tools', None)
+
+    continuation = bool(recent_tasks and _REFERENTIAL.search(normalized)
+                        and _EXECUTE.search(normalized)
+                        and not _EXPLAIN.search(normalized)
+                        and recent_tasks[0].get('status') == 'succeeded'
+                        and recent_tasks[0].get('intent') and recent_tasks[0].get('result'))
+
+    if _is_ambiguous_reference(normalized) and not continuation:
         return _decision("chat", "指代对象无法从本轮消息安全确定",
                          "brain_tools", "ambiguous_reference")
     if (_CAPABILITY_QUERY.search(normalized)
@@ -121,7 +143,8 @@ def classify(text, *, workspace_authorized=False):
             and not _EXECUTE.search(normalized)):
         return _decision("chat", "社交问候使用普通回答入口", "brain_tools", None)
 
-    historical_query = bool(_HISTORY.search(normalized) and
+    named_action = _named_action(normalized)
+    historical_query = bool(not named_action and not continuation and _HISTORY.search(normalized) and
                             (_RETRIEVE.search(normalized) or _EXPLAIN.search(normalized)))
     local_lookup = bool(_FILE_TASK.search(normalized) and _RETRIEVE.search(normalized))
     if local_lookup:
@@ -143,7 +166,9 @@ def classify(text, *, workspace_authorized=False):
         # Explanatory questions stay in chat unless they contain an independent
         # action request. This prevents language names or code nouns alone from
         # selecting the Coding Harness.
-        if _INSTALL_INTENT.search(normalized):
+        if named_action or continuation:
+            category, reason = 'simple_execution', '明确调用工具或承接本会话已完成任务'
+        elif _INSTALL_INTENT.search(normalized):
             # 安装/卸载/启停类请求直判任务：即使以问句形式出现（"你可以
             # 安装吗"），意图也是要 agent 走 capability_call + 审批卡，
             # 不是要一段"我能不能"的口头回答。
@@ -176,7 +201,15 @@ def classify(text, *, workspace_authorized=False):
             code_request = bool(coding_harness.looks_like_coding_request(normalized))
         except Exception:
             code_request = False
-        local_request = bool(_SCOPED_WORKSPACE.search(normalized))
+        # A named external application/CLI can be inspected through ordinary
+        # local tools. Its permissions are checked at dispatch, not inferred
+        # from whether a development workspace happens to be selected.
+        external_analysis = (named_action
+                             and bool(re.search(r'逆向|反编译|拆包|(?:用|使用|调用)\s*[A-Za-z][A-Za-z0-9_.-]*.{0,20}(?:分析|检查|查看)', normalized))
+                             and not re.search(r'修改|修复|删除|写入|重构|编辑|构建|编译', normalized))
+        if external_analysis:
+            code_request = False
+        local_request = bool(_SCOPED_WORKSPACE.search(normalized)) and not external_analysis
         if code_request or local_request:
             if not workspace_authorized:
                 fallback = "workspace_not_authorized"
@@ -189,6 +222,8 @@ def classify(text, *, workspace_authorized=False):
               and fallback is None else
               "brain_tools" if category in ("chat", "retrieval") else "chat_no_tools")
     decision = _decision(category, reason, target, fallback)
+    if continuation:
+        decision['context_run_id'] = recent_tasks[0].get('run_id')
     if category == "retrieval":
         # Historical references need Vigil's scoped memory/history RAG. Current
         # facts need the existing function-calling tool selected by capability.
