@@ -9,6 +9,32 @@
 
 ## 2026-10-25
 
+### 1.1.9-p21.5：从链接安装、心跳 fail-closed、流式可见
+
+**客户端**
+
+- 从链接安装插件/Skill：把 GitHub 仓库/tree/raw market.json 链接发给模型，
+  它调 `install_link` 解析清单条目并安装（可信来源直装，其他来源先弹审批卡，
+  附清单与哈希）；`link_preview` 可先看装什么再决定
+- 思考流默认折叠显示、可展开；工具调用阶段有过程说明正文，不再是干巴巴的状态卡
+
+**服务端**
+
+- 管理心跳改 fail-closed：`management.enabled` 必须显式为 `true` 才启用，
+  去掉 `sync.cloud_url` 兜底——旧逻辑下配置键丢失等于继续每 15 秒向旧云机
+  外发带 token 的心跳
+- `install_entry` 移入核心包 `core_features/plugin_market.py`，市场安装与
+  链接安装共用；此前放在可选插件包里，正式安装包内链接安装是断的
+- 删除 `deploy/` 下 7 个连旧云机的云部署脚本与部署文档（客户端更新只走
+  GitHub Releases，无调用方）
+
+**文档**
+
+- `docs/ARCHITECTURE.md`（架构与模块分工）、`docs/OPERATIONS.md`（起停、
+  备份、密钥轮换、旧云下线清单）新增；README 重写对齐本地优先现状
+
+---
+
 ### 文档清理：删掉 59 份一次性文档，补上索引
 
 仓库里堆了 199 份 Markdown，其中大半是各阶段的交接、验收、completion report
