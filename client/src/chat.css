@@ -194,6 +194,11 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .agent-step pre { max-height:220px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin:4px 0 12px 22px; font:12px/1.6 var(--mono); }
 .chatwrap .agent-detail-label { margin:8px 0 0 22px; font-size:12px; }
 .chatwrap .agent-commentary { color:var(--chat-text); font-size:var(--type-body); line-height:1.8; margin:12px 0; }
+.chatwrap .agent-think { margin:10px 0; font-size:12px; color:var(--chat-muted); }
+.chatwrap .agent-think summary { display:flex; align-items:center; gap:6px; cursor:pointer; list-style:none; width:fit-content; opacity:.8; }
+.chatwrap .agent-think summary::-webkit-details-marker { display:none; }
+.chatwrap .agent-think[open] summary { opacity:1; }
+.chatwrap .agent-think-body { margin:6px 0 0 22px; padding-left:10px; border-left:2px solid var(--chat-line); line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
 .chatwrap .agent-coding-card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:8px 0 14px; color:var(--chat-muted); font-size:12px; }
 .chatwrap .agent-coding-card header { display:flex; justify-content:space-between; align-items:center; gap:8px; color:var(--chat-text); }
 .chatwrap .agent-coding-section { margin-top:8px; }

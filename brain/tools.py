@@ -221,7 +221,13 @@ _STATIC_SPECS = {
                 "plugins_skills 能力支持插件管理：list/plugin_status（只读查询）、enable/disable/uninstall"
                 "（修改操作，会先弹审批卡片）；skill_status/skill_list（只读）、skill_install/skill_uninstall/"
                 "skill_reload（修改操作，需要审批）。查询插件用 plugin_status 时在 args 里带 {\"name\": 插件名}；"
-                "启用/禁用/卸载同理。内置插件不能卸载、可以禁用 —— 这要如实告诉用户。",
+                "启用/禁用/卸载同理。内置插件不能卸载、可以禁用 —— 这要如实告诉用户。"
+                "🔴 用户发来一个链接要装插件时，用 operation=install_link、args={\"url\": 原链接}"
+                "（仓库里指定某个插件再加 \"name\"）。先看清单可用 operation=link_preview。"
+                "返回 state=needs_choice 表示该仓库有多个插件，把 candidates 列给用户挑，**不要猜一个**；"
+                "返回 status=awaiting_authorization 表示已出审批卡，把要装的名字和来源说清楚请用户确认，"
+                "**不要换个操作重试**。装完按返回的 ok/err 如实回报。"
+                "list / plugin_status 只查本地已安装清单，反复调它们不会完成安装。",
         "params": [("capability", "能力名称，如 codex / video_workbench / local_tools / plugins_skills", True),
                    ("operation", "操作名，如 status / tasks / focus / create_task / list / disable", True),
                    ("args", "操作参数，JSON 对象字符串；没有参数就传 {}", False)],

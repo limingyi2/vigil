@@ -2822,6 +2822,24 @@
           remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
+        } else if (evt.type === 'think' && evt.text) {
+          // 思考流单独一块、默认折叠：推理内容不该混进正文气泡，也不该
+          // 被静默丢掉 —— 以前这条分支不存在，服务端推了 think 事件，
+          // 客户端收下就再也没人画，于是"思考过程"永远不显示。
+          const steps=msgs.querySelector('#'+turnId+' #liveSteps');
+          let thinkBox=steps.querySelector('.agent-think');
+          if(!thinkBox){
+            thinkBox=document.createElement('details');
+            thinkBox.className='agent-think';
+            thinkBox.innerHTML='<summary>'+icon('brain','sm')
+              +'<span class="agent-think-label">思考中</span></summary>'
+              +'<div class="agent-think-body"></div>';
+            steps.insertBefore(thinkBox, steps.firstChild);
+          }
+          const thinkBody=thinkBox.querySelector('.agent-think-body');
+          thinkBody.textContent=(thinkBody.textContent||'')+evt.text;
+          const thinkLabel=thinkBox.querySelector('.agent-think-label');
+          if(thinkLabel) thinkLabel.textContent='思考中 · '+thinkBody.textContent.length+' 字';
         } else if (evt.type === 'progress' && evt.summary) {
           setProgress(evt.summary, evt.state || 'running');
         } else if (evt.type === 'text' && evt.text) {

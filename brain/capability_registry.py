@@ -64,6 +64,18 @@ RUN_DENIED = "denied"
 RUN_UNKNOWN = "unknown"
 
 
+# 当前这次调用的调用方身份（线程本地）。DELEGATED 操作的 handler 要自己做
+# 门控，而 handler 的入参只有 args —— 由 ``invoke`` 在调用前写入，handler 用
+# ``current_actor()`` 读。它来自这次对话，不是模型能填的字段。
+_ACTOR = threading.local()
+
+
+def current_actor() -> dict[str, str]:
+    return {"identity": str(getattr(_ACTOR, "identity", "") or ""),
+            "session": str(getattr(_ACTOR, "session", "") or ""),
+            "target": str(getattr(_ACTOR, "target", "") or "")}
+
+
 class CapabilityGrant:
     """An explicit authorization for one capability operation.
 
@@ -652,6 +664,13 @@ class CapabilityRegistry:
                     "status": RUN_UNAVAILABLE, "error": "operation_not_supported",
                     "receipts": [receipt]}
         try:
+            # DELEGATED 操作的 handler 要自己做门控（例如链接安装要区分
+            # "可信来源直接装"和"其他来源出审批卡"），而 handler 只拿到
+            # 参数。调用方身份由这里写入线程本地，handler 用
+            # ``current_actor()`` 读 —— 它同样不是模型能填的字段。
+            _ACTOR.identity = identity
+            _ACTOR.session = session
+            _ACTOR.target = target
             result = spec["handler"](dict(args or {}))
         except Exception as exc:
             detail = "%s: %s" % (type(exc).__name__, str(exc)[:240])
@@ -662,6 +681,10 @@ class CapabilityRegistry:
                           "result": None, "detail": detail})
             return {"ok": False, "task_id": tid, "capability": key, "operation": op,
                     "status": RUN_FAILED, "error": detail, "receipts": [receipt]}
+        finally:
+            _ACTOR.identity = ""
+            _ACTOR.session = ""
+            _ACTOR.target = ""
         if isinstance(result, Mapping) and "ok" in result:
             out = dict(result)
         else:
@@ -777,6 +800,11 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
                               "handler": lambda a: _plugin_lifecycle_handler("uninstall", a)},
                 "skill_status": {"permission": READ, "handler": _skill_status_handler},
                 "skill_list": {"permission": READ, "handler": _skill_list_handler},
+                # 链接安装：DELEGATED —— 授权判定在 handler 里，因为"可信来源
+                # 直接装、其他来源出审批卡"这条分层规则需要看到来源；registry
+                # 只认识权限等级，不认识"这个仓库是不是你自己的"。
+                "link_preview": {"permission": READ, "handler": _link_preview_handler},
+                "install_link": {"permission": DELEGATED, "handler": _install_link_handler},
                 "skill_install": {"permission": WRITE, "handler": _skill_install_handler},
                 "skill_uninstall": {"permission": WRITE, "handler": _skill_uninstall_handler},
                 "skill_reload": {"permission": WRITE, "handler": _skill_reload_handler},
@@ -1129,6 +1157,86 @@ def _skill_install_handler(args):
             out["detail"] = "安装事务成功但 Skill Host 未确认该技能：%s" % (
                 verify.get("err") or "清单中不存在")
     return out
+
+
+def _link_preview_handler(args):
+    """只读：解析链接并回报清单摘要。下载清单，不下载制品、不落盘。"""
+    import link_install as _link
+    url = str(args.get("url") or "").strip()
+    try:
+        plan_data = _link.plan(url, name=str(args.get("name") or ""))
+    except _link.LinkError as exc:
+        return {"ok": False, "error": exc.code, "detail": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": "link_unresolved",
+                "detail": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
+    out = {"ok": True, "source": plan_data.get("source"),
+           "trusted": bool(plan_data.get("trusted")),
+           "requires_approval": not bool(plan_data.get("trusted"))}
+    if plan_data.get("kind") == "choice":
+        out["state"] = "needs_choice"
+        out["candidates"] = plan_data.get("candidates") or []
+        out["detail"] = plan_data.get("detail")
+    else:
+        out["summary"] = plan_data.get("summary")
+    return out
+
+
+def _approved_link_request(url: str) -> bool:
+    """这次调用是不是"人已经批准过"的那一次。
+
+    审批通过后 ``approve()`` 会把请求置为 executing 再用同一份参数调用一次
+    handler —— 这是本进程里"有人点过同意"的唯一证据，模型无法伪造
+    （请求只能由 invoke 在授权被拒时创建，approve 只能由 HTTP 端点触发）。
+    """
+    try:
+        for request in REGISTRY.requests(state="executing"):
+            if (request.get("capability") == "plugins_skills"
+                    and request.get("operation") == "install_link"
+                    and str((request.get("args") or {}).get("url") or "").strip() == url):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _install_link_handler(args):
+    """从链接安装插件。可信来源直接装，其他来源先出审批卡。
+
+    🔴 分层放行不等于放松校验：两条路都要过 market.json 校验、制品
+    SHA-256 与 Manifest 逐文件哈希；差别只在"要不要人点头"。
+    """
+    import link_install as _link
+    url = str(args.get("url") or "").strip()
+    replace = bool(args.get("replace"))
+    try:
+        plan_data = _link.plan(url, name=str(args.get("name") or ""))
+    except _link.LinkError as exc:
+        return {"ok": False, "error": exc.code, "detail": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": "link_unresolved",
+                "detail": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
+    if plan_data.get("kind") == "choice":
+        return {"ok": False, "state": "needs_choice",
+                "error": "plugin_name_required",
+                "source": plan_data.get("source"),
+                "detail": plan_data.get("detail"),
+                "candidates": plan_data.get("candidates") or []}
+    if plan_data.get("trusted") or _approved_link_request(url):
+        return _link.execute(plan_data, replace=replace)
+    actor = current_actor()
+    request = REGISTRY.request_authorization(
+        "plugins_skills", "install_link",
+        {"url": url, "name": plan_data.get("name")},
+        identity=actor["identity"], session=actor["session"],
+        target=str(plan_data.get("name") or ""))
+    return {"ok": False, "status": RUN_AWAITING,
+            "error": "authorization_required",
+            "request_id": request["request_id"],
+            "source": plan_data.get("source"),
+            "summary": plan_data.get("summary"),
+            "detail": "来源 %s 不在可信清单内。清单已核验（版本/权限/哈希），"
+                      "但要你确认之后才安装" % plan_data.get("source")}
 
 
 def _skill_uninstall_handler(args):
