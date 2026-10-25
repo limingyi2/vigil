@@ -94,7 +94,22 @@ async function start() {
     if (['ready', 'failed'].includes(health.status)) break;
     await sleep(250);
   }
-  assert.equal(health.status, 'ready', health.lastErr);
+  if (health.status !== 'ready') {
+    // Keep the exact installed runtime's startup evidence in the CI artifact.
+    // The message is deliberately limited to sidecar diagnostics, not config contents.
+    const diagnostic = {
+      status: health.status, failureKind: health.failureKind, lastErr: health.lastErr,
+      lastFailure: health.lastFailure, pid: health.pid, exe: health.exe, home: health.home,
+      diagnosis: health.diagnosis,
+      logTail: (health.logTail || []).map(line => String(line)
+        .replace(/((?:api[_-]?key|token|password|secret|authorization)\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[redacted]')
+        .replace(/Bearer\\s+[^\\s]+/gi, 'Bearer [redacted]')),
+    };
+    console.error('SIDECAR_STARTUP_DIAGNOSTIC ' + JSON.stringify(diagnostic));
+  }
+  assert.equal(health.status, 'ready', health.lastErr || JSON.stringify({
+    failureKind: health.failureKind, lastFailure: health.lastFailure, logTail: health.logTail
+  }));
   assert.ok(health.exe.startsWith(install), 'Brain executable was not loaded from the fresh install');
   const runtime = await evaluate("vigil.api('GET','/api/runtime')");
   assert.equal(runtime.status, 200, 'Bundled Brain health endpoint did not return 200');
