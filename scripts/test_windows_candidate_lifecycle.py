@@ -7,8 +7,10 @@ from pathlib import Path
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
+import urllib.request
 
 
 def sha256(path):
@@ -43,6 +45,74 @@ def failure_detail(result, tail=20):
     if result.stdout:
         lines.append('stdout tail: ' + '\n'.join(result.stdout.strip().splitlines()[-tail:]))
     return '\n'.join(lines)
+
+
+def download_verified(url, path, expected_sha256, attempts=4):
+    path = Path(path)
+    temporary = path.with_name(path.name + '.download')
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=90) as response, temporary.open('wb') as output:
+                shutil.copyfileobj(response, output, length=1024 * 1024)
+            if sha256(temporary) != expected_sha256:
+                raise RuntimeError('Downloaded release asset SHA-256 mismatch: ' + path.name)
+            os.replace(temporary, path)
+            return path
+        except Exception as error:
+            last_error = error
+            temporary.unlink(missing_ok=True)
+            if attempt + 1 < attempts:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f'Could not download verified release asset {url}: {last_error}')
+
+
+def run_historical_upgrade(installer, expected_commit, root):
+    """Use the published P21.2 setup executable, never a synthesized old layout."""
+    old_version = '1.1.9-p21.2.20261025.1'
+    old_source = 'd0a7e90409614961fda3a4a33523e42d4d4b92dc'
+    old_sha = '954ae2096bfc8a1327c35b50165404dc887b674a8ba32e45e079c33e598bcfd6'
+    manifest_sha = '0603ee73c8623c7bda5d9f49b3e4d5beb4c060f349068cb42584283c3d0819d0'
+    release = f'https://github.com/limingyi2/vigil/releases/download/v{old_version}'
+    old_dir = root / 'historical-release'
+    old_dir.mkdir()
+    historical_installer = download_verified(
+        release + f'/Kestrel.Setup.{old_version}.exe',
+        old_dir / f'Kestrel.Setup.{old_version}.exe', old_sha)
+    historical_manifest_path = download_verified(
+        release + '/release-manifest.json', old_dir / 'release-manifest.json', manifest_sha)
+    historical_manifest = json.loads(historical_manifest_path.read_text(encoding='utf-8'))
+    if (historical_manifest.get('source_commit') != old_source or
+            historical_manifest.get('ver') != old_version or
+            historical_manifest.get('candidate') is not False or
+            historical_manifest.get('sha256') != old_sha or
+            historical_manifest.get('size') != 162533456):
+        raise RuntimeError('Published P21.2 release manifest identity mismatch')
+    quoted_installer = "'" + str(historical_installer).replace("'", "''") + "'"
+    signature = subprocess.run(
+        ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+         f'(Get-AuthenticodeSignature -LiteralPath {quoted_installer}).Status.ToString()'],
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60)
+    if signature.returncode:
+        raise RuntimeError('Could not inspect historical installer Authenticode signature: ' + signature.stderr[-1000:])
+    auth_status = signature.stdout.strip().splitlines()[-1]
+    output = root / 'historical-upgrade.json'
+    result = subprocess.run([
+        sys.executable, str(Path(__file__).with_name('test_windows_historical_upgrade.py')),
+        str(historical_installer), str(installer),
+        '--expected-old-source-commit', old_source,
+        '--expected-old-version', old_version,
+        '--expected-old-sha256', old_sha,
+        '--expected-new-source-commit', expected_commit,
+        '--authenticode-status', auth_status,
+        '--output', str(output),
+    ], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800)
+    if result.returncode:
+        raise RuntimeError('Actual historical P21.2 upgrade failed: ' + failure_detail(result))
+    report = json.loads(output.read_text(encoding='utf-8'))
+    if report.get('result') != 'passed':
+        raise RuntimeError('Historical upgrade report did not pass')
+    return report
 
 
 def main(installer, expected_commit, output, expected_version=None):
@@ -201,6 +271,8 @@ def main(installer, expected_commit, output, expected_version=None):
     assert user_data_after == user_data_before, 'Uninstall changed or removed files in the default user-data directory'
     assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
 
+    historical_upgrade = run_historical_upgrade(installer, expected_commit, root)
+
     output.parent.mkdir(parents=True, exist_ok=True)
     logs_dir = output.parent / (output.stem + '-logs')
     logs_dir.mkdir(exist_ok=True)
@@ -216,6 +288,7 @@ def main(installer, expected_commit, output, expected_version=None):
         'post_uninstall_upgrade': root / 'installer-post-uninstall-upgrade.json',
         'post_uninstall_upgrade_nsis': post_uninstall_upgrade_log,
         'post_uninstall_runtime': root / 'runtime-post-uninstall-upgrade.json',
+        'historical_upgrade': root / 'historical-upgrade.json',
         'uninstall': root / 'installer-uninstall.json',
         'nsis_uninstall': nsis_uninstall_log,
     }
@@ -225,6 +298,9 @@ def main(installer, expected_commit, output, expected_version=None):
             extension = '.log' if source.suffix == '.log' else '.json'
             shutil.copy2(source, logs_dir / f'{name}{extension}')
             available_logs[name] = f'{logs_dir.name}/{name}{extension}'
+    historical_logs = root / 'historical-upgrade-logs'
+    if historical_logs.is_dir():
+        shutil.copytree(historical_logs, logs_dir / 'historical-upgrade')
     report = {
         'result': 'passed',
         'environment': {'os': os.environ.get('RUNNER_OS', 'Windows isolated runner'),
@@ -244,6 +320,7 @@ def main(installer, expected_commit, output, expected_version=None):
                                   'uninstall_survived_later_reinstall': True,
                                   'legacy_source_preserved': True,
                                   'old_signed_release_binary_used': False},
+        'actual_historical_upgrade': historical_upgrade,
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),
@@ -286,6 +363,7 @@ if __name__ == '__main__':
                                    ('nsis_install', 'nsis-install.log'),
                                    ('first_launch', 'runtime-first-launch.json'),
                                    ('restart', 'runtime-restart.json'),
+                                   ('historical_upgrade', 'historical-upgrade.json'),
                                    ('uninstall', 'installer-uninstall.json'),
                                    ('nsis_uninstall', 'nsis-uninstall.log')):
                 source = root / filename
@@ -296,6 +374,9 @@ if __name__ == '__main__':
                         continue
                     shutil.copy2(source, destination)
                     logs[name] = f'{logs_dir.name}/{name}{extension}'
+            historical_logs = root / 'historical-upgrade-logs'
+            if historical_logs.is_dir() and not (logs_dir / 'historical-upgrade').exists():
+                shutil.copytree(historical_logs, logs_dir / 'historical-upgrade')
         failure = {'result': 'failed', 'source_commit_expected': args.expected_source_commit,
                    'error': f'{type(error).__name__}: {error}', 'logs': logs}
         output.write_text(json.dumps(failure, indent=2), encoding='utf-8')
