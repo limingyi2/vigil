@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/limingyi2/vigil/releases/download/v1.1.9-p21.6.20261025.1/Kestrel.Setup.1.1.9-p21.6.20261025.1.exe"><strong>下载 Windows 版</strong></a> ·
+  <a href="https://github.com/limingyi2/vigil/releases/download/v1.1.9-p21.7.20261025.1/Kestrel.Setup.1.1.9-p21.7.20261025.1.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="#开始使用">开始使用</a> ·
   <a href="#架构">架构</a> ·
   <a href="#文档导航">文档导航</a>
@@ -26,7 +26,7 @@ Vigil 是一个桌面 Agent 工作台：Electron 客户端 + 本机 Python Brain
 
 | Windows 安装版 | Windows 便携版 |
 |:---|:---|
-| [下载 Kestrel Setup 1.1.9-p21.6](https://github.com/limingyi2/vigil/releases/download/v1.1.9-p21.6.20261025.1/Kestrel.Setup.1.1.9-p21.6.20261025.1.exe) | [在 Releases 里选便携包](https://github.com/limingyi2/vigil/releases) |
+| [下载 Kestrel Setup 1.1.9-p21.7](https://github.com/limingyi2/vigil/releases/download/v1.1.9-p21.7.20261025.1/Kestrel.Setup.1.1.9-p21.7.20261025.1.exe) | [在 Releases 里选便携包](https://github.com/limingyi2/vigil/releases) |
 | 使用安装向导，适合日常使用 | 解压后由启动程序处理所需组件 |
 
 安装包文件名形如 `Kestrel.Setup.<版本>.exe`（`Kestrel` 是桌面端的构建名，产品仍叫 Vigil）。版本号、SHA-256 与发布说明以 [Releases](https://github.com/limingyi2/vigil/releases) 里对应那一条为准。当前 Windows 包尚未代码签名，首次运行可能触发 SmartScreen 提示。
@@ -72,7 +72,7 @@ flowchart LR
 
 ## 开发进度
 
-默认分支 `dev`，当前版本 `1.1.9-p21.6`（版本号在 [`client/version.json`](client/version.json)，`code` 用于客户端判断更新）。
+默认分支 `dev`，当前版本 `1.1.9-p21.7`（版本号在 [`client/version.json`](client/version.json)，`code` 用于客户端判断更新）。
 
 | 阶段 | 状态 | 交付 |
 |---|---|---|
