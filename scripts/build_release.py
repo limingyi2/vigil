@@ -50,6 +50,19 @@ def filehash(p):
     return h.hexdigest()
 
 
+def assert_client_version_metadata(version, package, lock):
+    """Keep source, npm package and npm lock identity on one candidate version."""
+    expected = version.get('ver')
+    code = version.get('code')
+    if not isinstance(expected, str) or not expected or not isinstance(code, int):
+        raise RuntimeError('client/version.json must define a version string and integer code')
+    if package.get('version') != expected:
+        raise RuntimeError('client/package.json version differs from client/version.json')
+    if lock.get('version') != expected or (lock.get('packages') or {}).get('', {}).get('version') != expected:
+        raise RuntimeError('client/package-lock.json version differs from client/version.json')
+    return expected, code
+
+
 def inspect_pyinstaller_archive(executable):
     """Inspect the actual EXE, including recursively embedded PYZ modules."""
     viewer = shutil.which('pyi-archive_viewer')
@@ -128,6 +141,12 @@ def build_native_window_host():
 def verify(candidate=False):
     assert_no_bundled_plugin_tree(OUT)
     build = json.loads((ROOT / 'client/build-info.json').read_text(encoding='utf-8'))
+    client_version = json.loads((ROOT / 'client/version.json').read_text(encoding='utf-8'))
+    client_package = json.loads((ROOT / 'client/package.json').read_text(encoding='utf-8'))
+    client_lock = json.loads((ROOT / 'client/package-lock.json').read_text(encoding='utf-8'))
+    ver, code = assert_client_version_metadata(client_version, client_package, client_lock)
+    if ver != build['version'] or code != build['code']:
+        raise RuntimeError('Client version metadata differs from the Brain build identity')
     manifest = json.loads((OUT / 'brain-manifest.json').read_text(encoding='utf-8'))
     executable = OUT / 'vigil-brain.exe'
     embedded_modules = inspect_pyinstaller_archive(executable)
@@ -148,8 +167,6 @@ def verify(candidate=False):
         raise RuntimeError('Source changed after Brain build; rebuild the complete Vigil package')
     if any(build.get(k) != manifest.get(k) for k in build):
         raise RuntimeError('Electron and Brain build identities differ')
-    if json.loads((ROOT / 'client/package.json').read_text(encoding='utf-8'))['version'] != build['version']:
-        raise RuntimeError('Client version differs from Brain')
     if not manifest.get('files', {}).get('vigil-brain.exe'):
         raise RuntimeError('Missing Brain executable')
     for rel, sha in manifest['files'].items():
@@ -166,8 +183,8 @@ def build(candidate=False, brain_only=False):
         raise RuntimeError('Commit and test source before building an official installer')
     package = json.loads((ROOT / 'client/package.json').read_text(encoding='utf-8'))
     version = json.loads((ROOT / 'client/version.json').read_text(encoding='utf-8'))
-    if version['ver'] != package['version']:
-        raise RuntimeError('version.json and package.json differ')
+    lock = json.loads((ROOT / 'client/package-lock.json').read_text(encoding='utf-8'))
+    assert_client_version_metadata(version, package, lock)
     info = dict(schema=1, version=version['ver'], code=version['code'], commit=git('rev-parse', 'HEAD'),
                 source_digest=digest(), protocol=1, capabilities=CAPS, candidate=candidate)
     for rel in ['brain/build-info.json', 'client/build-info.json']:

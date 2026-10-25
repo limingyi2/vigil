@@ -39,6 +39,17 @@ assert err.options == expected, err.options
     assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
 
 
+def test_release_candidate_requires_consistent_client_version_metadata():
+    version = {"code": 39, "ver": "1.1.9-p21.5.20261025.1"}
+    package = {"version": version["ver"]}
+    lock = {"version": version["ver"], "packages": {"": {"version": version["ver"]}}}
+    assert build_release.assert_client_version_metadata(version, package, lock) == (version["ver"], 39)
+
+    lock["packages"][""]["version"] = "stale-lock-version"
+    with pytest.raises(RuntimeError, match="package-lock.json"):
+        build_release.assert_client_version_metadata(version, package, lock)
+
+
 def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, monkeypatch):
     import server_launch
 
