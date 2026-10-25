@@ -433,6 +433,60 @@ def api_list(body, query):
     }
 
 
+def install_entry(meta, name, *, replace=False, note_source=""):
+    """安装一个**已经过清单校验**的条目，并把它装载进运行时。
+
+    调用方必须先完成来源校验（市场清单查找或链接解析）。
+    ``api_install`` 与 P22 链接安装（link_install）共用这一段，
+    避免两条链路的装后处理分叉：重复安装判定、依赖检查、制品哈希校验、
+    事务提交、重载与运行时状态。
+    """
+    # Never import newly downloaded code during the install transaction.
+    import plugin_ops
+    repo = _repo_path()
+    already = name in _list_local()
+    if already and not replace:
+        return {"ok": False, "name": name, "state": "already_installed",
+                "err": "插件已安装，请使用更新操作", "installed_version":
+                plugin_ops.read_registry().get("plugins", {}).get(name, {}).get("version", "")}
+    try:
+        import plugin_manager
+        deps = plugin_manager._dependencies(meta, plugin_ops.read_registry())
+        if deps:
+            return {"ok": False, "name": name, "state": "error", "err": "依赖检查失败：" + "; ".join(deps)}
+    except Exception:
+        pass
+    if repo:
+        ok, result = _install_remote_directory(meta, name, replace=replace) if meta.get("artifact") else (False, {"err": "本地市场条目缺少可校验制品"})
+    else:
+        ok, result = _install_remote_directory(meta, name, replace=replace)
+    if ok:
+        try:
+            import plugin_manager
+            plugin_manager._update_meta(name, result.get("manifest") or meta,
+                                        source=note_source or "market:%s@%s" % (name, meta.get("version", "")))
+            reload_result = plugin_manager.reload(name)
+            result["runtime_state"] = ("loaded" if reload_result.get("ok")
+                                       else reload_result.get("state", "pending"))
+            if reload_result.get("restart_needed"):
+                result["restart_needed"] = True
+                result["state"] = "restart_required"
+            if not reload_result.get("ok"):
+                result["runtime_warning"] = reload_result.get("err", "重载失败")
+            else:
+                result["restart_needed"] = False
+        except Exception as exc:
+            result["runtime_warning"] = "安装后重载失败：%s" % str(exc)[:120]
+            result["runtime_state"] = "error"
+        result["msg"] = ("插件已安装并加载" if result.get("runtime_state") == "loaded"
+                          else "插件已安装；需要重启 Brain 后生效" if result.get("restart_needed")
+                          else "插件已安装，但运行时加载失败")
+        result["name"] = name
+    else:
+        result["ok"] = False
+    return result
+
+
 def api_install(body, query):
     """POST /api/market/install —— 安装插件到独立的 data/installed_plugins。
 
@@ -464,48 +518,7 @@ def api_install(body, query):
                 "err": "这是随程序发布的内置插件，不能作为用户插件重复安装"}
 
     # Never import newly downloaded code during the install transaction.
-    repo = _repo_path()
-    already = name in _list_local()
-    if already:
-        return {"ok": False, "name": name, "state": "already_installed",
-                "err": "插件已安装，请使用更新操作", "installed_version":
-                plugin_ops.read_registry().get("plugins", {}).get(name, {}).get("version", "")}
-    try:
-        import plugin_manager
-        deps = plugin_manager._dependencies(meta, plugin_ops.read_registry())
-        if deps:
-            return {"ok": False, "name": name, "state": "error", "err": "依赖检查失败：" + "; ".join(deps)}
-    except Exception:
-        pass
-    if repo:
-        ok, result = _install_remote_directory(meta, name) if meta.get("artifact") else (False, {"err": "本地市场条目缺少可校验制品"})
-    else:
-        ok, result = _install_remote_directory(meta, name)
-    if ok:
-        try:
-            import plugin_manager
-            plugin_manager._update_meta(name, result.get("manifest") or meta,
-                                        source="market:%s@%s" % (name, meta.get("version", "")))
-            reload_result = plugin_manager.reload(name)
-            result["runtime_state"] = ("loaded" if reload_result.get("ok")
-                                       else reload_result.get("state", "pending"))
-            if reload_result.get("restart_needed"):
-                result["restart_needed"] = True
-                result["state"] = "restart_required"
-            if not reload_result.get("ok"):
-                result["runtime_warning"] = reload_result.get("err", "重载失败")
-            else:
-                result["restart_needed"] = False
-        except Exception as exc:
-            result["runtime_warning"] = "安装后重载失败：%s" % str(exc)[:120]
-            result["runtime_state"] = "error"
-        result["msg"] = ("插件已安装并加载" if result.get("runtime_state") == "loaded"
-                          else "插件已安装；需要重启 Brain 后生效" if result.get("restart_needed")
-                          else "插件已安装，但运行时加载失败")
-        result["name"] = name
-    else:
-        result["ok"] = False
-    return result
+    return install_entry(meta, name, note_source="market:%s@%s" % (name, meta.get("version", "")))
 
 
 def api_uninstall(body, query):

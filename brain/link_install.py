@@ -34,7 +34,8 @@ class LinkError(ValueError):
 
 
 def _market_module():
-    from plugins import plugin_market
+    """市场管理器：核心包（随 Brain 发布），不在可选插件里。"""
+    from core_features import plugin_market
     return plugin_market
 
 

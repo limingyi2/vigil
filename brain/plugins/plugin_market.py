@@ -463,17 +463,8 @@ def api_install(body, query):
         return {"ok": False, "name": name, "state": "builtin",
                 "err": "这是随程序发布的内置插件，不能作为用户插件重复安装"}
 
-    return install_entry(meta, name)
-
-
-def install_entry(meta, name, *, replace=False, note_source=""):
-    """安装一个**已经过市场清单校验**的条目，并把它装载进运行时。
-
-    调用方必须先完成来源校验（市场清单查找或链接解析）。
-    ``api_install`` 与链接安装共用这一段，避免两条链路的装后处理出现分叉：
-    重复安装判定、依赖检查、制品哈希校验、事务提交、重载与运行时状态。
-    """
     # Never import newly downloaded code during the install transaction.
+    repo = _repo_path()
     already = name in _list_local()
     if already:
         return {"ok": False, "name": name, "state": "already_installed",
@@ -486,15 +477,15 @@ def install_entry(meta, name, *, replace=False, note_source=""):
             return {"ok": False, "name": name, "state": "error", "err": "依赖检查失败：" + "; ".join(deps)}
     except Exception:
         pass
-    if not meta.get("artifact"):
-        return {"ok": False, "err": "该条目没有可校验的制品（artifact）"}
-    ok, result = _install_remote_directory(meta, name, replace=replace)
+    if repo:
+        ok, result = _install_remote_directory(meta, name) if meta.get("artifact") else (False, {"err": "本地市场条目缺少可校验制品"})
+    else:
+        ok, result = _install_remote_directory(meta, name)
     if ok:
         try:
             import plugin_manager
             plugin_manager._update_meta(name, result.get("manifest") or meta,
-                                        source=note_source or "market:%s@%s" % (
-                                            name, meta.get("version", "")))
+                                        source="market:%s@%s" % (name, meta.get("version", "")))
             reload_result = plugin_manager.reload(name)
             result["runtime_state"] = ("loaded" if reload_result.get("ok")
                                        else reload_result.get("state", "pending"))
