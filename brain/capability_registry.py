@@ -274,9 +274,13 @@ class CapabilityRegistry:
         if not callable(spec.get("handler")):
             return STATE_UNAVAILABLE
         permission = str(spec.get("permission") or READ)
-        if permission in (READ, DELEGATED):
-            return STATE_QUERYABLE if permission == READ else STATE_EXECUTABLE
         connected = bool((status or {}).get("connected"))
+        if permission == READ:
+            return STATE_QUERYABLE
+        if permission == DELEGATED:
+            # Delegated adapters own the final risk/approval gate, but the
+            # operation cannot be executable when its backing host is offline.
+            return STATE_EXECUTABLE if connected else STATE_UNAVAILABLE
         if not connected:
             return STATE_UNAVAILABLE
         identity = str((actor or {}).get("identity") or "")

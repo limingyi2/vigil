@@ -23,8 +23,8 @@ _CODE = re.compile(
 )
 _EXECUTE = re.compile(
     r"修改|改好|改成|改|调整|协调|确认|修复|修好|修|实现|重构|编辑|整理|创建|新建|写入|写文件|删除|构建|编译|"
-    r"运行|执行|检查|审查|分析|验证|整理|列出|读取|搜索|查找|设置|创建|保存|安装|"
-    r"modify|edit|fix|implement|refactor|build|compile|run|test|inspect|review|"
+    r"运行|执行|检查|审查|分析|验证|整理|列出|读取|搜索|查找|设置|创建|保存|安装|打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|"
+    r"modify|edit|fix|implement|refactor|build|compile|run|test|inspect|review|open|launch|control|click|type|close|connect|"
     r"create|delete|write|list|read|set|save|install",
     re.I,
 )
@@ -34,6 +34,36 @@ _FILE_TASK = re.compile(r"工作区|仓库|项目|代码库|文件|目录|本地
 _SCOPED_WORKSPACE = re.compile(r"工作区|仓库|项目|代码库|目录|本地|源码|代码")
 _UNRESOLVED_THIS = re.compile(r"这个|这份|此")
 _REQUEST_FRAME = re.compile(r"请|帮我|替我|为我|能不能|可以帮|我想让你|把.{0,40}(?:改|修|写|删|建)|(?:并|然后|再)保存|保存到")
+# Capability questions are routed before the general action vocabulary.  A
+# question such as "能不能控制浏览器" must inspect status, never execute.
+# Explicit imperative frames ("帮我打开…", "请启动…") remain execution.
+_CAPABILITY_QUERY = re.compile(
+    r"(?:(?:能不能|能否|是否可以|可以吗|行不行|会不会).{0,16}"
+    r"(?:玩电脑|控制|操作|操控|调用|使用|接入|截屏|截图|运行命令|执行命令|"
+    r"操作电脑|控制电脑|操作浏览器|控制浏览器|打开浏览器))|"
+    r"(?:你|agent).{0,12}(?:能|会|可以).{0,16}"
+    r"(?:玩电脑|控制|操作|操控|调用|使用|接入|截屏|截图|运行命令|执行命令|"
+    r"操作电脑|控制电脑|操作浏览器|控制浏览器|打开浏览器).{0,12}(?:吗|呢|？|\?)|"
+    r"能做什么|可以做什么|支持.{0,12}吗|"
+    r"有什么.{0,8}工具|有.{0,8}工具吗|安装什么.{0,8}工具|应该安装什么|"
+    r"前后.{0,8}(?:判断|说法).{0,12}(?:不一样|矛盾)|"
+    r"(?:有工具|没工具|工具状态|工具权限).{0,12}(?:吗|呢|？|\?)",
+    re.I,
+)
+_EXPLICIT_ACTION_REQUEST = re.compile(
+    r"(?:(?:请(?!问)(?:你)?(?:现在|立刻)?(?:直接)?|"
+    r"请(?!问)(?:你)?(?:帮我|替我|为我)(?:现在|立刻)?(?:直接)?|"
+    r"(?:现在|立刻)?(?:帮我|替我|为我)(?:现在|立刻)?(?:直接)?)"
+    r"(?:打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|安装|运行|执行|"
+    r"open|launch|control|click|type|close|connect|install|run|execute))",
+    re.I,
+)
+_TOOL_CALL_REQUEST = re.compile(
+    r"(?:(?:请(?!问)(?:你)?\s*)?(?:帮我|替我|为我)\s*|"
+    r"请(?!问)(?:你)?\s*)"
+    r"(?:调用|使用)\s+[A-Za-z_][A-Za-z0-9_.-]*",
+    re.I,
+)
 
 
 def _execution_clauses(text):
@@ -72,6 +102,10 @@ def classify(text, *, workspace_authorized=False):
     if _is_ambiguous_reference(normalized):
         return _decision("chat", "指代对象无法从本轮消息安全确定",
                          "brain_tools", "ambiguous_reference")
+    if (_CAPABILITY_QUERY.search(normalized)
+            and not _EXPLICIT_ACTION_REQUEST.search(normalized)):
+        return _decision("capability", "询问工具或宿主能力状态",
+                         "brain_tools", None)
     if (_SOCIAL.search(normalized) and not _RETRIEVE.search(normalized)
             and not _EXECUTE.search(normalized)):
         return _decision("chat", "社交问候使用普通回答入口", "brain_tools", None)
@@ -84,7 +118,8 @@ def classify(text, *, workspace_authorized=False):
     elif historical_query:
         category, reason = "retrieval", "现有会话记忆检索信号"
     else:
-        execute = bool(_EXECUTE.search(normalized))
+        execute = bool(_EXECUTE.search(normalized)
+                       or _TOOL_CALL_REQUEST.search(normalized))
         code_shaped = False
         try:
             import coding_harness

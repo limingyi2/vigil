@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "brain"))
 import brain
 import tools as brain_tools
+import model_providers.execution as real_execution
 
 
 def _spec(name):
@@ -33,7 +34,7 @@ def _call(name, args, call_id="call_1"):
 
 def _run(completions, invoke_result="查询到结果", supports_tools=True,
          tool_enabled=True, max_rounds=18, include_capability=False,
-         captured_turns=None):
+         captured_turns=None, capability_query=False, capability_fails=False):
     instance = brain.Brain(mem=None, api_config={"api_key": "fixture",
         "api_base": "http://fixture.invalid/v1", "model": "fixture"})
     provider = SimpleNamespace(supports_tools=supports_tools, supports_xml_tools=False,
@@ -55,6 +56,13 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
     def invoke_readonly(_name, _args, ctx):
         if captured_turns is not None:
             captured_turns.append(ctx)
+        if _name == "capability_status":
+            if capability_fails:
+                return brain_tools.ReadOnlyToolResult(False, "status unavailable")
+            return brain_tools.ReadOnlyToolResult(True, json.dumps({
+                "item": {"name": "local_tools", "status": {"connected": False}},
+                "environment": {"local_tool_state": {"client_online": False}},
+            }))
         return (invoke_result if isinstance(invoke_result, brain_tools.ReadOnlyToolResult)
                 else brain_tools.ReadOnlyToolResult(True, invoke_result))
 
@@ -77,6 +85,7 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
         "output_tokens": 3, "estimated_output": False})
     reasoning = SimpleNamespace(apply_reasoning_strategy=lambda p, *_args: (p, {}))
     execution = SimpleNamespace(
+        capabilities=real_execution.capabilities,
         prepare=lambda payload, *_args, **_kwargs: payload,
         completion_events=events,
         ERROR_MESSAGES={"connection_lost": "连接中断"},
@@ -95,7 +104,10 @@ def _run(completions, invoke_result="查询到结果", supports_tools=True,
                                   "agent_context": usage_module,
                                   "model_providers.execution": execution}):
         emitted = list(instance._stream_readonly_tool_chat(
-            "查一下最近的版本", "pc", "conversation_1", None, api, provider))
+            "查一下最近的版本", "pc", "conversation_1", None, api, provider,
+            capability_query=capability_query,
+            request_id="request_1" if capability_query else None,
+            route_entry="brain_tools"))
     return emitted, payloads, fake_tools, instance
 
 
@@ -112,8 +124,13 @@ def test_readonly_stream_shows_text_deltas_and_executes_only_audited_tool():
     assert "tools" in payloads[0]
     assert {x["function"]["name"] for x in payloads[0]["tools"]} == {
         "search", "weather", "tracking"}
+    started = next(event for event in emitted if event["type"] == "model_request_started")
+    assert set(started["available_tools"]) == {
+        x["function"]["name"] for x in payloads[0]["tools"]}
     assert "reminder_set" not in payloads[0]["tools"]
     assert "local_exec" not in payloads[0]["tools"]
+    assert any(event.get("type") == "tool" and event.get("state") == "started"
+               and "只读工具" in event.get("purpose", "") for event in emitted)
     assert [event["type"] for event in emitted if event["type"] in ("text", "done")] == [
         "text", "text", "done"]
     returned = [event for event in emitted if event.get("type") == "tool"
@@ -121,6 +138,38 @@ def test_readonly_stream_shows_text_deltas_and_executes_only_audited_tool():
     assert len(returned) == 1 and returned[0]["error"] is False
     assert emitted[-1]["text"] == "基于搜索结果：v2"
     assert instance.last_tools_used == ["search"]
+
+
+def test_capability_query_is_checked_even_when_provider_cannot_call_tools():
+    emitted, payloads, _fake_tools, instance = _run(
+        [[_completion("这轮查询了本机能力状态。")]],
+        supports_tools=False, include_capability=True, capability_query=True)
+    started = next(event for event in emitted if event["type"] == "model_request_started")
+    assert started["request_id"] == "request_1"
+    assert started["provider_supports_tools"] is False
+    assert started["available_tools"] == []
+    assert started["capability_check"]["success"] is True
+    assert "tools" not in payloads[0]
+    assert "本轮可信能力状态" in payloads[0]["messages"][0]["content"]
+    assert "历史回答不是本轮状态证据" in payloads[0]["messages"][0]["content"]
+    assert instance.last_request_diagnostics["capability_check"]["success"] is True
+
+
+def test_failed_capability_check_returns_unverified_text_without_model_request():
+    emitted, payloads, _fake_tools, instance = _run(
+        [[_completion("我刚刚重新检查过，工具不可用。")]],
+        include_capability=True, capability_query=True, capability_fails=True)
+    expected = ("我这轮没能读取到可信的宿主工具状态，因此无法确认工具是否已连接、"
+                "启用或暴露给当前请求。")
+    assert payloads == []
+    check_event = next(event for event in emitted if event["type"] == "capability_check")
+    assert check_event["request_id"] == "request_1"
+    assert check_event["state"] == "failed"
+    assert check_event["error_class"] == "status_query_failed"
+    assert [event["text"] for event in emitted if event["type"] == "text"] == [expected]
+    assert emitted[-1]["type"] == "done"
+    assert emitted[-1]["text"] == expected
+    assert instance.last_request_diagnostics["capability_check"]["success"] is False
 
 
 def test_readonly_stream_rejects_unsafe_calls_from_model_even_if_schema_was_ignored():

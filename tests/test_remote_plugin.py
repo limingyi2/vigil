@@ -158,11 +158,63 @@ class TestRemotePlugin(unittest.TestCase):
         self.assertIsNone(r["call"])
 
     def test_空能力不派活(self):
-        """能力被全关掉时不该派任何活（客户端也就不必轮询）。"""
-        localtools._QUEUE[localtools._Call("local_file_list", {}).id] = \
-            localtools._Call("local_file_list", {})
-        r = PLUGIN._h_poll({}, {"caps": ""})
-        self.assertIsNone(r["call"], "没声明能力就一条都不该派")
+        """全关工具仍是在线心跳，并且不认领排队操作。"""
+        call = localtools._Call("local_file_list", {})
+        localtools._QUEUE[call.id] = call
+        r = PLUGIN._h_poll({}, {"caps": "", "device": "dev_test",
+                                "approval_mode": "confirm_risky"})
+        self.assertIsNone(r["call"], "空能力集合不得认领工具任务")
+        self.assertIn(call.id, localtools._QUEUE)
+        status = localtools.client_status()
+        self.assertTrue(status["online"])
+        self.assertEqual(status["enabled_tools"], [])
+        self.assertEqual(status["approval_mode"], "confirm_risky")
+
+    def test_服务端轮询区分空能力_部分启用和真正离线(self):
+        old_status = (localtools._LAST_POLL, localtools._LAST_CAPS,
+                      localtools._LAST_APPROVAL_MODE)
+        try:
+            localtools._LAST_POLL = 0
+            localtools._LAST_CAPS = None
+            localtools._LAST_APPROVAL_MODE = None
+            empty = PLUGIN._h_poll({}, {"caps": "", "device": "dev_test"})
+            self.assertIsNone(empty["call"])
+            self.assertTrue(localtools.client_status()["online"])
+            self.assertEqual(localtools.client_status()["enabled_tools"], [])
+
+            partial = PLUGIN._h_poll({}, {"caps": "local_file_list",
+                                           "device": "dev_test"})
+            self.assertTrue(partial["ok"])
+            status = localtools.client_status()
+            self.assertTrue(status["online"])
+            self.assertEqual(status["enabled_tools"], ["local_file_list"])
+
+            localtools._LAST_POLL = time.time() - localtools.POLL_STALE - 1
+            offline = localtools.client_status()
+            self.assertFalse(offline["online"])
+            self.assertIsNone(offline["enabled_tools"])
+        finally:
+            (localtools._LAST_POLL, localtools._LAST_CAPS,
+             localtools._LAST_APPROVAL_MODE) = old_status
+
+    def test_空能力服务端心跳在线但不能认领已有任务(self):
+        old_status = (localtools._LAST_POLL, localtools._LAST_CAPS,
+                      localtools._LAST_APPROVAL_MODE)
+        call = localtools._Call("local_file_list", {})
+        localtools._QUEUE[call.id] = call
+        try:
+            localtools._LAST_POLL = 0
+            response = PLUGIN._h_poll({}, {"caps": "", "device": "dev_test"})
+            self.assertTrue(response["ok"])
+            self.assertIsNone(response["call"])
+            self.assertIn(call.id, localtools._QUEUE)
+            state = localtools.client_status()
+            self.assertTrue(state["online"])
+            self.assertEqual(state["enabled_tools"], [])
+        finally:
+            localtools._QUEUE.pop(call.id, None)
+            (localtools._LAST_POLL, localtools._LAST_CAPS,
+             localtools._LAST_APPROVAL_MODE) = old_status
 
 
 if __name__ == "__main__":

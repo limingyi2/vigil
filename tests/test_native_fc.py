@@ -128,6 +128,24 @@ class TestNativeFunctionCalling(unittest.TestCase):
         self.assertIn("self.draft_native(", src,
                       "chat() 不再走原生 function calling 了")
 
+    def test_failed_capability_check_skips_model_and_returns_unverified_status(self):
+        original = tl.invoke_readonly_spec
+        tl.invoke_readonly_spec = lambda *_args: tl.ReadOnlyToolResult(
+            False, "status unavailable")
+        try:
+            self._stub([_say("我刚刚重新检查过，工具不可用。")])
+            br = self._brain()
+            answer = br.draft_native(
+                "能不能控制浏览器？", "", tool_policy="readonly",
+                capability_query=True, request_id="capability-failed")
+        finally:
+            tl.invoke_readonly_spec = original
+        self.assertEqual(answer,
+                         "我这轮没能读取到可信的宿主工具状态，因此无法确认工具是否已连接、"
+                         "启用或暴露给当前请求。")
+        self.assertEqual(self.seen, [], "状态检查失败时不得请求模型编造状态")
+        self.assertFalse(br.last_request_diagnostics["capability_check"]["success"])
+
     def test_只有一条拼提示词的链(self):
         """🔴 `draft()` / `draft_router()` 必须保持**不存在**。
 

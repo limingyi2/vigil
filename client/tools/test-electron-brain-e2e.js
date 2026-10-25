@@ -17,6 +17,9 @@ const token = 'e2e-' + require('node:crypto').randomBytes(24).toString('hex');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-p5-joint-'));
 const home = path.join(root, 'brain-home');
 const profile = path.join(root, 'electron-profile');
+const evidenceDir = path.resolve(process.env.VIGIL_E2E_OUTPUT_DIR || path.join(root, 'evidence'));
+fs.mkdirSync(evidenceDir, { recursive: true });
+console.log('Electron E2E evidence directory: ' + evidenceDir);
 const pluginReleasePath = path.join(root, 'release-blocked-plugin');
 const captureScreenshots = process.argv.includes('--packaged') || process.argv.includes('--screenshots');
 const modelRequests = [];
@@ -98,7 +101,42 @@ async function startModel() {
     }
 
     if (payload.stream) {
+      const isPluginScenario = userText.includes('E2E_TOOL_SUCCESS') || userText.includes('E2E_TOOL_FAIL');
+      if (isPluginScenario && !call.toolNames.includes('smoke_ping')) {
+        return json(res, 500, { error: { message: 'smoke_ping schema missing' } });
+      }
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'close' });
+      const endSseText = text => {
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: text } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
+      };
+      if (userText.startsWith('E2E_SEED_HISTORY_')) {
+        endSseText('SEEDED_HISTORY_OK');
+        return;
+      }
+      if (isPluginScenario) {
+        const mode = userText.includes('E2E_TOOL_FAIL') ? 'fail' : 'ok';
+        if (toolMessage) {
+          call.toolResult = String(toolMessage.content || '');
+          if (call.toolResult === 'VIGIL_PLUGIN_CALL_OK') {
+            endSseText('VIGIL_PLUGIN_CALL_OK');
+          } else if (call.toolResult === '查询失败，照实说查不到，别编') {
+            endSseText('插件执行失败，未返回成功标记。');
+          } else {
+            res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'Fake Provider received an unexpected plugin result.' } }] }) + '\n\n');
+            res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+            res.end('data: [DONE]\n\n');
+          }
+          return;
+        }
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
+          id: 'e2e-smoke-' + modelRequests.length, type: 'function',
+          function: { name: 'smoke_ping', arguments: JSON.stringify({ mode }) } }] } }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
+        return;
+      }
       if (userText === '晚安') {
         res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: '断连前片段' } }] }) + '\n\n');
         await new Promise(resolve => res.once('close', resolve));
@@ -363,11 +401,14 @@ async function startBrain(modelBase, fixedPort, options = {}) {
       const r = await fetch(base + '/api/runtime', { headers: { Authorization: 'Bearer ' + token } });
       if (r.ok) {
         const runtime = await r.json();
+        if (brain.exitCode != null) throw new Error('Brain child exited while readiness probe was being served; log is at ' + path.join(root, 'brain.log'));
         assert.equal(runtime.protocol, 1);
         return { base, pluginTrace, port };
       }
 
-    } catch (_) {}
+    } catch (error) {
+      if (brain && brain.exitCode != null) throw error;
+    }
     await wait(250);
   }
   throw new Error('Brain did not become ready; log is at ' + path.join(root, 'brain.log'));
@@ -449,9 +490,7 @@ async function evaluate(expression) {
 }
 async function screenshot(name) {
   const result = await cdpSend('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
-  const dir = path.join(repo, 'reports', process.env.VIGIL_E2E_SCENARIO==='p12'?'p12-evidence':'p6.1-evidence');
-  fs.mkdirSync(dir, {recursive:true});
-  fs.writeFileSync(path.join(dir, name + '.png'), Buffer.from(result.data, 'base64'));
+  fs.writeFileSync(path.join(evidenceDir, name + '.png'), Buffer.from(result.data, 'base64'), { flag:'wx' });
 }
 async function connectRenderer(debugPort) {
   const deadline = Date.now() + 20000;
@@ -779,11 +818,22 @@ async function exerciseEventBurst(brainBase) {
 async function stopChild(child, force = false) {
   if (!child) return;
   if (process.platform === 'win32') {
-    await new Promise(resolve => {
+    const taskkillCode = await new Promise(resolve => {
       const args = ['/PID', String(child.pid), '/T']; if (force) args.push('/F');
       const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' });
-      killer.once('exit', resolve); killer.once('error', resolve);
+      killer.once('exit', resolve); killer.once('error', () => resolve(-1));
     });
+    if (child.exitCode == null) await Promise.race([
+      new Promise(resolve => child.once('exit', resolve)), wait(4000),
+    ]);
+    // `taskkill` can report success for an empty process tree while a spawned
+    // Brain still owns its listener. Confirm the child actually exited before
+    // a restart can mistake the old server for the new one.
+    if (child.exitCode == null) {
+      try { child.kill('SIGKILL'); } catch (_) {}
+      await Promise.race([new Promise(resolve => child.once('exit', resolve)), wait(4000)]);
+    }
+    if (child.exitCode == null) throw new Error('Could not stop spawned child PID ' + child.pid + ' (taskkill=' + taskkillCode + ')');
   } else {
     if (child.exitCode != null) return;
     child.kill(force ? 'SIGKILL' : 'SIGTERM');
@@ -812,7 +862,7 @@ async function run() {
   const modelBase = await startModel();
   if (process.env.VIGIL_E2E_SCENARIO === 'p12') {
     await require('./test-p12-e2e').run({modelBase,startBrain,startElectron,evaluate,waitFor,submit,
-      screenshot,wait,root,home,repo,token,modelRequests,stopBrain:async()=>{await stopChild(brain,true);brain=null;},
+      screenshot,wait,root,home,repo,evidenceDir,token,modelRequests,stopBrain:async()=>{await stopChild(brain,true);brain=null;},
       stopElectron:async()=>{await stopChild(electron,true);electron=null;}});
     return;
   }

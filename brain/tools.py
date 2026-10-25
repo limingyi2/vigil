@@ -593,6 +593,31 @@ def all_specs(brain=None, src=None):
     return tools
 
 
+def operation_purpose(task, name, specs=None):
+    """Build display-only purpose from this task and the advertised tool."""
+    name = str(name or '').strip()
+    task = str(task or '').strip()
+    task = re.sub(r'((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*["\']?)[^\s,;"\']+',
+                  r'\1[已隐藏]', task, flags=re.I)
+    task = re.sub(r'\bBearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [已隐藏]', task, flags=re.I)
+    task = task[:120].rstrip()
+    description = ''
+    for spec in specs or ():
+        fn = spec.get('function') if isinstance(spec, dict) else None
+        if isinstance(fn, dict) and fn.get('name') == name:
+            lines = str(fn.get('description') or '').splitlines()
+            description = lines[0].strip() if lines else ''
+            break
+    if task:
+        action = description or ('调用工具 %s' % name if name else '执行工具')
+        return ('为处理“%s”，%s' % (task, action))[:240]
+    if description:
+        return description[:180]
+    if name in ('local_exec', 'exec', 'shell', 'command'):
+        return '执行本机命令'
+    return ('调用工具 %s' % name) if name else '执行工具'
+
+
 # --- 要不要给这一轮挂工具表 ------------------------------------------------
 #
 # 工具表 10 个约 2200 字符 ≈ 1100 token，**每轮都跟着请求走**。纯闲聊那几轮

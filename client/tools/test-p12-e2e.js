@@ -3,10 +3,11 @@ const assert=require('assert/strict'),fs=require('fs'),path=require('path');
 let modelGate;
 exports.respond=async(req,res,call,wait)=>{
   if(process.env.VIGIL_P12_REAL==='1')return require('./test-p12-real').respond(req,res,call);
-  const task=call.messages.findLast(m=>m.role==='user' && String(m.content).includes('P12_'))?.content || '';
+  const taskIndex=call.messages.findLastIndex(m=>m.role==='user' && String(m.content).includes('P12_'));
+  const task=taskIndex>=0 ? call.messages[taskIndex].content : '';
   const send=delta=>res.write('data: '+JSON.stringify({choices:[{delta}]})+'\n\n');
   res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache',connection:'close'});
-  const finished=call.messages.some(m=>m.role==='tool' || String(m.content).startsWith('工具已执行'));
+  const finished=taskIndex>=0 && call.messages.slice(taskIndex+1).some(m=>m.role==='tool' || String(m.content).startsWith('工具已执行'));
   const resumed=call.messages.some(m=>String(m.content).includes('断点续跑'));
   send({reasoning_content:'Provider reasoning fixture'});
   if(task.includes('P12_PAUSE') && !resumed) {
@@ -20,7 +21,10 @@ exports.respond=async(req,res,call,wait)=>{
       send({content:fragment});await wait(35);
     }
   } else if(task.includes('P12_NATIVE')) {
-    send({tool_calls:[{index:0,id:'native-'+Date.now(),type:'function',function:{name:'smoke_ping',arguments:'{"mode":"crash"}'}}]});
+    const mode=['3','4','5'].includes(process.env.VIGIL_P12_ROUND) ? 'crash' : 'ok';
+    send({tool_calls:[{index:0,id:'native-'+Date.now(),type:'function',function:{name:'smoke_ping',arguments:JSON.stringify({mode})}}]});
+  } else if(task.includes('P12_UNKNOWN')) {
+    send({tool_calls:[{index:0,id:'unknown-'+Date.now(),type:'function',function:{name:'smoke_ping',arguments:'{"mode":"fail"}'}}]});
   } else if(task.includes('P12_PAUSE') || task.includes('P12_RESTART')) {
     send({content:'正在检查文件。'});
     await new Promise(resolve=>{modelGate=resolve;});
@@ -65,9 +69,14 @@ exports.run=async h=>{
   console.log('PASS one Settings entry, drag ordering, draggable rail width persists across reload');
   const results=[];
   for(const task of ['P12_XML','P12_NATIVE']){
-    await h.submit(task);
+    // The test plugin is intentionally not among ordinary chat's four
+    // read-only tools. Make the fixture request an explicit operation so it
+    // follows the authorized Agent Run path that exposes plugin schemas.
+    await h.submit(task+' 请执行隔离测试工具 smoke_ping');
+    await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="tool"&&e.state==="started")',task+' tool start');
+    const startProgress=await h.evaluate('document.querySelector("#msgs .turn:last-child .agent-thinking")?.textContent||""');
+    assert.ok(startProgress.includes('正在执行工具操作'),JSON.stringify({task,startProgress}));
     if(task==='P12_NATIVE'){
-      await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="tool"&&e.state==="started")','real in-flight tool');
       if(['4','5'].includes(process.env.VIGIL_P12_ROUND)){
         await h.evaluate('window.p12LiveTurn=document.querySelector("#msgs .turn:last-child");true');
         await h.wait(8500); // Exercise the existing 8-second history poll during a gated tool.
@@ -92,8 +101,22 @@ exports.run=async h=>{
     const events=await h.evaluate('window.__vigilE2EEvents');
     assert.equal(events.some(e=>['text','done','run_snapshot','error'].includes(e.type)&&/<(?:tool_call|function|parameter)/i.test(e.text||'')),false);
     assert.ok(events.some(e=>e.type==='tool'&&e.state==='started'));
+    assert.ok(events.some(e=>e.type==='tool'&&e.state==='started'&&e.purpose),'tool start carries its purpose');
     assert.equal(await h.evaluate('document.querySelector("#msgs").textContent.includes("Provider reasoning fixture")'),false);
     assert.equal(await h.evaluate('(()=>{const rows=[...document.querySelectorAll("#msgs .turn:last-child #liveSteps > *")];return rows[0]?.classList.contains("agent-thinking") && rows.findIndex(n=>n.matches("[data-step-key]"))>0})()'),true,'Chinese thinking state precedes actual tool evidence');
+    const collapsedPurpose=await h.evaluate(`(()=>{const card=document.querySelector('#msgs .turn:last-child details.agent-step');const purpose=card?.querySelector('summary .agent-step-summary-purpose');if(!card||!purpose)return null;purpose.scrollIntoView({block:'center'});const r=purpose.getBoundingClientRect(),s=getComputedStyle(purpose);return {open:card.open,width:r.width,height:r.height,display:s.display,visibility:s.visibility,insideSummary:purpose.closest('summary')===card.querySelector('summary'),text:purpose.textContent}})()`);
+    assert.ok(collapsedPurpose && !collapsedPurpose.open && collapsedPurpose.insideSummary
+      && collapsedPurpose.width>0 && collapsedPurpose.height>0
+      && collapsedPurpose.display!=='none' && collapsedPurpose.visibility==='visible',
+      'purpose is visibly laid out inside the collapsed summary');
+    assert.match(collapsedPurpose.text,/操作目的/);
+    assert.equal(await h.evaluate('document.querySelectorAll("#msgs .turn:last-child details.agent-step[data-step-key]").length'),1,
+      'tool start and completion update one stable card');
+    const expanded=await h.evaluate(`(()=>{const card=document.querySelector('#msgs .turn:last-child details.agent-step');card.open=true;const p=card.querySelector(':scope > .agent-step-purpose');const r=p?.getBoundingClientRect();return {text:p?.textContent,width:r?.width,height:r?.height}})()`);
+    assert.ok(expanded.text?.includes('操作目的') && expanded.width>0 && expanded.height>0,
+      'expanding the card exposes the full purpose');
+    await h.evaluate('document.querySelector("#msgs .turn:last-child details.agent-step").open=false;true');
+    assert.ok(await h.evaluate('[...document.querySelectorAll("#msgs .turn:last-child .agent-thinking")].some(n=>n.textContent.includes("任务已完成"))'),'terminal progress reflects actual completion');
     assert.ok(events.some(e=>e.type==='tool'&&e.state==='returned'));
     assert.equal(await h.evaluate('document.querySelector("#sendBtn").getAttribute("aria-busy")'),'false');
     assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("VIGIL_PLUGIN_CALL_OK") || document.querySelector("#msgs").textContent.includes("你好。")'));
@@ -121,11 +144,24 @@ exports.run=async h=>{
     await h.evaluate('window.__vigilE2EEvents=[];true');
     console.log('PASS real Electron + Brain '+task+' streaming, tool execution and final answer');
   }
-  fs.mkdirSync(path.join(h.repo,'reports/p12-evidence'),{recursive:true});
-  fs.writeFileSync(path.join(h.repo,'reports/p12-evidence/round1-events.json'),JSON.stringify({raw:h.modelRequests.map(x=>({messages:x.messages,toolNames:x.toolNames})),results},null,2));
+  await h.evaluate('window.__vigilE2EEvents=[];true');
+  await h.submit('P12_UNKNOWN 请执行并核对工具返回');
+  await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="tool"&&e.state==="unknown") && window.__vigilE2EEvents.some(e=>e.type==="error")',
+    'unknown tool outcome and terminal error');
+  const unknownUi=await h.evaluate(`(()=>{const card=document.querySelector('#msgs .turn:last-child details.agent-step');const p=card?.querySelector('summary .agent-step-summary-purpose');return {state:card?.dataset.state,opened:card?.open,summary:card?.querySelector('summary')?.textContent,visible:!!p&&p.getBoundingClientRect().width>0&&getComputedStyle(p).visibility==='visible',progress:document.querySelector('#msgs .turn:last-child .agent-thinking')?.textContent}})()`);
+  assert.equal(unknownUi.state,'unknown');
+  assert.equal(unknownUi.opened,false,'unknown outcome remains a folded evidence card');
+  assert.ok(unknownUi.visible && unknownUi.summary.includes('结果未知') && unknownUi.summary.includes('操作目的'));
+  assert.equal(unknownUi.progress,'任务失败','task termination may report failure while the tool card preserves its unknown result');
+  assert.equal(await h.evaluate('document.querySelectorAll("#msgs .turn:last-child details.agent-step[data-step-key]").length'),1,
+    'unknown result updates the existing tool card instead of duplicating it');
+  const unknownEvents=await h.evaluate('window.__vigilE2EEvents.filter(e=>e.type==="tool").map(e=>e.state)');
+  results.push({task:'P12_UNKNOWN',toolStates:unknownEvents,ui:unknownUi});
   console.log('PASS P12 round1 end-to-end protocol boundaries');
+  console.log('PASS Electron renderer preserves unknown tool outcome without success wording or duplicate cards');
+  fs.writeFileSync(path.join(h.evidenceDir,'round1-events.json'),JSON.stringify({raw:h.modelRequests.map(x=>({messages:x.messages,toolNames:x.toolNames})),results},null,2),{flag:'wx'});
   if(process.env.VIGIL_P12_ROUND==='1')return;
-  await h.submit('P12_PAUSE');
+  await h.submit('P12_PAUSE 请执行隔离测试工具 smoke_ping');
   await h.waitFor('document.querySelector("#sendBtn").getAttribute("aria-label")==="暂停任务"','active run Pause');
   await h.waitFor('document.querySelector("#msgs").textContent.includes("正在检查文件")','pause after a confirmed tool effect');
   await h.evaluate('document.querySelector("#sendBtn").click();document.querySelector("#sendBtn").click();true');
@@ -139,8 +175,11 @@ exports.run=async h=>{
   assert.equal(fs.readFileSync(pluginTrace,'utf8').trim().split('\n').length,confirmedEffects);
   console.log('PASS pause/resume returns to Send without replaying a confirmed tool');
   await h.evaluate('window.__vigilE2EEvents=[];true');
-  await h.submit('P12_RESTART');
+  await h.submit('P12_RESTART 请执行隔离测试工具 smoke_ping');
   await h.waitFor('document.querySelector("#sendBtn").getAttribute("aria-label")==="暂停任务"','run before Brain restart');
+  const requestDeadline=Date.now()+10000;
+  while(!h.modelRequests.some(call=>call.userText.includes('P12_RESTART')) && Date.now()<requestDeadline) await h.wait(25);
+  assert.ok(h.modelRequests.some(call=>call.userText.includes('P12_RESTART')),'restart test waits until its Provider request is recorded');
   const beforeRestart=h.modelRequests.length;
   await h.stopBrain();
   exports.release();
@@ -154,9 +193,14 @@ exports.run=async h=>{
   assert.equal(await h.evaluate('API.state.chatConversationId'),cid);
   console.log('PASS next message after task completion/restart stays in the same conversation');
   await h.evaluate('window.__vigilE2EEvents=[];true');
-  await h.submit('P12_RESTART ledger replacement');
+  await h.submit('P12_RESTART ledger replacement 请执行隔离测试工具 smoke_ping');
   await h.waitFor('window.__vigilE2EEvents.some(e=>e.type==="agent_run") && document.querySelector("#sendBtn").getAttribute("aria-label")==="暂停任务"','run before ledger replacement');
   const lostId=await h.evaluate('window.__vigilE2EEvents.find(e=>e.type==="agent_run").run_id');
+  await h.evaluate('document.querySelector("#sendBtn").click();true');
+  await h.waitFor('document.querySelector("#sendBtn").getAttribute("aria-label").startsWith("继续")','pause before ledger replacement');
+  exports.release();
+  await h.wait(100);
+  const effectsBeforeMissingResume=fs.readFileSync(pluginTrace,'utf8').trim().split('\n').filter(Boolean).length;
   // P17 双库之后 Agent Run 落在主库 data/db/vigil.db；升级前的机器上还是
   // 独立文件 data/agent_runs.sqlite3。两个都试，先存在的那个为准。
   const agentDbCandidates=[
@@ -169,9 +213,12 @@ exports.run=async h=>{
     agentDb,lostId],{windowsHide:true});
   await h.evaluate('document.querySelector("#sendBtn").click();true');
   await h.waitFor('document.querySelector("#sendBtn").getAttribute("aria-label")==="发送消息"','missing task clears stale Pause');
-  assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("任务已不存在")'));
+  const missingTaskUi=await h.evaluate('({text:document.querySelector("#msgs .turn:last-child")?.textContent||"",events:window.__vigilE2EEvents})');
+  assert.ok(missingTaskUi.text.includes('任务失败') && missingTaskUi.events.some(e=>e.type==='error'),JSON.stringify(missingTaskUi));
+  assert.equal(fs.readFileSync(pluginTrace,'utf8').trim().split('\n').filter(Boolean).length,effectsBeforeMissingResume,
+    'resuming a missing durable task must not replay the tool side effect');
   exports.release();
-  console.log('PASS authoritative missing ledger record restores Send and reports interruption without replay');
+  console.log('PASS missing durable task resume fails visibly without replaying the tool side effect');
   for(let round=1;round<=10;round++){
     await h.evaluate('window.__vigilE2EEvents=[];true');
     await h.submit('P12_CHAT round '+round);

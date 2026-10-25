@@ -806,9 +806,10 @@ ipcMain.on('local:answer', (_e, msg) => {
 /** 向本机内核要活：有活就执行，结果送回同一个内核。
  *  以前还要再轮一遍云端队列（微信消息由云上那只答，工具调用入的是云端
  *  队列）。P8.1 起桌面端只连本机，那条双轮询随远程 Brain 一起去掉了。 */
-async function pollBrain(base, token, device, caps) {
+async function pollBrain(base, token, device, caps, autoApproval) {
   const url = base + '/api/plugin/remote/poll?caps=' + encodeURIComponent(caps.join(',')) +
-    '&device=' + encodeURIComponent(device || '');
+    '&device=' + encodeURIComponent(device || '') +
+    '&approval_mode=' + (autoApproval ? 'auto' : 'confirm_risky');
   const r = await request('GET', url, null, token, 8000);
   const call = r.json && r.json.call;
   if (!call) return;                            // 没活是常态
@@ -865,11 +866,12 @@ async function pollOnce() {
   const base = connectionBase();
   if (!base) return;
   const caps = localtool.capabilities(cfg);
-  if (!caps.length) return;                       // 全关了就别浪费请求
+  // 空能力也要带着已有 token 轮询：服务端用它刷新“客户端在线、工具全关”
+  // 状态，并在空集合分支只记心跳、不认领任何工具任务。
   pollBusy = true;
   try {
     const token = await getToken();
-    await pollBrain(base, token, cfg.device_id, caps);
+    await pollBrain(base, token, cfg.device_id, caps, !!cfg.localAuto);
   } catch (e) {
     // 轮询失败不打扰用户：网络抖一下很正常，下一轮接着来
   } finally {

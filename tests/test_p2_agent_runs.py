@@ -96,6 +96,21 @@ class RunTests(unittest.TestCase):
         self.assertEqual(provider.payloads[1]['messages'][-1], {'role': 'tool', 'tool_call_id': 'c1', 'content': 'note saved'})
         self.assertEqual(tool.call_count, 1)
         self.assertEqual(item['budget']['consumed']['steps'], 3)
+        tool_step = next(step for step in item['steps'] if step['kind'] == 'tool')
+        self.assertIn('write a note', tool_step['purpose'])
+        started = next(event for event in runs.events(item['run_id'], 'owner')['events']
+                       if event['type'] == 'step_started' and event['payload'].get('kind') == 'tool')
+        self.assertEqual(started['payload']['purpose'], tool_step['purpose'])
+
+    def test_tool_purpose_uses_task_and_tool_description_and_is_redacted(self):
+        spec = {'type': 'function', 'function': {'name': 'local_exec',
+            'description': '执行 PowerShell 查询仓库分支', 'parameters': {}}}
+        purpose = runs.tools.operation_purpose('检查仓库状态', 'local_exec', [spec])
+        self.assertEqual(purpose, '为处理“检查仓库状态”，执行 PowerShell 查询仓库分支')
+        self.assertEqual(call(), call(), 'purpose generation must not mutate tool call data')
+        self.assertEqual(runs.tools.operation_purpose('', 'local_exec', []), '执行本机命令')
+        safe = runs.tools.operation_purpose('检查 token=private_secret_987654', 'local_exec', [spec])
+        self.assertNotIn('private_secret_987654', safe)
 
     def test_same_call_and_new_id_same_operation_are_reused(self):
         item, provider, tool = self.execute([response(calls=[call()]), response(calls=[call()]),

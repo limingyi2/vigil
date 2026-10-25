@@ -121,6 +121,74 @@ def test_uncertain_reference_is_non_executing_and_deterministic():
     assert first["fallback_reason"] == "ambiguous_reference"
 
 
+def test_computer_capability_questions_and_actions_route_separately():
+    inquiries = (
+        "你能玩电脑吗，或者我给你下个虚拟安装手机，你能接入进去操控吗？",
+        "那我应该安装什么工具啊？",
+        "你为什么前后判断不一样啊，一会说自己有工具，一会说没有？",
+        "能不能控制浏览器？",
+        "请问你能控制浏览器吗？",
+        "现在能不能控制浏览器？",
+    )
+    for text in inquiries:
+        decision = task_intent.classify(text)
+        assert decision["task_category"] == "capability", (text, decision)
+        assert decision["target_entry"] == "brain_tools", (text, decision)
+        assert task_intent.select_entry(decision, agent_allowed=True) == "brain_tools"
+
+    actions = ("帮我打开浏览器。", "帮我操作安卓模拟器。", "请启动浏览器。")
+    for text in actions:
+        decision = task_intent.classify(text)
+        assert decision["task_category"] == "simple_execution", (text, decision)
+        assert decision["target_entry"] == "agent_run", (text, decision)
+        assert task_intent.select_entry(decision, agent_allowed=True) == "agent_run"
+
+
+def test_capability_wording_does_not_execute_without_explicit_action_frame():
+    for text in ("能不能控制浏览器？", "你是否可以操作安卓模拟器？",
+                 "请问你能控制浏览器吗？", "现在能不能控制浏览器？"):
+        decision = task_intent.classify(text)
+        assert decision["task_category"] == "capability", text
+        assert decision["target_entry"] == "brain_tools", text
+        assert task_intent.select_entry(decision, agent_allowed=True) == "brain_tools", text
+
+
+def test_named_tool_call_requests_and_questions_keep_distinct_routes():
+    cases = (
+        ("E2E_TOOL_SUCCESS 请调用 smoke_ping", "simple_execution", "agent_run"),
+        ("P1_AGENT_CANCEL_IN_TOOL 请调用 smoke_ping 执行隔离慢工具",
+         "simple_execution", "agent_run"),
+        ("请帮我调用 smoke_ping", "simple_execution", "agent_run"),
+        ("能不能调用 smoke_ping？", "capability", "brain_tools"),
+        ("请问你能调用 smoke_ping 吗？", "capability", "brain_tools"),
+        ("请问调用 smoke_ping 是什么意思？", "chat", "brain_tools"),
+        ("解释一下调用工具的原理", "chat", "brain_tools"),
+    )
+    for text, category, entry in cases:
+        decision = task_intent.classify(text)
+        assert decision["task_category"] == category, (text, decision)
+        assert decision["target_entry"] == entry, (text, decision)
+        assert task_intent.select_entry(decision, agent_allowed=True) == entry
+
+
+def test_full_agent_tool_schema_and_ordinary_readonly_schema_are_distinct(monkeypatch):
+    import features
+    import localtools
+    import plugin_host
+    import tools
+
+    monkeypatch.setattr(features, "on", lambda _name, _src=None: True)
+    monkeypatch.setattr(plugin_host, "tool_specs", lambda _src=None: localtools.specs())
+    full = tools.all_specs(src="pc")
+    readonly = tools.read_only_specs(full)
+    full_names = {spec["function"]["name"] for spec in full}
+    readonly_names = {spec["function"]["name"] for spec in readonly}
+    assert set(localtools.REMOTE_TOOLS).issubset(full_names)
+    assert len(localtools.REMOTE_TOOLS) == 27
+    assert readonly_names == {"search", "weather", "tracking", "capability_status"}
+    assert not (set(localtools.REMOTE_TOOLS) & readonly_names)
+
+
 def test_mixed_explanation_and_ambiguous_followups_never_select_coding_agent():
     for text in (
         "解释这个模块的问题，并告诉我怎么修",
@@ -160,9 +228,12 @@ def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
 
     for text, expected_category, expected_no_tools in (
         ("解释一下 Python 装饰器", "chat", False),
+        ("能不能控制浏览器？", "capability", False),
         ("帮我找出之前讨论的 RAG 方案", "retrieval", False),
         ("搜索今天最新的 AI 新闻", "retrieval", False),
         ("查询当前天气", "retrieval", False),
+        ("帮我打开浏览器。", "simple_execution", False),
+        ("帮我操作安卓模拟器。", "simple_execution", False),
         ("修改启动配置并验证", "simple_execution", True),
         ("全面调整我的日程，协调所有安排并逐项确认", "complex_execution", True),
     ):
@@ -173,14 +244,19 @@ def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
              patch.object(tools, "static_tool_enabled", return_value=True), \
              patch.object(bridge, "run_hybrid_delegation_direct",
                           side_effect=AssertionError("non-execution intent delegated")):
-            answer, mode = server._chat_with_tools(text, None, trace_out=trace, src="pc")
+            answer, mode = server._chat_with_tools(
+                text, None, trace_out=trace, src="pc", conversation_id="conv-test",
+                request_id="req-test")
         assert (answer, mode) == ("answer", "offline")
         assert len(brain.calls) == 1
         assert brain.calls[0][1]["no_tools"] is expected_no_tools
-        if expected_category in ("chat", "retrieval"):
+        if expected_category in ("chat", "retrieval", "capability"):
             assert brain.calls[0][1]["tool_policy"] == "readonly"
+        assert brain.calls[0][1]["capability_query"] == (expected_category == "capability")
         assert trace["task_decision"]["task_category"] == expected_category
-        if expected_category == "simple_execution":
+        assert trace["request_id"] == "req-test"
+        assert trace["conversation_id"] == "conv-test"
+        if text == "修改启动配置并验证":
             assert trace["task_decision"]["fallback_reason"] == "workspace_not_authorized"
 
     brain = FakeBrain()
@@ -197,3 +273,90 @@ def test_brain_chat_entry_separates_history_rag_from_live_function_calling():
     assert brain.calls[0][1]["tool_policy"] == "readonly"
     assert brain.calls[0][1]["no_tools"] is False
     assert trace["task_decision"]["fallback_reason"] is None
+
+
+def test_request_diagnostics_snapshot_contains_names_and_statuses_only():
+    from types import SimpleNamespace
+    import server
+
+    brain = SimpleNamespace(
+        mem=None,
+        last_request_diagnostics={
+            "request_id": "r-1", "conversation_id": "c-1",
+            "task_category": "capability", "route_entry": "brain_tools",
+            "tool_policy": "readonly", "provider_supports_tools": True,
+            "provider_supports_xml_tools": False,
+            "tools_in_request": ["capability_status"],
+            "tool_calls": [{"name": "capability_status", "result_state": "succeeded"}],
+            "capability_check": {"success": True, "state": "checked"},
+        })
+    diag = server._snapshot(brain)["request_diagnostics"]
+    rendered = str(diag)
+    assert diag["request_id"] == "r-1"
+    assert diag["conversation_id"] == "c-1"
+    assert diag["tools_in_request"] == ["capability_status"]
+    assert diag["tool_calls"] == [{"name": "capability_status", "result_state": "succeeded"}]
+    assert diag["capability_check"]["success"] is True
+    assert "arguments" not in rendered
+    assert "cmd" not in rendered
+
+
+def test_agent_run_diagnostics_match_the_tools_sent_to_the_provider(tmp_path, monkeypatch):
+    import agent_runs
+    from test_p2_agent_runs import Provider, response
+
+    monkeypatch.setattr(agent_runs.paths, "DATA_DIR", str(tmp_path / "data"))
+    agent_runs.INITIALIZED.clear()
+    specs = [
+        {"type": "function", "function": {"name": "local_file_list",
+         "description": "list", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {"name": "local_exec",
+         "description": "execute", "parameters": {"type": "object", "properties": {}}}},
+    ]
+    provider = Provider([response("完成")])
+    monkeypatch.setattr(agent_runs, "get_provider", lambda _cfg: provider)
+    monkeypatch.setattr(agent_runs.tools, "all_specs", lambda **_kwargs: specs)
+    item = agent_runs.create({"request_id": "diag_agent_run_001",
+                              "conversation_id": "conversation_agent_run_001",
+                              "intent": "检查工具", "src": "pc"}, {}, "owner",
+                             start=False)
+
+    agent_runs._run(item["run_id"], "owner", {})
+    sent_names = {spec["function"]["name"]
+                  for spec in provider.payloads[0]["tools"]}
+    events = agent_runs.events(item["run_id"], "owner")["events"]
+    diagnostic = next(event["payload"] for event in events
+                      if event["type"] == "request_diagnostics")
+    assert set(diagnostic["tools_in_request"]) == sent_names == {
+        "local_file_list", "local_exec"}
+    assert diagnostic["request_id"] == "diag_agent_run_001"
+    assert diagnostic["conversation_id"] == "conversation_agent_run_001"
+
+
+def test_failed_stream_capability_check_persists_own_trace_event(monkeypatch):
+    import server
+
+    records = []
+    monkeypatch.setattr(server, "_trace_write", lambda record: records.append(record))
+    event = {"type": "capability_check", "request_id": "req-cap-1",
+             "conversation_id": "conv-cap-1", "success": False,
+             "state": "failed", "error_class": "status_query_failed"}
+    assert server._trace_capability_check_event(
+        event, src="pc", request_id="fallback-id", conversation_id="fallback-cid",
+        task_category="capability", target_entry="brain_tools") is True
+    assert records == [{
+        "t": records[0]["t"], "kind": "capability_check", "src": "pc",
+        "request_id": "req-cap-1", "conversation_id": "conv-cap-1",
+        "task_category": "capability", "target_entry": "brain_tools",
+        "success": False, "state": "failed", "error_class": "status_query_failed",
+    }]
+    assert records[0]["kind"] != "model_request"
+
+
+def test_empty_actual_schema_is_not_replaced_by_precomputed_tools():
+    import server
+
+    assert server._available_tools_for_trace({"available_tools": []},
+                                              ["local_file_list"]) == []
+    assert server._available_tools_for_trace({}, ["local_file_list"]) == [
+        "local_file_list"]

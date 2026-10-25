@@ -68,6 +68,7 @@ def test_status_query_reports_the_real_modules_and_never_pretends_ready():
     assert video["operations"]
     # 窗口操作是客户端代办的，注册中心不得假装自己能验证
     assert video["permissions"]["focus"] == "delegated"
+    assert video["operation_states"]["focus"] == "unavailable"
     assert items["codex"]["status"]["connected"] in (True, False)
 
 

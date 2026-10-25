@@ -171,7 +171,7 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .agent-elapsed { color:var(--chat-muted); font-size:12px; margin:0 0 12px; }
 .chatwrap .live-steps { margin:0; padding:0; border:0; }
 .chatwrap .agent-step { margin:12px 0; color:var(--chat-muted); }
-.chatwrap .agent-step summary { display:flex; align-items:baseline; gap:8px; cursor:pointer; font-size:13px; list-style:none; }
+.chatwrap .agent-step summary { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; cursor:pointer; font-size:13px; list-style:none; min-width:0; }
 .chatwrap .agent-step summary::-webkit-details-marker { display:none; }
 .chatwrap .agent-step-icon { flex:none; width:14px; text-align:center; }
 .chatwrap .agent-step-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:inherit; font:inherit; min-width:0; }
@@ -187,6 +187,10 @@ body[data-vigil-page="chat"] .panel .empty { color:var(--chat-muted); }
 .chatwrap .agent-step-badge[data-error="invalid_args"],
 .chatwrap .agent-step-badge[data-error="empty_output"] { color:var(--err); }
 .chatwrap .agent-step-why { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; opacity:.85; }
+.chatwrap .agent-step-purpose { margin:4px 0 8px 22px; font-size:12px; line-height:1.5; color:var(--chat-muted); overflow-wrap:anywhere; }
+.chatwrap .agent-step-purpose b { color:var(--chat-fg); }
+.chatwrap .agent-step-summary-purpose { flex:1 1 100%; min-width:0; max-width:calc(100% - 22px); margin-left:22px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; line-height:1.5; color:var(--chat-muted); }
+.chatwrap .agent-step-summary-purpose b { color:var(--chat-fg); }
 .chatwrap .agent-step pre { max-height:220px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin:4px 0 12px 22px; font:12px/1.6 var(--mono); }
 .chatwrap .agent-detail-label { margin:8px 0 0 22px; font-size:12px; }
 .chatwrap .agent-commentary { color:var(--chat-text); font-size:var(--type-body); line-height:1.8; margin:12px 0; }

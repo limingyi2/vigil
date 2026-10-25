@@ -67,6 +67,20 @@
     skill:{run:'正在执行技能',done:'执行了技能',fail:'技能执行失败',denied:'技能执行被拒绝'},
     other:{run:'正在执行 ',done:'已完成 ',fail:'执行失败',denied:'执行被拒绝'},
   };
+  function toolProgress(event={}){
+    const state=String(event.state||'');
+    const summaries={
+      started:'正在执行工具操作', running:'正在执行工具操作', in_flight:'正在执行工具操作',
+      awaiting_authorization:'等待你批准本次操作', denied:'操作已拒绝，未执行',
+      failed:'工具执行失败', not_dispatched:'工具未派发，操作未执行',
+      unknown:'执行结果尚未确认，需要核对',
+      not_returned:'尚未收到执行结果，需要核对',
+      interrupted:'工具执行中断，实际结果需要核对',
+    };
+    let summary=summaries[state];
+    if(state==='returned')summary=event.error?'工具返回了错误':'工具已返回结果，正在继续';
+    return {summary:summary||'工具状态未确认',state:state||'unknown'};
+  }
   function errorInfo(meta){
     const raw=meta.error;
     if(!raw)return null;
@@ -142,6 +156,12 @@
     const failed=['failed','unknown','not_dispatched','not_returned','interrupted','denied'].includes(state)
       || (state==='returned' && !!info);
     const rule=classify(name), cat=rule.cat;
+    const purpose=meta.purpose || (cat==='exec' ? '执行本机命令（具体目的未记录）'
+      : '执行工具 '+name+'（具体目的未记录）');
+    const purposeText=String(redact(purpose));
+    const purposeFull=purposeText.length>320 ? purposeText.slice(0,319)+'…' : purposeText;
+    const purposeBrief=Array.from(purposeFull).length>76
+      ? Array.from(purposeFull).slice(0,75).join('')+'…' : purposeFull;
     // The category decides the wording; the state decides which variant.
     // An unknown outcome reads as unknown — never as a plain success.
     const unknownOutcome=state==='unknown'||state==='not_returned'||state==='interrupted';
@@ -179,14 +199,16 @@
       +esc(diagnostics.map(([k,v])=>k+'：'+redact(v)).join('\n'))+'</pre>');
     if(info && info.receipts.length)parts.push('<div class="agent-detail-label">执行凭据</div><pre>'
       +esc(info.receipts.map(r=>[r.state,r.reason,r.detail].filter(Boolean).join(' · ')).join('\n'))+'</pre>');
-    parts.push(Object.entries({参数:input,结果:meta.output,
+    parts.push(Object.entries({执行内容:input,执行结果:meta.output,
       错误:info ? undefined : meta.error}).filter(([,v])=>v!==undefined && v!=='')
       .map(([title,v])=>'<div class="agent-detail-label">'+title+'</div><pre>'+esc(typeof v==='object'?JSON.stringify(redact(v),null,2):redact(v))+'</pre>').join(''));
     const detail=parts.join('');
     // 等待授权的步骤必须一眼看见：默认展开，不藏在折叠区里。
     return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'" data-error="'+esc(info?.category || '')+'" data-tool-cat="'+esc(cat)+'"'+(open || awaiting ?' open':'')+'>'+
       '<summary><svg class="i xs agent-step-icon" aria-hidden="true"><use href="#'+(rule.icon||'i-activity')+'"/></svg><span>'+esc(label)+'</span>'+badge+why+
-      (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+'</summary>'+detail+'</details>';
+      (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+
+      '<span class="agent-step-summary-purpose" title="操作目的：'+esc(purposeFull)+'"><b>操作目的</b>：'+esc(purposeBrief)+'</span></summary>'+
+      '<div class="agent-step-purpose"><b>操作目的</b>：'+esc(purposeFull)+'</div>'+detail+'</details>';
   }
   function elapsed(ms) {
     const seconds=Math.max(0,Math.floor(ms/1000));
@@ -261,6 +283,6 @@
       return null;                       // 回退查询失败:同样不判定 stale
     }
   }
-  const api={step,elapsed,redact,codingSummary,approvalCard,approvalResolutions,approvalHistory};root.VigilAgentView=api;
+  const api={step,toolProgress,elapsed,redact,codingSummary,approvalCard,approvalResolutions,approvalHistory};root.VigilAgentView=api;
   if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
