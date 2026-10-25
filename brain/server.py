@@ -4707,6 +4707,10 @@ def start_remote_api(brain):
                 _fsrc = (_norm_src(_q.get("src"))
                          if (_q.get("src") or "").strip() else None)
                 self._json(200, {"features": _feat.all_features(_fsrc)})
+            elif path.startswith("/api/creator"):
+                # Creator Mode 草稿查询（GET 只读：清单/详情）。
+                # 这一分支被 p21.7 误并进 /api/features，GET /api/creator/jobs
+                # 变 404，客户端就绪探测（creator/jobs）失败 → 启动超时弹窗。
                 if self._creator_admin("GET", path, None):
                     return
                 self._json(404, {"err": "no such creator api"})
