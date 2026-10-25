@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,32 @@ def download_verified(url, path, expected_sha256, attempts=4):
     raise RuntimeError(f'Could not download verified release asset {url}: {last_error}')
 
 
+def authenticode_presence(path):
+    """Report whether a PE has a WIN_CERTIFICATE table without shell modules."""
+    with Path(path).open('rb') as stream:
+        if stream.read(2) != b'MZ':
+            raise RuntimeError('Historical installer is not a PE executable')
+        stream.seek(0x3c)
+        pe_offset = struct.unpack('<I', stream.read(4))[0]
+        stream.seek(pe_offset)
+        if stream.read(4) != b'PE\0\0':
+            raise RuntimeError('Historical installer has an invalid PE signature')
+        coff = stream.read(20)
+        if len(coff) != 20:
+            raise RuntimeError('Historical installer COFF header is truncated')
+        optional_size = struct.unpack_from('<H', coff, 16)[0]
+        optional = stream.read(optional_size)
+        if len(optional) != optional_size or optional_size < 2:
+            raise RuntimeError('Historical installer optional header is truncated')
+    magic = struct.unpack_from('<H', optional)[0]
+    directory_offset = {0x10b: 96, 0x20b: 112}.get(magic)
+    security_offset = directory_offset + 8 * 4 if directory_offset is not None else -1
+    if security_offset < 0 or len(optional) < security_offset + 8:
+        raise RuntimeError('Historical installer has an unsupported PE optional header')
+    certificate_file_offset, certificate_size = struct.unpack_from('<II', optional, security_offset)
+    return 'SignedPresent' if certificate_file_offset and certificate_size else 'NotSigned'
+
+
 def run_historical_upgrade(installer, expected_commit, root):
     """Use the published P21.2 setup executable, never a synthesized old layout."""
     old_version = '1.1.9-p21.2.20261025.1'
@@ -88,14 +115,7 @@ def run_historical_upgrade(installer, expected_commit, root):
             historical_manifest.get('sha256') != old_sha or
             historical_manifest.get('size') != 162533456):
         raise RuntimeError('Published P21.2 release manifest identity mismatch')
-    quoted_installer = "'" + str(historical_installer).replace("'", "''") + "'"
-    signature = subprocess.run(
-        ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
-         f'(Get-AuthenticodeSignature -LiteralPath {quoted_installer}).Status.ToString()'],
-        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60)
-    if signature.returncode:
-        raise RuntimeError('Could not inspect historical installer Authenticode signature: ' + signature.stderr[-1000:])
-    auth_status = signature.stdout.strip().splitlines()[-1]
+    auth_status = authenticode_presence(historical_installer)
     output = root / 'historical-upgrade.json'
     result = subprocess.run([
         sys.executable, str(Path(__file__).with_name('test_windows_historical_upgrade.py')),
