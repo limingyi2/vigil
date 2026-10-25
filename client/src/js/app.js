@@ -52,13 +52,8 @@
         const ids=navPages.map(p=>p.id).filter(id=>id!==dragged);ids.splice(ids.indexOf(b.dataset.page),0,dragged);
         try{localStorage.setItem('vigil.primary-nav.order.v1',JSON.stringify(ids));}catch(_){}buildNav();});
     });
-    if(!settingsWindow && !document.getElementById('primaryNavToggle')){
-      const toggle=document.createElement('button');toggle.id='primaryNavToggle';toggle.type='button';toggle.className='primary-nav-toggle';
-      const apply=collapsed=>{document.body.classList.toggle('primary-nav-collapsed',collapsed);toggle.setAttribute('aria-expanded',String(!collapsed));toggle.setAttribute('aria-label',collapsed?'展开一级导航':'隐藏一级导航');toggle.title=toggle.getAttribute('aria-label');toggle.textContent=collapsed?'›':'‹';};
-      let collapsed=false;try{collapsed=localStorage.getItem('vigil.primary-nav.collapsed.v1')==='1';}catch(_){}apply(collapsed);
-      toggle.onclick=()=>{const next=!document.body.classList.contains('primary-nav-collapsed');apply(next);try{localStorage.setItem('vigil.primary-nav.collapsed.v1',next?'1':'0');}catch(_){}};
-      document.body.appendChild(toggle);
-    }
+    // 折叠按钮（‹/›）已下线：一级栏宽度改成直接拖 #gRail 的分隔条，
+    // 想收窄就拖窄，不需要一个"藏起来"的中间态。
     gnavEl.querySelectorAll('.gbtn').forEach((b) =>
       b.addEventListener('click', () => {
         if (b.id === 'settingsBtn') {
@@ -241,15 +236,23 @@
     try { localStorage.setItem('vigil_theme', state.theme); } catch (_) {}
   }
 
-  // ── 分栏拖拽（左栏宽度，180–460，双击复位，方向键微调）────
+  // ── 分栏拖拽（双击复位，方向键微调，宽度记在 localStorage）────
+  // 一级栏 --rail（图标栏，拖宽后自动显示文字标签）、二级栏 --panel（列表栏）。
   function bindGutter(el, o) {
     if (!el) return;
     let on = false, x0 = 0, w0 = 0;
+    const KEY = 'vigil.gutter.' + o.var;
     const cur = () => parseInt(getComputedStyle(document.documentElement).getPropertyValue(o.var), 10) || o.def;
     const put = (v) => {
       v = Math.max(o.min, Math.min(o.max, v));
       document.documentElement.style.setProperty(o.var, v + 'px');
+      if (o.onChange) o.onChange(v);
     };
+    const save = () => { try { localStorage.setItem(KEY, String(cur())); } catch (_) {} };
+    try {
+      const saved = parseInt(localStorage.getItem(KEY) || '', 10);
+      if (saved) put(saved);
+    } catch (_) {}
     el.addEventListener('pointerdown', (e) => {
       on = true; x0 = e.clientX; w0 = cur(); el.classList.add('drag');
       el.setPointerCapture(e.pointerId); e.preventDefault();
@@ -258,16 +261,19 @@
     const stop = (e) => {
       if (!on) return;
       on = false; el.classList.remove('drag');
+      save();
       try { el.releasePointerCapture(e.pointerId); } catch (_) {}
     };
     el.addEventListener('pointerup', stop);
     el.addEventListener('pointercancel', stop);
-    el.addEventListener('dblclick', () => put(o.def));
+    el.addEventListener('dblclick', () => { put(o.def); save(); });
     el.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       put(cur() + (e.key === 'ArrowRight' ? 12 : -12) * o.dir);
+      save();
     });
+    if (o.onChange) o.onChange(cur());
   }
 
   // ── 启动 ──────────────────────────────────────────────────
@@ -441,6 +447,11 @@
     }
 
     bindGutter(document.getElementById('gPanel'), { var: '--panel', min: 180, max: 460, def: 240, dir: 1 });
+    // 一级栏：拖窄是纯图标，拖过 112px 自动带上文字标签（替代原来的折叠按钮）
+    bindGutter(document.getElementById('gRail'), {
+      var: '--rail', min: 52, max: 220, def: 62, dir: 1,
+      onChange: (v) => document.body.classList.toggle('rail-wide', v >= 112),
+    });
 
     if (settingsWindow && window.vigil && window.vigil.settings) {
       window.vigil.settings.onNavigate((target) => {
@@ -468,7 +479,19 @@
     // 首屏先使用本地 shell；壁纸、插件和本机 Brain 连接都异步进行。
     if (settingsWindow) {
       state.settingsSub = windowQuery.get('section') || 'model';
-      void go('system').then(() => perf('first-usable-settings'));
+      void go('system').then(() => {
+        perf('first-usable-settings');
+        // 等两帧再回报：go() 只保证 DOM 建好，样式与首帧还要一次合成。
+        // 隐藏窗口的 rAF 可能被节流，另挂一个定时器兜底，谁先到算谁。
+        let reported = false;
+        const report = () => {
+          if (reported) return;
+          reported = true;
+          if (window.vigil && window.vigil.settings) window.vigil.settings.ready();
+        };
+        requestAnimationFrame(() => requestAnimationFrame(report));
+        setTimeout(report, 400);
+      });
     } else {
       void go(state.page).then(() => perf('first-usable'));
     }

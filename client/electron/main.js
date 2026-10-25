@@ -643,17 +643,27 @@ function openSettingsWindow(options) {
       contextIsolation: true,
       sandbox: true,
       spellcheck: false,
+      // 窗口在 show 之前是隐藏的：不关节流的话 rAF/定时器会被压到秒级，
+      // 首帧回报迟到最后只能走主进程的兜底定时器（看起来像"点了没反应"）。
+      backgroundThrottling: false,
     },
   });
   const created = settingsWin;
+  // 🔴 设置页画好再显示窗口。设置窗口和主窗口共用一个 index.html，首帧渲染的是
+  // 聊天 shell（壁纸层、玻璃主题都还没注入），那一帧就是"点设置闪黑一下"的来源；
+  // 靠 ready-to-show 只能保证"画过一帧"，保证不了"画的是设置页"。所以让渲染层
+  // 在 go('system') 落地后回报 settings:first-paint，收到才 show。
+  const showSettings = () => {
+    if (!created.isDestroyed() && !created.isVisible()) created.show();
+  };
+  const onSettingsPainted = (event) => { if (event.sender === created.webContents) showSettings(); };
+  ipcMain.on('settings:first-paint', onSettingsPainted);
+  created.on('closed', () => ipcMain.removeListener('settings:first-paint', onSettingsPainted));
   created.loadFile(path.join(__dirname, '..', 'src', 'index.html'), {
     query: { window: 'settings', section },
   });
-  created.once('ready-to-show', () => { if (!created.isDestroyed()) created.show(); });
-  setTimeout(() => {
-    try { if (!created.isDestroyed() && !created.isVisible()) created.show(); }
-    catch (_) { /* window was closed before the fallback */ }
-  }, 3500);
+  // 兜底：渲染层要是没回报（脚本报错/被插件打断），也别让窗口一直不出现。
+  setTimeout(showSettings, 2500);
   created.webContents.once('did-finish-load', () => {
     settingsWinReady = true;
     // 设置窗口迟到：补注入插件前端（壁纸/玻璃主题），不重复打扰主窗口。

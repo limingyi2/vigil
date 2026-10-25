@@ -46,19 +46,23 @@ exports.run=async h=>{
   assert.equal(await h.evaluate('document.querySelectorAll("#settingsBtn,#settingsOpen").length'),1,'exactly one Settings entry');
   await h.evaluate(`(()=>{const a=document.querySelector('#gnav [data-page=market]'),b=document.querySelector('#gnav [data-page=chat]'),dt=new DataTransfer();a.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt}));b.dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt}));return true})()`);
   assert.equal(await h.evaluate('document.querySelector("#gnav .gbtn").dataset.page'),'market','drag changes primary order');
-  await h.evaluate('document.querySelector("#primaryNavToggle").click();true');
-  assert.equal(await h.evaluate('getComputedStyle(document.querySelector("#gnav")).visibility'),'hidden');
-  assert.equal(await h.evaluate('document.querySelector("#primaryNavToggle").getAttribute("aria-label")'),'展开一级导航');
-  await h.screenshot('navigation-collapsed');
+  // 折叠按钮已下线：一级栏宽度改为拖 #gRail（这里用方向键，避免合成 PointerEvent 拿不到 pointerId）
+  assert.equal(await h.evaluate('document.querySelector("#primaryNavToggle")'),null,'collapse toggle is gone');
+  assert.equal(await h.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--rail").trim()'),'62px','rail default width');
+  await h.evaluate(`(()=>{const g=document.querySelector('#gRail');for(let i=0;i<3;i++)g.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));return true})()`);
+  assert.equal(await h.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--rail").trim()'),'98px','arrow keys widen the rail');
+  assert.equal(await h.evaluate('localStorage.getItem("vigil.gutter.--rail")'),'98','rail width saved');
+  await h.screenshot('navigation-rail-widened');
   await h.evaluate('location.reload();true');
-  await h.waitFor('document.querySelector("#primaryNavToggle") && window.API?.state.conn.ok','persisted navigation');
+  await h.waitFor('window.API?.state.conn.ok','persisted navigation');
   assert.equal(await h.evaluate('document.querySelector("#gnav .gbtn").dataset.page'),'market');
-  assert.equal(await h.evaluate('document.body.classList.contains("primary-nav-collapsed")'),true);
-  await h.evaluate('document.querySelector("#primaryNavToggle").click();true');
+  assert.equal(await h.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--rail").trim()'),'98px','rail width survives reload');
+  await h.evaluate(`(()=>{document.querySelector('#gRail').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));return true})()`);
+  assert.equal(await h.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--rail").trim()'),'62px','double click resets the rail');
   await h.waitFor('document.querySelector("#ta")','chat restored after nav preference reload');
   await h.screenshot('navigation-expanded');
   await h.evaluate('window.__vigilE2EEvents=[];window.vigil.onStreamEvent(e=>window.__vigilE2EEvents.push(e));true');
-  console.log('PASS one Settings entry, drag ordering and hide/show persist across reload');
+  console.log('PASS one Settings entry, drag ordering, draggable rail width persists across reload');
   const results=[];
   for(const task of ['P12_XML','P12_NATIVE']){
     await h.submit(task);

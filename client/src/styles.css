@@ -65,7 +65,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .wrap { width: 100%; max-width: 1200px; margin: 0 auto; }
 
 /* ── 骨架：顶部标题 + 左侧主导航 + 主体 + 状态栏 ── */
-.app { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); grid-template-rows: var(--title) minmax(0, 1fr) var(--status); height: 100vh; }
+.app { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); grid-template-rows: var(--title) minmax(0, 1fr) var(--status); height: 100vh; position: relative; }
 .titlebar {
   grid-column: 1 / -1; grid-row: 1;
   display: flex; align-items: center; justify-content:flex-end; gap: 8px; padding-left: 12px; background: var(--bg-sub);
@@ -114,6 +114,10 @@ input, select, textarea { font: inherit; color: inherit; }
 .gbtn.on { background: var(--fill); color: var(--on-fill); }
 .gbtn:focus-visible { outline-offset: 2px; }
 .gnav .gbtn .i { width:20px; height:20px; }
+/* 一级栏拖宽（>=112px）后自动带文字标签：窄是纯图标，宽是图标+页名 */
+body.rail-wide .gnav { align-items: stretch; }
+body.rail-wide .gbtn { width: 100%; height: 40px; grid-template-columns: 20px minmax(0, 1fr); place-items: center start; gap: 10px; padding: 0 10px; }
+body.rail-wide .gnav-label { display: inline; font-size: var(--type-control); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body[data-vigil-page="market"] .body { grid-template-columns:minmax(0,1fr); }
 body[data-vigil-page="market"] .panel,
 body[data-vigil-page="market"] #gPanel { display:none; }
@@ -160,6 +164,9 @@ body[data-vigil-page="market"] #gPanel { display:none; }
 .gutter:hover::after, .gutter:focus-visible::after, .gutter.drag::after { background: var(--accent); }
 #gPanel { left: calc(var(--panel) - 3px); }
 #gChat { right: calc(var(--right) - 3px); }
+/* 一级栏分隔条：跨在 .app 的第 1/2 列之间，避开标题栏与状态栏 */
+.gutter-rail { top: var(--title); bottom: var(--status); left: calc(var(--rail) - 3px); }
+body.settings-window .gutter-rail { display: none; }
 
 /* ── 组件 ── */
 .btn {

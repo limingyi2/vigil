@@ -120,6 +120,8 @@ contextBridge.exposeInMainWorld('vigil', {
 
   settings: {
     open: (options) => ipcRenderer.invoke('settings:open', options || {}),
+    // 设置页首帧画好了，主进程收到才显示窗口（否则会先闪一下聊天 shell）
+    ready: () => ipcRenderer.send('settings:first-paint'),
     onNavigate: (fn) => {
       _settingsNavigateHandler = fn;
       if (_pendingSettingsNavigation) {
