@@ -1976,6 +1976,12 @@ class Brain:
             self.last_think = ""
             self._commit_turn(user_text, text, src=self._cur_src,
                               conversation_id=self._cur_conversation)
+            yield {"type": "capability_check",
+                   "request_id": str(request_id or "")[:120],
+                   "conversation_id": str(conversation_id or "")[:120],
+                   "success": False,
+                   "state": str(capability_check.get("state") or "failed")[:32],
+                   "error_class": str(capability_check.get("error_class") or "unknown")[:48]}
             yield {"type": "text", "text": text}
             yield {"type": "done", "text": text, "think": "",
                    "token_rate": {"output_tokens": 0, "estimated_output": True}}

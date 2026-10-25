@@ -160,6 +160,10 @@ def test_failed_capability_check_returns_unverified_text_without_model_request()
     expected = ("我这轮没能读取到可信的宿主工具状态，因此无法确认工具是否已连接、"
                 "启用或暴露给当前请求。")
     assert payloads == []
+    check_event = next(event for event in emitted if event["type"] == "capability_check")
+    assert check_event["request_id"] == "request_1"
+    assert check_event["state"] == "failed"
+    assert check_event["error_class"] == "status_query_failed"
     assert [event["text"] for event in emitted if event["type"] == "text"] == [expected]
     assert emitted[-1]["type"] == "done"
     assert emitted[-1]["text"] == expected

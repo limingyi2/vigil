@@ -127,6 +127,8 @@ def test_computer_capability_questions_and_actions_route_separately():
         "那我应该安装什么工具啊？",
         "你为什么前后判断不一样啊，一会说自己有工具，一会说没有？",
         "能不能控制浏览器？",
+        "请问你能控制浏览器吗？",
+        "现在能不能控制浏览器？",
     )
     for text in inquiries:
         decision = task_intent.classify(text)
@@ -134,7 +136,7 @@ def test_computer_capability_questions_and_actions_route_separately():
         assert decision["target_entry"] == "brain_tools", (text, decision)
         assert task_intent.select_entry(decision, agent_allowed=True) == "brain_tools"
 
-    actions = ("帮我打开浏览器。", "帮我操作安卓模拟器。")
+    actions = ("帮我打开浏览器。", "帮我操作安卓模拟器。", "请启动浏览器。")
     for text in actions:
         decision = task_intent.classify(text)
         assert decision["task_category"] == "simple_execution", (text, decision)
@@ -143,10 +145,12 @@ def test_computer_capability_questions_and_actions_route_separately():
 
 
 def test_capability_wording_does_not_execute_without_explicit_action_frame():
-    for text in ("能不能控制浏览器？", "你是否可以操作安卓模拟器？"):
+    for text in ("能不能控制浏览器？", "你是否可以操作安卓模拟器？",
+                 "请问你能控制浏览器吗？", "现在能不能控制浏览器？"):
         decision = task_intent.classify(text)
         assert decision["task_category"] == "capability", text
         assert decision["target_entry"] == "brain_tools", text
+        assert task_intent.select_entry(decision, agent_allowed=True) == "brain_tools", text
 
 
 def test_full_agent_tool_schema_and_ordinary_readonly_schema_are_distinct(monkeypatch):
@@ -309,3 +313,32 @@ def test_agent_run_diagnostics_match_the_tools_sent_to_the_provider(tmp_path, mo
         "local_file_list", "local_exec"}
     assert diagnostic["request_id"] == "diag_agent_run_001"
     assert diagnostic["conversation_id"] == "conversation_agent_run_001"
+
+
+def test_failed_stream_capability_check_persists_own_trace_event(monkeypatch):
+    import server
+
+    records = []
+    monkeypatch.setattr(server, "_trace_write", lambda record: records.append(record))
+    event = {"type": "capability_check", "request_id": "req-cap-1",
+             "conversation_id": "conv-cap-1", "success": False,
+             "state": "failed", "error_class": "status_query_failed"}
+    assert server._trace_capability_check_event(
+        event, src="pc", request_id="fallback-id", conversation_id="fallback-cid",
+        task_category="capability", target_entry="brain_tools") is True
+    assert records == [{
+        "t": records[0]["t"], "kind": "capability_check", "src": "pc",
+        "request_id": "req-cap-1", "conversation_id": "conv-cap-1",
+        "task_category": "capability", "target_entry": "brain_tools",
+        "success": False, "state": "failed", "error_class": "status_query_failed",
+    }]
+    assert records[0]["kind"] != "model_request"
+
+
+def test_empty_actual_schema_is_not_replaced_by_precomputed_tools():
+    import server
+
+    assert server._available_tools_for_trace({"available_tools": []},
+                                              ["local_file_list"]) == []
+    assert server._available_tools_for_trace({}, ["local_file_list"]) == [
+        "local_file_list"]

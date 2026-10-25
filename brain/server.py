@@ -554,6 +554,34 @@ def _snapshot(b):
     return d
 
 
+def _trace_capability_check_event(evt, *, src, request_id, conversation_id,
+                                  task_category, target_entry):
+    """Persist a status-check receipt separately from model-request traces."""
+    if not isinstance(evt, dict) or evt.get("type") != "capability_check":
+        return False
+    _trace_write({
+        "t": time.strftime("%Y-%m-%d %H:%M"),
+        "kind": "capability_check",
+        "src": str(src or "")[:32],
+        "request_id": str(evt.get("request_id") or request_id or "")[:120],
+        "conversation_id": str(evt.get("conversation_id") or conversation_id or "")[:120],
+        "task_category": str(task_category or "capability")[:48],
+        "target_entry": str(target_entry or "brain_tools")[:48],
+        "success": bool(evt.get("success")),
+        "state": str(evt.get("state") or "unknown")[:32],
+        "error_class": str(evt.get("error_class") or "")[:48],
+    })
+    return True
+
+
+def _available_tools_for_trace(evt, fallback):
+    """Use fallback schemas only when the event omitted the field entirely."""
+    names = evt.get("available_tools") if isinstance(evt, dict) else None
+    if names is None:
+        names = fallback
+    return list(names or [])[:128]
+
+
 # 规划/修正 prompt 的指纹。brain.chat 会把喂给它的 prompt 原样记进历史和当日
 # 流水，那两条不是用户说的话，事后要认出来删掉（见 _restore_hist）。
 _PLAN_PROMPT_MARK = "（系统提示：你已经按计划完成了以下步骤"
@@ -3480,7 +3508,16 @@ def start_remote_api(brain):
                                     dict(_ev, type='image'), ensure_ascii=False) + '\n\n').encode())
                                 self.wfile.flush()
                         for evt in _events:
-                            if evt.get('type') == 'model_request_started':
+                            if evt.get('type') == 'capability_check':
+                                try:
+                                    _trace_capability_check_event(
+                                        evt, src=_src, request_id=_diag_request_id,
+                                        conversation_id=_brain_cid,
+                                        task_category=_task_decision.get('task_category'),
+                                        target_entry=_task_entry)
+                                except Exception:
+                                    pass
+                            elif evt.get('type') == 'model_request_started':
                                 try:
                                     _trace_write({
                                         "t": time.strftime("%Y-%m-%d %H:%M"),
@@ -3492,7 +3529,8 @@ def start_remote_api(brain):
                                         "target_entry": _task_entry,
                                         "tool_policy": str(evt.get('tool_policy') or _route_policy)[:32],
                                         "provider_supports_tools": evt.get('provider_supports_tools', _fc_support),
-                                        "tools_in_request": list(evt.get('available_tools') or _request_tool_names)[:128],
+                                        "tools_in_request": _available_tools_for_trace(
+                                            evt, _request_tool_names),
                                         "capability_check": dict(evt.get('capability_check') or {}),
                                     })
                                 except Exception:

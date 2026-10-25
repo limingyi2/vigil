@@ -616,6 +616,11 @@ def take(device_id, capabilities=None, approval_mode=None):
     """客户端轮询时调用：认领一条它能干的活。没有就返回 None。"""
     global _LAST_POLL, _LAST_CAPS, _LAST_APPROVAL_MODE
     caps = set(capabilities or [])
+    if not caps:
+        # Empty capability sets are a status heartbeat only.  Never treat an
+        # empty set as a wildcard while claiming queued work.
+        heartbeat(device_id, caps, approval_mode)
+        return None
     now = time.time()
     with _COND:
         _LAST_POLL = now                # 这台大脑刚被客户端看过：在线证据
@@ -639,6 +644,24 @@ def take(device_id, capabilities=None, approval_mode=None):
             _ACTIVE[cid] = c
             return c.public()
     return None
+
+
+def heartbeat(device_id, capabilities=None, approval_mode=None):
+    """Record an authenticated client poll without attempting task dispatch.
+
+    In particular, a client with every tool disabled remains online while
+    advertising an empty enabled-tool set.
+    """
+    del device_id  # The caller already authenticated and bound this identity.
+    global _LAST_POLL, _LAST_CAPS, _LAST_APPROVAL_MODE
+    caps = set(capabilities or [])
+    with _COND:
+        _LAST_POLL = time.time()
+        _LAST_CAPS = set(caps)
+        _LAST_APPROVAL_MODE = (approval_mode if approval_mode in
+                               ("auto", "confirm_risky") else None)
+        _COND.notify_all()
+    return True
 
 
 def resolve(call_id, result, err="", device_id=None):

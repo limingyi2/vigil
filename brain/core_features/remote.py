@@ -122,9 +122,12 @@ def _h_poll(body, query):
             caps = [c for c in caps if c in declared]
     except Exception:
         pass
-    if not caps:
-        return {"ok": True, "call": None, "wait": 1}
     approval_mode = str(query.get("approval_mode") or "").strip().lower()
+    if not caps:
+        # Keep connectivity/disabled-tool state current without entering the
+        # queue-claim path.  Empty capability sets are never wildcards.
+        localtools.heartbeat(dev, caps, approval_mode=approval_mode)
+        return {"ok": True, "call": None, "wait": 1}
     c = localtools.take(dev, caps, approval_mode=approval_mode)
     if not c:
         return {"ok": True, "call": None, "wait": 1}

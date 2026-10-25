@@ -51,9 +51,11 @@ _CAPABILITY_QUERY = re.compile(
     re.I,
 )
 _EXPLICIT_ACTION_REQUEST = re.compile(
-    r"(?:帮我|替我|请(?:你)?|为我|现在|立刻).{0,24}"
+    r"(?:(?:请(?!问)(?:你)?(?:现在|立刻)?(?:直接)?|"
+    r"请(?!问)(?:你)?(?:帮我|替我|为我)(?:现在|立刻)?(?:直接)?|"
+    r"(?:现在|立刻)?(?:帮我|替我|为我)(?:现在|立刻)?(?:直接)?)"
     r"(?:打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|安装|运行|执行|"
-    r"open|launch|control|click|type|close|connect|install|run|execute)",
+    r"open|launch|control|click|type|close|connect|install|run|execute))",
     re.I,
 )
 
