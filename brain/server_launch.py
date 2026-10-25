@@ -15,6 +15,16 @@ import socket
 import subprocess
 import sys
 
+# Frozen Windows processes can inherit a legacy code page (for example cp1252).
+# Migration diagnostics include Chinese text and must never crash startup while
+# writing stdout/stderr. runtime.py also configures these streams, but it loads
+# only after _seed_core_features(), so configure them here first.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 FROZEN = bool(getattr(sys, "frozen", False))
 CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
     os.path.abspath(__file__))
