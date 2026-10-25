@@ -4,6 +4,9 @@
 代码基线：`4c541ac`，Vigil v1.0.1
 状态：开发方案，尚未实施；涉及新协议、权限与默认限额的内容均为设计要求。
 
+> **现状更新（2026-10-25）**：Creator 生成、草稿、流式与安装链路已实施。本文只作设计底稿保留，
+> 现行行为以 [Creator 契约](VIGIL_CREATOR_STAGE1_CONTRACT.md) 与源码为准。
+
 2026-10-15 范围更新：主对话与 Creator 的共同执行策略见 [多步任务执行优化方案](VIGIL_AGENT_EXECUTION_OPTIMIZATION_PLAN.md)。该方案扩展本文件原先只优化 Creator 的范围；生命周期、模型能力与未知上限策略以共同方案及后续 P0 契约修订为准。本文件继续保留插件结构、隔离、授权和安装方面的细节。
 
 P1 交付顺序补充：插件创作/修改复用主对话流式输出已纳入共同方案的 P1（模型适配与 Creator 流式复用），具体边界与针对性验收见共同方案 §9.1。本文件下方保留的 Creator 专项 P0–P5 编号属于原专项划分；跨工作线排期统一以共同方案为准。
@@ -250,4 +253,4 @@ P1/P2 阶段即使生成了联网调用代码，也不能提前安装为受限�
 | `brain/creator_install.py` | 一次性批准快照、字节绑定与受控安装 |
 | `client/src/js/pages.js` | 普通聊天流式 UI、Creator 发送和草稿卡 |
 | `client/electron/main.js` / `preload.js` | HTTP/流式 IPC、插件前端加载与桌面能力边界 |
-| `docs/CREATOR_MVP1_HANDOFF.md` / `CREATOR_MVP2_HANDOFF.md` | 已有生成及安装流程的历史交接依据 |
+| `docs/CREATOR_MVP1_HANDOFF.md` / `CREATOR_MVP2_HANDOFF.md` | 历史交接依据（已随文档清理移除，见 `git log -- docs/CREATOR_MVP1_HANDOFF.md`） |

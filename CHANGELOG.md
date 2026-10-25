@@ -7,6 +7,48 @@
 
 ---
 
+## 2026-10-25
+
+### 文档清理：删掉 59 份一次性文档，补上索引
+
+仓库里堆了 199 份 Markdown，其中大半是各阶段的交接、验收、completion report
+和过程审计。它们的问题不是"没用"，而是**和现状混在一起**：README 链到的分支早就
+删了，`项目目录结构说明.md` 还写着 `F:\Vigil\` 和"云端大脑为核心"，`03-插件前端注入方案.md`
+开头自己声明"历史设计稿，不要按本文操作"。新人打开仓库分不清哪份能信。
+
+删掉的（59 份正文 + 6 个只为它们提供证据的目录）：
+
+- `docs/` 根目录从 70 份降到 19 份：P9 / P17 / P18 / P19 / P20 / P21 / P2 的 handoff、
+  验收报告、completion report、evidence、checkpoint，`SERVER_PAGES_MODULARIZATION_R1-R4`，
+  `agent-center-codex-p0~p3`，以及自述"未实施"或"已被取代"的方案稿
+- 顶层从 12 份降到 4 份：`必读必读必读！.md`、`项目目录结构说明.md`、`下一步建议-20261009.md`、
+  `WINDOWS_P4_HANDOFF.md`、两份 `vigil-hybrid-*-20261011`、`第一阶段统一管理-实施说明.md`
+- `混合模式方案` 两个版本合并为一份（保留逐条核对过代码的 v2）
+
+刻意保留的：`P9_data_migration.md`（有测试读它做契约校验）、
+两份 `VIGIL_*_OPTIMIZATION_PLAN.md`（被冻结契约当作上层依据引用），
+后者加了一行"已实施"的现状说明，避免继续被当成"尚未实施"。
+
+补的：
+
+- 新增 `docs/README.md` 文档索引，按"手册 / 契约 / 设计与使用说明 / 待办与素材"分类，
+  并写明规矩：一次性的交接和验收不往 `docs/` 根目录放
+- README 去掉 4 处指向已删除分支 `p2-agent-execution` 的死链（GitHub 上是 404），
+  源码运行步骤里那句 `git checkout p2-agent-execution` 一并删掉，版本号改为指向 `client/package.json`
+- USER_GUIDE 里 10 处指向旧路径的相对链接修正（文档早就挪进子目录了，链接没跟着改）
+- `client/README.md`、`docs/releases/v1.0.2.md`、`docs/VIGIL_CREATOR_STAGE1_CONTRACT.md`
+  等 6 处指向已删文档的引用改为说明"已移除，见 git log"
+
+### 按链接安装插件与 Skill
+
+`plugins_skills` 新增 `install_link` 与 `link_preview`：可信来源直接装，其他来源
+出审批卡。裸 zip 直链会被拒绝——没有清单就核对不了版本、权限和哈希。
+
+### 流式：思考块可见
+
+客户端补上 `think` 事件渲染（默认折叠），Agent 提示词要求调用工具前后各说一句在做什么，
+工具卡片之间不再只有状态没有正文。
+
 ## 2026-10-24
 
 ### Kestrel Hub Bridge

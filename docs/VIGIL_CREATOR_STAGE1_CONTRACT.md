@@ -630,4 +630,4 @@ sample-panel/
 | 一次性批准/字节绑定 | `brain/creator_install.py`（`approve`/`install`/`list_approvals`） |
 | Creator API | `brain/server.py:1441-1534` |
 | 插件运行（进程内） | `brain/plugin_host.py`、`brain/tools.py`（`run_tool`/`all_specs`） |
-| 历史交接依据 | `docs/CREATOR_MVP1_HANDOFF.md`、`docs/CREATOR_MVP2_HANDOFF.md`、`docs/creator-mode-mvp2-design.md` |
+| 历史交接依据 | `docs/CREATOR_MVP1_HANDOFF.md`、`docs/CREATOR_MVP2_HANDOFF.md`、`docs/creator-mode-mvp2-design.md`（均已随文档清理移除，见 `git log -- docs/CREATOR_MVP1_HANDOFF.md`） |

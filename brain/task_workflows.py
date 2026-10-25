@@ -3,7 +3,7 @@
 Scope must be built from authenticated server context, never model arguments.
 All mutations use a short main-DB transaction and return an immutable checkpoint.
 External effects are deliberately outside this service; a dispatch intent cannot
-prove completion. See docs/VIGIL_P18_1_TODO_CHECKPOINT.md for the integration contract.
+prove completion. The integration contract lives in VIGIL_AGENT_EXECUTION_STAGE1_CONTRACT.md.
 """
 import hashlib
 import json

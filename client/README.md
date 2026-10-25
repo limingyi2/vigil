@@ -7,7 +7,7 @@ Vigil 桌面 Agent，由 Electron 客户端与本地 Brain 组成，提供聊天
 **桌宠 Live2D（阶段5）还没开始。**
 
 排版定稿见 [`docs/client-layout-v1.html`](../docs/client-layout-v1.html)（可点开的可交互稿），
-开发计划见 [`00-客户端开发方案-待办.md`](../00-客户端开发方案-待办.md)。
+开发计划见 [`docs/03-客户端/客户端开发待办.md`](../docs/03-客户端/客户端开发待办.md)。
 
 ---
 
@@ -293,4 +293,4 @@ Windows 安装包包含同一提交构建的 Electron 与 Brain。首次启动�
 
 开发：仓库根运行 `scripts/start_dev.bat`，缺失或过期的配套 Brain 会先生成候选构建，开发数据隔离在 `.vigil-dev`。正式打包运行 `python scripts/build_release.py`，要求干净已提交源码；验收阶段用 `--candidate --installer-test`，候选包不发布。
 
-迁移风险、版本门禁、恢复和 Windows 验收见 [一体化方案](../docs/UNIFIED_CLIENT_BRAIN.md)。
+迁移风险、版本门禁、恢复见 [统一执行契约](../docs/VIGIL_AGENT_EXECUTION_STAGE1_CONTRACT.md)。

@@ -45,7 +45,7 @@ Vigil 是以 Electron 客户端和 Python Brain 为核心的桌面 Agent。你�
 | **Creator** | 插件创作与修改、真实流式输出、作业去重、快照、取消和草稿管理 |
 | **模型接入** | OpenAI 兼容接口；按服务商、端点、模型适配输出参数与结果类型 |
 | **本地资料** | 记忆与约定、知识库导入及检索、按渠道配置人格 |
-| **扩展与连接** | Python 插件、目录型插件市场、JS 技能，以及可选的云端同步和手机 / 微信入口 |
+| **扩展与连接** | Python 插件、目录型插件市场、按链接安装插件与技能、JS 技能，以及可选的云端同步和手机 / 微信入口 |
 
 ### 工作台预览
 
@@ -69,7 +69,7 @@ flowchart LR
 
 ## 开发进度
 
-最新桌面安装包为 **1.0.2**，包含 P1 与 P2 的实现。源码中的 Agent 执行循环位于 [`p2-agent-execution`](https://github.com/limingyi2/vigil/tree/p2-agent-execution) 分支。
+源码默认分支为 `dev`，桌面客户端版本号见 [`client/package.json`](client/package.json)。Agent 执行循环与能力注册都在这个分支上，`p2-agent-execution` 等阶段分支已合并并删除。
 
 | 阶段 | 状态 | 交付 |
 |---|---|---|
@@ -81,7 +81,7 @@ flowchart LR
 
 **当前边界：** 预算耗尽不会自动追加预算或继续执行；进程重启后的在途任务标记为中断，不自动重放工具。取消会阻止后续派发，已经开始的外部操作可能仍然完成。工具去重针对同一 run 的调用身份与规范化参数，并不等于外部系统的事务保证。
 
-实现范围、测试记录和未验证项见 [P1 交付记录](https://github.com/limingyi2/vigil/blob/p2-agent-execution/docs/VIGIL_P1_IMPLEMENTATION_REPORT.md) 与 [P2 交付记录](https://github.com/limingyi2/vigil/blob/p2-agent-execution/docs/VIGIL_P2_IMPLEMENTATION_REPORT.md)。
+各阶段的交付记录、交接与验收文档已从仓库移除，需要追溯时用 `git log -- docs/` 查历史版本。
 
 ## 从源码运行
 
@@ -90,7 +90,6 @@ flowchart LR
 ```powershell
 git clone https://github.com/limingyi2/vigil.git
 cd vigil
-git checkout p2-agent-execution
 
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r brain/requirements.txt
@@ -118,11 +117,12 @@ npm start
 | 想了解什么 | 入口 |
 |---|---|
 | 使用、配置、架构与构建 | [详细手册](docs/USER_GUIDE.md) |
-| 统一执行协议与阶段范围 | [执行契约](https://github.com/limingyi2/vigil/blob/p2-agent-execution/docs/VIGIL_AGENT_EXECUTION_STAGE1_CONTRACT.md) |
-| Creator 的作业、草稿与流式协议 | [Creator 契约](https://github.com/limingyi2/vigil/blob/p2-agent-execution/docs/VIGIL_CREATOR_STAGE1_CONTRACT.md) |
-| 任务恢复的设计与验收约定 | [任务恢复契约](https://github.com/limingyi2/vigil/blob/p2-agent-execution/docs/VIGIL_TASK_RECOVERY_STAGE1.md) |
-| 已完成的 P2 功能与限制 | [P2 交付记录](https://github.com/limingyi2/vigil/blob/p2-agent-execution/docs/VIGIL_P2_IMPLEMENTATION_REPORT.md) |
-| 评测方法、轨迹和对照数据 | [评测文档](https://github.com/limingyi2/vigil/tree/p2-agent-execution/docs/evaluation) |
+| 全部现行文档的分类索引 | [文档索引](docs/README.md) |
+| 统一执行协议与阶段范围 | [执行契约](docs/VIGIL_AGENT_EXECUTION_STAGE1_CONTRACT.md) |
+| Creator 的作业、草稿与流式协议 | [Creator 契约](docs/VIGIL_CREATOR_STAGE1_CONTRACT.md) |
+| 任务恢复的设计与验收约定 | [任务恢复契约](docs/VIGIL_TASK_RECOVERY_STAGE1.md) |
+| 扩展清单、权限与兼容规则 | [扩展通信契约](docs/P9_extension_protocol.md) |
+| 评测方法、轨迹和对照数据 | [评测文档](docs/evaluation) |
 
 ## 配置与隐私
 
