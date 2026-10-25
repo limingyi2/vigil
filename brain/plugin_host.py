@@ -471,7 +471,7 @@ def prompt_block(ctx=None, native=False):
     native=True（原生 function calling）：**跳过带 TOOLS 的工具类插件**。
     它们的 prompt 是 `[tool:...]` 标签语法教学，和结构化 tool_calls 通道
     冲突，模型看了可能两套都写。工具能力此时由 tools schema 的
-    description 承载。react / gate 这类没有 TOOLS 的纯行为插件照常保留
+    description 承载。react 这类没有 TOOLS 的纯行为插件照常保留
     （react 教的 think 格式仍需要）。
     """
     parts = []

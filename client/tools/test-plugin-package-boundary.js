@@ -14,7 +14,6 @@ test('core plugin management and resource bridge are allowed in the client packa
 test('bundled plugins inside the Brain payload are expected, not rejected', () => {
   assert.equal(verifyNoBundledPluginPaths([
     '/resources/vigil-brain/_internal/plugins/kb.py',
-    '/resources/vigil-brain/_internal/plugins/gate.py',
     '/resources/vigil-brain/_internal/plugins/branch-atlas/frontend.js',
   ]), true);
 });

@@ -13,7 +13,7 @@ DEFAULTS 里除核心功能外，插件声明了 FEATURE 的也会登记进来�
 那是你和她的私事；群里有人随口说的单号更不该进你的监控。
 所以 `features_by_src.<渠道>` 里可以给某个渠道单独覆盖：
 
-    "features_by_src": {"wechat": {"weather_alert": false, "packages": false}}
+    "features_by_src": {"<渠道名>": {"weather_alert": false, "packages": false}}
 
 **没写的键跟全局走**，所以只写要关的那几个就够，不用抄一整份。
 全局那份 `features` 是"任何渠道都没覆盖时"的初值。
@@ -66,10 +66,6 @@ DEFAULTS = {
     "rand_img_moment": True,  # 朋友圈配图优先用随机图（云上 10-07 加的键）
     "tools": True,            # 模型可自选调免费 API（查他在哪/天气/快递）
     "voice": True,            # 语音条（App 能渲染音频条；群里发不了 mp3，要关）
-    # 微信远程操控 PC 的总闸。**默认关**：现阶段微信只聊天；要开放远控必须
-    # 显式打开，且仍要过 localtools.clearance() 的 owner/群聊矩阵。
-    # 不能靠"没登记的 key on() 默认 True"那套 fail-open —— 安全闸必须 fail-closed。
-    "remote_control": False,
     # 可选插件：仓库拓扑查看（branch-atlas）是开发者工具，0.1.0 只做了只读视图。
     # 默认关 —— 界面上不留一个对聊天没用的入口；要看去设置里打开。
     "branch-atlas": False,

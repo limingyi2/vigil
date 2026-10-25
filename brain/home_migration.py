@@ -15,9 +15,9 @@ DIRECTORIES = ('config', 'data', 'plugins', 'logs', 'archive', 'skill_host/skill
 CORE_FEATURE_NAMES = frozenset({
     "plugin_market.py", "remote.py", "skill.py",
 })
-# calc 已在 P21.2 下线：旧安装里的 calc.py 不再往新 home 搬，否则它会以
-# 用户插件的身份复活一个已经被删掉的功能。
-LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"gate.py", "kb.py", "react.py", "websearch.py"})
+# calc 与 gate 已在 P21.2 下线：旧安装里的 calc.py / gate.py 不再往新 home 搬，
+# 否则它们会以用户插件的身份复活一个已经被删掉的功能。
+LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"kb.py", "react.py", "websearch.py"})
 # 外部插件由插件市场装到 data/installed_plugins，绝不从安装包种入。
 # 打包 spec 是第一道防线；这里是纵深防御，旧包或误打包也带不进用户家目录。
 EXTERNAL_PLUGIN_NAMES = frozenset({"wallpaper"})

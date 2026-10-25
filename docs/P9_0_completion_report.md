@@ -38,7 +38,7 @@ IPC 入口有限定的 host 方法，但 main-process handler 未做明确的扩
 - `docs/P9_extension_protocol.md`：定义 Core、桌面扩展、渠道 Bridge 与双 Brain 转发的职责；标注现有 IPC/HTTP/WS 与新契约的区别；规定 ID、SemVer、健康状态、生命周期、RPC、错误/超时/取消、权限最小化、双协议退场条件及当前待验证边界。
 - `docs/P9_data_migration.md`：规定 Wallpaper 资产范围、旧配置只读探测、幂等 staging/校验/提交和回退；规定 Bridge 登录态/凭据、渠道隔离、历史接口及失败保留策略。
 - `docs/schemas/extension-manifest.schema.json`：Draft 2020-12 严格 Schema，区分 `desktop-extension`/`channel-bridge`；未知属性、类型和权限拒绝；限定 artifact/hash、协议、版本、权限和迁移字段；拒绝绝对/点段入口路径。
-- `docs/examples/extensions/wallpaper.manifest.example.json`、`wechat-bridge.manifest.example.json`：假域名、假 SHA-256、无凭据样例。
+- `docs/examples/extensions/wallpaper.manifest.example.json`、`channel-bridge.manifest.example.json`：假域名、假 SHA-256、无凭据样例。
 - `tests/test_p9_contract_artifacts.py`：stdlib 静态 Schema 子集校验和文档/安全契约检查。
 - `wechat-bridge/README.md`：纠正不存在的 `brain/wechat_bot/`、绝对化安全承诺和不确定部署状态；记录公开源码仓库与本地快照漂移及 gate 双版本关系。
 - `docs/05-微信/P8.2-微信插件化迁移清单.md`：明确旧规划与当前实现的边界，防止把加密凭据库、统一插件安装器等未实现能力描述为已有。

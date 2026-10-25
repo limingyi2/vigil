@@ -18,7 +18,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # plugins/ 也要扫：插件是新增功能最容易扎堆的地方，一份文件里写两遍
 # 同一个 helper 就是"后者悄悄赢"，而插件坏了只打一行日志，很难发现
-SCAN_DIRS = ("brain", "pet", "tests")
+SCAN_DIRS = ("brain", "tests")
 
 
 def _defs(body):
@@ -56,7 +56,6 @@ def _files():
     seen = set()
     for d, pat in (("brain", "brain/*.py"),
                    ("brain/plugins", "brain/plugins/*.py"),
-                   ("pet", "pet/*.py"),
                    ("tests", "tests/*.py")):
         for p in sorted(glob.glob(os.path.join(ROOT, pat))):
             rp = os.path.relpath(p, ROOT)

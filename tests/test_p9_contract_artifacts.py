@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "docs/schemas/extension-manifest.schema.json"
 WALLPAPER_PATH = ROOT / "docs/examples/extensions/wallpaper.manifest.example.json"
-BRIDGE_PATH = ROOT / "docs/examples/extensions/wechat-bridge.manifest.example.json"
+BRIDGE_PATH = ROOT / "docs/examples/extensions/channel-bridge.manifest.example.json"
 
 
 def _resolve_ref(root_schema, ref):
@@ -151,7 +151,6 @@ class P9ContractArtifactTests(unittest.TestCase):
         protocol = (ROOT / "docs/P9_extension_protocol.md").read_text(encoding="utf-8")
         migration = (ROOT / "docs/P9_data_migration.md").read_text(encoding="utf-8")
         p82 = (ROOT / "docs/05-微信/P8.2-微信插件化迁移清单.md").read_text(encoding="utf-8")
-        readme = (ROOT / "wechat-bridge/README.md").read_text(encoding="utf-8")
         guide = (ROOT / "docs/USER_GUIDE.md").read_text(encoding="utf-8")
         self.assertTrue(SCHEMA_PATH.is_file())
         self.assertIn("`brain/ws_forward.py`", protocol)
@@ -160,9 +159,11 @@ class P9ContractArtifactTests(unittest.TestCase):
         self.assertIn("`.vigil/wallpaper/config.json`", migration)
         self.assertIn("msg/ack/result", migration)
         self.assertIn("Turn.veto()", p82)
-        self.assertIn("`brain/wechat_bot/`", readme)
         self.assertIn("P9_extension_protocol.md", guide)
-        self.assertFalse((ROOT / "brain/wechat_bot/wxauto_bridge.py").exists())
+        # P21.2：微信运行时（brain/wechat_bot/ + wechat-bridge/）整块下线，
+        # 这里从"桥接文件不在"升级成"整套都不在" —— 别哪天又被复制回来。
+        self.assertFalse((ROOT / "brain/wechat_bot").exists())
+        self.assertFalse((ROOT / "wechat-bridge").exists())
 
     def test_examples_contain_only_fake_artifact_values(self):
         for path in (WALLPAPER_PATH, BRIDGE_PATH):

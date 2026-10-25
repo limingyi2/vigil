@@ -12,9 +12,7 @@
 
 **为什么 FEATURE = None（不做成可开关的功能）**：本地操控是 agent 的核心
 能力，不是"可选功能"。用户不应该能在设置里把它关掉——关了 agent 就
-没法干活了。渠道过滤不硬编码在这个文件里，统一交给 localtools.specs()：
-微信渠道在 remote_control 总闸关着时返回空（现阶段微信只聊天）；
-pc 等带客户端的渠道返回全部。
+没法干活了。渠道裁剪统一交给 localtools.specs()，本文件不自己维护名单。
 """
 # 注意：核心模块叫 localtools，不叫 remote —— 这个文件自己就叫
 # plugins/remote.py，plugins/ 又在 sys.path 上，叫 remote 会 import 到自己
@@ -25,12 +23,9 @@ NAME = "remote"
 DESC = "本地操控：她可以用这台电脑看文件、截图、打开网页"
 FEATURE = None               # 始终启用——这是 agent 的核心能力，不是可选功能
 
-# 渠道裁剪的唯一真源在 localtools.specs()：
-#   - 微信私聊/群聊在 remote_control 总闸（features.remote_control，默认关）
-#     关着时返回空集 —— 现阶段"微信只聊天"；
-#   - 总闸打开后，群聊仍只给 safe 档；
-#   - 执行层 localtools.clearance() 是同一套规则的第二道关卡。
-# 本插件不再自己维护渠道黑名单，免得两份名单漂移。
+# 渠道裁剪的唯一真源在 localtools.specs()，执行层第二道关卡是
+# localtools.clearance()。本插件不自己维护渠道黑名单，免得两份名单漂移。
+# （core 只跑 pc，那两处现在对 pc 一律放行。）
 
 
 def tool_specs(src=None):

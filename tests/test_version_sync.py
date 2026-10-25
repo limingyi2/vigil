@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
-"""版本号必须只有一个真源。
+"""桌面客户端的版本号必须只有一个真源。
+
+真源是 `client/version.json`（ver + code），`client/package.json` 的 version
+必须跟它一致，打包脚本和发布标签都从这里取（scripts/build_release.py）。
 
 以前版本号写在四个地方：build.gradle 的 versionCode、chat.html 的 APP_CODE、
-PollService 的 installedCode、云端 app/version.json。四处各写各的 ——
-手机上装的是 22、云端说 23，装完照样弹更新提示，能一直弹到天荒地老
-（真实发生过，见 2026-10-03）。
-
-现在全从仓库根的 version.json 派生。这几条钉住那个约定。
+PollService 的 installedCode、云端 app/version.json。手机 App 在 P21.2 下线，
+那四处连同注入脚本一起删了；现在只剩桌面这一条链，钉住它别再分裂。
 """
 import io
 import json
 import os
-import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,57 +22,21 @@ def _read(rel):
 
 
 class TestSingleSourceOfVersion(unittest.TestCase):
-    def setUp(self):
-        self.ver = json.loads(_read("version.json"))
-
-    def test_version_json_字段齐全(self):
-        for k in ("code", "name", "min_sdk", "target_sdk"):
-            self.assertIn(k, self.ver, k)
-        self.assertIsInstance(self.ver["code"], int)
-        self.assertGreater(self.ver["code"], 0)
-
-    def test_build_gradle_不再写死版本(self):
-        g = _read("android-app/app/build.gradle")
-        self.assertNotRegex(g, r"versionCode\s+\d",
-                            "versionCode 写死了 —— 应该从 version.json 读")
-        self.assertNotRegex(g, r'versionName\s+"',
-                            "versionName 写死了 —— 应该从 version.json 读")
-        self.assertIn("version.json", g, "gradle 应该读 version.json")
-
-    def test_pollservice_不再写死installedCode(self):
-        # 写死 int 的话，发版漏改这里就变成"装完还提示"
-        j = _read("android-app/app/src/main/java/com/resident/chat/PollService.java")
-        self.assertNotRegex(j, r"int\s+installedCode\s*=\s*\d")
-        self.assertIn("BuildConfig.VERSION_CODE", j)
-
-    def test_chat_html_的APP_CODE是占位(self):
-        # 仓库里必须是 0，由 rebuild_apk.py 从 version.json 注入
-        h = _read("android-app/app/src/main/assets/chat.html")
-        m = re.search(r"const\s+APP_CODE\s*=\s*(\d+)", h)
-        self.assertIsNotNone(m, "找不到 APP_CODE")
-        self.assertEqual(m.group(1), "0",
-                         "仓库版 APP_CODE 应该是 0（构建时注入），不是手写的号")
-
     def test_desktop_version_metadata_is_consistent(self):
-        # Android rebuild_apk.py was retired; desktop is the maintained release.
-        meta = json.loads(_read('client/version.json'))
-        package = json.loads(_read('client/package.json'))
-        self.assertEqual(meta['ver'], package['version'])
-        self.assertGreater(meta['code'], 0)
+        meta = json.loads(_read("client/version.json"))
+        package = json.loads(_read("client/package.json"))
+        self.assertEqual(meta["ver"], package["version"])
+        self.assertGreater(meta["code"], 0)
 
-    def test_两份chat_html一致(self):
-        # 版本号占位符改动如果只改了一份，打包出来的和仓库里的会对不上。
-        #
-        # 但根目录 _chat.html 是**打包母本**，被 .gitignore 挡着 —— 克隆/CI 上
-        # 本来就没有，读它必然 FileNotFoundError（这个测试对所有人都是红的，
-        # 只有作者本机例外，而作者删掉母本之后连本机也红了）。
-        # 没有母本时明确跳过，而不是让它报错。
-        root_copy = os.path.join(ROOT, "_chat.html")
-        if not os.path.isfile(root_copy):
-            self.skipTest("根目录 _chat.html 不在（它不入库，克隆后本就没有）")
-        a = _read("_chat.html")
-        b = _read("android-app/app/src/main/assets/chat.html")
-        self.assertEqual(a, b, "_chat.html 与 assets 那份不一致")
+    def test_release_script_reads_client_version_json(self):
+        build = _read("scripts/build_release.py")
+        self.assertIn("client/version.json", build)
+        self.assertIn("client/package.json", build)
+
+    def test_mobile_app_is_gone(self):
+        """App 已下线：仓库里不该再有 android 工程或它的版本号母本。"""
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "android-app")))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "version.json")))
 
 
 if __name__ == "__main__":

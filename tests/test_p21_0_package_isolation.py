@@ -31,7 +31,7 @@ def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, m
 
 
 def test_brain_release_guard_allows_bundled_plugins(tmp_path):
-    """内置插件（kb/gate/branch-atlas…）随包发布是预期状态，不该被拦。"""
+    """内置插件（kb/react/branch-atlas…）随包发布是预期状态，不该被拦。"""
     internal = tmp_path / "_internal"
     (internal / "core_features").mkdir(parents=True)
     (internal / "core_features" / "skill.py").write_text("core", encoding="utf-8")
@@ -140,18 +140,18 @@ def test_failed_legacy_plugin_copy_is_reported_and_keeps_source(monkeypatch, tmp
 
 def test_previous_p21_core_feature_copies_migrate_as_optional_plugins(tmp_path):
     home = tmp_path / "home"
-    old = home / "core_features" / "gate.py"
+    old = home / "core_features" / "websearch.py"
     old.parent.mkdir(parents=True)
-    old.write_text("user-adjusted-gate", encoding="utf-8")
+    old.write_text("user-adjusted-websearch", encoding="utf-8")
     (old.parent / "kb.py").write_text("legacy-kb-feature", encoding="utf-8")
 
     result = migrate_legacy_plugins(home)
-    target = home / "data/installed_plugins/gate.py"
+    target = home / "data/installed_plugins/websearch.py"
     kb_target = home / "data/installed_plugins/kb.py"
     assert result["copied"] == 2
-    assert target.read_text(encoding="utf-8") == "user-adjusted-gate"
+    assert target.read_text(encoding="utf-8") == "user-adjusted-websearch"
     assert kb_target.read_text(encoding="utf-8") == "legacy-kb-feature"
-    assert old.read_text(encoding="utf-8") == "user-adjusted-gate"
+    assert old.read_text(encoding="utf-8") == "user-adjusted-websearch"
 
 
 def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_roots(tmp_path):
@@ -160,7 +160,7 @@ def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_ro
     (old_brain / "_internal/core_features").mkdir(parents=True)
     (old_brain / "_internal/plugins").mkdir(parents=True)
     (old_brain / "_internal/core_features/kb.py").write_text("legacy-kb-adapter", encoding="utf-8")
-    (old_brain / "_internal/core_features/gate.py").write_text("legacy-gate", encoding="utf-8")
+    (old_brain / "_internal/core_features/websearch.py").write_text("legacy-websearch", encoding="utf-8")
     (old_brain / "_internal/plugins/reminder.py").write_text("legacy-reminder", encoding="utf-8")
     (old_brain / "_internal/core_features/remote.py").write_text("core-only", encoding="utf-8")
 
@@ -168,7 +168,7 @@ def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_ro
     installed = home / "data/installed_plugins"
     assert result["copied"] == 3
     assert (installed / "kb.py").read_text(encoding="utf-8") == "legacy-kb-adapter"
-    assert (installed / "gate.py").read_text(encoding="utf-8") == "legacy-gate"
+    assert (installed / "websearch.py").read_text(encoding="utf-8") == "legacy-websearch"
     assert (installed / "reminder.py").read_text(encoding="utf-8") == "legacy-reminder"
     assert not (installed / "remote.py").exists()
 
@@ -234,7 +234,7 @@ def test_retire_superseded_installs_only_removes_unmodified_shipped_copies(tmp_p
     _write_marker(home, {
         "kb.py": hashlib.sha256(b"kb-v1").hexdigest(),
         "branch-atlas/__init__.py": hashlib.sha256(b"NAME='branch-atlas'").hexdigest(),
-        "gate.py": hashlib.sha256(b"gate-v1").hexdigest(),
+        "websearch.py": hashlib.sha256(b"websearch-v1").hexdigest(),
     })
 
     result = retire_superseded_installs(home)
@@ -289,13 +289,13 @@ def test_release_spec_ships_bundled_plugins_and_isolates_wallpaper():
     assert '["git", "ls-files", "-z", "--", "brain/plugins"]' in spec
     assert 'if rel_file == "wallpaper" or rel_file.startswith("wallpaper/")' in spec
     assert "datas=core_feature_data + plugins_data + skill_host_data" in spec
-    assert '"kb.py", "gate.py", "react.py", "websearch.py"' in spec
+    assert '"kb.py", "react.py", "websearch.py"' in spec
     # 与 core_features 重名的镜像不进包。
     assert 'BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py"}' in spec
     # 核心适配器仍是允许清单制。
     assert "CORE_FEATURE_ALLOWLIST = {" in spec
     assert "if seen_core_features != CORE_FEATURE_ALLOWLIST" in spec
-    for optional in ("gate.py", "kb.py", "react.py", "websearch.py"):
+    for optional in ("kb.py", "react.py", "websearch.py"):
         assert not (ROOT / "brain/core_features" / optional).exists()
 
     # 启动时先迁移旧 home 再铺内置，顺序反了会用旧文件盖掉新版。

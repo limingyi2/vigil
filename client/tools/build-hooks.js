@@ -51,7 +51,7 @@ exports.afterPack=async context=>{
   for(const rel of ['plugins/wallpaper','_internal/plugins/wallpaper']) {
     if(fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain contains an external plugin payload: '+rel);
   }
-  for(const rel of ['_internal/plugins/kb.py','_internal/plugins/gate.py','_internal/plugins/react.py','_internal/plugins/websearch.py']) {
+  for(const rel of ['_internal/plugins/kb.py','_internal/plugins/react.py','_internal/plugins/websearch.py']) {
     if(!fs.existsSync(path.join(root,rel))) throw new Error('Packaged Brain is missing a bundled plugin: '+rel);
   }
   contract.compatible(client,brain);contract.verifyTree(root,brain);

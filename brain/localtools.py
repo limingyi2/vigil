@@ -305,23 +305,15 @@ POLL_STALE = 60
 _LAST_POLL = 0.0     # 最近一次 take() 的时间戳（本地内存，重启归零）
 
 
-# ── 身份与权限（M4）──────────────────────────────────────────────
-# 以前默认"能连上客户端的都是主人"，工具集按渠道一裁了事（微信渠道
-# 直接给空）。M4 起微信渠道也开放本地操控 —— 反正活最终派到的是**他
-# 自己的电脑**，但谁能下指令要按（渠道，发送者，风险档）判定：
+# ── 身份与权限 ───────────────────────────────────────────────────
+# 渠道收敛到 PC 之后，能发起本地操控的只有**坐在自己电脑前的本人**（pc，
+# 以及进程内调用的空渠道）：三档全放，confirm/dangerous 仍有客户端弹窗兜底。
 #
-#   risk 三档：safe（只读/低危） confirm（改动但可逆） dangerous（不可逆/高危）
-#   - app/pc 渠道（他自己的电脑上聊）：主人本人，三档全放（confirm/
-#     dangerous 仍有客户端弹窗兜底）
-#   - wechat 私聊：sender_id 在 owner_ids 才放行（三档全放，弹窗兜底）；
-#     非 owner 一律拒
-#   - wechat_group 群聊：**即使 owner 也只放 safe** —— 群里一句话就能
-#     删文件的世界太危险，而且群里确认弹窗没有意义（人不在电脑前）
+# risk 三档：safe（只读/低危） confirm（改动但可逆） dangerous（不可逆/高危）
 #
-# 🔴 现阶段微信远控总闸 remote_control 默认关（见 features.DEFAULTS）：
-#   关着时微信私聊/群聊**一条 local_* 工具都看不到，执行层也一律拒**，
-#   即"微信只聊天"。owner/群聊矩阵只有总闸打开后才生效 —— 那是以后单独
-#   授权才开放的能力。
+# 🔴 以前那套（微信私聊 owner_ids 白名单 + 群聊只放 safe + remote_control
+#   总闸）随微信入口一起在 P21.2 下线：core 已经不接受任何非 pc 渠道，
+#   留着只是一段永远走不到的安全戏。
 #
 # 🔴 这是服务端的最终关卡。客户端的确认弹窗、白名单、能力开关是第二道；
 #   两道各自独立工作，谁也不依赖谁。
@@ -374,30 +366,6 @@ def get_context():
     return dict(_CTX.get())
 
 
-def _remote_control_on(src):
-    """微信渠道远控总闸（features.remote_control，默认关）。
-
-    规格层和执行层都问它：关着 = 微信渠道不暴露、不放行任何 local_* 工具。
-    读开关失败一律按"关"处理（fail-closed）——远控不是基础能力。
-    """
-    try:
-        import features
-        return bool(features.on("remote_control", str(src or "").lower()))
-    except Exception:
-        return False
-
-
-def _owner_ids():
-    """主人微信号清单。config 键 owner_ids（列表），不在就空 —— 空表示
-    微信渠道谁都不放行（宁可错过不可错杀，配好再说）。"""
-    try:
-        import runtime as _rt
-        ids = (_rt.api_config or {}).get("owner_ids") or []
-        return [str(i).strip() for i in ids if str(i).strip()]
-    except Exception:
-        return []
-
-
 def clearance(risk, src=None, sender_id=None):
     """这一档工具在这条消息上能不能放。返回 (ok, reason)。
 
@@ -405,26 +373,9 @@ def clearance(risk, src=None, sender_id=None):
     """
     risk = risk if risk in ("safe", "confirm", "dangerous") else "safe"
     src = _CTX.get()["src"] if src is None else str(src or "")
-    sender_id = (_CTX.get()["sender_id"] if sender_id is None
-                 else str(sender_id or "").strip())
-    if src in ("wechat", "wechat_group"):
-        # 总闸关着：规格层不给工具，这里是执行层的第二道拒绝（双重保险，
-        # 防止旧队列、热加载窗口或别的调用路径漏过来）。
-        if not _remote_control_on(src):
-            return False, ("现阶段微信只聊天，不远程操控电脑"
-                           "（远程控制功能还没打开）。")
-        owners = _owner_ids()
-        if not sender_id or sender_id not in owners:
-            return False, ("这个操作要在他的电脑上动东西，只有他本人（微信私聊）"
-                           "叫你做才行。")
-        if src == "wechat_group" and risk != "safe":
-            return False, ("群聊里只能做查询类的安全操作（看看状态、读读文件），"
-                           "改动和危险操作只在他本人私聊时才做。")
-        return True, ""
-    # 只有"坐在设备前的本人渠道"才天然放行：pc（桌面客户端）、app（已退役，
-    # 仅内部/老链路兼容；HTTP 上 app 会被 _norm_src 归一成 wechat，到不了这）、
-    # 空渠道（进程内调用）。其它任何拼不出来的渠道默认拒 —— 不认识就不放行。
-    if src in ("pc", "app", ""):
+    # 只有"坐在设备前的本人渠道"才放行：pc（桌面客户端）与空渠道（进程内
+    # 调用）。其它任何拼不出来的渠道默认拒 —— 不认识就不放行。
+    if src in ("pc", ""):
         return True, ""
     return False, "未知渠道，不允许在这台电脑上执行操作。"
 
@@ -499,19 +450,8 @@ def specs(names=None, src=None):
     """给插件用的工具规格（TOOL_SPECS 的形状）。
 
     names 为 None 时给全部；传了名字就只给这些 —— 能力裁剪用得上。
-    src 是渠道：
-      - 微信私聊/群聊在 remote_control 总闸关着时返回**空集**（模型根本
-        看不到 local_* 工具，"微信只聊天"）；
-      - 总闸打开后，群聊（wechat_group）仍只暴露 safe 档 —— 模型**看不到**
-        改动类工具，比"调了再拒"更稳（省得它在群里许诺一件做不了的事）。
+    src 只用于审计：core 现在只跑 pc，渠道不再影响工具集合。
     """
-    src = str(src or "").strip().lower()
-    if src in ("wechat", "wechat_group") and not _remote_control_on(src):
-        return {}
-    if src in ("wechat_group",):
-        names = [k for k, v in REMOTE_TOOLS.items()
-                 if v.get("risk") == "safe"] if names is None else \
-            [n for n in names if REMOTE_TOOLS.get(n, {}).get("risk") == "safe"]
     out = {}
     for k, v in REMOTE_TOOLS.items():
         if names is not None and k not in names:

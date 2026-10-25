@@ -68,23 +68,10 @@ brain/logs/
 # 集中放被取代/移除的老文件、清理前的备份、重复副本。
 # 只做留存不做参考，除非要考古否则不用打开，整目录不入库。
 _attic/
-# 桌宠摘掉的本地模块 / 本地兜底大脑（2026-09-29）
-pet/mobile_server.py
-
 # ===== 打包流水线的活跃输入（不是历史遗留，别归档、别删）=====
-# _chat.html 是前端母本：改完跑 .workbuddy\scripts\tools\_repackage.py 打进 APK。
-# 它与 android-app\app\src\main\assets\chat.html 内容必须一致（那份入库存档，
-# 供 gradle 正式构建用），母本不入库 —— 避免同一份前端在仓库里存两次。
-_chat.html
-# 源 APK（deploy\角色.apk 的副本，_repackage.py 拿它当底）已被上面 *.apk 规则覆盖
-
 # ===== 构建产物 =====
 *.apk
 *.aab
-android-app/.gradle/
-android-app/app/build/
-android-app/build/
-android-app/local.properties
 build/
 dist/
 
@@ -98,10 +85,6 @@ __pycache__/
 *.egg-info/
 
 # ===== 本机专用启动脚本：含服务器地址与私钥路径，不入库 =====
-# 仓库只保留 run_pet.example.bat 作为模板，本机真实脚本改好后无需提交
-pet/launchers/run_pet.bat
-pet/launchers/run_pet_cloud.bat
-
 # ===== 已下架的旧人设（恋爱框架），不对外 =====
 *.retired*
 
@@ -191,18 +174,7 @@ brain/skill_host/package-lock.json
 # 那个目录 436MB、5000+ 个文件，一次 `git add .` 就会整个吞进仓库。
 # 写成通用规则，以后新增任何前端目录都自动生效。
 node_modules/
-#===== vigil-client：客户端真做起来了 =====
-# 这条原来是**整目录忽略**，当时的注释写着"里面只有 node_modules、连
-# package.json 都没有（436MB）……将来真要做客户端，把这个规则删掉、
-# 把源码补上再用"。现在源码齐了（electron/ src/ tools/ package.json
-# README），按那句话把整目录规则删掉，只挡产物。
-# （node_modules/ 已经被上面的通用规则盖住，这里不用再写一遍。）
 #===== 客户端：Electron 打包产物 =====
-# vigil-client/ 旧路径（兼容）
-vigil-client/dist/
-vigil-client/_shots/
-vigil-client/src/_harness.html
-# client/ 新路径（重构后）
 client/dist/
 client/dist-*/
 client/dist_*/
@@ -254,7 +226,6 @@ _backup_*/
 # ===== 本地优先改造期间的备份/参考目录（2026-10-08 基线快照时补挡）=====
 _removed_*/
 _split/
-vigil-client_backup_*/
 deepseek-harness/
 
 # persona 同步账本：运行时状态（seq/墓碑），每台机器各自推进，不入库

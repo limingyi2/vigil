@@ -35,7 +35,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PANEL = os.path.join(ROOT, "admin", "dashboard.html")
-APP = os.path.join(ROOT, "vigil-client", "src", "js", "pages.js")
+APP = os.path.join(ROOT, "client", "src", "js", "pages.js")
 SERVER = os.path.join(ROOT, "brain", "server.py")
 
 
@@ -149,10 +149,21 @@ class TestAppRefetchesOnProviderSwitch(unittest.TestCase):
                       "换服务商没带出该家的默认地址")
 
     def test_重拉_把地址与密钥都传过去(self):
-        self.assertIn("/api/models?force=1&base=", self.h,
-                      "重新拉取没有带 base —— 拿到的还是当前配置那家的列表")
-        self.assertIn("encodeURIComponent(key)", self.h,
-                      "重新拉取没带 key：用户换地址后可能也换了密钥")
+        """重拉要带 force/base/provider/api_key 四样。
+
+        2026-10 起从 GET `/api/models?force=1&base=` 改成 POST
+        `/api/models/list` —— 密钥不能再走 URL（会落进访问日志）。判据跟着
+        换，钉的还是同一件事：不传 base 就只能拿已保存配置那家的列表。
+        """
+        i = self.h.index("v.querySelector('#mPull').addEventListener('click'")
+        body = self.h[i:i + 900]
+        self.assertIn("/api/models/list", body,
+                      "重新拉取走的还是老接口")
+        for token, why in (("force: true", "没带 force，服务端可能直接回缓存"),
+                           ("base: base", "没带 base —— 拿到的还是当前配置那家的列表"),
+                           ("provider: pk", "没带 provider，服务端不知道该按哪家返"),
+                           ("api_key: key", "没带 key：用户换地址后可能也换了密钥")):
+            self.assertIn(token, body, why)
 
     def test_重拉按钮存在且不是旧路径(self):
         self.assertIn("id='mPull'", self.h.replace('"', "'") or self.h,

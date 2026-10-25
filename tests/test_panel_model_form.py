@@ -32,7 +32,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PANEL = os.path.join(ROOT, "admin", "dashboard.html")
-APP = os.path.join(ROOT, "vigil-client", "src", "js", "pages.js")
+APP = os.path.join(ROOT, "client", "src", "js", "pages.js")
 
 
 def _read(path):

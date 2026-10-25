@@ -1,8 +1,8 @@
 name: tests
 
 # 这个仓库以前一个自动化测试都没有：效果全靠"日常使用观察"，
-# 于是 LOOP_MAX 未定义、rollup 不删源文件丢内容、pet 的 read_history 不存在
-# 这类问题都只能等出事了才发现。现在至少纯逻辑那部分有回归网了。
+# 于是 LOOP_MAX 未定义、rollup 不删源文件丢内容这类问题都只能等出事了
+# 才发现。现在至少纯逻辑那部分有回归网了。
 
 on:
   push:
@@ -60,11 +60,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      # compileall 只编译不执行，所以不需要装 PyQt6 / psutil / fastembed 也能
-      # 把桌宠与客户端的语法一起兜住（测试路径 import 不到那些文件）。
-      - name: 编译 brain/ 与 pet/ 下所有模块
+      # compileall 只编译不执行，所以不需要装 psutil / fastembed 也能把
+      # brain 的语法兜住（测试路径 import 不到那些文件）。
+      - name: 编译 brain/ 下所有模块
         run: |
-          python -m compileall -q brain pet
+          python -m compileall -q brain
           echo "compileall OK"
 
   rag-acceptance:

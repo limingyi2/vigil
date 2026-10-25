@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 # 只有这些插件是"外部"的：由插件市场安装到 data/installed_plugins。
-# 其余（kb/gate/react/websearch/reminder/branch-atlas）随包内置。
+# 其余（kb/react/websearch/reminder/branch-atlas）随包内置。
 EXTERNAL_PLUGIN_NAMES = ("wallpaper",)
 
 

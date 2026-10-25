@@ -128,13 +128,18 @@ class TestRemotePlugin(unittest.TestCase):
             self.assertIn("arg_param", s)
             self.assertTrue(s["desc"] in PLUGIN.TOOL_HELP or True)
 
-    def test_微信渠道规格默认是空(self):
-        """总闸默认关：微信私聊/群聊的工具规格必须为空（微信只聊天）。"""
-        self.assertEqual(PLUGIN.tool_specs("wechat"), {})
-        self.assertEqual(PLUGIN.tool_specs("wechat_group"), {})
-        # 客户端渠道不受影响
-        self.assertTrue(PLUGIN.tool_specs("pc"))
-        self.assertTrue(PLUGIN.tool_specs("app"))
+    def test_工具规格不再随渠道裁剪(self):
+        """渠道收敛到 PC 之后，工具集合跟渠道无关。
+
+        以前这里钉的是"微信渠道返回空集（总闸默认关）"；微信运行时在 P21.2
+        整块下线，core 只跑 pc，那套裁剪已经是没有作用对象的安全戏。现在钉
+        的是"别再把按渠道裁剪的逻辑偷偷加回来"。
+        """
+        everything = set(PLUGIN.tool_specs("pc"))
+        self.assertTrue(everything)
+        for src in ("", "pc", "app", "wechat", "wechat_group"):
+            self.assertEqual(set(PLUGIN.tool_specs(src)), everything,
+                             "%r 的工具集合跟 pc 不一致 —— 又按渠道裁剪了" % src)
 
     def test_提示词里提了每个工具(self):
         """tag 形式的提示词要带工具名（模型照名字拼 [tool:名字:参数]）。"""

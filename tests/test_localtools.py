@@ -261,5 +261,41 @@ class TestPluginWiring(unittest.TestCase):
         self.assertIn("/api/plugin/remote/result", self.src)
 
 
+class ClearanceTests(unittest.TestCase):
+    """渠道收敛到 PC 后的执行层放行规则。
+
+    以前这里有一套微信矩阵（owner_ids 白名单 + 群聊只放 safe + 总闸），随
+    微信入口在 P21.2 下线；留下的是"本人渠道全放、认不出来的渠道一律拒"。
+    """
+
+    def setUp(self):
+        localtools.set_context("pc", "")
+
+    def tearDown(self):
+        localtools.set_context("", "")
+
+    def test_pc_allows_all_three_risk_levels(self):
+        for risk in ("safe", "confirm", "dangerous"):
+            ok, why = localtools.clearance(risk)
+            self.assertTrue(ok, "%s 在 pc 上应放行：%s" % (risk, why))
+
+    def test_unknown_channel_is_denied(self):
+        for src in ("wechat", "wechat_group", "app", "lan"):
+            ok, why = localtools.clearance("safe", src=src)
+            self.assertFalse(ok, src + " 不该再被接受")
+            self.assertIn("未知渠道", why)
+
+    def test_in_process_context_allows(self):
+        localtools.set_context("", "")
+        ok, _ = localtools.clearance("dangerous")
+        self.assertTrue(ok, "进程内调用（空渠道）是本人，应放行")
+
+    def test_specs_do_not_depend_on_channel(self):
+        everything = localtools.specs()
+        self.assertTrue(everything)
+        for src in ("pc", "", "wechat_group"):
+            self.assertEqual(set(localtools.specs(src=src)), set(everything))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,7 +24,7 @@ import model_hub as M                                  # noqa: E402
 
 # 2026-10-08：模型面板已从 App 搬到 Electron 客户端，界面断言改读客户端源码。
 # App 现在只是框架页（连接 + 更新），模型/人设界面都在客户端里。
-CHAT_HTML = os.path.join(ROOT, "vigil-client", "src", "js", "pages.js")
+CHAT_HTML = os.path.join(ROOT, "client", "src", "js", "pages.js")
 
 
 class TestProviders(unittest.TestCase):
@@ -174,10 +174,13 @@ class TestAppHtml(unittest.TestCase):
 
     def _model_page(self):
         """抠出模型页那段源码（含下拉与 change 处理），别整份文件里瞎找。
-        2026-10-09 起模型页加了云端/本机切换和自动拉清单，函数变长了，
-        窗口跟着放宽（别掐得太紧把 change 处理截在外面）。"""
+
+        边界用**下一个顶层函数**，不用固定字符窗口 —— 窗口写过 12000，函数
+        后来长到 23000+，change 处理被截在外面，断言就成了"永远找不到"的假红
+        （还很容易被误读成"功能被删了"）。"""
         i = self.src.index("async function model(")
-        return self.src[i:i + 12000]
+        j = self.src.find("\n    async function ", i + 1)
+        return self.src[i:j if j > 0 else len(self.src)]
 
     def test_provider_select_is_rendered_from_server_list(self):
         """下拉必须由 provs（服务端返回）渲染，不是写死的 option。"""

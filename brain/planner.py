@@ -277,11 +277,11 @@ def _ask_flash(prompt, temperature, max_tokens, timeout):
     if not api_base or not api_key:
         return None
     # 🔴 模型和 base 必须同家：planner_model 默认是 DeepSeek flash，主服务商
-    # 切回小米后这里会 400「Unsupported model」（跟 gate 一样）。失败虽然只是
-    # 静默回退 ReAct，但那两次 flash 调用就白花了。换家规则跟 gate._judge_api
-    # 共用一份实现（plugins/gate.py），别在这再抄一遍 —— 抄两遍必漂移。
+    # 切回小米后这里会 400「Unsupported model」。失败虽然只是静默回退 ReAct，
+    # 但那两次 flash 调用就白花了。换家规则统一实现在 model_pick，别在这再抄
+    # 一遍 —— 抄两遍必漂移。
     try:
-        from plugins.gate import _judge_api
+        from model_pick import _judge_api
         api_base, api_key, model = _judge_api(
             {"api_base": api_base, "api_key": api_key, "model": model}, cfg)
     except Exception:

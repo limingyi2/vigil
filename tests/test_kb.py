@@ -53,6 +53,12 @@ class KBTestBase:  # 只是个 mixin，别继承 TestCase：tests/test_source_hy
         engine.ROOT_OVERRIDE = self.tmp
         config.SETTINGS_PATH = os.path.join(self.tmp, "settings.json")
         engine.reset_cache()
+        # 统一混合检索还会把块同步进**主库**（search_docs / search_fts）。只钉
+        # ROOT_OVERRIDE 的话那一份照样写真实开发库 —— 症状是"删干净了还搜得到"，
+        # 而且测试之间互相污染（先跑过的用例在库里留了块）。所以连库目录一起钉。
+        from storage import db as _db
+        self._db_dir_old = _db._DB_DIR
+        _db.set_dir(os.path.join(self.tmp, "db"))
         import kb.embedder as emb
         self._orig_embed = emb.embed
         self._orig_embed_one = emb.embed_one
@@ -66,6 +72,10 @@ class KBTestBase:  # 只是个 mixin，别继承 TestCase：tests/test_source_hy
         engine.ROOT_OVERRIDE = self._root_old
         config.SETTINGS_PATH = self._settings_old
         engine.reset_cache()
+        from storage import db as _db
+        # 传 None 而不是旧值：set_dir(None) 会 close_all()，把临时库的句柄放掉，
+        # 否则 Windows 上 rmtree 会撞 WinError 32（文件被占）。
+        _db.set_dir(self._db_dir_old or None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 

@@ -998,7 +998,7 @@ class Brain:
             pass
         try:
             import plugin_host
-            # native=True：跳过工具类插件的标签教学，只留 react/gate 行为引导
+            # native=True：跳过工具类插件的标签教学，只留 react 行为引导
             pb = plugin_host.prompt_block(native=True)
             if pb:
                 parts.append(pb)

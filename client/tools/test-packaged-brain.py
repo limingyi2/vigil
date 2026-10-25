@@ -47,7 +47,7 @@ try:
     else:
         raise RuntimeError('Backend health timed out; fixture: %s' % home)
     # 内置插件随包；wallpaper 是市场外部插件，不该出现在安装包里。
-    for rel in ('plugins/kb.py', 'plugins/gate.py', 'plugins/react.py',
+    for rel in ('plugins/kb.py', 'plugins/react.py',
                 'plugins/websearch.py', 'plugins/branch-atlas/frontend.js'):
         assert (home / '_internal' / rel).is_file(), 'missing bundled plugin: ' + rel
     assert not (home / '_internal/plugins/wallpaper').exists(), 'wallpaper must stay external'

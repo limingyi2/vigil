@@ -12,7 +12,7 @@ const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validate = ajv.compile(schema);
 const wallpaper = JSON.parse(fs.readFileSync(path.join(root, 'docs/examples/extensions/wallpaper.manifest.example.json')));
-const bridge = JSON.parse(fs.readFileSync(path.join(root, 'docs/examples/extensions/wechat-bridge.manifest.example.json')));
+const bridge = JSON.parse(fs.readFileSync(path.join(root, 'docs/examples/extensions/channel-bridge.manifest.example.json')));
 
 assert.equal(validate(wallpaper), true, JSON.stringify(validate.errors));
 assert.equal(validate(bridge), true, JSON.stringify(validate.errors));

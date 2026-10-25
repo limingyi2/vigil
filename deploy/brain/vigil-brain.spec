@@ -87,9 +87,9 @@ for tracked in sorted(p for p in tracked_plugins if p):
 if not plugins_data:
     raise RuntimeError("Bundled plugin payload is empty; refusing to build a shell-only Brain")
 shipped = {os.path.basename(src) for src, dest in plugins_data if dest == "plugins"}
-if {"kb.py", "gate.py", "react.py", "websearch.py"} - shipped:
+if {"kb.py", "react.py", "websearch.py"} - shipped:
     raise RuntimeError("Required bundled plugins are missing: " +
-                       ", ".join(sorted({"kb.py", "gate.py", "react.py", "websearch.py"} - shipped)))
+                       ", ".join(sorted({"kb.py", "react.py", "websearch.py"} - shipped)))
 
 # 带 skill_host（Node.js 技能宿主）：server.js + start_host.bat + skills/ 下所有技能
 skill_host_data = []

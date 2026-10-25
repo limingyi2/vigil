@@ -46,7 +46,6 @@ import zipfile
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DASH = os.path.normpath(os.path.join(HERE, "..", "admin", "dashboard.html"))
 # 🔴 单反斜杠。这里的常量是写进 Python 源码的，不经过 cmd，
 # 但仍要跟仓库里其它脚本一致 —— 写成双反斜杠会在 Windows 上被当 UNC。
 VENV_PY = os.path.normpath("F:/vigil/venv/Scripts/python.exe")
@@ -258,15 +257,9 @@ def run_suite():
           st.get("ext"))
     check("ext 含 .js", ".js" in (st.get("ext") or []), st.get("ext"))
 
-    group("3. 面板读的每个键，后端真的都给了")
-    html = io.open(DASH, encoding="utf-8").read()
-    seg = html[html.index("Views.skills = "):]
-    seg = seg[:seg.index("/* ===== 视图：朋友圈")]
-    read_keys = set(re.findall(r"\bst\.(\w+)", seg))
-    check("面板读了几个键", len(read_keys) >= 3, sorted(read_keys))
-    missing = sorted(k for k in read_keys if k not in st)
-    check("一个不缺（缺一个就显示空）", not missing,
-          "面板读 %s，缺 %s" % (sorted(read_keys), missing))
+    # 3. 原来这里拿 admin/dashboard.html 当"消费方契约"，逐个 u0040st.X 核对后端有没
+    #    有给。那个面板随 App/微信渠道一起在 P21.2 下线了；现在的消费方是 Electron
+    #    客户端，契约由 tests/ 里的接口测试守。
 
     group("4. 参数校验（跟宿主活不活无关，任何时候都得对）")
     z = mkzip_b64({"smoke/smoke/index.js": SKILL_IDX,

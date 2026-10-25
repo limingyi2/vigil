@@ -326,8 +326,6 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/memory/stores",
     "/api/memory/list",
     "/api/device/list",
-    "/api/app/version",
-    "/api/app.apk",
     "/api/client/version",
     "/api/client/setup",
     # remote 插件：设备轮询/看工具目录/统计
@@ -1419,7 +1417,7 @@ def start_remote_api(brain):
                 return management_items(_po, chans)
 
             if method == "GET":
-                # /api/plugins 已经被微信桥接和 VM 启动器当"大脑活着吗"
+                # /api/plugins 已经被外部启动器当"大脑活着吗"
                 # 的探针（只看 200），plugins 键保持原样别动。
                 # 管理视图另起一个键 —— 老消费者读不到新东西，新页面
                 # 不必知道那个键的存在。
@@ -4620,34 +4618,14 @@ def start_remote_api(brain):
                 self._json(404, {"err": "no such creator api"})
             elif path.startswith("/api/plugins"):
                 # 插件清单 + 管理视图（渠道视图）+ 前端注入资源。
-                # 微信桥接和 VM 启动器拿 /api/plugins 当"大脑还活着吗"
+                # 外部探针（VM 启动器等）拿 /api/plugins 当"大脑还活着吗"
                 # 的探针，只看 200 不看 body —— plugins 键的形状保持原样，
                 # 管理视图另起一个键。/api/plugins/frontend 返回插件前端代码。
                 if self._plugin_admin("GET", path, None):
                     return
                 self._json(200, {"plugins": []})
-            elif path == "/api/app/version":
-                # App 内置更新检查：读版本文件（发布新 APK 时一起更新）
-                try:
-                    vf = r"C:\vigil\app\version.json"
-                    self._json(200, json.load(open(vf, encoding="utf-8")))
-                except Exception as e:
-                    self._json(200, {"code": 0, "err": str(e)[:60]})
-            elif path == "/api/app.apk":
-                apk = r"C:\vigil\app\vigil.apk"
-                try:
-                    blob = open(apk, "rb").read()
-                    self.send_response(200)
-                    self.send_header("Content-Type",
-                                     "application/vnd.android.package-archive")
-                    self._cors()
-                    self.send_header("Content-Length", str(len(blob)))
-                    self.end_headers()
-                    self.wfile.write(blob)
-                except Exception as e:
-                    self._json(404, {"err": str(e)[:60]})
             elif path == "/api/client/version":
-                # 桌面客户端推送更新（2026-10-09，跟 App 一套思路）：
+                # 桌面客户端推送更新：
                 # C:\Vigil\app\client\ 放安装包 + client_version.json
                 # （code 递增，发布新包时一起更新）
                 try:
@@ -4657,7 +4635,7 @@ def start_remote_api(brain):
                     self._json(200, {"code": 0, "err": str(e)[:60]})
             elif path == "/api/client/setup":
                 # 桌面客户端安装包下载。**分块流式**：安装包 70MB+，
-                # 不能学 app.apk 整块 read() 进内存——每次更新都吃一次内存峰值
+                # 必须分块流式，不能整块 read() 进内存——每次更新都吃一次内存峰值
                 fp = r"C:\Vigil\app\client\VigilSetup.exe"
                 try:
                     import os as _os
