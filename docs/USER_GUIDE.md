@@ -3,10 +3,11 @@
 ﻿# Vigil
 
 Vigil 是以桌面端为中心的独立 Agent。Electron 客户端与本地 Brain 组成完整运行端，
-负责对话、工具执行、插件和本地数据；不连接云端 Brain 也可以启动和使用。
+负责对话、工具执行、插件和本地数据。记忆、人设、会话、任务都在这台机器上，
+**不存在需要连上的云端大脑**；联网只用于调用远程模型 API 和下载插件包。
 模型可通过 OpenAI 兼容接口接入本机 Ollama 或远程模型服务。
 Core 运行上下文仅为本机 PC。微信 Bridge 源码仅作归档，未来通过独立扩展接入。
-完全离线对话需要本机模型；断开云端 Brain 与断开模型 API 是两种不同情况。
+完全离线对话需要本机模型——这与"要不要连云端"无关，因为已经没有云端大脑了。
 
 **人格与项目无关。** 人格是 `brain/config/personas/*.json` 里各自定义的配置，
 仓库不预置角色。项目叫 Vigil，人格叫什么是人格自己的事。
@@ -21,9 +22,9 @@ Android WebView（手机）· Node（JS 技能宿主）· LLM 走 OpenAI 兼容�
 
 | 章节 | 内容 |
 |---|---|
-| [架构总览](#架构总览) | 双大脑怎么分工、谁权威 |
+| [架构总览](#架构总览) | 进程怎么分工、数据归谁 |
 | [装起来跑通](#装起来跑通) | 各端怎么启动 |
-| [双大脑与云端同步](#双大脑与云端同步) | 本地优先：改了什么怎么上云、微信怎么路由 |
+| [运行形态与数据归属](#运行形态与数据归属) | 数据放哪、为什么没有同步链路 |
 | [配 API 与模型](#配-api-与模型) | 接哪个服务商、密钥怎么管 |
 | [说话多少与搭话](#说话多少与搭话) | 话痨度滑条与 1 档只@ |
 | [桌面客户端](#桌面客户端) | Electron 控制台有什么、怎么发版 |
@@ -47,33 +48,34 @@ flowchart LR
   Desktop[Electron 桌面端] <--> Local[本地 Brain / Agent 运行时]
   Local --> Model[本机 Ollama 或独立配置的模型 API]
   Local --> Data[本地配置、记忆、知识库与工具]
-  Local <-. 可选同步与转发 .-> Cloud[云端扩展服务]
-  Cloud <--> Mobile[手机与微信入口]
+  Local --> Caps[能力注册表：权限与审批]
+  Caps --> Ext[插件 / 技能 / 本地工具]
+  Mobile[手机等受限设备] -.-> Local
 ```
 
 运行原则：
 
 1. **桌面端独立运行**。本地 Brain 保存本机配置和数据，提供对话与工具执行。
    Electron 负责交互与本机能力，两者共同构成桌面 Agent。
-2. **云端按需连接**。同步与远程渠道入口按现有配置连接；微信由独立 Bridge
-   进程接入 Brain。桌面 Core 不等同于 Bridge，也不因安装 Core 自动启用微信。
-   现有同步协议仍由云端维护同步版本权威。
+2. **没有云端权威源**。P8.1 起撤掉了"云端维护同步版本权威"那套：同步推送线程、
+   拉取循环都不再启动，配置里残留的 `sync.*` 无人读取。微信渠道与双 Brain 转发
+   返回 410 退役，Bridge 源码只在归档目录。
 3. **模型连接单独配置**。本机 Ollama 可支持离线推理；采用远程模型 API 时，
-   生成回答需要相应网络连接。设备凭据与云端同步凭据分别管理。
+   生成回答需要相应网络连接。设备凭据只用于连接这台机器上的 Brain。
 
 ---
 
 ## 装起来跑通
 
-### 云端大脑
+### 本地 Brain（源码运行）
 
 ```bash
 pip install -r brain/requirements.txt
-cp brain/config/config.example.json brain/config/config.json   # 填 api_key / token
-python brain/server.py                                          # 监听 :8788
+cp brain/config/config.example.json brain/config/config.json   # 填模型配置
+python brain/server.py                                          # 挑空闲端口，回落到 :8788
 ```
 
-`brain_token` 没配时接口只接受本机回环。公网要连就得配，配完用
+`brain_token` 没配时接口只接受本机回环。局域网或远程设备要连就得配，配完用
 `Authorization: Bearer <token>` 走请求头。
 
 `fastembed` 第一次跑会下载 bge-m3 模型（记忆检索用），需要联网。
@@ -84,9 +86,9 @@ python brain/server.py                                          # 监听 :8788
 cd client && npm install && npm start
 ```
 
-启动后自动探测大脑：本机隧道 127.0.0.1:18787 → 本机 8788 → 自带的本地大脑
-（sidecar，PyInstaller 打包的 `vigil-brain.exe`，客户端会把它当子进程养起来）。
-没有云端时它就是一台完整的单机版：本地大脑独立跑，聊天照常。
+启动后客户端把 PyInstaller 打包的 `vigil-brain.exe`（sidecar）当子进程养起来：
+选空闲端口、注入 `VIGIL_PORT`、验证 API 就绪后进入工作台。源码直跑 Brain 时，
+客户端会探测到已运行的实例而不是再起一个。
 
 ### 手机端
 
@@ -98,28 +100,26 @@ python deploy/rebuild_apk.py
 
 ### 旧版桌宠（PyQt6）
 
-`pet/` 还在，能连云端跑，维护优先级已让位给 Electron 客户端。
+`pet/` 还在，维护优先级已让位给 Electron 客户端。
 
 ---
 
-## 双大脑与云端同步
-
-本地优先架构（M1–M5）落成后的分工：
+## 运行形态与数据归属
 
 | 能力 | 在哪 |
 |---|---|
-| 本机对话 / 工具 / 配置 / 记忆 | 本地 Brain；可独立运行 |
-| 跨设备同步数据 | 可选云端同步；现有协议由云端维护同步版本权威 |
-| 微信与双 Brain 转发 | Core 已退役，旧请求返回 410；Bridge 源码保留 |
-| 记忆/人设改动怎么上云 | 本地大脑 outbox → `/api/sync/flush`；seq 账本 + 墓碑 + 幂等 upsert |
-| 主人鉴权 | 工具按风险三档分级；私聊主人全放、群聊只放 safe 级 |
+| 本机对话 / 工具 / 配置 / 记忆 | 本地 Brain；单机完整可用 |
+| 跨设备同步 | **没有**。本地是唯一权威源，改动即落盘，不存在"上云才算存住" |
+| 微信与双 Brain 转发 | 已退役，旧请求返回 410；Bridge 源码在 `wechat-bridge/archive/` |
+| 手机等远程设备 | 以受限设备角色连同一台 Brain（`devices.json` 只存令牌哈希），权限按白名单路径走 |
+| 工具与风险分级 | 按只读 / 代理 / 写入三档分级；有副作用先进审批卡 |
 
-- **同步凭据是两把钥匙**：客户端的设备 token 连本机大脑；云端路由 / 数据页
-  云端视角用的是云端同步凭据（`sync.cloud_url` + `sync.cloud_token`）。
-  配置在客户端「设置 → 云端同步」。
-- **双 Brain 转发已退役**：`/api/route`、`/ws/brain` 返回 410，原模块在 `wechat-bridge/archive/core-forward/` 归档。Core 不隐式连接微信。
+- **残留的 `sync_client.py` / `sync_outbox.py` 不会被启动**：推送线程和拉取循环
+  都没有调用方，`record()` 恒为 no-op。它们保留只为兼容旧数据与历史接口。
+  配置里的 `sync.*` 无人读取，`cloud_token` 按"已泄露"处理——轮换见
+  [运维手册](OPERATIONS.md#密钥与凭据)。
 - **记忆管理**在客户端「人格与人格 → 记忆与约定」：分区浏览、行内改删，
-  走 `/api/memory/*`，改动立即进同步账本。
+  走 `/api/memory/*`，改动立即落盘。
 
 ## 配 API 与模型
 
@@ -176,7 +176,8 @@ PROVIDERS = {
 ## 说话多少与搭话
 
 `brain/chatty.py`：话痨度 1–10，按渠道（App / 微信私聊 / 微信群 / 本机）
-各存一份，客户端「能力 → 功能开关」里是滑条，App/微信渠道直改云端。
+各存一份，客户端「能力 → 功能开关」里是滑条，App/微信渠道的份自本机 Brain
+的各渠道配置读取（微信渠道已退役，实际只在本机生效）。
 
 - 2 档以上：搭话判定照旧，判定不过再按 `(档位-1)/9 × 0.45` 的概率救回
 - 旧版 `gate` 插件曾提供“只在被 @ 时回复”的硬闸；该可选插件已在 P21.2 下线，
@@ -188,26 +189,25 @@ PROVIDERS = {
 
 - **工作台**：聊天（流式）、聊天输入框旁的盾牌面板管本地操控授权
 - **数据**：仅查看本机 PC 的历史、长期记忆与知识库。旧微信数据保留，不自动读入或覆盖。
-- **人格与记忆**：本机人设编辑与切换、记忆分区管理、知识库导入，无需云端 Brain。
+- **人格与记忆**：本机人设编辑与切换、记忆分区管理、知识库导入。
 - **能力与扩展**：功能开关（滑条按渠道）、本地操控（她在你这台电脑上干活，
   全程确认气泡 + 操作日志 + 撤销）、生活面板、Brain Python 插件管理。
   现有 Python 插件机制不是 Electron 桌面扩展安装器，也不提供远程 Bridge 生命周期管理。
-- **连接与系统**：本地大脑状态/重启、模型与服务商、云端同步、危险操作
+- **连接与系统**：本地大脑状态/重启、模型与服务商、设备配对、危险操作
 - **Wallpaper Engine**：使用原来的 Brain Python 插件，从「能力与扩展 → 插件市场」安装；插件源不随客户端或 Brain 安装包内置，下载后的插件独立存放在运行时数据目录。
 - **常驻**：托盘图标（左键显示/隐藏，右键退出）、推送更新
 
 ### 推送更新（桌面客户端自己的一套）
 
-发版四步：
+发版用 `scripts/build_release.py`（一次出 Brain + 客户端，正式包要求工作区干净）：
 
-1. 改 `client/version.json` 的 `code` +1（打进 asar，`readLocalCode` 读它）
-2. `npx electron-builder --win -c.directories.output=dist_newX`（输出目录每次换新）
-3. 上传 Setup exe 到云端 `app/client/VigilSetup.exe`
-4. 更新同目录 `client_version.json`（code / ver / notes / sha256 / size）
+1. 改 `client/version.json` 的 `code` +1 和 `ver`（`package.json`、lock 保持一致，构建脚本会校验）
+2. `.\scripts\build_client.bat` → 产出 `client/dist-release/Kestrel.Setup.<版本>.exe` 与 `release-manifest.json`
+3. 在 GitHub Releases 新建 release，**exe、release-manifest.json、contents.json 三件一起传**
+4. 客户端启动 15 秒、每小时各查一次 GitHub Releases（`public-updates.js`）；发现新版弹窗询问，同意后下载 → sha256 校验 → 起安装向导覆盖装
 
-之后客户端启动 15 秒、每小时各查一次 `/api/client/version`；发现新版弹窗
-询问，同意后下载（进度写窗口标题）→ sha256 校验 → 起安装向导覆盖装。
-下载走 `/api/client/setup`，256KB 分块流式，不整块吃内存。
+历史教训：release 只传 manifest 不传 exe，访客和自动更新都拿不到包——上传后
+务必在 assets 列表里确认三件都在。
 
 ## 写插件
 
@@ -424,7 +424,7 @@ PC 默认使用 `persona_file`；兼容已有 `persona_by_src.pc` 覆盖。人�
 | `brain/planner.py` | 多步规划：判是否需要规划、逐步执行、结果核对 |
 | `brain/chatty.py` | 话痨度（1~10），按渠道各一份 |
 | `wechat-bridge/archive/core-forward/` | 已退役的双大脑转发源码，仅供历史参考 |
-| `brain/sync_client.py` / `sync_outbox.py` | 本地 → 云端的记忆/人设同步 |
+| `brain/sync_client.py` / `sync_outbox.py` | 已停用的同步残留：不会被启动，仅兼容旧数据（见[运行形态](#运行形态与数据归属)） |
 | `brain/paths.py` | 数据路径：长期记忆、聊天存档及运行状态目录 |
 | `brain/life_engine.py` | 她的生活推演与日记 |
 | `brain/moments.py` | 朋友圈 |

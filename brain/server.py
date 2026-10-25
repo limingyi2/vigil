@@ -1,12 +1,31 @@
 # -*- coding: utf-8 -*-
-"""云端大脑服务（组装与路由层）。
+"""Brain 的 HTTP 服务：装配、聊天管线、路由、启动。
 
-远程大脑 API（端口 8788）：手机 App 与桌宠都连它聊天，记忆/人设/上下文
-只有云上这一份；会话上下文压缩、主动搭话也都在这个进程里跑。
+谁在用它
+  桌面端由 server_launch.py（PyInstaller 入口）选一个空闲端口，经 VIGIL_PORT
+  注入后 import 本模块；手机与桌宠通过远程大脑 API 连同一个进程；没有设置
+  VIGIL_PORT 时才回落到 8788。也就是说它是**这台机器上的大脑**，不是某一台
+  云机的专属服务。
 
-模块分工：runtime 共享配置｜reply 回复后处理｜randimg 随机图｜selfie 自拍｜
-imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环。
-本文件只管装配大脑、聊天管线、HTTP 路由、启动。用法：python server.py
+数据在哪
+  记忆、人设、会话、行为配置都在这台机器的 data/ 目录里，本机是唯一权威源，
+  单机独立可用。历史上曾有过"云端是权威源、本地只是终端"的架构，P8.1 之后
+  已经撤掉 —— 现在没有任何进程会启动同步链路（见 sync_client 的模块说明）。
+  残留的 sync.* 配置不会被读取，但也不代表同步还活着。
+
+模块分工
+  runtime 共享配置｜reply 回复后处理｜randimg 随机图｜selfie 自拍｜
+  imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环｜
+  capability_registry 能力注册与授权｜agent_runs 任务循环｜
+  plugin_host / plugin_manager 插件｜creator_jobs 创作作业。
+  本文件只管装配大脑、聊天管线、HTTP 路由、启动。
+
+注意
+  这个文件五千行，是历史遗留的装配层，也是后续改动最容易被绊的地方。
+  新逻辑不要再往这里堆：能落成独立模块的（一次性任务、路由组、适配器）
+  就落成模块，这里只留装配和转发。拆分计划见 docs/ARCHITECTURE.md。
+
+用法：python server.py（源码直跑）；打包后由 server_launch 调 main()。
 """
 import os
 import sys

@@ -7,8 +7,12 @@
 
 ## 一、手册
 
+新接手先看这两份，它们描述**现状**：怎么组成、数据在哪、出问题看哪里。
+
 | 文档 | 作用 |
 |---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 系统怎么组成：进程与端口、模块分工、能力与权限、扩展模型、事件协议、已知技术债 |
+| [OPERATIONS.md](OPERATIONS.md) | 怎么跑起来、日志在哪、备份、升级回滚、密钥轮换、旧云下线清单 |
 | [USER_GUIDE.md](USER_GUIDE.md) | 总手册：装起来跑通、配模型、写插件和技能、知识库、打包、测试 |
 
 ## 二、契约（已冻结，改行为前必读）
@@ -44,8 +48,7 @@
 |---|---|
 | [04-插件市场使用指南.md](04-插件市场使用指南.md) | 插件市场来源、独立安装目录、装与卸 |
 | [P21-可选插件独立分发清单.md](P21-可选插件独立分发清单.md) | 哪些插件随包、哪些必须单独安装 |
-| [统一管理功能-合并方案与使用说明.md](统一管理功能-合并方案与使用说明.md) | 多节点监控页、心跳与 Token 配置 |
-| [DEPLOY_ENVIRONMENT_VARIABLES.md](DEPLOY_ENVIRONMENT_VARIABLES.md) | 部署所需环境变量 |
+| [统一管理功能-合并方案与使用说明.md](统一管理功能-合并方案与使用说明.md) | 多节点监控页、心跳与 Token 配置（上报默认关闭，见运维手册 §5.3） |
 | [KESTREL_HUB_BRIDGE.md](KESTREL_HUB_BRIDGE.md) | 可选 Hub Bridge 的只读能力与凭证 |
 | [03-客户端/客户端打包与推送更新流程.md](03-客户端/客户端打包与推送更新流程.md) | 出包与推送更新 |
 | [PC_CORE_LEGACY_WECHAT_CLEANUP.md](PC_CORE_LEGACY_WECHAT_CLEANUP.md) | 微信渠道与双 Brain 的退役边界 |
