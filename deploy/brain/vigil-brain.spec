@@ -9,7 +9,7 @@
 
 设计决定（spike 版）：
 - brain/core_features/ 是随 Brain 发布的核心能力适配器；
-  brain/plugins/ 是随包内置插件源，唯一例外是 wallpaper（市场外部插件）。
+  brain/plugins/ 是历史源码/升级迁移来源，绝不是打包输入。
 - 外部插件只从 data/installed_plugins/ 加载；市场制品与客户端安装包独立分发。
 - 核心能力按文件路径动态加载（spec_from_file_location），必须给真实 .py；
 - kb 包只被核心能力适配器动态 import，静态分析够不着 → 全部列进 hiddenimports；
@@ -20,7 +20,7 @@ import subprocess
 
 BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 
-# 核心能力适配器与内置插件都随包；只有 wallpaper 这类外部插件不进制品。
+# 只打包经过逐项批准的核心适配器。绝不扫描 brain/plugins 或 skill 包目录。
 core_feature_data = []
 CORE_FEATURE_ALLOWLIST = {
     "__init__.py", "plugin_market.py", "remote.py", "skill.py",
@@ -56,58 +56,36 @@ if seen_core_features != CORE_FEATURE_ALLOWLIST:
     missing = sorted(CORE_FEATURE_ALLOWLIST - seen_core_features)
     raise RuntimeError("Required core feature source is missing: " + ", ".join(missing))
 
-# 内置插件随包发布，唯一的例外是 wallpaper：它由市场装到 data/installed_plugins。
-# 与 core_features 重名的镜像文件不进包，否则同一能力会以两份源码存在。
-BUNDLED_PLUGIN_EXCLUDE = {"plugin_market.py", "remote.py", "skill.py"}
-plugins_data = []
-tracked_plugins = subprocess.check_output(
-    ["git", "ls-files", "-z", "--", "brain/plugins"], cwd=repo_root
-).decode("utf-8").split(chr(0))
-for tracked in sorted(p for p in tracked_plugins if p):
-    if not tracked.startswith("brain/plugins/"):
-        raise RuntimeError("Unexpected plugin build path: " + tracked)
-    rel_file = tracked[len("brain/plugins/"):]
-    base = os.path.basename(rel_file)
-    top_level = "/" not in rel_file
-    # wallpaper 是外部插件，任何形态都不许进包。
-    if rel_file == "wallpaper" or rel_file.startswith("wallpaper/"):
-        continue
-    if top_level and (base in BUNDLED_PLUGIN_EXCLUDE or base.startswith("_")):
-        continue
-    if base in ("_registry.json", "_pending_restart.json") or ".bak" in base \
-            or base.endswith((".pyc", ".pyo", ".log")):
-        continue
-    source = os.path.join(repo_root, *tracked.split("/"))
-    if not os.path.isfile(source) or os.path.islink(source):
-        raise RuntimeError("Tracked plugin source is missing or linked: " + tracked)
-    rel_dir = os.path.dirname(rel_file) or "."
-    dest = "plugins" if rel_dir == "." else os.path.join("plugins", rel_dir)
-    plugins_data.append((source, dest))
-
-if not plugins_data:
-    raise RuntimeError("Bundled plugin payload is empty; refusing to build a shell-only Brain")
-shipped = {os.path.basename(src) for src, dest in plugins_data if dest == "plugins"}
-if {"kb.py", "react.py", "websearch.py"} - shipped:
-    raise RuntimeError("Required bundled plugins are missing: " +
-                       ", ".join(sorted({"kb.py", "react.py", "websearch.py"} - shipped)))
-
-# 带 skill_host（Node.js 技能宿主）：server.js + start_host.bat + skills/ 下所有技能
+# Skill Host 基础设施是核心；技能包本身是独立安装内容，不能随宿主递归打包。
 skill_host_data = []
 skill_host_src = os.path.join(BLOCK, "skill_host")
-for root, dirs, files in os.walk(skill_host_src):
-    for f in files:
-        if f.endswith(('.pyc', '.pyo')) or f == '.gitkeep' or f.endswith('.log') or f == '.host_started':
-            continue
-        src = os.path.join(root, f)
-        rel = os.path.relpath(src, skill_host_src)
-        dst = os.path.join("skill_host", os.path.dirname(rel))
-        skill_host_data.append((src, dst))
+SKILL_HOST_ALLOWLIST = {"server.js", "start_host.bat"}
+tracked_skill_host = subprocess.check_output(
+    ["git", "ls-files", "-z", "--", "brain/skill_host"], cwd=repo_root
+).decode("utf-8").split(chr(0))
+seen_skill_host = set()
+for tracked in sorted(p for p in tracked_skill_host if p):
+    if not tracked.startswith("brain/skill_host/"):
+        raise RuntimeError("Unexpected Skill Host build path: " + tracked)
+    rel_file = tracked[len("brain/skill_host/"):]
+    if rel_file == "skills/.gitkeep":
+        continue
+    if rel_file not in SKILL_HOST_ALLOWLIST:
+        raise RuntimeError("Unapproved Skill Host build input: " + rel_file)
+    source = os.path.join(repo_root, *tracked.split("/"))
+    if not os.path.isfile(source) or os.path.islink(source):
+        raise RuntimeError("Skill Host infrastructure source is missing or linked: " + tracked)
+    seen_skill_host.add(rel_file)
+    skill_host_data.append((source, "skill_host"))
+if seen_skill_host != SKILL_HOST_ALLOWLIST:
+    raise RuntimeError("Required Skill Host infrastructure is missing: " +
+                       ", ".join(sorted(SKILL_HOST_ALLOWLIST - seen_skill_host)))
 
 a = Analysis(
     [os.path.join(BLOCK, "server_launch.py")],
     pathex=[BLOCK],
     binaries=[],
-    datas=core_feature_data + plugins_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
+    datas=core_feature_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
     hiddenimports=[
         "websocket",  # Optional Hub Bridge imports websocket-client lazily.
         "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",

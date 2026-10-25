@@ -82,6 +82,11 @@ def main(installer, expected_commit, output, expected_version=None):
         file = install / Path(relative)
         assert file.is_file() and sha256(file) == expected, f'Installed core file missing or changed: {relative}'
     assert (install / 'resources/vigil-brain/_internal').is_dir(), 'Bundled Brain runtime is missing'
+    packaged_paths = [p.relative_to(install).as_posix().lower() for p in install.rglob('*')]
+    packaged_plugins = [p for p in packaged_paths
+                        if 'installed_plugins' in p.split('/') or 'plugins' in p.split('/')
+                        or p.endswith('/zxplugin.json')]
+    assert not packaged_plugins, f'Client installation contains a bundled plugin path: {packaged_plugins[:10]}'
 
     runtime_script = Path(__file__).resolve().parents[1] / 'client/tools/test-fresh-installed-runtime.cjs'
     first = run_logged(['node', str(runtime_script), str(install), 'first'], env=env,
@@ -100,6 +105,56 @@ def main(installer, expected_commit, output, expected_version=None):
     assert restart_record['durable_chat_history'] is True
     brain_home = Path(first_record['brain_home'])
     user_data_root = brain_home.parent
+
+    # Exercise an actual NSIS reinstall/upgrade and Brain startup against legacy
+    # plugin locations. These fixture files use the old on-disk layout; the app
+    # and sidecar are the real Windows candidate binaries under test.
+    old_plugin_root = install / 'resources/vigil-brain/_internal/plugins'
+    old_plugin_root.mkdir(parents=True, exist_ok=True)
+    (old_plugin_root / 'p21_upgrade_fixture.py').write_text(
+        "NAME='p21_upgrade_fixture'\nDESC='legacy package fixture'\nTOOLS={}\n", encoding='utf-8')
+    old_plugin_root.mkdir(parents=True, exist_ok=True)
+    (old_plugin_root / 'p21_preserved_fixture.py').write_text(
+        "NAME='p21_preserved_fixture'\nDESC='old bundled shadow'\nTOOLS={}\n", encoding='utf-8')
+    legacy_home_plugins = brain_home / 'plugins'
+    legacy_home_plugins.mkdir(parents=True, exist_ok=True)
+    (legacy_home_plugins / 'p21_home_fixture.py').write_text(
+        "NAME='p21_home_fixture'\nDESC='legacy home fixture'\nTOOLS={}\n", encoding='utf-8')
+    installed_plugins = brain_home / 'data/installed_plugins'
+    installed_plugins.mkdir(parents=True, exist_ok=True)
+    preserved = installed_plugins / 'p21_preserved_fixture.py'
+    preserved.write_text(
+        "NAME='p21_preserved_fixture'\nDESC='existing user version'\nTOOLS={}\n", encoding='utf-8')
+    preserved_hash = sha256(preserved)
+
+    upgrade_log = root / 'nsis-upgrade.log'
+    upgrade = run_logged([str(installer), '/S', '/LOG=' + str(upgrade_log), '/D=' + str(install)], env=env,
+                         log_path=root / 'installer-upgrade.json', timeout=300)
+    assert upgrade.returncode == 0, 'Candidate in-place upgrade failed: ' + failure_detail(upgrade)
+    migrated_runtime = run_logged(['node', str(runtime_script), str(install), 'upgrade'], env=env,
+                                  log_path=root / 'runtime-upgrade.json', timeout=300)
+    assert migrated_runtime.returncode == 0, 'Legacy plugin upgrade/runtime check failed: ' + failure_detail(migrated_runtime)
+    for name in ('p21_upgrade_fixture.py', 'p21_home_fixture.py'):
+        assert (installed_plugins / name).is_file(), f'Legacy plugin was not migrated: {name}'
+    assert sha256(preserved) == preserved_hash, 'Upgrade overwrote an existing user-installed plugin'
+
+    uninstall_plugins = run_logged(['node', str(runtime_script), str(install), 'uninstall-migrated'], env=env,
+                                   log_path=root / 'runtime-plugin-uninstall.json', timeout=300)
+    assert uninstall_plugins.returncode == 0, 'Plugin Manager uninstall failed: ' + failure_detail(uninstall_plugins)
+    for name in ('p21_upgrade_fixture.py', 'p21_home_fixture.py'):
+        assert not (installed_plugins / name).exists(), f'Plugin Manager did not uninstall {name}'
+    assert (legacy_home_plugins / 'p21_home_fixture.py').is_file(), 'Uninstall removed legacy recovery source'
+
+    post_uninstall_upgrade_log = root / 'nsis-post-uninstall-upgrade.log'
+    post_uninstall_upgrade = run_logged(
+        [str(installer), '/S', '/LOG=' + str(post_uninstall_upgrade_log), '/D=' + str(install)], env=env,
+        log_path=root / 'installer-post-uninstall-upgrade.json', timeout=300)
+    assert post_uninstall_upgrade.returncode == 0, 'Upgrade after plugin uninstall failed: ' + failure_detail(post_uninstall_upgrade)
+    post_uninstall_runtime = run_logged(['node', str(runtime_script), str(install), 'post-uninstall-upgrade'], env=env,
+                                        log_path=root / 'runtime-post-uninstall-upgrade.json', timeout=300)
+    assert post_uninstall_runtime.returncode == 0, 'Uninstalled plugins reappeared after upgrade: ' + failure_detail(post_uninstall_runtime)
+    assert sha256(preserved) == preserved_hash, 'Later upgrade overwrote an existing user-installed plugin'
+
     sentinels = {
         brain_home / 'plugins/p8-retention-plugin.py': 'NAME="p8_retention"\n',
         brain_home / 'skill_host/skills/p8-retention/skill.json': '{"id":"p8-retention"}\n',
@@ -154,6 +209,13 @@ def main(installer, expected_commit, output, expected_version=None):
         'nsis_install': nsis_install_log,
         'first_launch': root / 'runtime-first-launch.json',
         'restart': root / 'runtime-restart.json',
+        'upgrade': root / 'installer-upgrade.json',
+        'upgrade_nsis': upgrade_log,
+        'runtime_upgrade': root / 'runtime-upgrade.json',
+        'plugin_uninstall': root / 'runtime-plugin-uninstall.json',
+        'post_uninstall_upgrade': root / 'installer-post-uninstall-upgrade.json',
+        'post_uninstall_upgrade_nsis': post_uninstall_upgrade_log,
+        'post_uninstall_runtime': root / 'runtime-post-uninstall-upgrade.json',
         'uninstall': root / 'installer-uninstall.json',
         'nsis_uninstall': nsis_uninstall_log,
     }
@@ -174,6 +236,14 @@ def main(installer, expected_commit, output, expected_version=None):
                           'fake_provider_first_chat': True, 'conversation_id': conversation_id},
         'restart_recovery': {'electron_restarted': True, 'chat_history_restored': True,
                              'durable_brain_display_turn_restored_via_api': True},
+        'legacy_plugin_upgrade': {'candidate_reinstalled_in_place': True,
+                                  'legacy_bundle_source_migrated': True,
+                                  'legacy_home_source_migrated': True,
+                                  'existing_user_plugin_hash_preserved': True,
+                                  'plugin_manager_uninstall_api_passed': True,
+                                  'uninstall_survived_later_reinstall': True,
+                                  'legacy_source_preserved': True,
+                                  'old_signed_release_binary_used': False},
         'uninstall': {'uninstaller': uninstallers[0].name, 'exit_code': uninstall_result.returncode,
                       'program_files_removed': True, 'user_data_policy': 'preserved',
                       'retained_test_data': list(retained_before),

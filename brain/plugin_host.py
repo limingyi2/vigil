@@ -48,7 +48,7 @@ import traceback
 
 try:
     from paths import PLUGINS_DIR, CORE_FEATURES_DIR, PLUGIN_INSTALL_DIR, PLUGIN_DATA_DIR, CONFIG_DIR
-    _DIR = str(PLUGINS_DIR)                     # 随包内置插件（wallpaper 不在其中）
+    _DIR = str(PLUGINS_DIR)                     # 仅供升级迁移兼容，绝不作为运行时来源
     _CORE_PLUGIN_ROOT = str(CORE_FEATURES_DIR)   # 核心能力适配器
     _INSTALLED_DIR = str(PLUGIN_INSTALL_DIR)     # 市场安装的外部插件
     _DDIR = str(PLUGIN_DATA_DIR)
@@ -66,7 +66,7 @@ _ARITY = {"prompt": 1, "on_turn_in": 1, "on_reply": 2, "start": 1}
 # brain/plugins/ 里的这几个文件是历史镜像，实际来源另有其一：
 # 前三个随核心从 core_features/ 加载。
 # 打包时它们也不进制品，这里排除是为开发态不出现同名双份。
-_SHADOWED_BUILTINS = frozenset({"plugin_market.py", "remote.py", "skill.py"})
+_CORE_ADAPTERS = frozenset({"plugin_market.py", "remote.py", "skill.py"})
 
 _registry = {}        # name -> Plugin
 _lock = threading.RLock()
@@ -292,13 +292,12 @@ def _scan_plugin_directory(directory, exclude_files=None):
 
 
 def _plugin_entry_path(name):
-    """Find one builtin/core-feature/installed entry without importing unrelated modules."""
+    """Find one approved core adapter or explicitly installed user plugin."""
     name = str(name or "").strip()
-    for directory in (_INSTALLED_DIR, _DIR, _CORE_PLUGIN_ROOT):
+    for directory in (_INSTALLED_DIR, _CORE_PLUGIN_ROOT):
         if not directory:
             continue
-        if (name + ".py" in _SHADOWED_BUILTINS
-                and os.path.abspath(directory) == os.path.abspath(_DIR)):
+        if os.path.abspath(directory) == os.path.abspath(_CORE_PLUGIN_ROOT) and name + ".py" not in _CORE_ADAPTERS:
             continue
         package_init = os.path.join(directory, name, "__init__.py")
         if os.path.isfile(package_init):
@@ -310,12 +309,7 @@ def _plugin_entry_path(name):
 
 
 def load(force=False, only=None):
-    """Load core capability adapters, bundled plugins, then installed extensions.
-
-    Bundled plugins ship inside the Brain package (everything except wallpaper);
-    wallpaper and any future optional extension are read only from
-    data/installed_plugins, so an installed copy overrides a bundled one.
-    """
+    """Load approved core adapters and explicitly installed user extensions."""
     global _loaded
     with _lock:
         if only:
@@ -334,11 +328,13 @@ def load(force=False, only=None):
             _sync_features()
             return dict(_registry)
         found = {}
-        # 核心能力适配器（随核心发布的三件）先装，内置插件不得顶掉它们的名字。
-        for directory, skip in ((_CORE_PLUGIN_ROOT, None), (_DIR, _SHADOWED_BUILTINS)):
-            if directory and os.path.abspath(directory) != os.path.abspath(_INSTALLED_DIR):
-                for name, plugin in _scan_plugin_directory(directory, skip).items():
-                    found[name] = plugin
+        # Core adapter allowlist only. Arbitrary files in core_features are not plugins.
+        if _CORE_PLUGIN_ROOT:
+            for filename in sorted(_CORE_ADAPTERS):
+                path = os.path.join(_CORE_PLUGIN_ROOT, filename)
+                plugin = _load_one(path) if os.path.isfile(path) else None
+                if plugin:
+                    found[plugin.name] = plugin
         # Installed plugins override a same-named builtin intentionally.
         for name, plugin in _scan_plugin_directory(_INSTALLED_DIR).items():
             found[name] = plugin

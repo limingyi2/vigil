@@ -5,30 +5,26 @@
 import os
 
 _datas = [
-    ('core_features/__init__.py', 'core_features'),
-    ('core_features/plugin_market.py', 'core_features'),
-    ('core_features/remote.py', 'core_features'),
-    ('core_features/skill.py', 'core_features'),
     ('version.json', '.'),
 ]
 
-# 内置插件随包发布；wallpaper 是市场外部插件，不进制品。
-_SHADOWED = {'plugin_market.py', 'remote.py', 'skill.py',
-             '_registry.json', '_pending_restart.json'}
-_plugins_root = os.path.join(SPECPATH, 'plugins')
-for _root, _dirs, _files in os.walk(_plugins_root):
-    _dirs[:] = [d for d in _dirs if d != '__pycache__']
-    for _name in _files:
-        _rel = os.path.relpath(os.path.join(_root, _name), _plugins_root)
-        _parts = _rel.split(os.sep)
-        if _parts[0] == 'wallpaper' or '.bak' in _name:
-            continue
-        if _name.endswith(('.pyc', '.pyo', '.log')):
-            continue
-        if len(_parts) == 1 and (_name.startswith('_') or _name in _SHADOWED):
-            continue
-        _dest = 'plugins' if len(_parts) == 1 else os.path.join('plugins', os.path.dirname(_rel))
-        _datas.append((os.path.join(_root, _name), _dest))
+# 旧调试配置也必须遵守零可选插件规则：不要遍历 SPECPATH/plugins。
+# 只显式带入被批准的核心适配器和 Skill Host 基础设施。
+_CORE_ALLOWLIST = {'__init__.py', 'plugin_market.py', 'remote.py', 'skill.py'}
+_core_root = os.path.join(SPECPATH, 'core_features')
+for _name in sorted(_CORE_ALLOWLIST):
+    _source = os.path.join(_core_root, _name)
+    if not os.path.isfile(_source) or os.path.islink(_source):
+        raise RuntimeError('Required core feature is missing or linked: ' + _name)
+    _datas.append((_source, 'core_features'))
+
+_SKILL_HOST_ALLOWLIST = {'server.js', 'start_host.bat'}
+_skill_host_root = os.path.join(SPECPATH, 'skill_host')
+for _name in sorted(_SKILL_HOST_ALLOWLIST):
+    _source = os.path.join(_skill_host_root, _name)
+    if not os.path.isfile(_source) or os.path.islink(_source):
+        raise RuntimeError('Required Skill Host infrastructure is missing or linked: ' + _name)
+    _datas.append((_source, 'skill_host'))
 
 a = Analysis(
     ['server_launch.py'],
@@ -37,8 +33,8 @@ a = Analysis(
     datas=_datas,
     hiddenimports=[
         'websocket',
-        # The optional Knowledge Base extension is loaded from user data and
-        # imports these package modules dynamically in frozen builds.
+        # Core Knowledge Base engine modules are separate from the optional
+        # plugin adapter under brain/plugins/kb.py.
         'kb', 'kb.config', 'kb.chunker', 'kb.embedder', 'kb.engine',
         'kb.ingest', 'kb.kb_core', 'kb.reader', 'kb.search', 'kb.store',
     ],

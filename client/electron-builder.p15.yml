@@ -11,6 +11,7 @@ files:
   - package.json
   - '!src/_harness.html'
   - '!src/js/_devstub.js'
+afterPack: ./tools/p15-build-hooks.js
 asarUnpack:
   - '**/node_modules/keytar/**'
 extraResources:

@@ -82,7 +82,7 @@ class CreatorPluginContractTests(unittest.TestCase):
         self.assertEqual(report["errors"], [])
 
     def test_legacy_list_chat_tool_loads_registers_schema_and_executes(self):
-        old_dir = plugin_host._DIR
+        old_dir = plugin_host._INSTALLED_DIR
         old_registry = dict(plugin_host._registry)
         old_index = dict(plugin_host._TOOL_INDEX)
         old_loaded = plugin_host._loaded
@@ -90,7 +90,7 @@ class CreatorPluginContractTests(unittest.TestCase):
             with tempfile.TemporaryDirectory(prefix="vigil-legacy-tool-") as tmp:
                 plugin_path = Path(tmp) / "vigil_smoke.py"
                 plugin_path.write_text(LEGACY_LIST_VALID, encoding="utf-8")
-                plugin_host._DIR = tmp
+                plugin_host._INSTALLED_DIR = tmp
                 loaded = plugin_host.load()
                 self.assertIn("vigil_smoke", loaded)
 
@@ -113,7 +113,7 @@ class CreatorPluginContractTests(unittest.TestCase):
                     "VIGIL_PLUGIN_CALL_OK",
                 )
         finally:
-            plugin_host._DIR = old_dir
+            plugin_host._INSTALLED_DIR = old_dir
             plugin_host._registry.clear()
             plugin_host._registry.update(old_registry)
             plugin_host._TOOL_INDEX.clear()
