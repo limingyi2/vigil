@@ -126,7 +126,7 @@ def test_tool_switch_state_is_read_from_live_feature_status(monkeypatch):
     snap = host_environment.snapshot(_Brain({"model_mode": "cloud", "model": "m"}),
                                      provider=_Provider())
     assert snap["tooling"]["state"] == "registered_but_disabled"
-    assert "search" in {x["name"] for x in snap["tooling"]["registered_but_disabled"]}
+    assert "search" not in {x["name"] for x in snap["tooling"]["registered_but_disabled"]}
 
 
 def test_tool_detail_does_not_confuse_enabled_switch_with_request_availability(monkeypatch):
@@ -314,7 +314,8 @@ def test_only_readonly_capability_query_is_added_to_allowlist():
                                                     "capability_status"})
     readonly_names = {item["function"]["name"]
                       for item in tools.read_only_specs(tools._static_tool_array(src="pc"))}
-    assert readonly_names == set(tools.READ_ONLY_TOOL_NAMES)
+    assert readonly_names == {"weather", "tracking", "capability_status"}
+    assert "search" not in readonly_names  # no installed websearch package in clean runtime
     assert "capability_status" in readonly_names
     assert "capability_call" not in readonly_names
     all_names = {item["function"]["name"] for item in tools._static_tool_array(src="pc")}

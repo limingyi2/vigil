@@ -139,8 +139,9 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
         import tools as _tools
         if specs_supplied:
             actual_names = [name for name in actual_names
-                            if (name not in _tools._STATIC_SPECS or
-                                _tools.static_tool_enabled(name, src))]
+                            if ((name not in _tools._STATIC_SPECS
+                                 and name not in _tools.READ_ONLY_TOOL_NAMES)
+                                or _tools.static_tool_enabled(name, src))]
             if tool_policy == "readonly":
                 actual_names = [name for name in actual_names
                                 if name in _tools.READ_ONLY_TOOL_NAMES]

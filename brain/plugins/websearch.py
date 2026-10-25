@@ -281,6 +281,19 @@ def _t_search(arg):
 
 TOOLS = {"search": _t_search}
 
+# Core tool-table exposure is driven only by this loaded plugin declaration.
+TOOL_SPECS = {
+    "search": {
+        "desc": "联网搜索新闻、股价、最新版本和近期信息。价格、配置、优惠与条件只能按结果来源原文回答；搜不到或服务不可用时明确说明未核实。天气用 weather，物流用 tracking。",
+        "params": [("query", "要搜索的内容，直接写中文", True)],
+        "arg_param": "query",
+    },
+}
+
+# Read-only chat has a structured success/failure boundary. This callback is
+# reached through Plugin Host only when this package is installed and enabled.
+READONLY_TOOLS = {"search": _search_result}
+
 
 def _route_search(body, query):
     """GET/POST /api/plugin/websearch —— 直接查一下（给 App / 面板调试用）。"""

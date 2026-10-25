@@ -17,6 +17,7 @@
 """
 import os
 import subprocess
+import sys
 
 BLOCK = os.path.normpath(os.path.join(SPECPATH, "..", "..", "brain"))
 
@@ -104,6 +105,14 @@ a = Analysis(
     ],
     noarchive=False,
 )
+
+# Reject modules discovered from any file under brain/plugins, even when the
+# resulting archive module name does not contain a `plugins/` path component.
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+from scripts.plugin_package_contract import assert_no_optional_plugin_modules
+assert_no_optional_plugin_modules(a.pure, plugin_source_root=os.path.join(BLOCK, "plugins"))
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

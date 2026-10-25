@@ -12,7 +12,9 @@ sys.path.insert(0, str(ROOT / "brain"))
 sys.path.insert(0, str(ROOT))
 
 from home_migration import migrate_legacy_plugins, seed_core_features
-from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
+from scripts import build_release
+from scripts.plugin_package_contract import (assert_no_bundled_plugin_tree,
+                                             assert_no_optional_plugin_modules)
 
 
 def test_server_launch_sets_utf8_replacement_before_startup_diagnostics():
@@ -85,6 +87,53 @@ def test_brain_release_guard_rejects_renamed_future_plugin_by_manifest(tmp_path)
     }), encoding="utf-8")
     with pytest.raises(RuntimeError, match="extension plugin manifest"):
         assert_no_bundled_plugin_tree(tmp_path)
+
+
+def test_pyinstaller_archive_guard_rejects_embedded_future_plugin_without_plugin_path(tmp_path):
+    # This models a PYZ module renamed by import analysis: the artifact has no
+    # plugin directory or manifest, but analysis still records its source tree.
+    brain = tmp_path / "checkout" / "brain"
+    source = brain / "plugins" / "future_plugin.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1", encoding="utf-8")
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "vigil-brain.exe").write_bytes(b"fixture archive")
+    with pytest.raises(RuntimeError, match="optional plugin source"):
+        assert_no_bundled_plugin_tree(
+            artifact, embedded_modules=[("renamed_future_module", str(source), "PYMODULE")],
+            plugin_source_root=brain / "plugins")
+
+
+def test_pyinstaller_archive_guard_rejects_plugin_namespace_from_real_archive():
+    with pytest.raises(RuntimeError, match="optional plugin module"):
+        assert_no_optional_plugin_modules(["PYZ-00.pyz", "plugins.future_plugin"])
+
+
+def test_release_archive_inspection_parses_real_recursive_viewer_output(monkeypatch, tmp_path):
+    viewer_output = """Options in 'vigil-brain.exe' (PKG/CArchive):
+ pyi-contents-directory _internal
+Contents of 'vigil-brain.exe' (PKG/CArchive):
+ struct
+ pyimod01_archive
+ PYZ.pyz
+
+Contents of 'PYZ.pyz' (PYZ):
+ brain
+ plugin_host
+ skill
+"""
+    monkeypatch.setattr(build_release.shutil, "which", lambda _name: "pyi-archive_viewer")
+    monkeypatch.setattr(build_release.subprocess, "run",
+                        lambda *_args, **_kwargs: type("Result", (), {"stdout": viewer_output})())
+    entries = build_release.inspect_pyinstaller_archive(tmp_path / "vigil-brain.exe")
+    assert {"brain", "plugin_host", "skill"} <= set(entries)
+
+    bad_output = viewer_output.replace(" plugin_host\n", " plugins.future_plugin\n")
+    monkeypatch.setattr(build_release.subprocess, "run",
+                        lambda *_args, **_kwargs: type("Result", (), {"stdout": bad_output})())
+    with pytest.raises(RuntimeError, match="optional plugin module"):
+        build_release.inspect_pyinstaller_archive(tmp_path / "vigil-brain.exe")
 
 
 def test_core_feature_seeding_never_creates_plugins_directory_and_preserves_user_edits(tmp_path):

@@ -3,15 +3,18 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 
 try:
-    from plugin_package_contract import assert_no_bundled_plugin_tree
+    from plugin_package_contract import (assert_no_bundled_plugin_tree,
+                                         assert_no_optional_plugin_modules)
 except ModuleNotFoundError:
-    from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
+    from scripts.plugin_package_contract import (assert_no_bundled_plugin_tree,
+                                                 assert_no_optional_plugin_modules)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'dist/brain-release/vigil-brain'
@@ -45,6 +48,30 @@ def filehash(p):
         for chunk in iter(lambda: f.read(1024 * 1024), b''):
             h.update(chunk)
     return h.hexdigest()
+
+
+def inspect_pyinstaller_archive(executable):
+    """Inspect the actual EXE, including recursively embedded PYZ modules."""
+    viewer = shutil.which('pyi-archive_viewer')
+    if not viewer:
+        raise RuntimeError('pyi-archive_viewer is required to inspect the Brain EXE archive')
+    result = subprocess.run([viewer, '-b', '-r', str(executable)],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    # The viewer emits readable sections followed by one archive member per line.
+    # Keep the parser strict so changed or unrecognized output fails closed.
+    sections = re.findall(
+        r"(?m)^Contents of '[^']+' \([^)]+\):\s*([\s\S]*?)(?=^Contents of '|\Z)",
+        result.stdout,
+    )
+    if not sections:
+        raise RuntimeError('Could not parse recursive PyInstaller archive inventory')
+    entries = [line.strip() for section in sections for line in section.splitlines()
+               if line.strip()]
+    if not entries:
+        raise RuntimeError('PyInstaller archive viewer returned an empty inventory')
+    entries = sorted(set(entries))
+    assert_no_optional_plugin_modules(entries)
+    return entries
 
 
 def verify_release_manifest(installer, manifest_path, build):
@@ -102,6 +129,14 @@ def verify(candidate=False):
     assert_no_bundled_plugin_tree(OUT)
     build = json.loads((ROOT / 'client/build-info.json').read_text(encoding='utf-8'))
     manifest = json.loads((OUT / 'brain-manifest.json').read_text(encoding='utf-8'))
+    executable = OUT / 'vigil-brain.exe'
+    embedded_modules = inspect_pyinstaller_archive(executable)
+    assert_no_bundled_plugin_tree(OUT, embedded_modules=embedded_modules)
+    archive_manifest = manifest.get('module_archive') or {}
+    if archive_manifest.get('executable_sha256') != filehash(executable):
+        raise RuntimeError('Brain module archive report does not match the actual executable')
+    if archive_manifest.get('entries') != embedded_modules:
+        raise RuntimeError('Brain module archive report differs from the actual executable')
     if not candidate and (build['candidate'] or git('status', '--porcelain')):
         raise RuntimeError('Official installer requires a clean committed source; candidates are not releasable')
     head = git('rev-parse', 'HEAD')
@@ -149,8 +184,16 @@ def build(candidate=False, brain_only=False):
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--distpath', str(OUT.parent),
         '--workpath', str(BUILD_WORK), str(ROOT / 'deploy/brain/vigil-brain.spec')], cwd=ROOT, check=True)
     assert_no_bundled_plugin_tree(OUT)
+    embedded_modules = inspect_pyinstaller_archive(OUT / 'vigil-brain.exe')
+    assert_no_bundled_plugin_tree(OUT, embedded_modules=embedded_modules)
     files = {p.relative_to(OUT).as_posix(): filehash(p) for p in sorted(OUT.rglob('*')) if p.is_file()}
-    (OUT / 'brain-manifest.json').write_text(json.dumps(dict(info, files=files), indent=2), encoding='utf-8')
+    archive_manifest = {'executable_sha256': filehash(OUT / 'vigil-brain.exe'),
+                        'viewer': 'pyi-archive_viewer -b -r',
+                        'entry_count': len(embedded_modules), 'entries': embedded_modules}
+    (OUT / 'brain-manifest.json').write_text(json.dumps(
+        dict(info, files=files, module_archive=archive_manifest), indent=2), encoding='utf-8')
+    print('[release] inspected %d embedded Brain archive entries; optional plugin modules: 0' %
+          len(embedded_modules), flush=True)
     verify(candidate)
     if not brain_only:
         env = dict(os.environ, VIGIL_BUILD_PYTHON=sys.executable, VIGIL_BUILD_CANDIDATE='1' if candidate else '0')

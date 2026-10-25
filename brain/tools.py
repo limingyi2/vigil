@@ -10,7 +10,7 @@
 
 工具分三类：
 - 内置：weather / tracking（本文件实现）
-- 静态插件：search / reminder_*（plugin_host 加载）
+- 可选插件：只有安装并由 plugin_host 加载后才提供工具
 - 动态技能：`包名__工具名`，运行时从 Node 技能宿主拉取（skill 模块）
 """
 import re
@@ -228,40 +228,6 @@ _STATIC_SPECS = {
         "arg_param": "capability",
         "multi_args": True,
     },
-    # --- 静态插件（执行路由到 plugin_host）---
-    "search": {
-        "desc": "联网搜索实时信息：新闻、股价、最新版本、近期事件等训练数据里没有或会过时的东西。"
-                "**报价、套餐配置、优惠券规则、资格与适用条件、买哪个更划算**这类也要用它 —— "
-                "它们全都随时间和账号变化，凭印象说一定是错的。"
-                "🔴 **天气不要用它**（用 weather）、**快递单号不要用它**（用 tracking）、"
-                "某个网页的正文不要用它（用网页抓取类工具）。"
-                "它管的是「泛泛地查一下公开信息」。\n"
-                "用它的时候守住这几条：\n"
-                "1. 价格、配置、优惠额度、适用条件只能照检索结果里的原文说，并说明出自哪条来源；"
-                "结果里没写的就是没查到，不要说成默认规则"
-                "（比如把「学生券」当成「无门槛券」就是自己补的）。\n"
-                "2. 摘要被标了「已截断」时，别把它当全文 —— 缺的那半段往往正是条件。\n"
-                "3. 优先官方来源（厂商/政府/平台自己的域名），社区帖子只能当线索，不能当价格依据。\n"
-                "4. 搜不到、或者连不上搜索服务，就直说「这个我没查到、没核实」，"
-                "**不许**凭记忆补一个价格、配置或购买链接出来。\n"
-                "5. 同一个问题不要反复搜同一句话；结果不够就换个更具体的说法再搜一次。",
-        "params": [("query", "要搜索的内容，直接写中文", True)],
-        "arg_param": "query",
-    },
-    "reminder_set": {
-        "desc": "设一个到点主动提醒他的事项。把他说的原话传进来（需包含时间，如“20分钟后”“明天早上八点”）。",
-        "params": [("text", "他说的原话，要包含时间和要提醒的事，如：20分钟后叫我起床", True)],
-        "arg_param": "text",
-    },
-    "reminder_list": {
-        "desc": "查看当前还记着哪些未到点的提醒。无参数。",
-        "params": [], "arg_param": None,
-    },
-    "reminder_cancel": {
-        "desc": "取消提醒。传关键词来匹配要取消的事项；要清空全部就传“全部”。",
-        "params": [("keyword", "要取消的事项关键词，或“全部”", True)],
-        "arg_param": "keyword",
-    },
     "project_review_start": {
         "desc": "对用户明确提供的本地项目绝对路径建立可暂停审查。依次执行静态 step、semantic_batch；沿调用线索提出带准确行号和原文引用的 candidate，再运行验证计划。静态 TODO 不是缺陷。",
         "params": [("path", "项目根目录绝对路径", True)],
@@ -365,17 +331,12 @@ def _plugin_specs(src=None):
         return {}
 
 
-# 静态工具名 → features 开关名。None = 始终启用（没有专门开关）。
-# 插件工具已经在 plugin_host.tool_specs(src) 里按 _enabled(p, src) 过滤了，
-# 这里只管 _STATIC_SPECS 里核心写死的那几个。
+# 核心静态工具名 → features 开关名。可选插件工具不在这里登记；
+# Plugin Host 先确认插件已加载，再用插件的 FEATURE 开关过滤。
 # 映射必须跟 config.json features / features_by_src 里的键名对得上。
 _STATIC_FEATURE_MAP = {
     "weather": "weather",
     "tracking": "packages",
-    "search": "websearch",
-    "reminder_set": "reminder",
-    "reminder_list": "reminder",
-    "reminder_cancel": "reminder",
 }
 
 
@@ -428,20 +389,22 @@ def validate_readonly_arguments(name, args):
 def invoke_readonly_spec(name, args, ctx=None):
     """Invoke one audited tool with an internal, structured success status.
 
-    The registered tool APIs remain string-based for compatibility. Each
-    audited implementation exposes a private result helper that reports
-    whether the underlying query/calculation completed successfully.
+    Registered plugin APIs remain string-based for compatibility. Search's
+    structured result is dispatched through the installed Plugin Host entry;
+    core code never imports an optional plugin source module.
     """
     n = str(name or "").strip()
     if n not in READ_ONLY_TOOL_NAMES:
         return readonly_failure("该工具不在普通聊天只读白名单内，未执行。")
-    spec = _STATIC_SPECS.get(n) or {}
+    spec = _STATIC_SPECS.get(n) or _plugin_specs(
+        getattr(ctx, "src", None) if ctx is not None else None).get(n) or {}
     arg_param = spec.get("arg_param")
     arg = str((args or {}).get(arg_param) or "").strip() if arg_param else ""
     try:
         if n == "search":
-            from plugins.websearch import _search_result
-            outcome = _search_result(arg)
+            import plugin_host
+            outcome = plugin_host.invoke_readonly_tool(
+                n, arg, src=getattr(ctx, "src", None) if ctx is not None else None)
         elif n == "weather":
             outcome = _weather_result(arg)
         elif n == "tracking":
@@ -494,14 +457,20 @@ def _static_tool_array(src=None):
 
 
 def static_tool_enabled(name, src=None):
-    """Whether a required built-in tool is exposed for this channel.
+    """Whether a core or loaded optional tool is enabled for this channel.
 
     This is a routing hint only. Actual invocation still goes through
     ``all_specs`` and ``invoke_spec`` with their existing permission gates.
     """
     name = str(name or "").strip()
-    if name not in _STATIC_SPECS or not _feature_on("tools", src):
+    if not _feature_on("tools", src):
         return False
+    if name not in _STATIC_SPECS:
+        try:
+            import plugin_host
+            return plugin_host.tool_enabled(name, src)
+        except Exception:
+            return False
     feature = _STATIC_FEATURE_MAP.get(name)
     return feature is None or _feature_on(feature, src)
 
