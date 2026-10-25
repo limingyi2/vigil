@@ -296,6 +296,7 @@ def test_release_specs_and_runtime_have_no_plugin_source_fallback():
     host = (ROOT / "brain/plugin_host.py").read_text(encoding="utf-8")
     manager = (ROOT / "brain/plugin_manager.py").read_text(encoding="utf-8")
     build = (ROOT / "scripts/build_release.py").read_text(encoding="utf-8")
+    packaged_smoke = (ROOT / "client/tools/test-packaged-brain.py").read_text(encoding="utf-8")
 
     assert 'CORE_FEATURE_ALLOWLIST = {' in spec
     assert 'SKILL_HOST_ALLOWLIST = {"server.js", "start_host.bat"}' in spec
@@ -309,6 +310,8 @@ def test_release_specs_and_runtime_have_no_plugin_source_fallback():
     assert "(_CORE_PLUGIN_ROOT, _DIR)" not in host.split("def load(", 1)[1].split("def _sync_features", 1)[0]
     assert "_CORE_PLUGIN_ROOT" in manager
     assert "assert_no_bundled_plugin_tree(OUT)" in build
+    assert "optional plugin payload was bundled" in packaged_smoke
+    assert "missing bundled plugin" not in packaged_smoke
 
 
 def test_clean_path_bootstrap_does_not_create_a_legacy_plugin_source(tmp_path, monkeypatch):
