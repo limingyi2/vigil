@@ -678,7 +678,8 @@ def build_context(brain, user_text, *, system_text='', tool_specs=None,
     # Compaction targets are working limits; unused capacity remains an output/
     # estimation safety buffer. Keep as many *newest* complete messages as fit.
     goal = max(0, (info['target_tokens'] if pressure else info['input_budget']) - fixed)
-    from history_retrieval import retrieve, should_retrieve
+    from history_retrieval import should_retrieve
+    from retrieval_adapters import chat_messages
     opts = (brain.api or {}).get('history_retrieval') or {}
     retrieval_limit = _integer(opts, 'local_max_tokens' if info['local'] else 'cloud_max_tokens', 800 if info['local'] else 2000)
     reserved = min(goal, retrieval_limit) if opts.get('enabled', True) and should_retrieve(user_text) else 0
@@ -697,7 +698,7 @@ def build_context(brain, user_text, *, system_text='', tool_specs=None,
         summary = _render_summary(state, remaining, info)
     remaining = goal - estimate_messages(summary + keep_hist)
     retrieval_budget = min(remaining, retrieval_limit)
-    evidence, retrieval_info = retrieve(brain, user_text, key, retrieval_budget)
+    evidence, retrieval_info = chat_messages(brain, user_text, key, retrieval_budget)
     result = summary + evidence + keep_hist
     info.update(retrieval=retrieval_info, trimmed_from=len(hist), trimmed_to=len(keep_hist),
                 compacted=bool(summary) or len(keep_hist) < len(hist),

@@ -1889,8 +1889,9 @@ class Brain:
                 if memory is not None and cfg.get("enabled", True):
                     from storage.query_resolver import bind, for_brain
                     with bind(for_brain(self)):
-                        memory_block = memory.render(
-                            query=user_text, top_k=5, chan=self._cur_src)
+                        from retrieval_adapters import memory_block as retrieve_memory
+                        memory_block = retrieve_memory(
+                            self, memory, user_text, top_k=5, chan=self._cur_src)
         except Exception as exc:
             print("[上下文] 流式记忆检索失败：%s" % str(exc)[:100], flush=True)
 
@@ -2304,8 +2305,9 @@ class Brain:
                 if memory is not None and cfg.get("enabled", True):
                     from storage.query_resolver import bind, for_brain
                     with bind(for_brain(self)):
-                        memory_block = memory.render(
-                            query=user_text, top_k=5, chan=self._cur_src)
+                        from retrieval_adapters import memory_block as retrieve_memory
+                        memory_block = retrieve_memory(
+                            self, memory, user_text, top_k=5, chan=self._cur_src)
         except Exception as exc:
             print("[上下文] 流式记忆检索失败：%s" % str(exc)[:100], flush=True)
 
@@ -2649,7 +2651,8 @@ class Brain:
                     _t1 = time.time()
                     from storage.query_resolver import bind, for_brain
                     with bind(for_brain(self)):
-                        memory_block = _m.render(query=q, top_k=5, chan=self._cur_src)
+                        from retrieval_adapters import memory_block as retrieve_memory
+                        memory_block = retrieve_memory(self, _m, q, top_k=5, chan=self._cur_src)
                     print(f"[perf] 记忆检索 {time.time()-_t1:.1f}s", flush=True)
                 except Exception as e:
                     _log_memory_partition_error(
@@ -2779,6 +2782,12 @@ class Brain:
                                 print(f"[记忆] src={_chan} persona={_persona} "
                                       f"path={_partition_path} "
                                       "error_code=not_a_promise", flush=True)
+                    if nf or ne or saved:
+                        try:
+                            from storage import unified
+                            unified.sync_memory('', _chan, _persona, _chan)
+                        except Exception as exc:
+                            print('[记忆] 统一索引同步失败：%s' % type(exc).__name__, flush=True)
                     print(f"[perf] 后台记忆抽取+写入 {time.time()-_t:.1f}s "
                           f"(facts={nf}, events={ne}, hers={saved})", flush=True)
                 except Exception as e:
@@ -2954,7 +2963,8 @@ class Brain:
         _mz = self._mem_for(DEFAULT_SRC)
         if _mz is not None:
             try:
-                memory_block = _mz.render(query=f"{what} {detail}", top_k=4,
+                from retrieval_adapters import memory_block as retrieve_memory
+                memory_block = retrieve_memory(self, _mz, f"{what} {detail}", top_k=4,
                                           chan=DEFAULT_SRC)
             except Exception:
                 memory_block = ""

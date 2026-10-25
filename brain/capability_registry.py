@@ -983,7 +983,8 @@ def _kb_search_handler(args):
     query = str(args.get("query") or "").strip()
     if not query:
         return {"ok": False, "error": "empty_query"}
-    results = kb.search(
+    from retrieval_adapters import kb_rows
+    results = kb_rows(
         query,
         persona_key=args.get("persona") or _runtime_persona_key(),
         src=args.get("src") or "pc",
