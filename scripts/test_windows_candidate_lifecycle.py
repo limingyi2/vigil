@@ -26,10 +26,23 @@ def inventory(root):
 
 
 def run_logged(command, *, env, log_path, timeout):
-    result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=timeout)
+    # 子进程（Node/Electron/大脑）输出 UTF-8；用 text=True 默认走 Windows 本地代码页
+    # (cp1252) 会在遇到中文日志时抛 UnicodeDecodeError，把真实失败原因吞掉，故显式指定 UTF-8。
+    result = subprocess.run(command, env=env, text=True, encoding='utf-8', errors='replace',
+                            capture_output=True, timeout=timeout)
     log_path.write_text(json.dumps({'command': [str(x) for x in command], 'exit_code': result.returncode,
                                     'stdout': result.stdout, 'stderr': result.stderr}, indent=2), encoding='utf-8')
     return result
+
+
+def failure_detail(result, tail=20):
+    """把子进程的 returncode/stderr/stdout 尾巴一起带出来，避免只看到一句"失败了"。"""
+    lines = [f'rc={result.returncode}']
+    if result.stderr:
+        lines.append('stderr: ' + result.stderr.strip()[-2000:])
+    if result.stdout:
+        lines.append('stdout tail: ' + '\n'.join(result.stdout.strip().splitlines()[-tail:]))
+    return '\n'.join(lines)
 
 
 def main(installer, expected_commit, output, expected_version=None):
@@ -73,14 +86,15 @@ def main(installer, expected_commit, output, expected_version=None):
     runtime_script = Path(__file__).resolve().parents[1] / 'client/tools/test-fresh-installed-runtime.cjs'
     first = run_logged(['node', str(runtime_script), str(install), 'first'], env=env,
                        log_path=root / 'runtime-first-launch.json', timeout=300)
-    assert first.returncode == 0, f'Fresh installed Electron/Brain/chat test failed: {first.stderr}'
+    assert first.returncode == 0, ('Fresh installed Electron/Brain/chat test failed: '
+                                   + failure_detail(first))
     first_record = json.loads(next(line for line in reversed(first.stdout.splitlines()) if line.startswith('{')))
     assert first_record['result'] == 'passed' and first_record['fake_provider_chat'] == 'passed'
     conversation_id = first_record['conversation_id']
 
     restarted = run_logged(['node', str(runtime_script), str(install), 'restart'], env=env,
                            log_path=root / 'runtime-restart.json', timeout=300)
-    assert restarted.returncode == 0, f'Chat restore after Electron restart failed: {restarted.stderr}'
+    assert restarted.returncode == 0, 'Chat restore after Electron restart failed: ' + failure_detail(restarted)
     restart_record = json.loads(next(line for line in reversed(restarted.stdout.splitlines()) if line.startswith('{')))
     assert restart_record['conversation_id'] == conversation_id
     assert restart_record['durable_chat_history'] is True
