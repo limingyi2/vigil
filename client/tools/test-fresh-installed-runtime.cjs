@@ -102,8 +102,8 @@ async function start() {
       lastFailure: health.lastFailure, pid: health.pid, exe: health.exe, home: health.home,
       diagnosis: health.diagnosis,
       logTail: (health.logTail || []).map(line => String(line)
-        .replace(/((?:api[_-]?key|token|password|secret|authorization)\\s*[:=]\\s*)[^\\s,;]+/gi, '$1[redacted]')
-        .replace(/Bearer\\s+[^\\s]+/gi, 'Bearer [redacted]')),
+        .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
+        .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')),
     };
     console.error('SIDECAR_STARTUP_DIAGNOSTIC ' + JSON.stringify(diagnostic));
   }
