@@ -48,6 +48,11 @@ def failure_detail(result, tail=20):
     return '\n'.join(lines)
 
 
+def is_known_unsigned_p212_startup_block(authenticode_status, detail):
+    return (authenticode_status == 'NotSigned' and 'UnicodeEncodeError' in detail and
+            'cp1252' in detail and 'server_launch.py' in detail)
+
+
 def download_verified(url, path, expected_sha256, attempts=4):
     path = Path(path)
     temporary = path.with_name(path.name + '.download')
@@ -128,7 +133,30 @@ def run_historical_upgrade(installer, expected_commit, root):
         '--output', str(output),
     ], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800)
     if result.returncode:
-        raise RuntimeError('Actual historical P21.2 upgrade failed: ' + failure_detail(result))
+        detail = failure_detail(result)
+        if is_known_unsigned_p212_startup_block(auth_status, detail):
+            # This is a known limitation of the only pinned historical release:
+            # its frozen Python cannot start on the en-US runner before upgrade.
+            # Preserve the exact failure evidence and mark the historical check
+            # BLOCKED; never replace it with a synthetic legacy-layout fixture.
+            print('BLOCKED: signed historical installer upgrade unavailable; '
+                  'published unsigned P21.2 Brain cannot start under runner cp1252')
+            return {
+                'result': 'blocked',
+                'status': 'BLOCKED',
+                'reason': 'The pinned published P21.2 installer is unsigned and its frozen Brain crashes while encoding localized startup output under the Windows runner cp1252 locale.',
+                'historical_release': 'v' + old_version,
+                'historical_source_commit': old_source,
+                'installer': historical_installer.name,
+                'installer_size': historical_installer.stat().st_size,
+                'installer_sha256': old_sha,
+                'authenticode_status': auth_status,
+                'installer_was_actually_installed': True,
+                'historical_electron_brain_start': 'failed_before_upgrade',
+                'failure_evidence': detail[-2500:],
+                'synthetic_fixture_used': False,
+            }
+        raise RuntimeError('Actual historical P21.2 upgrade failed: ' + detail)
     report = json.loads(output.read_text(encoding='utf-8'))
     if report.get('result') != 'passed':
         raise RuntimeError('Historical upgrade report did not pass')
@@ -322,7 +350,14 @@ def main(installer, expected_commit, output, expected_version=None):
     if historical_logs.is_dir():
         shutil.copytree(historical_logs, logs_dir / 'historical-upgrade')
     report = {
-        'result': 'passed',
+        'result': 'blocked' if historical_upgrade.get('result') == 'blocked' else 'passed',
+        'status_by_check': {
+            'candidate_build_and_manifest': 'PASS',
+            'fresh_install_chat_restart_and_uninstall': 'PASS',
+            'plugin_market_lifecycle_and_no_resurrection': 'PASS',
+            'actual_signed_historical_upgrade': historical_upgrade.get('status', 'PASS'),
+            'windows_physical_user_machine': 'WAITING_USER_TEST',
+        },
         'environment': {'os': os.environ.get('RUNNER_OS', 'Windows isolated runner'),
                         'runner_name': os.environ.get('RUNNER_NAME'), 'isolation_root': str(root)},
         'candidate': {'version': manifest['ver'], 'source_commit': manifest['source_commit'],

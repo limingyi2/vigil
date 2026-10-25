@@ -86,25 +86,13 @@ def main(args):
     if not (install / 'resources/vigil-brain/vigil-brain.exe').is_file():
         raise RuntimeError('Historical installer did not create the Brain sidecar')
 
-    # P21.2's frozen Python ignores PYTHONIOENCODING and prints localized
-    # migration output before starting the HTTP service. On an en-US runner
-    # that crashes under cp1252. Temporarily park only its shipped plugin tree
-    # while starting the real historical Electron/Brain pair, then restore the
-    # exact tree before the in-place candidate upgrade so migration still sees
-    # the original published payload. The isolated install is disposable; the
-    # `finally` guarantees no source bytes are discarded on either outcome.
-    parked_old_plugins = root / 'historical-bundled-plugins'
-    old_plugins.rename(parked_old_plugins)
-    try:
-        old_start = run_logged(['node', str(runtime_helper), str(install), 'old-install'], env=env,
-                               log_path=logs / 'historical-first-start.json')
-    finally:
-        if parked_old_plugins.exists():
-            if old_plugins.exists():
-                raise RuntimeError('Historical Brain recreated its plugin tree; refusing to overwrite it')
-            parked_old_plugins.rename(old_plugins)
-    if not old_plugins.is_dir() or not (old_plugins / 'websearch.py').is_file() or not (old_plugins / 'kb.py').is_file():
-        raise RuntimeError('Historical bundled plugin tree was not restored intact before upgrade')
+    # Attempt UTF-8 for the published P21.2 sidecar's localized startup logs.
+    # PyInstaller's frozen runtime ignores these Python environment overrides;
+    # if it still fails with the known cp1252 startup error, the outer lifecycle
+    # report records BLOCKED instead of substituting a synthetic old layout.
+    old_runtime_env = dict(env, PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    old_start = run_logged(['node', str(runtime_helper), str(install), 'old-install'], env=old_runtime_env,
+                           log_path=logs / 'historical-first-start.json')
     old_record = json.loads(old_start.stdout.strip().splitlines()[-1])
     if old_record.get('result') != 'passed' or old_record.get('brain_health') != 'ready':
         raise RuntimeError('Published historical Electron/Brain failed startup')
@@ -177,7 +165,7 @@ def main(args):
                        'sha256': sha256(old_installer), 'authenticode_status': args.authenticode_status,
                        'old_bundle_plugins': ['websearch.py', 'kb.py'],
                        'installer_was_actually_run': True, 'old_electron_and_brain_started': True,
-                       'old_startup_locale': 'Published plugin tree temporarily parked during first start to avoid P21.2 cp1252 log crash; exact bytes restored before upgrade'},
+                       'old_startup_locale': 'UTF-8 environment override attempted for en-US runner'},
         'candidate': {'version': manifest['ver'], 'source_commit': manifest['source_commit'],
                       'installer': candidate.name, 'size': candidate.stat().st_size,
                       'sha256': sha256(candidate)},
