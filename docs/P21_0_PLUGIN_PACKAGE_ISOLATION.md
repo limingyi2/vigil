@@ -1,6 +1,6 @@
 # P21.0 — Plugin package isolation
 
-Status: implementation in progress; this phase is limited to the package boundary and backward-compatible startup migration.
+Historical P21.0 record. Its pre-P21.2 inventory and publication order are superseded by [`P21-可选插件独立分发清单.md`](P21-可选插件独立分发清单.md), which reflects the current source tree, retired functions, and current market artifact status.
 
 ## Problem confirmed at the merged P20.2 baseline
 

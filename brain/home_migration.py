@@ -15,9 +15,9 @@ DIRECTORIES = ('config', 'data', 'plugins', 'logs', 'archive', 'skill_host/skill
 CORE_FEATURE_NAMES = frozenset({
     "plugin_market.py", "remote.py", "skill.py",
 })
-# calc 与 gate 已在 P21.2 下线：旧安装里的 calc.py / gate.py 不再往新 home 搬，
-# 否则它们会以用户插件的身份复活一个已经被删掉的功能。
+# 这些可选功能已在 P21.2 下线：旧安装里的副本不再导入，避免以用户插件身份复活。
 LEGACY_OPTIONAL_FEATURE_NAMES = frozenset({"kb.py", "react.py", "websearch.py"})
+RETIRED_PLUGIN_NAMES = frozenset({"calc", "gate", "meme", "sticker_pack"})
 # 外部插件由插件市场装到 data/installed_plugins，绝不从安装包种入。
 # 打包 spec 是第一道防线；这里是纵深防御，旧包或误打包也带不进用户家目录。
 _MIGRATED_PLUGIN_MARKER = "data/run/legacy-plugin-migration.json"
@@ -88,9 +88,12 @@ def seed_core_features(bundle, home, legacy_roots=()):
     return {"seeded": len(current), "removed_stale": removed_stale}
 
 
-def _legacy_plugin_candidate(src, *, core_folder=False):
+def _legacy_plugin_candidate(src, *, core_folder=False, plugin_name=None):
     """Return whether a legacy entry is an optional plugin candidate."""
     if src.is_symlink():
+        return False
+    plugin_name = plugin_name or (src.stem if src.is_file() else src.name)
+    if plugin_name.lower() in RETIRED_PLUGIN_NAMES:
         return False
     if core_folder:
         return src.is_file() and src.name in LEGACY_OPTIONAL_FEATURE_NAMES
@@ -165,7 +168,7 @@ def migrate_legacy_plugins(home, legacy_roots=()):
 
     sources = []
     if has_legacy:
-        sources.extend((src, "plugins/" + src.name, False)
+        sources.extend((src, "plugins/" + src.name, False, "plugins/" + src.name)
                        for src in sorted(legacy.iterdir()))
     # Old application payloads are preserved in place. Only optional plugin
     # entries are copied; explicit core adapters remain owned by the application.
@@ -177,13 +180,16 @@ def migrate_legacy_plugins(home, legacy_roots=()):
             if not source_dir.is_dir() or source_dir.is_symlink():
                 continue
             is_core_folder = folder.endswith("core_features")
-            sources.extend((src, folder + "/" + src.name, is_core_folder)
+            root_id = hashlib.sha256(os.path.normcase(str(root)).encode("utf-8")).hexdigest()[:16]
+            sources.extend((src, "legacy/" + root_id + "/" + folder + "/" + src.name,
+                            is_core_folder, folder + "/" + src.name)
                            for src in sorted(source_dir.iterdir()))
     if old_core.is_dir() and not old_core.is_symlink():
-        sources.extend((src, "core_features/" + src.name, True)
+        sources.extend((src, "core_features/" + src.name, True,
+                        "core_features/" + src.name)
                        for src in sorted(old_core.iterdir()))
 
-    for src, key, core_folder in sources:
+    for src, key, core_folder, legacy_key in sources:
         if src.is_symlink():
             result["skipped_links"] += 1
             continue
@@ -193,6 +199,11 @@ def migrate_legacy_plugins(home, legacy_roots=()):
             continue
         if src.is_dir() and any(child.is_symlink() for child in src.rglob("*")):
             result["skipped_links"] += 1
+            continue
+        # P21.0-P21.2 receipts used a root-relative key without the old
+        # installation identity. Honor those receipts during the transition.
+        if legacy_key in migrated:
+            migrated[key] = migrated[legacy_key]
             continue
         _copy_legacy_plugin(src, installed, key, migrated, result)
 
@@ -209,7 +220,8 @@ def migrate_legacy_plugins(home, legacy_roots=()):
             if src.is_dir() and len(name) > 9 and name[-9] == "." and all(
                     c in "0123456789abcdef" for c in name[-8:].lower()):
                 name = name[:-9]
-            if not _legacy_plugin_candidate(src):
+            plugin_name = Path(name).stem if src.is_file() else name
+            if not _legacy_plugin_candidate(src, plugin_name=plugin_name):
                 continue
             if src.is_dir() and any(child.is_symlink() for child in src.rglob("*")):
                 result["skipped_links"] += 1

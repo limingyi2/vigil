@@ -179,8 +179,8 @@ PROVIDERS = {
 各存一份，客户端「能力 → 功能开关」里是滑条，App/微信渠道直改云端。
 
 - 2 档以上：搭话判定照旧，判定不过再按 `(档位-1)/9 × 0.45` 的概率救回
-- **1 档 = 只@硬闸**（`plugins/gate.py`）：被@、@所有人、叫名字才开口，
-  不问模型直接判；名字匹配会兜底人设的 `nicknames` 和 `name`
+- 旧版 `gate` 插件曾提供“只在被 @ 时回复”的硬闸；该可选插件已在 P21.2 下线，
+  不会随新客户端安装，也不会在升级时从旧源码目录复活。
 
 ## 桌面客户端
 
@@ -212,7 +212,8 @@ PROVIDERS = {
 ## 写插件
 
 Vigil 有三种扩展入口：Python 后端插件、目录型市场插件、Node 侧 JS 技能。
-后端运行插件安装在 `brain/plugins/`，可以声明工具、路由、提示词钩子和前端资源。
+Python 插件可声明工具、路由、提示词钩子和前端资源，但必须通过明确的市场/安装流程进入运行时。
+`brain/plugins/` 只保留历史源码和升级迁移来源；新客户端不扫描或打包这个目录。
 Brain 插件市场默认从独立 `vigil-plugins` GitHub 仓库的 `market.json` 读取；GitHub Raw 裸连
 不可达时自动回退到 jsDelivr 等公开镜像（清单与制品都先过 SHA-256 强校验，镜像不引入信任风险）。
 如果在运行目录的
@@ -223,12 +224,13 @@ fast-forward-only `git pull` 刷新。市场制品先校验 ZIP SHA-256、Manife
 Python 插件，不是 Electron 桌面扩展；具体路径与边界见
 [`docs/04-插件市场使用指南.md`](04-插件市场使用指南.md)。
 
-核心内置插件源码放在 `brain/plugins/`；通过市场安装的插件放在独立运行时目录。
+插件开发源码与安装包应放在仓库目录之外；通过插件市场或审核安装流程安装到 `data/installed_plugins/`。
+把新代码放入 `brain/plugins/` 不会使它生效，也不会让它随客户端发布。
 
 最小可用的插件：
 
 ```python
-# brain/plugins/hello.py
+# hello.py（外部插件包源码；完成结构检查后显式打包并安装）
 NAME = "hello"
 DESC = "打招呼"
 
@@ -341,7 +343,9 @@ cd brain/skill_host && node server.js
 
 ## 本地知识库
 
-入口为 `brain/plugins/kb.py`，实现位于 `brain/kb/`；源码运行时，索引与文档块存储在
+知识库引擎位于 `brain/kb/`；本地知识库页面、API、聊天自动检索和 `kb_search` 工具由
+可选插件 `kb` 接线。新安装需要等待独立市场制品；旧版升级会迁移旧插件副本。插件安装后，
+索引与文档块存储在
 `brain/data/kb/`，按「人设 × 渠道」分区。打包运行时的数据位于本地 Brain 可执行文件
 旁的 `data/kb/`；设置 `VIGIL_HOME` 时按该目录定位。
 检索需要启用知识库并通过导入接口建立索引，直接复制文件到索引目录不会自动入库。
@@ -426,9 +430,9 @@ PC 默认使用 `persona_file`；兼容已有 `persona_by_src.pc` 覆盖。人�
 | `brain/moments.py` | 朋友圈 |
 | `brain/voice.py` / `imggen.py` / `selfie.py` | 语音 / 生图 / 自拍 |
 | `brain/features.py` | 功能开关，按渠道覆盖 |
-| `brain/plugin_host.py` | 插件加载面：扫 `plugins/`、汇总工具 schema、拼提示词 |
+| `brain/plugin_host.py` | 插件加载面：从显式允许的核心适配器和 `data/installed_plugins/` 加载、汇总工具 schema、拼提示词；旧 `plugins/` 只作升级迁移来源 |
 | `brain/plugin_ops.py` | 插件管理面：装卸 .zip、元数据、渠道开关 |
-| `brain/kb/` | 本地知识库（RAG）：切块、嵌入、检索；`plugins/kb.py` 负责接线 |
+| `brain/kb/` | 本地知识库（RAG）底层引擎；可选 `kb` 插件负责页面/API/聊天接线，独立制品发布前仅旧版迁移用户保留此功能 |
 | `brain/skill_host/` | JS 技能的 Node 宿主 |
 | `client/` | 桌面客户端（Electron）：控制台 + 本地大脑宿主 + 推送更新 |
 | `pet/` | Windows 桌宠（PyQt6，旧版入口） |
@@ -464,8 +468,8 @@ python -m unittest discover -s tests -t tests
 WeChat Bridge 是独立渠道服务，发行项目源码仓库为
 [`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)；Vigil 仓库的
 `wechat-bridge/` 是有固定来源摘要的归档兼容快照，非 Core 运行依赖。生产部署版本仍需检查桥接机部署记录。
-Bridge 与 Brain 内的 Python gate 插件是不同交付物：当前 Brain 权威版本位于 `brain/plugins/gate.py`，
-`wechat-bridge/brain-plugin/gate.py` 是不随 Bridge 发行的历史参考，双方通过共享 OPEN/PASS 契约测试而非整文件覆盖同步。
+Bridge 的 OPEN/PASS 处理与旧 Brain Python `gate` 插件是不同交付物。旧 Brain gate 插件已退役；
+`wechat-bridge/brain-plugin/gate.py` 仅是 Bridge 兼容代码，不是 Kestrel 可选插件的打包或发布来源。
 本机微信登录态留在专用桥接运行机。凭据不应进入 Manifest、命令行、日志或聊天历史。
 Bridge 仍使用旧 HTTP/WS 接口；WeChat Bridge 的 Core 安装生命周期和新 RPC 尚未实现。P9.1 已实现 Wallpaper 独立桌面扩展的本地安装和启停，但不构成进程沙箱。
 P9 拆分方案见 [扩展通信契约](P9_extension_protocol.md) 与 [数据迁移约定](P9_data_migration.md)。

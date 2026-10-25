@@ -195,6 +195,27 @@ def test_previous_installer_core_feature_and_plugin_trees_migrate_from_legacy_ro
     assert (old_brain / "_internal/core_features/kb.py").is_file()
 
 
+def test_p21_2_retired_plugins_are_not_resurrected_from_legacy_or_retired_trees(tmp_path):
+    home = tmp_path / "home"
+    legacy = home / "plugins"
+    retired = home / "data/installed_plugins/_retired"
+    legacy.mkdir(parents=True)
+    retired.mkdir(parents=True)
+    for name in ("calc", "gate", "meme", "sticker_pack"):
+        (legacy / (name + ".py")).write_text("NAME='" + name + "'\n", encoding="utf-8")
+        (retired / (name + ".py")).write_text("NAME='" + name + "'\n", encoding="utf-8")
+    retired_package = retired / "gate.1234abcd"
+    retired_package.mkdir()
+    (retired_package / "__init__.py").write_text("NAME='gate'\n", encoding="utf-8")
+
+    result = migrate_legacy_plugins(home)
+    assert result["copied"] == 0
+    for name in ("calc", "gate", "meme", "sticker_pack"):
+        assert not (home / "data/installed_plugins" / (name + ".py")).exists()
+        assert (legacy / (name + ".py")).is_file()
+        assert (retired / (name + ".py")).is_file()
+
+
 def test_old_plugin_copy_identical_to_bundled_version_is_migrated(tmp_path):
     home = tmp_path / "home"
     legacy = home / "plugins"
