@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.join(ROOT, "brain"))
 sys.path.insert(0, os.path.join(ROOT, "brain", "plugins"))
 
 _spec = importlib.util.spec_from_file_location(
-    "skill_under_test", os.path.join(ROOT, "brain", "plugins", "skill.py"))
+    "skill_under_test", os.path.join(ROOT, "brain", "core_features", "skill.py"))
 skill = importlib.util.module_from_spec(_spec)
 sys.modules["skill_under_test"] = skill
 _spec.loader.exec_module(skill)

@@ -20,7 +20,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGES = os.path.join(ROOT, "client", "src", "js", "pages.js")
 SERVER = os.path.join(ROOT, "brain", "server.py")
-SKILL = os.path.join(ROOT, "brain", "plugins", "skill.py")
+SKILL = os.path.join(ROOT, "brain", "core_features", "skill.py")
 HOST = os.path.join(ROOT, "brain", "skill_host", "server.js")
 PLUGIN_OPS = os.path.join(ROOT, "brain", "plugin_ops.py")
 RESTART_STATE = os.path.join(ROOT, "brain", "restart_state.py")

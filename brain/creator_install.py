@@ -215,7 +215,7 @@ def _target_exists(kind, target):
         import plugin_ops
         return (os.path.lexists(os.path.join(plugin_ops._PLUG_DIR, target + ".py")) or
                 os.path.lexists(os.path.join(plugin_ops._PLUG_DIR, target)))
-    from plugins import skill as skill_ops
+    from core_features import skill as skill_ops
     return os.path.lexists(os.path.join(skill_ops._skill_dir(), target))
 
 
@@ -339,7 +339,7 @@ def install(approval_id, identity):
                     except OSError:
                         pass
             else:
-                from plugins import skill as skill_ops
+                from core_features import skill as skill_ops
                 result = skill_ops._install_zip(blob, note="Creator Mode MVP-2")
                 ok = bool(result.get("ok"))
         except ValueError:

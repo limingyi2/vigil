@@ -229,7 +229,7 @@ def _extension_status():
               "install_entry_in_client_source": "unconfirmed",
               "current_client_install_entry": "unconfirmed"}
     try:
-        importlib.import_module("plugins.skill")
+        importlib.import_module("core_features.skill")
         skills.update({"mechanism": "confirmed_available",
                        "install_entry_in_client_source": "present",
                        "current_client_install_entry": "unconfirmed"})
