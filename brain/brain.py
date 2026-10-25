@@ -2268,6 +2268,328 @@ class Brain:
             yield {"type": "error", "class": "model_request_failed",
                    "reason": type(exc).__name__, "msg": self.last_err}
 
+    def stream_chat_with_tools(self, user_text, src=None, conversation_id=None,
+                               native_content=None, request_id=None,
+                               route_entry=None):
+        """彻底版流式工具循环：全量 FC 循环全程在流上（P24"循环即流"）。
+
+        背景：此前带工具的聊天走阻塞式 chat()——工具循环期间客户端收不到
+        任何事件，用户体验是"长时间空白 → 整段蹦出"。本方法把 draft_native
+        的工具循环搬进生成器：每一轮模型的思考/正文增量、工具的开始/返回
+        全部实时流出。
+
+        与 _stream_readonly_tool_chat 同构（think/text/tool 事件、XML 双协议、
+        final_only 收尾、成功才落账），差异只有三点：
+        1) 工具表是全量 all_specs（含写操作，经 capability_registry 审批），
+           不是只读白名单；
+        2) 执行走 _tools.invoke_spec（全工具分发），不是 invoke_readonly_spec；
+        3) 轮数/时间预算对齐 draft_native（tool_max_rounds 默认 24、
+           tool_budget_seconds 默认 270），不是只读版的 4 轮上限。
+
+        事件协议与 _stream_readonly_tool_chat 完全一致，客户端零改动即可
+        获得完整流：模型在工具轮之间的叙事自然作为 text 流出；工具事件
+        额外带 summary 字段（结果摘要），旧客户端忽略未知字段是安全的。
+        """
+        import json
+        import time
+        self.use_src(src, conversation_id)
+
+        # --- 记忆检索（与 chat/_stream_readonly_tool_chat 同一判据）---
+        memory_block = ""
+        try:
+            import tools as _tools
+            if not _tools.is_smalltalk(user_text):
+                memory = self._mem_for()
+                cfg = self.api.get("memory_search") or {}
+                if memory is not None and cfg.get("enabled", True):
+                    from storage.query_resolver import bind, for_brain
+                    with bind(for_brain(self)):
+                        memory_block = memory.render(
+                            query=user_text, top_k=5, chan=self._cur_src)
+        except Exception as exc:
+            print("[上下文] 流式记忆检索失败：%s" % str(exc)[:100], flush=True)
+
+        _api0 = self._api_snapshot()
+        mp = self._provider(_api0)
+        if not self._provider_ready(mp, _api0):
+            yield {"type": "error", "class": "service_error",
+                   "msg": "模型提供者未就绪（没配 key 或本地模型未配置）"}
+            return
+        parts, life = self._build_system_parts_for_runtime(
+            user_text, memory_block, _api0, mp)
+        # 全工具使用态度（与 draft_native 同一段话，两处同步维护）
+        parts.append(
+            "\n## 工具\n"
+            "需要实时信息或精确计算（天气、位置、快递、搜索、算数、提醒、技能）"
+            "就调用对应工具，别凭记忆编；相互独立的调用一次并行发出。"
+            "工具结果回来后，用你自己的话自然地回答他，不要把参数或原始结果"
+            "原样倒给他；查不到就照实说查不到。")
+        if life:
+            parts.append("\n" + LIFE_RULES)
+
+        import tools as _tools
+        try:
+            import features as _features
+            tools_on = bool(_features.on("tools", src))
+        except Exception:
+            tools_on = False
+        tool_specs = None
+        if tools_on:
+            try:
+                tool_specs = _tools.all_specs(brain=self, src=src or self._cur_src)
+            except Exception as exc:
+                print("[工具] 流式全量工具表不可用：%s" % str(exc)[:100], flush=True)
+                tool_specs = None
+        xml_allowed = bool(getattr(mp, "supports_xml_tools", False)) and str(
+            _api0.get("allow_xml_tool_fallback", True)).lower() not in ('false', '0', 'off', 'no')
+        provider_tools = bool(getattr(mp, "supports_tools", False) or xml_allowed)
+        if tool_specs and not provider_tools:
+            tool_specs = None
+            parts.append(
+                "\n当前模型不支持 Function Calling，本轮不能执行工具调用。"
+                "不得声称已联网或核实实时信息；需要实时数据时请明确说明无法查询。")
+
+        request_tool_names = sorted({
+            str((item.get("function") or {}).get("name") or "")
+            for item in (tool_specs or []) if isinstance(item, dict)
+            and (item.get("function") or {}).get("name")
+        })
+        self.last_request_diagnostics = {
+            "request_id": str(request_id or "")[:120],
+            "conversation_id": str(conversation_id or "")[:120],
+            "task_category": None,
+            "route_entry": str(route_entry or "brain_tools")[:64],
+            "tool_policy": "full", "provider_supports_tools": bool(
+                getattr(mp, "supports_tools", False)),
+            "provider_supports_xml_tools": bool(getattr(mp, "supports_xml_tools", False)),
+            "tools_in_request": request_tool_names if provider_tools else [],
+            "tool_calls": [], "capability_check": {"success": False, "state": "not_requested"},
+        }
+
+        try:
+            from conversation_context import build_context as _build_context
+            history, context_info = _build_context(
+                self, user_text, system_text="".join(parts), tool_specs=tool_specs,
+                src=self._cur_src, conversation_id=self._cur_conversation)
+        except Exception as exc:
+            print("[上下文] 流式上下文构建失败：%s" % str(exc)[:100], flush=True)
+            history, context_info = list(self.recent_hist()), {"fallback": True}
+        self.last_context_info = context_info
+        if context_info.get("fixed_overflow"):
+            yield {"type": "error", "reason": "context_overflow",
+                   "msg": "系统提示、工具与当前消息超过输入预算，请缩短输入或调整模型容量"}
+            return
+        messages = [{"role": "system", "content": "".join(parts)}]
+        messages.extend(history)
+        messages.append({"role": "user",
+                         "content": self._native_user_content(user_text, native_content)})
+
+        max_rounds = int(self.api.get("tool_max_rounds") or 24)
+        budget_s = float(self.api.get("tool_budget_seconds") or 270)
+        tools_used = []
+        text_parts, think_parts = [], []
+        input_tokens = output_tokens = 0
+        started = time.time()
+        request_seconds = 0.0
+        self.last_cloud_requests = 0
+        self.last_cloud_seconds = 0.0
+        self.last_tools_used = []
+        self.last_err = ""
+        self.last_think = ""
+        _next_no_tools = False
+
+        try:
+            from model_providers.execution import (
+                prepare, completion_events, ERROR_MESSAGES,
+                apply_reasoning_strategy, assistant_history_message,
+            )
+            from conversation_context import output_reserve
+            from agent_context import usage_record
+            from model_providers.tool_protocol import ToolTextBoundary
+            from model_providers.base import ProviderResponseError
+            yield {"type": "model_request_started", "tool_status":
+                       "available" if provider_tools else "provider_unsupported",
+                   "available_tools": list(self.last_request_diagnostics.get(
+                       "tools_in_request") or []),
+                   "request_id": str(request_id or "")[:120],
+                   "conversation_id": str(conversation_id or "")[:120],
+                   "route_entry": str(route_entry or "brain_tools")[:64],
+                   "tool_policy": "full",
+                   "provider_supports_tools": bool(getattr(mp, "supports_tools", False))}
+            for round_index in range(max_rounds + 1):
+                final_only = round_index == max_rounds or _next_no_tools
+                if not final_only and time.time() - started > budget_s:
+                    # 预算耗尽：不再挂工具，逼她出一段正文（对齐 draft_native
+                    # 的收尾语义，但用流式而非阻塞请求）。
+                    final_only = True
+                payload = {
+                    "model": _api0.get("model") or "deepseek-chat",
+                    "messages": messages,
+                    "temperature": 0.85,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                if tool_specs and not final_only:
+                    payload["tools"] = tool_specs
+                    payload["tool_choice"] = "auto"
+                if final_only:
+                    messages.append({"role": "user", "content":
+                        "（系统提示：工具调用已经结束。请根据已有信息用你自己的话"
+                        "回答他；不要再调用工具，也不要声称未执行的调用已经成功。）"})
+                payload, _reasoning_state = apply_reasoning_strategy(
+                    payload, _api0, mp,
+                    "balanced" if _is_knowledge_q(user_text) else "fast")
+                current_text, current_think = [], []
+                boundary = ToolTextBoundary() if xml_allowed else None
+                result = None
+                request_started = time.monotonic()
+                self.last_cloud_requests += 1
+                for event in completion_events(mp,
+                        prepare(payload, _api0,
+                                step_tokens=output_reserve(_api0, mp)),
+                        timeout=120):
+                    if event["type"] == "think_delta":
+                        current_think.append(event["text"])
+                        yield {"type": "think", "text": event["text"]}
+                    elif event["type"] == "text_delta":
+                        try:
+                            visible = boundary.feed(event["text"]) if boundary else event["text"]
+                        except ProviderResponseError:
+                            self.last_err = "工具调用协议超过限制，本次未执行调用。"
+                            yield {"type": "error", "class": "tool_protocol_error",
+                                   "msg": self.last_err}
+                            return
+                        current_text.append(visible)
+                        if visible:
+                            yield {"type": "text", "text": visible}
+                    elif event["type"] == "completion":
+                        result = event["result"]
+                request_seconds += max(0.0, time.monotonic() - request_started)
+                if boundary:
+                    tail = boundary.feed('', final=True)
+                    if isinstance(tail, str) and tail:
+                        current_text.append(tail)
+                        yield {"type": "text", "text": tail}
+                if not result or not result.get("complete"):
+                    reason = (result or {}).get("reason") or "connection_lost"
+                    self.last_err = ERROR_MESSAGES.get(reason, "模型响应不完整")
+                    yield {"type": "error", "class": "model_request_failed",
+                           "reason": reason, "msg": self.last_err}
+                    return
+                usage = result.get("usage") or {}
+                input_tokens += int(usage.get("prompt_tokens") or 0)
+                output_tokens += int(usage.get("completion_tokens") or 0)
+                tool_calls = result.get("tool_calls") or []
+                xml_mode = False
+                parsed_calls = []
+                parse_failed = ""
+                try:
+                    for call in tool_calls:
+                        fn = call.get("function") or {}
+                        args = json.loads(fn.get("arguments") or "{}")
+                        if not isinstance(args, dict):
+                            raise ValueError("arguments must be an object")
+                        parsed_calls.append((call, str(fn.get("name") or ""), args))
+                except (ValueError, TypeError, AttributeError):
+                    parsed_calls = []
+                    parse_failed = "工具调用参数解析失败，本次未执行调用。"
+                if boundary and boundary.blocks and not parsed_calls:
+                    # MiMo 等端点会带不完整的原生参数残片 + 完整 XML 块，
+                    # 只有供应商显式开启 XML 协议时才让完整 XML 顶上来。
+                    try:
+                        tool_calls = boundary.calls()
+                        parsed_calls = [(c, str((c.get("function") or {}).get("name") or ""),
+                                         json.loads((c.get("function") or {}).get("arguments") or "{}"))
+                                        for c in tool_calls]
+                        xml_mode = True
+                        parse_failed = ""
+                    except (ValueError, TypeError, AttributeError):
+                        parse_failed = parse_failed or "工具调用参数解析失败，本次未执行调用。"
+                if parse_failed:
+                    self.last_err = parse_failed
+                    yield {"type": "error", "class": "tool_protocol_error", "msg": self.last_err}
+                    return
+                if final_only and tool_calls:
+                    self.last_err = "工具轮次已结束，未执行额外调用。"
+                    yield {"type": "error", "class": "tool_protocol_error",
+                           "reason": "tool_limit", "msg": self.last_err}
+                    return
+                if not tool_calls:
+                    final_text = "".join(text_parts + current_text)
+                    final_think = "".join(think_parts + current_think)
+                    self.last_think = final_think
+                    self.last_ms = int((time.time() - started) * 1000)
+                    self.last_usage = {"in": input_tokens, "out": output_tokens}
+                    self.last_tools_used = tools_used
+                    self.last_cloud_seconds = round(request_seconds, 2)
+                    if final_text.strip():
+                        self._commit_turn(user_text, final_text, src=self._cur_src,
+                                          conversation_id=self._cur_conversation)
+                    token_rate = usage_record(
+                        {"prompt_tokens": input_tokens,
+                         "completion_tokens": output_tokens},
+                        input_text=json.dumps(messages, ensure_ascii=False),
+                        output_text=final_text)
+                    token_rate["request_elapsed_seconds"] = round(max(0.001, request_seconds), 3)
+                    token_rate["tokens_per_second"] = round(
+                        token_rate["output_tokens"] / max(0.001, request_seconds), 2)
+                    token_rate["rate_estimated"] = token_rate["estimated_output"]
+                    yield {"type": "done", "text": final_text, "think": final_think,
+                           "token_rate": token_rate}
+                    return
+
+                # 全工具审计语义与 draft_native 一致：记录在执行前。
+                for _call, _name, _args in parsed_calls:
+                    if _name and _name not in tools_used:
+                        tools_used.append(_name)
+                if not xml_mode:
+                    messages.append(assistant_history_message(
+                        mp, {"content": "".join(current_text),
+                             "reasoning_content": "".join(current_think),
+                             "tool_calls": tool_calls}, tool_calls=tool_calls))
+                xml_results = []
+                for call, name, args in parsed_calls:
+                    yield {"type": "tool", "tool": name, "state": "started"}
+                    try:
+                        from plugin_host import Turn
+                        ctx = Turn(text=user_text, src=src or self._cur_src, brain=self)
+                        ctx.tool_policy = ""
+                        ctx.allowed_tool_specs = list(tool_specs or [])
+                        result_text = _tools.invoke_spec(name, args, ctx)
+                    except Exception:
+                        result_text = None
+                    tool_ok = result_text is not None
+                    self.last_request_diagnostics.setdefault("tool_calls", []).append({
+                        "name": name,
+                        "result_state": "returned" if tool_ok else "failed",
+                    })
+                    yield {"type": "tool", "tool": name, "state": "returned",
+                           "error": not tool_ok,
+                           "summary": (str(result_text) or "")[:200]}
+                    if xml_mode:
+                        xml_results.append("【工具结果 %s】\n%s" % (
+                            name, result_text or "调用失败，照实说明，不要编造结果"))
+                    else:
+                        messages.append({"role": "tool", "tool_call_id": call.get("id"),
+                                         "content": str(result_text) if result_text is not None
+                                         else "调用失败，照实说明，不要编造结果"})
+                if xml_mode:
+                    messages.append({"role": "user", "content":
+                        "（系统提示：以下是你刚才调用工具的返回结果。"
+                        "请根据结果用你自己的话回答他，不要再调用工具。）\n"
+                        + "\n".join(xml_results)})
+                    _next_no_tools = True
+                text_parts.extend(current_text)
+                think_parts.extend(current_think)
+            self.last_err = "工具循环达到轮次上限，未能给出最终回复。"
+            yield {"type": "error", "class": "tool_limit", "msg": self.last_err}
+        except Exception as exc:
+            self.last_err = "模型请求失败或连接中断，本次未能完成回答。"
+            print("[大脑] 流式工具循环失败：%s: %s" % (type(exc).__name__, str(exc)[:100]),
+                  flush=True)
+            yield {"type": "error", "class": "model_request_failed",
+                   "reason": type(exc).__name__, "msg": self.last_err}
+
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,
              no_tools=False, conversation_id=None, native_content=None,

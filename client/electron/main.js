@@ -1096,7 +1096,7 @@ ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, b
   // 渠道用 query 带上：服务端按 src 分区（features / history / persona 都吃这个）。
   // URL 里已经写了 src 的（数据页看别的渠道历史）尊重写死的那个。
   const sep = p.includes('?') ? '&' : '?';
-  const wantsSrc = ['/api/features', '/api/chatty', '/api/history', '/api/persona', '/api/memory']
+  const wantsSrc = ['/api/features', '/api/history', '/api/persona', '/api/memory']
     .some((k) => p.startsWith(k));
   const hasSrc = /(?:\?|&)src=/.test(p);
   const withSrc = wantsSrc && !hasSrc ? p + sep + 'src=' + encodeURIComponent(src) : p;

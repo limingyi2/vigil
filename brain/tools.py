@@ -178,7 +178,7 @@ def tool_help_extra(native=False):
 #   params    [("参数名", "参数说明", 是否必填)]；空列表 = 无参
 #   arg_param 模型传 dict，执行时取哪个参数还原成旧函数的字符串 arg；
 #             None = 无参
-# 静态插件工具（search/reminder_*/skill_list）也集中在这里声明。
+# 静态插件工具（search/skill_list）也集中在这里声明。
 
 _STATIC_SPECS = {
     "agent_run_inspect": {

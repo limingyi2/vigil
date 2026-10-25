@@ -166,9 +166,12 @@ class HTTPTests(unittest.TestCase):
                 else:
                     self.assertEqual([event['type'] for event in events if event['type'] in ('text', 'done')],
                                      ['text', 'text', 'done'])
-                    self.assertEqual(events[-1]['text'], 'incremental answer')
-                    self.assertEqual(brain.calls[-1][0], text)
-                    self.assertTrue(brain.calls[-1][1]['no_tools'])
+                    # P25：回退聊天路径同样挂只读工具（联网搜索常驻），
+                    # 不再是 no_tools 直答。
+                    self.assertEqual(events[-1]['text'], 'function answer')
+                    self.assertEqual(brain.tool_calls[-1][0], text)
+                    self.assertEqual(brain.tool_calls[-1][1]['tool_policy'], 'readonly')
+                    self.assertNotIn('no_tools', brain.tool_calls[-1][1])
                 task_traces = [row for row in self.trace_rows if row.get('kind') == 'task_route']
                 self.assertEqual(task_traces[-1]['task_category'], category)
                 expected_entry = ('brain_tools' if category in ('chat', 'retrieval')
@@ -217,7 +220,7 @@ class HTTPTests(unittest.TestCase):
                     'text': '修改启动配置并验证', 'src': 'pc'}, sse=True)
             self.assertEqual(code, 200, events)
             self.assertEqual(events[-1]['type'], 'done')
-            self.assertTrue(brain.calls[-1][1]['no_tools'])
+            self.assertNotIn('no_tools', brain.tool_calls[-1][1])
             self.assertEqual(self.trace_rows[-1]['fallback_reason'], 'classification_error')
 
     def test_legacy_request_is_not_migrated_and_executed_again(self):

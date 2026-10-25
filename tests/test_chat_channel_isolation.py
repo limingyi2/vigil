@@ -52,7 +52,6 @@ class ChatChannelIsolationTests(unittest.TestCase):
         self._runtime_patches = [
             patch.object(server, "_her_look", return_value={}),
             patch.object(server, "resolve_gen_tags", side_effect=lambda text, _look: text),
-            patch.object(server, "resolve_rand_tags", side_effect=lambda text, _input: text),
             patch.object(server, "resolve_voice_tag", side_effect=lambda text, _cfg: text),
             patch.object(plugin_host, "on_reply", side_effect=lambda _turn, answer: answer),
         ]

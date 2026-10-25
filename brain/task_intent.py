@@ -24,6 +24,7 @@ _CODE = re.compile(
 _EXECUTE = re.compile(
     r"修改|改好|改成|改|调整|协调|确认|修复|修好|修|实现|重构|编辑|整理|创建|新建|写入|写文件|删除|构建|编译|"
     r"运行|执行|检查|审查|分析|验证|整理|列出|读取|搜索|查找|设置|创建|保存|安装|打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|"
+    r"装个|装一下|卸载|卸掉|reinstall|uninstall|"
     r"modify|edit|fix|implement|refactor|build|compile|run|test|inspect|review|open|launch|control|click|type|close|connect|"
     r"create|delete|write|list|read|set|save|install",
     re.I,
@@ -58,6 +59,16 @@ _EXPLICIT_ACTION_REQUEST = re.compile(
     r"open|launch|control|click|type|close|connect|install|run|execute))",
     re.I,
 )
+# 安装/卸载/启停类意图（P25）：这类请求即使带问号也是行动请求——
+# "你可以安装吗"被 _SAFE_QUESTION 判成"问句未表达执行动作"后，agent 只能
+# 查状态（旧元数据谎报 currently_unavailable 又把它劝退），用户永远走不到
+# 审批卡。这里在问句分支之前拦截，直判任务路径。
+_INSTALL_INTENT = re.compile(
+    r"安装|装个|装一下|装上|给我装|帮我装|卸载|卸掉|删除插件|禁用插件|"
+    r"启用插件|重载插件|装回来|reinstall|uninstall",
+    re.I,
+)
+
 _TOOL_CALL_REQUEST = re.compile(
     r"(?:(?:请(?!问)(?:你)?\s*)?(?:帮我|替我|为我)\s*|"
     r"请(?!问)(?:你)?\s*)"
@@ -132,7 +143,12 @@ def classify(text, *, workspace_authorized=False):
         # Explanatory questions stay in chat unless they contain an independent
         # action request. This prevents language names or code nouns alone from
         # selecting the Coding Harness.
-        if _EXPLAIN.search(normalized) and not _REQUEST_FRAME.search(normalized):
+        if _INSTALL_INTENT.search(normalized):
+            # 安装/卸载/启停类请求直判任务：即使以问句形式出现（"你可以
+            # 安装吗"），意图也是要 agent 走 capability_call + 审批卡，
+            # 不是要一段"我能不能"的口头回答。
+            category, reason = "simple_execution", "安装/卸载/启停类意图"
+        elif _EXPLAIN.search(normalized) and not _REQUEST_FRAME.search(normalized):
             category, reason = "chat", "解释型问题使用普通回答入口"
         elif (_SAFE_QUESTION.search(normalized) and not _REQUEST_FRAME.search(normalized)
               and not (_RETRIEVE.search(normalized) or _FACTUAL_QUERY.search(normalized))):

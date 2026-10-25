@@ -4186,62 +4186,17 @@
     // 桥接，桌面端改不到、也不该假装改得到（P8.1 起桌面端只连本机 Brain）。
     async function features() {
       const f = pick(await get('/api/features'));
-      const CHATS = [['pc', '本机']];
-      let curCh = 'pc';
-      const chName = () => (CHATS.find(([c]) => c === curCh) || ['', '?'])[1];
-      const chBase = () => null;
       const feats = f.features || {};
       const NAMES = {
-        hotboard: '热搜接入', weather: '天气信息', weather_alert: '天气变化提醒',
+        weather: '天气信息', weather_alert: '天气变化提醒',
         package: '快递监控', tools: '工具调用',
       };
       v.innerHTML =
-        '<div class="card" style="margin-bottom:12px">' +
-        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">' +
-        '<div style="flex:1;min-width:180px"><b style="font-size:13.5px">说话多少</b>' +
-        '<div class="muted" style="font-size:12px">1 档 = 只有被 @（或叫名字）才搭话；档位越高越爱插话</div></div>' +
-        (CHATS.length > 1 ? '<div class="seg" id="chSrc">' + CHATS.map(([c, n]) =>
-          '<button data-ch="' + c + '"' + (c === curCh ? ' class="on"' : '') + '>' + n + '</button>').join('') + '</div>' : '') +
-        '</div>' +
-        '<div style="display:flex;align-items:center;gap:12px">' +
-        '<input type="range" min="1" max="10" value="5" id="chattyRange" style="flex:1">' +
-        '<b id="chattyVal" style="font-size:20px;width:28px;text-align:right">…</b>' +
-        '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:6px" id="chattyNote"></div>' +
-        '</div>' +
         '<div class="card hd"><table class="tbl"><tr><th>功能</th><th class="c">本机（pc）</th></tr>' +
         Object.keys(feats).map((k) => '<tr><td>' + esc(NAMES[k] || k) + '</td>' +
           '<td class="c"><button class="sw ' + (feats[k] ? 'on' : '') + '" data-f="' + esc(k) + '"></button></td></tr>').join('') +
         '</table></div>' +
         '<div class="muted" style="font-size:11.5px;margin-top:8px">这里是本机控制台（pc）的开关，改完即时生效。所有设置仅作用于本机 PC。</div>';
-
-      const range = v.querySelector('#chattyRange');
-      const valEl = v.querySelector('#chattyVal');
-      const noteEl = v.querySelector('#chattyNote');
-
-      async function loadLevel() {
-        valEl.textContent = '…';
-        const c = pick(await get('/api/chatty?src=' + curCh, { base: chBase() }));
-        const lvl = c.level || 5;
-        range.value = lvl;
-        valEl.textContent = lvl;
-        noteEl.textContent = '本机控制台的档位，存在本机 Brain，改完下一句就生效。';
-      }
-      loadLevel();
-
-      v.querySelectorAll('#chSrc button').forEach((b) => b.addEventListener('click', () => {
-        if (curCh === b.dataset.ch) return;
-        curCh = b.dataset.ch;
-        v.querySelectorAll('#chSrc button').forEach((x) => x.classList.toggle('on', x === b));
-        loadLevel();
-      }));
-      range?.addEventListener('input', () => { valEl.textContent = range.value; });
-      range?.addEventListener('change', async () => {
-        const lvl = Number(range.value);
-        const r = pick(await post('/api/chatty', { level: lvl, src: curCh }, { base: chBase() }));
-        if (!r.ok && r._status === 0) { toast('保存失败：' + (r._err || '数据源不可达')); loadLevel(); return; }
-        toast('「' + chName() + '」说话多少：' + lvl + (lvl <= 1 ? '（只 @）' : ''));
-      });
 
       v.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', async () => {
         const on = !b.classList.contains('on');

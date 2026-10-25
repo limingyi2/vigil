@@ -172,6 +172,11 @@ def test_named_tool_call_requests_and_questions_keep_distinct_routes():
 
 
 def test_full_agent_tool_schema_and_ordinary_readonly_schema_are_distinct(monkeypatch):
+    # 环境前置：本用例无隔离夹具，期望环境装着 websearch 插件（search 工具）。
+    # brain/plugins/ 源码目录不是运行时来源；未安装时跳过而不是误报失败。
+    import tools as _t_check, pytest as _pytest
+    if "search" not in {x["function"]["name"] for x in _t_check.all_specs(src="pc")}:
+        _pytest.skip("环境未安装 websearch 插件（installed_plugins 为空）")
     import features
     import localtools
     import plugin_host

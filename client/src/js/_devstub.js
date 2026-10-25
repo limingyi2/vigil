@@ -53,7 +53,6 @@
     [/^\/api\/features/, () => J({ features: {
       hotboard: true, weather: true, weather_alert: false, package: true,
       meme: true, moment_image: false, tools: true } })],
-    [/^\/api\/chatty/, () => J({ level: 6, levels: { pc: 6 } })],
     [/^\/api\/plugins/, () => J({ manage: { channels: ['pc'], items: [
       { name: 'weather', desc: '查天气', err: '', channels: ['app'], tools: ['weather'],
         meta: { version: '1.2', author: 'me', installed_at: '2026-10-02' } },

@@ -52,7 +52,7 @@ def test_clean_install_hides_optional_tools_even_when_unknown_features_default_o
     _installed, _feature_values, _registry = isolated_plugin_runtime
     names = _names()
     assert {"weather", "tracking", "capability_status", "capability_call"} <= names
-    assert not ({"search", "reminder_set", "reminder_list", "reminder_cancel", "kb_search"} & names)
+    assert not ({"search", "kb_search"} & names)
     assert features.on("websearch", "pc") is True  # unknown feature default is not install evidence
     assert not tools.static_tool_enabled("search", "pc")
     result = tools.invoke_readonly_spec("search", {"query": "should not run"},
@@ -76,11 +76,10 @@ def test_plugin_cannot_expose_unregistered_tools_with_a_stale_schema(
 def test_installed_optional_tools_appear_disable_and_disappear_on_uninstall_and_reload(
         isolated_plugin_runtime):
     installed, feature_values, registry = isolated_plugin_runtime
-    _install_sources(installed, "websearch", "reminder", "kb")
+    _install_sources(installed, "websearch", "kb")
     names = _names()
-    assert {"search", "reminder_set", "reminder_list", "reminder_cancel", "kb_search"} <= names
+    assert {"search", "kb_search"} <= names
     assert tools.static_tool_enabled("search", "pc")
-    assert tools.static_tool_enabled("reminder_set", "pc")
 
     # The standard plugin feature gate removes schemas and blocks dispatch.
     feature_values["websearch"] = False
@@ -92,17 +91,17 @@ def test_installed_optional_tools_appear_disable_and_disappear_on_uninstall_and_
     feature_values["websearch"] = True
 
     # Plugin Manager state also removes the tools without relying on FEATURES.
-    registry["plugins"]["reminder"] = {"enabled": False}
-    assert not ({"reminder_set", "reminder_list", "reminder_cancel"} & _names())
+    registry["plugins"]["kb"] = {"enabled": False}
+    assert "kb_search" not in _names()
     registry["plugins"].clear()
 
     # Uninstall removes source, and a later host reload must not resurrect it.
-    for name in ("websearch", "reminder", "kb"):
+    for name in ("websearch", "kb"):
         (installed / (name + ".py")).unlink()
     plugin_host.load(force=True)
     plugin_host.load(force=True)  # restart/reload path
     names = _names()
-    assert not ({"search", "reminder_set", "reminder_list", "reminder_cancel", "kb_search"} & names)
+    assert not ({"search", "kb_search"} & names)
     assert not tools.static_tool_enabled("search", "pc")
 
 
@@ -126,15 +125,13 @@ def test_search_structured_dispatch_uses_loaded_plugin_and_retains_sources(
 def test_pre_p21_5_installed_plugins_keep_tools_through_host_compatibility_adapter(
         isolated_plugin_runtime):
     installed, _feature_values, _registry = isolated_plugin_runtime
-    _install_sources(installed, "websearch", "reminder")
+    _install_sources(installed, "websearch")
     search = plugin_host.get_by_tool("search")
-    reminder = plugin_host.get_by_tool("reminder_set")
     del search.mod.TOOL_SPECS
     del search.mod.READONLY_TOOLS
-    del reminder.mod.TOOL_SPECS
 
     names = _names()
-    assert {"search", "reminder_set", "reminder_list", "reminder_cancel"} <= names
+    assert {"search"} <= names
     search.mod._mem.clear()
     with patch.object(search.mod, "_post", return_value=[{
             "title": "Legacy source", "url": "https://example.test/legacy",

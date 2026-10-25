@@ -21,8 +21,7 @@ DEFAULTS 里除核心功能外，插件声明了 FEATURE 的也会登记进来�
 **没写的键跟全局走**，所以只写要关的那几个就够，不用抄一整份。
 全局那份 `features` 是"任何渠道都没覆盖时"的初值。
 
-🔴 **app 跟其它渠道一样，也是一份覆盖**（和 `chatty` 那套"每渠道一份"
-同构）。写和读必须是同一套规则 —— 曾经读取侧单独跳过 app（注释写着
+🔴 **app 跟其它渠道一样，也是一份覆盖**。写和读必须是同一套规则 —— 曾经读取侧单独跳过 app（注释写着
 "app 就是基线"），写入侧却照写 `features_by_src.app`：面板在 App 渠道
 点开关"点了跟没点一样"，还往配置里攒了一堆永远读不出来的"幽灵覆盖"
 （界面上显示已关、运行时全是开的）。详见 `_test_features_src.py`。
@@ -35,21 +34,6 @@ import contextvars
 import json
 import threading
 import time
-
-# 行为开关改动 → 同步 outbox（M2：行为插件配置纳入 version 同步）。
-# 拉取落盘不经过 set_features（sync_client 直接写 config.json），无回声
-try:
-    import sync_outbox
-except Exception:
-    sync_outbox = None
-
-
-def _note_behavior():
-    try:
-        if sync_outbox is not None:
-            sync_outbox.record("behavior", {"seg": "features"})
-    except Exception:
-        pass
 
 try:
     from paths import CONFIG_PATH
@@ -65,8 +49,6 @@ DEFAULTS = {
     "weather": True,          # 天气进她的世界
     "weather_alert": True,    # 天气变化主动提醒
     "packages": True,         # 快递监控与提醒
-    "rand_img_chat": True,    # 聊天里她可以甩 [rand:] 图
-    "rand_img_moment": True,  # 朋友圈配图优先用随机图（云上 10-07 加的键）
     "tools": True,            # 模型可自选调免费 API（查他在哪/天气/快递）
     "voice": True,            # 语音条（App 能渲染音频条；群里发不了 mp3，要关）
     # 可选插件：仓库拓扑查看（branch-atlas）是开发者工具，0.1.0 只做了只读视图。
@@ -215,7 +197,6 @@ def set_features(patch, src=None):
         # 反过来的话返回的是 30 秒前的旧缓存 —— 调用方（面板）拿到的
                 # 是"修改前"的答案，界面上看着就像开关没写进去。
         invalidate()
-        _note_behavior()
         return all_features(src)
     except Exception:
         return None
@@ -261,5 +242,4 @@ def drop(key):
             except Exception:
                 return n              # 内存清了、文件没写成，如实返回
     invalidate()
-    _note_behavior()
     return n

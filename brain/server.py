@@ -10,11 +10,11 @@
 数据在哪
   记忆、人设、会话、行为配置都在这台机器的 data/ 目录里，本机是唯一权威源，
   单机独立可用。历史上曾有过"云端是权威源、本地只是终端"的架构，P8.1 之后
-  已经撤掉 —— 现在没有任何进程会启动同步链路（见 sync_client 的模块说明）。
+  已经撤掉 —— 现在没有任何进程会启动同步链路（同步客户端模块已于 2026-10-25 删除）。
   残留的 sync.* 配置不会被读取，但也不代表同步还活着。
 
 模块分工
-  runtime 共享配置｜reply 回复后处理｜randimg 随机图｜selfie 自拍｜
+  runtime 共享配置｜reply 回复后处理｜selfie 自拍｜
   imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环｜
   capability_registry 能力注册与授权｜agent_runs 任务循环｜
   plugin_host / plugin_manager 插件｜creator_jobs 创作作业。
@@ -74,7 +74,6 @@ except Exception:
 
 # --- 各领域模块（server 自己用的 + 给老脚本 re-export 的都在这） ---
 from reply import strip_say_marker, resolve_voice_tag, resolve_gen_tags
-from randimg import resolve_rand_tags, RAND_TAG_RE, _cloud_random_image
 from selfie import (_SELFIE_STRONG, _SELFIE_MISS, _SELFIE_THING_RE,
                     _looks_like_selfie, _hour_seg,
                     _wear_for, _selfie_prompt, _selfie_caption)
@@ -92,7 +91,6 @@ from jobs import start_background
 __all__ = [
     "api_config", "API_CFG", "MOB_CFG", "BRAIN_TOKEN", "load_config",
     "strip_say_marker", "resolve_voice_tag", "resolve_gen_tags",
-    "resolve_rand_tags", "RAND_TAG_RE", "_cloud_random_image",
     "_SELFIE_STRONG", "_SELFIE_MISS", "_SELFIE_THING_RE",
     "_looks_like_selfie", "_hour_seg", "_wear_for", "_selfie_prompt",
     "_selfie_caption", "GEN_NEGATIVE", "_cloud_gen_image", "_cloud_gen_selfie",
@@ -327,7 +325,6 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/health",
     "/api/history",
     "/api/features",
-    "/api/chatty",
     "/api/stats",
     "/api/logs",
     "/api/plugins",                     # 桥接/启动器的存活探针
@@ -1019,7 +1016,6 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             # 剥掉学出来的「说」标记；[gen:xxx] 换成 [img:名字]
             look = _her_look()
             ans = resolve_gen_tags(strip_say_marker(ans), look)
-            ans = resolve_rand_tags(ans, text)   # [rand:分类] 表情包/趣图
             ans = resolve_voice_tag(ans, API_CFG)
             # 插件的回复加工（on_reply）：核心那三道加工之后。
             # 放最后是有意的：插件拿到的已经是"能直接发出去"的文本
@@ -1166,7 +1162,7 @@ def reload_plugins_now():
 
     装/卸/改开关之后都要走这里 —— 少走一步就会出现
     "界面显示装上了、实际那轮对话里没有它"。
-    模块级函数：路由和同步客户端（sync_client 拉到行为配置/人设变化后）
+    模块级函数：路由和同步客户端（同步客户端已删除，只剩本地数据接口）
     两个入口共用，别留两份实现。
     """
     try:
@@ -1199,7 +1195,6 @@ def _sync_route_get(path, qp):
     import memory_store_v2 as ms
     if path == "/api/sync/manifest":
         import persona_store
-        import sync_client
         stores = []
         for name in ms.list_store_names():
             st = ms.open_store_by_name(name)
@@ -1209,10 +1204,8 @@ def _sync_route_get(path, qp):
                 stores.append(st.ledger())
             except Exception:
                 continue
-        beh = sync_client.behavior_snapshot()
         return 200, {"ok": True, "stores": stores,
-                     "personas": persona_store.sync_snapshot(),
-                     "behavior": {"version": sync_client.behavior_version(beh)}}
+                     "personas": persona_store.sync_snapshot()}
     if path == "/api/sync/memories":
         st = ms.open_store_by_name(qp.get("store"))
         if st is None:
@@ -1233,16 +1226,6 @@ def _sync_route_get(path, qp):
         d = persona_store.sync_snapshot()
         d["ok"] = True
         return 200, d
-    if path == "/api/sync/status":
-        import sync_client
-        d = sync_client.status()
-        d["ok"] = True
-        return 200, d
-    if path == "/api/sync/behavior":
-        import sync_client
-        data = sync_client.behavior_snapshot()
-        return 200, {"ok": True, "version": sync_client.behavior_version(data),
-                     "data": data}
     return None
 
 
@@ -1250,7 +1233,7 @@ def _sync_route_post(path, body):
     """同步 POST 路由（推送：记忆批量 / 人设 / 人设删除 / 行为段）。全部幂等。
 
     🔴 权威源语义：这几条是"本地 → 云端"的推入口，云端自己**不开**同步
-    客户端（sync_client.cloud() 在云端是 None），所以这里收到什么就按
+    端调用方已不存在，这里收到什么就按
     账本规则应用什么，不会再转发出去 —— 没有回声环。
     """
     import memory_store_v2 as ms
@@ -1295,27 +1278,6 @@ def _sync_route_post(path, body):
         except OSError:
             pass
         return 200, {"ok": True, "status": "applied", "version": v}
-    if path == "/api/sync/behavior":
-        import sync_client
-        data = (body or {}).get("data")
-        if not isinstance(data, dict):
-            return 400, {"ok": False, "err": "data 必须是对象"}
-        cur = sync_client.behavior_version(sync_client.behavior_snapshot())
-        incoming = sync_client.behavior_version(data)
-        if incoming == cur:
-            return 200, {"ok": True, "status": "same",
-                         "version": cur}       # 重推：内容一样，什么都不做
-        if not sync_client.behavior_apply(data):
-            return 500, {"ok": False, "err": "写配置失败"}
-        # 行为变了，本进程的插件开关缓存/提示词跟着刷新（2.4 的 reload 钩子）
-        try:
-            reload_plugins_now()
-        except Exception:
-            pass
-        return 200, {"ok": True, "status": "applied", "version": incoming}
-    return None
-
-
 def start_remote_api(brain):
     """给"远程桌宠"和手机 App 开的门：客户端是薄壳，经隧道/直连用云上的大脑
     聊天 —— 记忆 / 人设只有云上一份，天然同步。
@@ -2818,7 +2780,7 @@ def start_remote_api(brain):
                                          "err": "记忆编辑只允许管理员"})
                         return
                     # 底层 edit 自带 outbox 钩子（本地记 memory_edit 上云；
-                    # 云端是权威源，sync_outbox 没启用时 record 是 no-op）——
+                    # outbox 已随同步链路删除，record 恒为 no-op）——
                     # 两端共用这一份代码，同步方向自动正确。
                     import memory_store_v2 as _ms
                     st = _ms.open_store_by_name(
@@ -2855,18 +2817,6 @@ def start_remote_api(brain):
                         return
                     st.delete(iid)
                     self._json(200, {"ok": True})
-                    return
-                if path == "/api/sync/flush":
-                    # M5 客户端的「立即同步」按钮：把 outbox 存货推上去 +
-                    # 拉一轮云端增量。云端自己（权威源）调用时 cloud()
-                    # 返回 None，两个函数都是 no-op —— 同样一份代码两端安全。
-                    import sync_client as _sc
-                    import sync_outbox as _so
-                    pushed = _sc.flush_outbox_once()
-                    pulled = _sc.pull_once()
-                    self._json(200, {"ok": True, "pushed": pushed,
-                                     "pulled": pulled,
-                                     "pending": _so.pending_count()})
                     return
                 if path == "/api/device/revoke":
                     import devices
@@ -3467,14 +3417,12 @@ def start_remote_api(brain):
                             if len(_LOCAL['brain'].hist) <= 1:
                                 _LOCAL['brain'].seed_history(src=_src, conversation_id=_brain_cid)
                             if _stream_brain_entry:
-                                # Ordinary chat and history/RAG retrieval retain
-                                # the original streaming path. stream_chat has
-                                # no function-calling loop, so retrieval uses
-                                # its scoped context injection and cannot invoke
-                                # tools from model-generated arguments.
+                                # P25：普通聊天从 no_tools 改挂只读工具表——联网搜索
+                                # 常驻每一轮（"安装rea"这类短句曾因无工具只能反问用户）。
+                                # 只读工具有审计与渠道开关管着，写通道仍只在任务路径开放。
                                 _stream_kwargs = dict(src=_src,
                                                       conversation_id=_brain_cid,
-                                                      no_tools=True)
+                                                      tool_policy='readonly')
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
@@ -3493,22 +3441,21 @@ def start_remote_api(brain):
                                     yield from _LOCAL['brain'].stream_chat(
                                         _in_text, **_stream_kwargs)
                                 else:
-                                    _chat_kwargs = dict(src=_src, conversation_id=_brain_cid,
-                                        capability_query=_task_decision.get('task_category') == 'capability',
+                                    # P24"循环即流"：全工具任务从阻塞 chat() 切到
+                                    # 流式工具循环——工具执行期间 think/text/tool
+                                    # 事件照常流出，不再是黑盒等 done。
+                                    _stream_kwargs = dict(src=_src,
+                                        conversation_id=_brain_cid,
                                         request_id=_diag_request_id,
                                         route_entry=_task_entry)
                                     if _native_content is not None:
-                                        _chat_kwargs['native_content'] = _native_content
-                                    _ans, _mode = _LOCAL['brain'].chat(_in_text, **_chat_kwargs)
-                                    if getattr(_LOCAL['brain'], 'last_err', ''):
-                                        yield {'type': 'error', 'class': 'service_error',
-                                               'msg': str(getattr(_LOCAL['brain'], 'last_err', ''))[:300]}
-                                    else:
-                                        yield {'type': 'done', 'text': _ans or '', 'mode': _mode or ''}
+                                        _stream_kwargs['native_content'] = _native_content
+                                    yield from _LOCAL['brain'].stream_chat_with_tools(
+                                        _in_text, **_stream_kwargs)
                             else:
                                 _stream_kwargs = dict(src=_src,
                                                       conversation_id=_brain_cid,
-                                                      no_tools=True)
+                                                      tool_policy='readonly')
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
@@ -4149,28 +4096,6 @@ def start_remote_api(brain):
                     if cur is None:
                         cur = _feat.all_features(_fsrc)
                     self._json(200, {"features": cur})
-                elif path == "/api/chatty":
-                    # 说话多少（1~10）。跟功能开关一样按渠道存：
-                    # 带 src 改那个渠道，不带改 default。
-                    import chatty as _ch
-                    _c = body if isinstance(body, dict) else {}
-                    _c.pop("token", None)
-                    # 同 /api/features：body > query > 都没有 = default 档位
-                    _craw = str(_c.pop("src", "") or qp.get("src") or "").strip()
-                    _csrc = _norm_src(_craw) if _craw else None
-                    if "level" in _c:
-                        _ch.set_level(_c.get("level"), _csrc)
-                        # 🔴 **必须清规则缓存**。draft_rules 是按 (人设,渠道)
-                        # 缓存的，不清的话这次改动要等大脑重启才生效 ——
-                        # 而界面会立刻显示新值，"改了没用"就是这么来的。
-                        try:
-                            _b = _LOCAL.get("brain")
-                            if _b is not None:
-                                _b._rules_cache = {}
-                        except Exception:
-                            pass
-                    self._json(200, {"levels": _ch.all_levels(),
-                                     "level": _ch.level(_csrc)})
                 elif path.startswith("/api/sync/"):
                     # 同步推送（本地 → 权威源）：全部按账本幂等应用
                     r = _sync_route_post(path, body if isinstance(body, dict)
@@ -4782,22 +4707,6 @@ def start_remote_api(brain):
                 _fsrc = (_norm_src(_q.get("src"))
                          if (_q.get("src") or "").strip() else None)
                 self._json(200, {"features": _feat.all_features(_fsrc)})
-            elif path == "/api/chatty":
-                # 说话多少（1~10）。带 src=pc 读的是那个渠道的值。
-                import chatty as _ch
-                _q = {}
-                try:
-                    from urllib.parse import parse_qs, urlparse
-                    _q = {k: v[0] for k, v in
-                          parse_qs(urlparse(self.path).query).items()}
-                except Exception:
-                    _q = {}
-                _csrc = (_norm_src(_q.get("src"))
-                         if (_q.get("src") or "").strip() else None)
-                self._json(200, {"levels": _ch.all_levels(),
-                                 "level": _ch.level(_csrc)})
-            elif path.startswith("/api/creator"):
-                # Creator Mode 草稿查询（GET 只读：清单/详情）
                 if self._creator_admin("GET", path, None):
                     return
                 self._json(404, {"err": "no such creator api"})
@@ -4997,7 +4906,7 @@ def run_server():
             print("[插件] 启动失败（不影响聊天）：%s" % str(e)[:120],
                   flush=True)
         # 桌面端从 P8.1 起不再和任何远端对账：本地 Brain 就是唯一真身，
-        # 没有人再启动 sync_client 的拉取/推送线程。记忆、人设、行为配置
+        # 同步链路已于 2026-10-25 整体删除。记忆、人设、行为配置
         # 只写本机这一份。（`/api/sync/*` 是账本读写接口，留给多端场景，
         # 但它不发起任何出站请求。）
 

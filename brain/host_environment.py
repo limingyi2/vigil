@@ -211,9 +211,30 @@ def _tool_detail(brain, src, provider_info, tool_specs=None, specs_supplied=Fals
     }
 
 
+
+def _agent_install_status(operations):
+    """真实探测安装通道是否对 agent 开放（P25 修正硬编码谎报）。
+
+    注册表里 install_link 是 DELEGATED（可信来源直装、其他来源出审批卡）、
+    skill_install 是 WRITE（先审批）——都是活通道。探测按注册表实际状态
+    报告；探测本身失败才回落 unknown，绝不再谎报不可用。
+    """
+    try:
+        import capability_registry as _cr
+        cap = _cr.REGISTRY.get("plugins_skills") or {}
+        ops = cap.get("operations") or []
+        names = set(ops) if isinstance(ops, dict) else {str(o) for o in ops}
+        if any(op in names for op in operations):
+            return "available_via_capability_call"
+        return "operations_not_registered"
+    except Exception:
+        return "unknown"
+
+
 def _extension_status():
     plugins = {"state": "unconfirmed", "registered_count": None,
-               "agent_installation": "currently_unavailable",
+               "agent_installation": _agent_install_status(
+                   ["install_link", "skill_install"]),
                "install_entry_in_client_source": "unconfirmed",
                "current_client_install_entry": "unconfirmed"}
     try:
@@ -226,7 +247,8 @@ def _extension_status():
         plugins["state"] = "currently_unavailable"
 
     skills = {"mechanism": "unconfirmed",
-              "agent_installation": "currently_unavailable",
+              "agent_installation": _agent_install_status(
+                  ["skill_install", "skill_reload"]),
               "install_entry_in_client_source": "unconfirmed",
               "current_client_install_entry": "unconfirmed"}
     try:

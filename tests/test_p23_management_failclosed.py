@@ -20,7 +20,7 @@ FULL = {"cloud_url": "http://127.0.0.1:8788", "node_id": "local-pc",
 
 def cfg(**management):
     return {"management": dict(management),
-            "sync": {"enabled": True, "cloud_url": "http://47.114.58.45:8788",
+            "sync": {"enabled": True, "cloud_url": "http://203.0.113.45:8788",
                      "cloud_token": "legacy-token"}}
 
 
@@ -57,7 +57,7 @@ class NoSyncFallback(unittest.TestCase):
         self.assertIsNone(mgmt._resolve_from_config(c))
 
     def test_sync_block_alone_never_starts(self):
-        c = {"sync": {"enabled": True, "cloud_url": "http://47.114.58.45:8788",
+        c = {"sync": {"enabled": True, "cloud_url": "http://203.0.113.45:8788",
                       "cloud_token": "legacy-token"}}
         self.assertIsNone(mgmt._resolve_from_config(c))
 

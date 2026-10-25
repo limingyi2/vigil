@@ -77,16 +77,6 @@ _LEGACY_TOOL_SPECS = {
                    "params": [("query", "要搜索的内容", True)],
                    "arg_param": "query"},
     },
-    "reminder": {
-        "reminder_set": {"desc": "设置一个到点主动提醒，传入包含时间和事项的原话。",
-                         "params": [("text", "包含时间和提醒事项的原话", True)],
-                         "arg_param": "text"},
-        "reminder_list": {"desc": "查看当前尚未到点的提醒。",
-                           "params": [], "arg_param": None},
-        "reminder_cancel": {"desc": "取消匹配关键词的提醒；全部取消请传“全部”。",
-                            "params": [("keyword", "提醒关键词，或“全部”", True)],
-                            "arg_param": "keyword"},
-    },
 }
 
 _registry = {}        # name -> Plugin

@@ -308,13 +308,24 @@ def _find_manifest(names):
 
 
 @transaction.serialized
-def install(zip_path, note="", replace=False):
+def _stage_report(on_stage, stage, detail=""):
+    """安装阶段回调（P25 进度作业用）。回调异常绝不影响安装事务。"""
+    if on_stage is None:
+        return
+    try:
+        on_stage(stage, detail)
+    except Exception:
+        pass
+
+
+def install(zip_path, note="", replace=False, on_stage=None):
     """Validate and commit files transactionally.
 
     ``replace`` is reserved for the unified manager's update path. The legacy
     upload path keeps duplicate installs rejected, while updates use the same
     protected backup/rollback transaction instead of deleting the old plugin.
     """
+    _stage_report(on_stage, "inspect", "校验压缩包结构")
     ok, names, err = inspect_zip(zip_path)
     if not ok:
         return False, {"err": err, "static_validated": False}
@@ -335,6 +346,8 @@ def install(zip_path, note="", replace=False):
                 os.makedirs(os.path.dirname(dst_path), exist_ok=True)
                 with zf.open(name) as src, open(dst_path, "wb") as dst:
                     shutil.copyfileobj(src, dst)
+        _stage_report(on_stage, "extract", "解包到暂存目录")
+        _stage_report(on_stage, "validate", "校验插件结构与清单")
         from plugin_structure import check_plugin_directory
         report = check_plugin_directory(source)
         if not report["ok"]:
@@ -355,6 +368,7 @@ def install(zip_path, note="", replace=False):
                     replacements["_%s_%s" % (pname, name)] = os.path.join(source, name)
             old = [n for n in os.listdir(_PLUG_DIR)
                    if n == pname + ".py" or n.startswith("_" + pname + "_")]
+        _stage_report(on_stage, "commit", "落盘提交（含备份与回滚保护）")
         ok, result = _commit_install(stage, pname, replacements, old,
                                      report["manifest"], note)
         keep = result.get("rollback") == "failed"
@@ -405,7 +419,7 @@ def _commit_install(stage, name, replacements, old, manifest, note):
 
 
 @transaction.serialized
-def install_market_directory(repo, relative, name, note="market"):
+def install_market_directory(repo, relative, name, note="market", on_stage=None):
     """Static market validation plus the same filesystem transaction as zip."""
     from plugin_structure import check_plugin_directory, _filename_issue
     stage = None
@@ -428,6 +442,7 @@ def install_market_directory(repo, relative, name, note="market"):
         transaction.reject_links(_PLUG_DIR)
         if not os.path.isdir(src):
             raise ValueError("插件源目录不存在")
+        _stage_report(on_stage, "precheck", "校验源目录与路径安全")
         report = check_plugin_directory(src)
         if not report["ok"] or report["layout"] != "directory":
             raise ValueError("市场目录结构无效：" + "; ".join(
@@ -440,6 +455,7 @@ def install_market_directory(repo, relative, name, note="market"):
         shutil.copytree(src, staged, symlinks=True,
                         ignore=shutil.ignore_patterns("__pycache__"))
         # Validate the immutable staging copy under its target identity too.
+        _stage_report(on_stage, "stage_copy", "复制到暂存目录并复验")
         report = check_plugin_directory(staged)
         if not report["ok"]:
             raise ValueError("暂存目录结构无效：" + "; ".join(
@@ -448,6 +464,7 @@ def install_market_directory(repo, relative, name, note="market"):
             raise ValueError("同名单文件插件已存在，拒绝跨布局覆盖")
         # Directory rename over a non-empty directory requires first moving
         # the old directory. commit handles this with a protected backup.
+        _stage_report(on_stage, "commit", "落盘提交（含备份与回滚保护）")
         ok, result = _commit_install(stage, name, {name: staged}, [name],
                                      report["manifest"], note)
         keep = result.get("rollback") == "failed"

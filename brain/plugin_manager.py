@@ -338,10 +338,12 @@ def _update_meta(name, manifest, *, enabled=None, source=""):
     return item
 
 
-def install_archive(path, *, source="zip", replace=False, reload=True, manifest_override=None):
+def install_archive(path, *, source="zip", replace=False, reload=True, manifest_override=None, on_stage=None):
     """Install one archive through the existing safe transaction."""
     name = ""
     try:
+        from plugin_ops import _stage_report
+        _stage_report(on_stage, "precheck", "manifest 与依赖预检")
         incoming, manifest_error = _ops().manifest_from_zip(path)
         if manifest_error:
             return False, {"ok": False, "err": manifest_error, "state": "error"}
@@ -356,7 +358,7 @@ def install_archive(path, *, source="zip", replace=False, reload=True, manifest_
         missing = _dependencies(metadata_manifest, _registry())
         if missing:
             return False, {"ok": False, "err": "依赖检查失败：" + "; ".join(missing), "state": "error"}
-        ok, result = _ops().install(path, note=source, replace=replace)
+        ok, result = _ops().install(path, note=source, replace=replace, on_stage=on_stage)
         name = result.get("name") or result.get("package") or ""
         if not ok:
             if name:
@@ -368,7 +370,9 @@ def install_archive(path, *, source="zip", replace=False, reload=True, manifest_
         manifest = dict(manifest_override if manifest_override is not None
                         else (result.get("manifest") or {}))
         _update_meta(name, manifest, source=source)
+        _stage_report(on_stage, "register", "登记插件元数据")
         if reload:
+            _stage_report(on_stage, "reload", "重载插件")
             try:
                 if not _reload(name):
                     raise RuntimeError("运行中的 Brain 不可用，插件需要重启后才能启动")

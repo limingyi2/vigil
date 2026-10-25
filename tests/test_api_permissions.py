@@ -48,7 +48,7 @@ class TestDeviceMatrix(unittest.TestCase):
             self.assertTrue(server._device_path_allowed("POST", p), p)
 
     def test_GET_读取与轮询放行(self):
-        for p in ("/api/history", "/api/features", "/api/chatty",
+        for p in ("/api/history", "/api/features",
                   "/api/plugins", "/api/plugins/frontend",
                   "/api/plugin/remote/poll", "/api/plugin/remote/tools",
                   "/api/persona", "/api/models", "/api/memory/list",
@@ -65,7 +65,7 @@ class TestDeviceMatrix(unittest.TestCase):
                   "/api/persona/save", "/api/persona/apply",
                   "/api/persona/new", "/api/persona/del",
                   "/api/voice/apply", "/api/models/apply",
-                  "/api/features", "/api/chatty",
+                  "/api/features",
                   "/api/memory/edit", "/api/memory/delete",
                   "/api/proactive", "/api/packages/del",
                   "/api/gen", "/api/chat/stream-x"):
