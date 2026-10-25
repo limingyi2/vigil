@@ -86,7 +86,12 @@ def main(args):
     if not (install / 'resources/vigil-brain/vigil-brain.exe').is_file():
         raise RuntimeError('Historical installer did not create the Brain sidecar')
 
-    old_start = run_logged(['node', str(runtime_helper), str(install), 'old-install'], env=env,
+    # The published P21.2 sidecar prints Chinese before it configures its
+    # streams. GitHub's en-US runner uses cp1252, so use a UTF-8 process locale
+    # only to initialize the real old installation. The upgraded P21.5 start
+    # below receives the runner's unmodified environment and exercises the fix.
+    old_runtime_env = dict(env, PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    old_start = run_logged(['node', str(runtime_helper), str(install), 'old-install'], env=old_runtime_env,
                            log_path=logs / 'historical-first-start.json')
     old_record = json.loads(old_start.stdout.strip().splitlines()[-1])
     if old_record.get('result') != 'passed' or old_record.get('brain_health') != 'ready':
@@ -159,11 +164,13 @@ def main(args):
                        'installer': old_installer.name, 'size': old_installer.stat().st_size,
                        'sha256': sha256(old_installer), 'authenticode_status': args.authenticode_status,
                        'old_bundle_plugins': ['websearch.py', 'kb.py'],
-                       'installer_was_actually_run': True, 'old_electron_and_brain_started': True},
+                       'installer_was_actually_run': True, 'old_electron_and_brain_started': True,
+                       'old_startup_locale': 'UTF-8 override for the en-US runner cp1252 console'},
         'candidate': {'version': manifest['ver'], 'source_commit': manifest['source_commit'],
                       'installer': candidate.name, 'size': candidate.stat().st_size,
                       'sha256': sha256(candidate)},
         'upgrade': {'in_place': True, 'electron_and_brain_started': True,
+                    'candidate_started_without_python_encoding_override': True,
                     'legacy_websearch_loaded': True, 'legacy_kb_migrated': True,
                     'existing_market_version_hash_preserved': True,
                     'user_configuration_preserved': True, 'conversation_history_preserved': True,
