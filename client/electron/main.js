@@ -866,7 +866,8 @@ async function pollOnce() {
   const base = connectionBase();
   if (!base) return;
   const caps = localtool.capabilities(cfg);
-  if (!caps.length) return;                       // 全关了就别浪费请求
+  // 空能力也要带着已有 token 轮询：服务端用它刷新“客户端在线、工具全关”
+  // 状态，并在空集合分支只记心跳、不认领任何工具任务。
   pollBusy = true;
   try {
     const token = await getToken();
