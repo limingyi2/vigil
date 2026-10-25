@@ -68,6 +68,17 @@ async function run() {
     if (health.status === 'ready' || health.status === 'failed') break;
     await pause(250);
   }
+  if (health.status !== 'ready') {
+    const diagnostic = {
+      status: health.status, failureKind: health.failureKind, lastErr: health.lastErr,
+      lastFailure: health.lastFailure, pid: health.pid, exe: health.exe, home: health.home,
+      diagnosis: health.diagnosis, startupPhases: health.startupPhases,
+      logTail: (health.logTail || []).map(line => String(line)
+        .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
+        .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')),
+    };
+    console.error('HISTORICAL_BRAIN_STARTUP_DIAGNOSTIC ' + JSON.stringify(diagnostic));
+  }
   assert.equal(health.status, 'ready', health.lastErr || JSON.stringify(health));
   assert.ok(health.exe.startsWith(install), 'Brain did not start from the installed application');
   const home = health.home;
