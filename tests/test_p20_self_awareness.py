@@ -338,6 +338,119 @@ def test_readonly_capability_status_returns_current_host_without_enabling_calls(
     assert "capability_call" in disabled
 
 
+def test_local_tool_status_separates_definition_client_schema_and_approval(monkeypatch):
+    import time
+    import localtools
+
+    monkeypatch.setattr(localtools, "_LAST_POLL", time.time())
+    monkeypatch.setattr(localtools, "_LAST_CAPS",
+                        {"local_file_list", "local_file_append"})
+    monkeypatch.setattr(localtools, "_LAST_APPROVAL_MODE", "confirm_risky")
+    request_specs = [{"function": {"name": "capability_status"}}]
+    snap = host_environment.snapshot(
+        _Brain({"model_mode": "cloud", "model": "fixture"}),
+        provider=_Provider(), tool_specs=request_specs, detailed=True,
+        turn_snapshot=True, tool_policy="readonly")
+    state = snap["local_tool_state"]
+    by_name = {item["name"]: item for item in state["tools"]}
+
+    assert state["client_online"] is True
+    assert by_name["local_file_list"]["definition_present"] is True
+    assert by_name["local_file_list"]["client_enabled"] is True
+    assert by_name["local_file_list"]["request_exposed"] is False
+    assert by_name["local_file_list"]["approval_required"] is False
+    assert by_name["local_file_append"]["client_enabled"] is True
+    assert by_name["local_file_append"]["approval_required"] is True
+    assert by_name["local_file_append"]["approval_state"] == "will_prompt"
+    assert by_name["local_file_write"]["client_enabled"] is False
+    assert by_name["local_file_write"]["approval_required"] is True
+    assert by_name["local_file_write"]["approval_state"] == "will_prompt"
+    assert by_name["local_file_write"]["executed_success"] is None
+
+
+def test_auto_mode_is_reported_as_client_approval_policy_not_global_grant(monkeypatch):
+    import time
+    import localtools
+
+    monkeypatch.setattr(localtools, "_LAST_POLL", time.time())
+    monkeypatch.setattr(localtools, "_LAST_CAPS", {"local_file_write"})
+    monkeypatch.setattr(localtools, "_LAST_APPROVAL_MODE", "auto")
+    snap = host_environment.snapshot(
+        _Brain({"model_mode": "cloud", "model": "fixture"}),
+        provider=_Provider(), tool_specs=[], detailed=True,
+        turn_snapshot=True, tool_policy="readonly")
+    by_name = {item["name"]: item for item in snap["local_tool_state"]["tools"]}
+    assert by_name["local_file_write"]["approval_required"] is False
+    assert by_name["local_file_write"]["request_exposed"] is False
+    assert by_name["local_file_write"]["executed_success"] is None
+
+
+def test_local_tool_client_status_tracks_enable_disable_and_disconnect(monkeypatch):
+    import time
+    import localtools
+
+    now = time.time()
+    monkeypatch.setattr(localtools, "_LAST_POLL", now)
+    monkeypatch.setattr(localtools, "_LAST_CAPS", {"local_file_list", "local_file_write"})
+    monkeypatch.setattr(localtools, "_LAST_APPROVAL_MODE", "confirm_risky")
+    connected = localtools.client_status()
+    assert connected["online"] is True
+    assert connected["enabled_tools"] == ["local_file_list", "local_file_write"]
+    assert connected["approval_mode"] == "confirm_risky"
+
+    # A later authenticated poll replaces the enabled tool set immediately.
+    monkeypatch.setattr(localtools, "_LAST_POLL", time.time())
+    monkeypatch.setattr(localtools, "_LAST_CAPS", {"local_file_list"})
+    disabled = localtools.client_status()
+    assert disabled["online"] is True
+    assert disabled["enabled_tools"] == ["local_file_list"]
+
+    monkeypatch.setattr(localtools, "_LAST_POLL", time.time() - localtools.POLL_STALE - 1)
+    disconnected = localtools.client_status()
+    assert disconnected["online"] is False
+    assert disconnected["enabled_tools"] is None
+    assert disconnected["approval_mode"] is None
+
+
+def test_capability_evidence_performs_a_deterministic_readonly_check(monkeypatch):
+    observed = {}
+
+    class _Result:
+        ok = True
+        text = json.dumps({"item": {"name": "local_tools"},
+                           "environment": {"local_tool_state": {"client_online": False}}})
+
+    def invoke(name, args, turn):
+        observed.update(name=name, args=args, policy=turn.tool_policy,
+                        exposed=turn.allowed_tool_specs)
+        return _Result()
+
+    monkeypatch.setattr(tools, "invoke_readonly_spec", invoke)
+    check, payload = host_environment.capability_evidence(
+        _Brain({"model_mode": "cloud", "model": "fixture"}), "pc", {},
+        [{"function": {"name": "capability_status"}}], "能不能控制浏览器？")
+    assert check["success"] is True
+    assert check["state"] == "checked"
+    assert payload["item"]["name"] == "local_tools"
+    assert observed == {"name": "capability_status", "args": {"capability": "local_tools"},
+                        "policy": "readonly",
+                        "exposed": [{"function": {"name": "capability_status"}}]}
+
+
+def test_failed_capability_evidence_stays_unverified(monkeypatch):
+    class _Failure:
+        ok = False
+        text = ""
+
+    monkeypatch.setattr(tools, "invoke_readonly_spec", lambda *_a: _Failure())
+    check, payload = host_environment.capability_evidence(
+        _Brain({"model_mode": "cloud", "model": "fixture"}), "pc", {}, [],
+        "能不能控制浏览器？")
+    assert check["success"] is False
+    assert check["state"] == "failed"
+    assert payload is None
+
+
 def test_capability_status_uses_agent_run_model_configuration(monkeypatch):
     config = {"model_mode": "local", "model": "cloud-configured",
               "ollama": {"model": "run-local-model"}}

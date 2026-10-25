@@ -1075,7 +1075,8 @@ class Brain:
     #   * 它们的提示词还在教 `[tool:...]` 标签，和 tools schema 打架。
     # 一个决策点只留一条路，这类"改一处漏一处"才不会重演。
     def draft_native(self, user_text, memory_block, no_tools=False, ctx_src=None,
-                     native_content=None, route_decision=None, tool_policy=None):
+                     native_content=None, route_decision=None, tool_policy=None,
+                     capability_query=False, request_id=None, route_entry=None):
         """原生 FC 出草稿：工具调用走结构化 tool_calls，时序仍是 ReAct。
 
         和 draft 的区别只在"工具怎么传"：工具表挂在请求的 tools 字段，模型在
@@ -1188,6 +1189,52 @@ class Brain:
                     "\n当前渠道没有可用的只读查询工具（未启用：%s）。不得声称已经联网、查天气"
                     "或核实实时信息；如用户需要实时核实，请明确说明当前无法查询。"
                     % ", ".join(unavailable_names))
+
+        capability_check = {"success": False, "state": "not_requested"}
+        if capability_query:
+            import host_environment as _host_environment
+            capability_check, _status_value = _host_environment.capability_evidence(
+                self, ctx_src or self._cur_src, _api0, tool_specs or [], user_text)
+            if capability_check["success"]:
+                parts.append(
+                    "\n## 本轮可信能力状态（Brain 直接读取）\n"
+                    "以下 JSON 是本轮查询结果；它只报告注册、客户端在线/启用、"
+                    "本轮 schema 暴露和审批策略，不证明任何操作已执行。"
+                    "只有实际操作调用返回成功回执，才能说操作完成。"
+                    "历史回答不是本轮状态证据。若检查字段显示未确认，必须明确说未验证。\n"
+                    + json.dumps(_status_value, ensure_ascii=False, separators=(",", ":")))
+            else:
+                parts.append(
+                    "\n## 本轮能力状态未验证\n"
+                    "可信能力状态查询失败。必须明确说明本轮未验证；"
+                    "不能根据注册表推断客户端在线、授权、工具可见或操作成功。"
+                    "历史回答不是本轮状态证据。")
+
+        request_tool_names = sorted({
+            str((item.get("function") or {}).get("name") or "")
+            for item in (tool_specs or [])
+            if isinstance(item, dict) and (item.get("function") or {}).get("name")
+        })
+        self.last_request_diagnostics = {
+            "request_id": str(request_id or "")[:120],
+            "conversation_id": str(self._cur_conversation or "")[:120],
+            "task_category": "capability" if capability_query else None,
+            "route_entry": str(route_entry or "brain_tools")[:64],
+            "tool_policy": "readonly" if tool_policy == "readonly" else
+                           ("none" if no_tools else "full"),
+            "provider_supports_tools": bool(getattr(mp, "supports_tools", False)),
+            "provider_supports_xml_tools": bool(getattr(mp, "supports_xml_tools", False)),
+            "tools_in_request": request_tool_names,
+            "tool_calls": [],
+            "capability_check": capability_check,
+        }
+        if capability_query and not capability_check.get("success"):
+            # Do not ask the model to paraphrase an unavailable status check:
+            # this response is deterministic and cannot claim that state was
+            # verified from history or inference.
+            self.last_err = ""
+            return ("我这轮没能读取到可信的宿主工具状态，因此无法确认工具是否已连接、"
+                    "启用或暴露给当前请求。")
 
         # P8.4：历史段统一走压缩器（摘要注入/预算裁剪），三条入口同一份逻辑。
         # 失败回退旧行为 —— 压缩器任何问题都不能让她说不出话。
@@ -1486,10 +1533,18 @@ class Brain:
                         if _outcome.ok and _name not in used:
                             used.append(_name)
                         _result = _outcome.for_model()
+                        self.last_request_diagnostics.setdefault("tool_calls", []).append({
+                            "name": _name,
+                            "result_state": "succeeded" if _outcome.ok else "failed",
+                        })
                         if readonly_search_failed:
                             _result += '\n联网搜索调用失败，本次没有成功获取搜索结果。工具仍已授权。'
                     else:
                         _result = _tools.invoke_spec(_name, _args, ctx)
+                        self.last_request_diagnostics.setdefault("tool_calls", []).append({
+                            "name": _name,
+                            "result_state": "returned" if _result is not None else "failed",
+                        })
                     _tool_results.append((_fn.get("name") or "", _result))
 
                 if _xml_mode:
@@ -1640,7 +1695,8 @@ class Brain:
     # **当前没有被 chat() 调用**（线上走 draft_native）。保留是因为它省 token
     # --- 流式聊天：实时产出思考过程和正文 ---
     def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None,
-                    no_tools=False, tool_policy=None):
+                    no_tools=False, tool_policy=None, capability_query=False,
+                    request_id=None, route_entry=None):
         """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
         产出的事件格式：
@@ -1663,7 +1719,9 @@ class Brain:
 
         if tool_policy == "readonly" and not no_tools:
             yield from self._stream_readonly_tool_chat(
-                user_text, src, conversation_id, native_content, _api0, mp)
+                user_text, src, conversation_id, native_content, _api0, mp,
+                capability_query=capability_query, request_id=request_id,
+                route_entry=route_entry)
             return
 
         self.use_src(src, conversation_id)
@@ -1815,7 +1873,9 @@ class Brain:
                "token_rate": _token_usage}
 
     def _stream_readonly_tool_chat(self, user_text, src, conversation_id,
-                                   native_content, api_snapshot, provider):
+                                   native_content, api_snapshot, provider,
+                                   capability_query=False, request_id=None,
+                                   route_entry=None):
         """Stream ordinary chat while allowing only audited read-only tools."""
         import json
         import time
@@ -1874,6 +1934,52 @@ class Brain:
             parts.append(
                 "\n当前模型不支持 Function Calling，不能执行只读查询。不得声称已联网"
                 "或核实实时信息；需要实时数据时明确说明无法查询。")
+        capability_check = {"success": False, "state": "not_requested"}
+        if capability_query:
+            import host_environment as _host_environment
+            capability_check, value = _host_environment.capability_evidence(
+                self, src or self._cur_src, api_snapshot, tool_specs or [], user_text)
+            if capability_check["success"]:
+                parts.append(
+                    "\n## 本轮可信能力状态（Brain 直接读取）\n"
+                    "以下 JSON 是本轮查询结果；它只报告注册、客户端在线/启用、"
+                    "本轮 schema 暴露和审批策略，不证明任何操作已执行。"
+                    "只有实际操作调用返回成功回执，才能说操作完成。"
+                    "历史回答不是本轮状态证据。若检查字段显示未确认，必须明确说未验证。\n"
+                    + json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+            else:
+                parts.append(
+                    "\n## 本轮能力状态未验证\n可信能力状态查询失败。必须明确说明本轮未验证；"
+                    "不能根据注册表推断客户端在线、授权、工具可见或操作成功。"
+                    "历史回答不是本轮状态证据。")
+        request_tool_names = sorted({
+            str((item.get("function") or {}).get("name") or "")
+            for item in (tool_specs or []) if isinstance(item, dict)
+            and (item.get("function") or {}).get("name")
+        })
+        self.last_request_diagnostics = {
+            "request_id": str(request_id or "")[:120],
+            "conversation_id": str(conversation_id or "")[:120],
+            "task_category": "capability" if capability_query else None,
+            "route_entry": str(route_entry or "brain_tools")[:64],
+            "tool_policy": "readonly", "provider_supports_tools": bool(
+                getattr(provider, "supports_tools", False)),
+            "provider_supports_xml_tools": bool(getattr(provider, "supports_xml_tools", False)),
+            "tools_in_request": request_tool_names if provider_tools else [],
+            "tool_calls": [], "capability_check": capability_check,
+        }
+        if capability_query and not capability_check.get("success"):
+            text = ("我这轮没能读取到可信的宿主工具状态，因此无法确认工具是否已连接、"
+                    "启用或暴露给当前请求。")
+            self.last_tools_used = []
+            self.last_err = ""
+            self.last_think = ""
+            self._commit_turn(user_text, text, src=self._cur_src,
+                              conversation_id=self._cur_conversation)
+            yield {"type": "text", "text": text}
+            yield {"type": "done", "text": text, "think": "",
+                   "token_rate": {"output_tokens": 0, "estimated_output": True}}
+            return
         if life:
             parts.append("\n" + LIFE_RULES)
 
@@ -1933,7 +2039,15 @@ class Brain:
             from model_providers.tool_protocol import ToolTextBoundary
             from model_providers.base import ProviderResponseError
             yield {"type": "model_request_started", "tool_status": capability_status,
-                   "available_tools": sorted(authorized_names)}
+                   "available_tools": list(self.last_request_diagnostics.get(
+                       "tools_in_request") or []),
+                   "request_id": str(request_id or "")[:120],
+                   "conversation_id": str(conversation_id or "")[:120],
+                   "task_category": "capability" if capability_query else None,
+                   "route_entry": str(route_entry or "brain_tools")[:64],
+                   "tool_policy": "readonly",
+                   "provider_supports_tools": bool(getattr(provider, "supports_tools", False)),
+                   "capability_check": capability_check}
             for round_index in range(max_rounds + 1):
                 final_only = round_index == max_rounds
                 payload = {
@@ -2058,6 +2172,7 @@ class Brain:
                 xml_results = []
                 for call, name, args in parsed_calls:
                     error_class = None
+                    tool_ok = False
                     if not provider_tools:
                         error_class = 'provider_unsupported'
                         result_text = "当前模型不支持已授权工具的调用协议，本次未执行查询。"
@@ -2113,6 +2228,11 @@ class Brain:
                     if error_class and error_class != 'tool_execution_failed':
                         yield {"type": "tool", "tool": name, "state": "denied",
                                "error": True, "class": error_class}
+                    self.last_request_diagnostics.setdefault("tool_calls", []).append({
+                        "name": name,
+                        "result_state": "succeeded" if tool_ok else
+                                        "failed" if error_class else "unknown",
+                    })
                     if xml_mode:
                         xml_results.append("【工具结果 %s】\n%s" % (name, result_text))
                     else:
@@ -2135,7 +2255,8 @@ class Brain:
     # --- 对外：说一句话 ---
     def chat(self, user_text, proactive=False, img=None, log=True, src=None,
              no_tools=False, conversation_id=None, native_content=None,
-             route_decision=None, tool_policy=None):
+             route_decision=None, tool_policy=None, capability_query=False,
+             request_id=None, route_entry=None):
         """返回 (她说的话, 模式标签)。模式标签用于排查到底走的哪条路
 
         img：这一轮带的图片路径（有的话会记进聊天存档，手机/App 那边好显示）。
@@ -2206,6 +2327,12 @@ class Brain:
             _draft_kwargs = dict(no_tools=no_tools or proactive, ctx_src=self._cur_src)
             if tool_policy is not None:
                 _draft_kwargs["tool_policy"] = tool_policy
+            if capability_query:
+                _draft_kwargs["capability_query"] = True
+            if request_id is not None:
+                _draft_kwargs["request_id"] = request_id
+            if route_entry is not None:
+                _draft_kwargs["route_entry"] = route_entry
             if route_decision is not None:
                 _draft_kwargs['route_decision'] = route_decision
             if native_content is not None:

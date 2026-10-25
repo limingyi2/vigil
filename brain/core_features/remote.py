@@ -124,7 +124,8 @@ def _h_poll(body, query):
         pass
     if not caps:
         return {"ok": True, "call": None, "wait": 1}
-    c = localtools.take(dev, caps)
+    approval_mode = str(query.get("approval_mode") or "").strip().lower()
+    c = localtools.take(dev, caps, approval_mode=approval_mode)
     if not c:
         return {"ok": True, "call": None, "wait": 1}
     return {"ok": True, "call": c, "wait": 0}

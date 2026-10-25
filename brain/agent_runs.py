@@ -2368,6 +2368,21 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None, workflow_scop
         specs = tools.all_specs(brain=brain, src=item['src']) if provider.supports_tools else []
         ctx.tool_policy = "agent_run"
         ctx.allowed_tool_specs = list(specs)
+        request_diag = dict(
+            request_id=str(item.get('request_id') or '')[:120],
+            conversation_id=str(item.get('conversation_id') or '')[:120],
+            task_category='agent_run', route_entry='agent_run',
+            tool_policy='agent_run',
+            provider_supports_tools=bool(getattr(provider, 'supports_tools', False)),
+            tools_in_request=sorted({str((spec.get('function') or {}).get('name') or '')
+                                     for spec in specs if isinstance(spec, dict)
+                                     and (spec.get('function') or {}).get('name')}),
+        )
+        with LOCK, _db() as db:
+            current = _get(db, rid, owner)
+            if current and current.get('status') == 'running':
+                _event(db, current, 'request_diagnostics', request_diag)
+                _save(db, current)
         # A run owns its transcript; shared Brain/model history is never mutated.
         messages = messages or seed or [{'role': 'system', 'content': DEFAULT_SYSTEM},
                                {'role': 'user', 'content': item['intent']}]

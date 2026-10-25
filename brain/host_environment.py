@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import re
 import importlib
+import time
 
 
 _SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,119}$")
@@ -277,6 +278,60 @@ def snapshot(brain=None, src=None, *, api_config=None, provider=None,
         "workspace": _workspace_status(brain),
         "source": "Vigil Brain runtime and registered host interfaces",
     }
+    # Keep the host inventory, Electron's last advertised capabilities, and
+    # this request's model schema as separate facts.  Registration alone does
+    # not imply the client enabled a tool or that this request exposed it.
+    try:
+        import localtools as _localtools
+        registered = _localtools.specs()
+        client = _localtools.client_status()
+        schema_names = None
+        try:
+            import tools as _tool_registry
+            schema_names = set(_tool_registry._plugin_specs(source))
+        except Exception:
+            pass
+        request_names = None
+        if active_specs is not None:
+            request_names = sorted({
+                _safe_identifier((spec.get("function") or {}).get("name"))
+                for spec in active_specs if isinstance(spec, dict)
+                and isinstance(spec.get("function"), dict)
+                and spec["function"].get("name")
+            })
+        enabled = client.get("enabled_tools")
+        approval_mode = client.get("approval_mode")
+        env["local_tool_state"] = {
+            "registry_source": "brain.localtools.REMOTE_TOOLS",
+            "client_online": bool(client.get("online")),
+            "client_enabled_tools": enabled,
+            "request_tools_known": request_names is not None,
+            "request_tools": request_names,
+            "tools": [{
+                "name": name,
+                "definition_present": name in _localtools.REMOTE_TOOLS,
+                "schema_registered": (name in schema_names if schema_names is not None else None),
+                "client_enabled": (name in enabled if enabled is not None else None),
+                "request_exposed": (name in request_names if request_names is not None else None),
+                "approval_required": (
+                    False if registered[name].get("risk") == "safe" or approval_mode == "auto"
+                    else True if approval_mode == "confirm_risky" else None),
+                "approval_state": (
+                    "not_required" if registered[name].get("risk") == "safe" or
+                    approval_mode == "auto" else
+                    "will_prompt" if approval_mode == "confirm_risky" else
+                    "unconfirmed"),
+                # A snapshot never proves execution.  A separate receipt must.
+                "executed_success": None,
+            } for name in sorted(registered)],
+        }
+    except Exception as _local_error:
+        env["local_tool_state"] = {
+            "state": "unconfirmed",
+            "reason": type(_local_error).__name__,
+            "request_tools_known": active_specs is not None,
+            "request_tools": None,
+        }
     return env
 
 
@@ -417,3 +472,33 @@ def capability_status(ctx=None, capability=""):
             "cursor": cursor if type(cursor) is int and 0 <= cursor <= 2**53 else None,
             "environment": env,
             "source": "Vigil Brain capability registry"}
+
+
+def capability_evidence(brain, src, api_config, tool_specs, user_text=""):
+    """Perform a deterministic read-only capability check for this request.
+
+    Returns a bounded check receipt and the public capability snapshot.  This
+    internal path does not depend on the model choosing ``capability_status``
+    and cannot invoke a control operation.
+    """
+    import json
+    try:
+        from plugin_host import Turn
+        import tools
+        turn = Turn(text=user_text, src=src, brain=brain)
+        turn.api_config = dict(api_config or {})
+        turn.tool_policy = "readonly"
+        turn.allowed_tool_specs = list(tool_specs or [])
+        result = tools.invoke_readonly_spec(
+            "capability_status", {"capability": "local_tools"}, turn)
+        if not result.ok:
+            return ({"success": False, "state": "failed",
+                     "error_class": "status_query_failed"}, None)
+        payload = json.loads(result.text)
+        if not isinstance(payload, dict):
+            raise ValueError("invalid capability status payload")
+        return ({"success": True, "state": "checked",
+                 "capability": "local_tools", "checked_at": time.time()}, payload)
+    except Exception as exc:
+        return ({"success": False, "state": "failed",
+                 "error_class": type(exc).__name__}, None)

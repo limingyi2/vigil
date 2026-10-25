@@ -444,6 +444,8 @@ _ACTIVE = {}         # call_id -> _Call（已被认领、等结果）
 _DONE = set()        # 已完成的 call_id（重复结果幂等用，限量保留）
 _STATS = {"calls": 0, "ok": 0, "timeout": 0, "refused": 0, "errors": 0, "busy": 0}
 _CANCEL = False      # 全局取消标志：管理员点"停止"时置 True，下一次 wait 检查到就提前返回
+_LAST_CAPS = None    # last authenticated Electron poll capability list; names only
+_LAST_APPROVAL_MODE = None  # auto or confirm_risky; preference, not execution grant
 
 
 def specs(names=None, src=None):
@@ -610,13 +612,16 @@ def call(name, args, wait=None):
         return c.result or "（%s 执行完了，但没有输出）" % name
 
 
-def take(device_id, capabilities=None):
+def take(device_id, capabilities=None, approval_mode=None):
     """客户端轮询时调用：认领一条它能干的活。没有就返回 None。"""
-    global _LAST_POLL
+    global _LAST_POLL, _LAST_CAPS, _LAST_APPROVAL_MODE
     caps = set(capabilities or [])
     now = time.time()
     with _COND:
         _LAST_POLL = now                # 这台大脑刚被客户端看过：在线证据
+        _LAST_CAPS = set(caps)
+        _LAST_APPROVAL_MODE = (approval_mode if approval_mode in
+                               ("auto", "confirm_risky") else None)
         for cid, c in list(_QUEUE.items()):
             if c.cancel or _run_stopped(c.stop_check):
                 _QUEUE.pop(cid, None)
@@ -743,3 +748,16 @@ def pc_online():
     按它路由，不靠猜，也不靠提示词。
     """
     return time.time() - _LAST_POLL <= POLL_STALE
+
+
+def client_status():
+    """Return the last authenticated client's safe status and advertised tools."""
+    with _COND:
+        online = time.time() - _LAST_POLL <= POLL_STALE
+        return {
+            "online": online,
+            "last_poll_at": _LAST_POLL or None,
+            "enabled_tools": (sorted(_LAST_CAPS) if online and _LAST_CAPS is not None
+                              else None),
+            "approval_mode": (_LAST_APPROVAL_MODE if online else None),
+        }

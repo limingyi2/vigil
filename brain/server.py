@@ -18,6 +18,7 @@ import threading
 import contextlib
 import http.server
 import traceback
+import uuid
 
 from runtime import (
     api_config, API_CFG, MOB_CFG, BRAIN_TOKEN,
@@ -505,6 +506,25 @@ def _snapshot(b):
         # 客户端可以折叠显示，排查"她为啥这么答"时用。
         "think": getattr(b, "last_think", "") or "",
     }
+    diagnostics = getattr(b, "last_request_diagnostics", None)
+    if isinstance(diagnostics, dict):
+        # Request diagnostics are names/statuses only; tool arguments and results
+        # are deliberately excluded from the durable trace.
+        d["request_diagnostics"] = {
+            "request_id": str(diagnostics.get("request_id") or "")[:120],
+            "conversation_id": str(diagnostics.get("conversation_id") or "")[:120],
+            "task_category": str(diagnostics.get("task_category") or "")[:48],
+            "route_entry": str(diagnostics.get("route_entry") or "")[:64],
+            "tool_policy": str(diagnostics.get("tool_policy") or "")[:32],
+            "provider_supports_tools": diagnostics.get("provider_supports_tools"),
+            "provider_supports_xml_tools": diagnostics.get("provider_supports_xml_tools"),
+            "tools_in_request": list(diagnostics.get("tools_in_request") or [])[:128],
+            "tool_calls": [dict(name=str(item.get("name") or "")[:100],
+                                result_state=str(item.get("result_state") or "")[:32])
+                           for item in (diagnostics.get("tool_calls") or [])[:32]
+                           if isinstance(item, dict)],
+            "capability_check": dict(diagnostics.get("capability_check") or {}),
+        }
     # The delegation router's workspace is an authorization detail.  Keep the
     # decision observable without copying an absolute user path into traces.
     route = getattr(b, "last_route", None)
@@ -584,7 +604,7 @@ def _restore_hist(brain, text, ans, mode=None):
 
 
 def _chat_with_tools(text, img_path, trace_out=None, src=None,
-                    conversation_id=None, native_content=None):
+                    conversation_id=None, native_content=None, request_id=None):
     """聊一轮。工具调用走大脑**内部的原生 function calling 循环**（见
     brain.draft_native）：模型在响应的 tool_calls 字段请求工具，结果在同一
     条 messages 链上以 role:tool 回灌，直到她给出最终回复，不靠正文标签。
@@ -607,6 +627,8 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
         trace_out["task_decision"] = dict(_task_decision,
                                           target_entry="brain_tools" if _task_decision.get("target_entry") == "agent_run"
                                           else _task_decision.get("target_entry"))
+        trace_out["request_id"] = str(request_id or "")[:120]
+        trace_out["conversation_id"] = str(conversation_id or "")[:120]
 
     def _once(t, no_tools=False):
         with _chat_lock():
@@ -622,7 +644,10 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
                                                  and _task_decision.get("fallback_reason"))
                                              or _task_decision.get("decision_source") == "fallback"),
                                tool_policy=("readonly" if _task_decision.get("task_category")
-                                            in ("chat", "retrieval") else None),
+                                             in ("chat", "retrieval", "capability") else None),
+                                capability_query=_task_decision.get("task_category") == "capability",
+                                request_id=request_id,
+                                route_entry="brain_tools",
                                route_decision=_route_decision)
             if native_content is not None:
                 # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
@@ -864,7 +889,7 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
 
 def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                    dry_run=False, attachments=None, conversation_id=None,
-                   native_content=None):
+                   native_content=None, request_id=None):
     """让她回一句话。
 
     img_b64：这一轮带的图片（base64），保留为历史附件并作为原生多模态
@@ -931,6 +956,8 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
             # 锁在 _chat_with_tools 的每轮 chat 里拿（带超时），别抱着锁等网络
             _chat_kwargs = dict(trace_out=trace_out, src=src,
                                 conversation_id=conversation_id)
+            if request_id is not None:
+                _chat_kwargs['request_id'] = request_id
             if native_content is not None:
                 _chat_kwargs['native_content'] = native_content
             try:
@@ -1985,6 +2012,17 @@ def start_remote_api(brain):
                         # chat card can render a lightweight progress view.
                         yield dict(type=kind, run_id=rid, request_id=item['request_id'],
                                    seq=event['seq'], **payload)
+                    elif kind == 'request_diagnostics':
+                        yield {'type': 'model_request_started', 'run_id': rid,
+                               'request_id': payload.get('request_id') or item['request_id'],
+                               'conversation_id': payload.get('conversation_id') or '',
+                               'task_category': payload.get('task_category') or 'agent_run',
+                               'route_entry': payload.get('route_entry') or 'agent_run',
+                               'tool_policy': payload.get('tool_policy') or 'agent_run',
+                               'provider_supports_tools': payload.get('provider_supports_tools'),
+                               'available_tools': payload.get('tools_in_request') or [],
+                               'capability_check': {'success': False, 'state': 'not_requested'},
+                               'seq': event['seq']}
                     elif kind in ('text_delta', 'think_delta'):
                         yield {'type': 'text' if kind == 'text_delta' else 'think', 'text': payload['text'],
                                'run_id': rid, 'request_id': item['request_id'], 'seq': event['seq']}
@@ -2995,6 +3033,7 @@ def start_remote_api(brain):
                         body['img'] = base64.b64encode(_img_blob).decode()
                         _native_content = _native_image_content(_img_blob, _in_text)
                     _rid = body.get('request_id') if not body.get('dry_run') else None
+                    _diag_request_id = str(body.get('request_id') or uuid.uuid4().hex)
                     _display_owner = self._display_owner(body)
                     if _rid:
                         _turn, _fresh = _display.begin(_display_owner, _rid, _disp)
@@ -3006,6 +3045,7 @@ def start_remote_api(brain):
                         _in_text, body.get("img") or None, display=_disp,
                         trace_out=_snap, src=_src, attachments=_att_meta,
                         conversation_id=_brain_cid,
+                        request_id=_diag_request_id,
                         native_content=_native_content,
                         # 带 dry_run=true 的一轮**不写聊天存档**。
                         # 给"用接口打探测句"用：探测句混进她的记录会污染她的上下文，
@@ -3047,6 +3087,9 @@ def start_remote_api(brain):
                             "tok_in": _snap.get("tok_in"),
                             "tok_out": _snap.get("tok_out"),
                             "tool": _snap.get("tool") or "",
+                            "request_id": str(_snap.get("request_id") or "")[:120],
+                            "conversation_id": str(_snap.get("conversation_id") or "")[:120],
+                            "request_diagnostics": _snap.get("request_diagnostics") or {},
                             "route_decision": _snap.get("route_decision"),
                             "task_decision": _snap.get("task_decision"),
                             "mode": mode,
@@ -3085,6 +3128,9 @@ def start_remote_api(brain):
                                          "plan_steps": _snap.get("plan_steps"),
                                          "revised": bool(_snap.get("revised")),
                                          "tool": _snap.get("tool") or "",
+                                          "request_id": str(_snap.get("request_id") or "")[:120],
+                                          "conversation_id": str(_snap.get("conversation_id") or "")[:120],
+                                          "request_diagnostics": _snap.get("request_diagnostics") or {},
                                          "route_decision": _snap.get("route_decision"),
                                          "task_decision": _snap.get("task_decision"),
                                          "mode": mode,
@@ -3109,6 +3155,7 @@ def start_remote_api(brain):
                                          "err": "带附件的消息请走普通聊天接口，附件已单独分块上传"})
                         return
                     _in_text = str(body.get("text") or "")
+                    _diag_request_id = str(body.get('request_id') or uuid.uuid4().hex)
                     _src = _norm_src(body.get("src"))
                     _cid = body.get('conversation_id')
                     _brain_cid = None
@@ -3224,16 +3271,55 @@ def start_remote_api(brain):
                     # the task category.
                     _route_agent = bool(_task_entry == 'agent_run'
                                         and (_existing_run or not _existing_legacy))
+                    _route_policy = (
+                        'agent_run' if _task_entry == 'agent_run' else
+                        'readonly' if (_task_entry == 'brain_tools' and
+                                       _task_decision.get('task_category') in
+                                       ('chat', 'retrieval', 'capability')) else
+                        'full' if _task_entry == 'brain_tools' else 'none')
+                    _fc_support = False
+                    _xml_support = False
+                    _protocol_support = False
+                    _request_tool_names = []
+                    try:
+                        _diag_provider = brain._provider(brain._api_snapshot())
+                        _fc_support = bool(getattr(_diag_provider, 'supports_tools', False))
+                        _xml_support = bool(getattr(_diag_provider, 'supports_xml_tools', False))
+                        _xml_allowed = str(API_CFG.get('allow_xml_tool_fallback', True)).lower() not in (
+                            'false', '0', 'off', 'no')
+                        _protocol_support = _fc_support or (_xml_support and _xml_allowed)
+                        if _task_entry in ('agent_run', 'brain_tools') and _protocol_support:
+                            _diag_specs = _run_tools.all_specs(brain=brain, src=_src)
+                            if _route_policy == 'readonly':
+                                _diag_specs = _run_tools.read_only_specs(_diag_specs)
+                            elif (_task_entry == 'brain_tools'
+                                  and not _run_tools.schema_needed(_in_text)):
+                                _diag_specs = []
+                        else:
+                            _diag_specs = []
+                        _request_tool_names = sorted({
+                            str((spec.get('function') or {}).get('name') or '')
+                            for spec in _diag_specs if isinstance(spec, dict)
+                            and (spec.get('function') or {}).get('name')})
+                    except Exception:
+                        _request_tool_names = []
                     # Keep an inspectable decision in the existing trace file;
                     # this is diagnostics only and never grants tool access.
                     try:
                         _trace_write({"t": time.strftime("%Y-%m-%d %H:%M"),
                             "kind": "task_route", "src": _src,
+                            "request_id": _diag_request_id[:120],
+                            "conversation_id": str(_brain_cid or '')[:120],
                             "task_category": _task_decision.get("task_category"),
                             "decision_source": _task_decision.get("decision_source"),
                             "reason": str(_task_decision.get("reason") or "")[:120],
                             "target_entry": _task_entry,
-                            "fallback_reason": _task_decision.get("fallback_reason")})
+                            "fallback_reason": _task_decision.get("fallback_reason"),
+                            "tool_policy": _route_policy,
+                            "provider_supports_tools": _fc_support,
+                            "provider_supports_xml_tools": _xml_support,
+                            "tool_protocol_available": _protocol_support,
+                            "tools_in_request": _request_tool_names})
                     except Exception:
                         pass
                     # 🔴 图片能力闸门：**必须在做任何 Agent Run 工作之前**判。
@@ -3345,15 +3431,21 @@ def start_remote_api(brain):
                                 yield {'type': 'done', 'text':
                                        '当前没有启用可用的实时查询工具，无法核实这条信息。'}
                             elif _task_entry in ('brain_tools', 'history_retrieval'):
-                                if _task_decision.get('task_category') in ('chat', 'retrieval'):
+                                if _task_decision.get('task_category') in ('chat', 'retrieval', 'capability'):
                                     _stream_kwargs = dict(src=_src,
-                                        conversation_id=_brain_cid, tool_policy='readonly')
+                                        conversation_id=_brain_cid, tool_policy='readonly',
+                                        capability_query=_task_decision.get('task_category') == 'capability',
+                                        request_id=_diag_request_id,
+                                        route_entry=_task_entry)
                                     if _native_content is not None:
                                         _stream_kwargs['native_content'] = _native_content
                                     yield from _LOCAL['brain'].stream_chat(
                                         _in_text, **_stream_kwargs)
                                 else:
-                                    _chat_kwargs = dict(src=_src, conversation_id=_brain_cid)
+                                    _chat_kwargs = dict(src=_src, conversation_id=_brain_cid,
+                                        capability_query=_task_decision.get('task_category') == 'capability',
+                                        request_id=_diag_request_id,
+                                        route_entry=_task_entry)
                                     if _native_content is not None:
                                         _chat_kwargs['native_content'] = _native_content
                                     _ans, _mode = _LOCAL['brain'].chat(_in_text, **_chat_kwargs)
@@ -3388,6 +3480,38 @@ def start_remote_api(brain):
                                     dict(_ev, type='image'), ensure_ascii=False) + '\n\n').encode())
                                 self.wfile.flush()
                         for evt in _events:
+                            if evt.get('type') == 'model_request_started':
+                                try:
+                                    _trace_write({
+                                        "t": time.strftime("%Y-%m-%d %H:%M"),
+                                        "kind": "model_request", "src": _src,
+                                        "request_id": _diag_request_id[:120],
+                                        "conversation_id": str(_brain_cid or '')[:120],
+                                        "task_category": str(evt.get('task_category') or
+                                            _task_decision.get('task_category') or '')[:48],
+                                        "target_entry": _task_entry,
+                                        "tool_policy": str(evt.get('tool_policy') or _route_policy)[:32],
+                                        "provider_supports_tools": evt.get('provider_supports_tools', _fc_support),
+                                        "tools_in_request": list(evt.get('available_tools') or _request_tool_names)[:128],
+                                        "capability_check": dict(evt.get('capability_check') or {}),
+                                    })
+                                except Exception:
+                                    pass
+                            elif evt.get('type') == 'tool':
+                                try:
+                                    _trace_write({
+                                        "t": time.strftime("%Y-%m-%d %H:%M"),
+                                        "kind": "tool_call", "src": _src,
+                                        "request_id": _diag_request_id[:120],
+                                        "conversation_id": str(_brain_cid or '')[:120],
+                                        "task_category": _task_decision.get('task_category'),
+                                        "target_entry": _task_entry,
+                                        "tool": str(evt.get('tool') or '')[:100],
+                                        "result_state": str(evt.get('state') or '')[:32],
+                                        "error_class": str(evt.get('class') or '')[:48],
+                                    })
+                                except Exception:
+                                    pass
                             self.wfile.write(('data: ' + json.dumps(evt, ensure_ascii=False) + '\n\n').encode())
                             self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
