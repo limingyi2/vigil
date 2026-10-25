@@ -37,7 +37,9 @@ def _seed_core_features():
     if os.environ.get("VIGIL_MANAGED") == "1":
         legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
     try:
+        print("[sidecar] phase=plugin_migration:start", flush=True)
         migrated = migrate_legacy_plugins(HOME_DIR, legacy_roots)
+        print("[sidecar] phase=plugin_migration:done", flush=True)
         if migrated.get("copied"):
             print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
                   migrated["copied"], flush=True)
@@ -52,7 +54,9 @@ def _seed_core_features():
     # 最后铺新版内置；反过来会把旧文件当成"用户改动"复制进 installed，
     # 从而覆盖掉刚铺好的新版。
     try:
+        print("[sidecar] phase=retire_superseded_installs:start", flush=True)
         retired = retire_superseded_installs(HOME_DIR)
+        print("[sidecar] phase=retire_superseded_installs:done", flush=True)
         if retired.get("retired"):
             print("[sidecar] 已停用 %d 个旧版随包插件副本（保留在 installed_plugins/_retired）" %
                   retired["retired"], flush=True)
@@ -60,11 +64,15 @@ def _seed_core_features():
             print("[sidecar] 旧副本停用未完成，原文件已保留：%s" % error, flush=True)
     except Exception as exc:
         print("[sidecar] 旧副本停用失败，Brain 继续启动：%s" % str(exc)[:180], flush=True)
+    print("[sidecar] phase=seed_core_features_payload:start", flush=True)
     seed_core_features(src, HOME_DIR, legacy_roots)
+    print("[sidecar] phase=seed_core_features_payload:done", flush=True)
     bundled = os.path.join(CODE_DIR, "plugins")
     if os.path.isdir(bundled):
         try:
+            print("[sidecar] phase=seed_plugins:start", flush=True)
             seeded = seed_plugins(bundled, HOME_DIR, legacy_roots)
+            print("[sidecar] phase=seed_plugins:done", flush=True)
             print("[sidecar] 内置插件已就位 %d 个（跟踪 %d 个文件）" %
                   (seeded["seeded"], seeded["tracked"]), flush=True)
         except Exception as exc:
