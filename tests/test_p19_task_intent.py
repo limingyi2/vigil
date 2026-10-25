@@ -153,6 +153,24 @@ def test_capability_wording_does_not_execute_without_explicit_action_frame():
         assert task_intent.select_entry(decision, agent_allowed=True) == "brain_tools", text
 
 
+def test_named_tool_call_requests_and_questions_keep_distinct_routes():
+    cases = (
+        ("E2E_TOOL_SUCCESS 请调用 smoke_ping", "simple_execution", "agent_run"),
+        ("P1_AGENT_CANCEL_IN_TOOL 请调用 smoke_ping 执行隔离慢工具",
+         "simple_execution", "agent_run"),
+        ("请帮我调用 smoke_ping", "simple_execution", "agent_run"),
+        ("能不能调用 smoke_ping？", "capability", "brain_tools"),
+        ("请问你能调用 smoke_ping 吗？", "capability", "brain_tools"),
+        ("请问调用 smoke_ping 是什么意思？", "chat", "brain_tools"),
+        ("解释一下调用工具的原理", "chat", "brain_tools"),
+    )
+    for text, category, entry in cases:
+        decision = task_intent.classify(text)
+        assert decision["task_category"] == category, (text, decision)
+        assert decision["target_entry"] == entry, (text, decision)
+        assert task_intent.select_entry(decision, agent_allowed=True) == entry
+
+
 def test_full_agent_tool_schema_and_ordinary_readonly_schema_are_distinct(monkeypatch):
     import features
     import localtools

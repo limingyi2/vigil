@@ -39,10 +39,10 @@ _REQUEST_FRAME = re.compile(r"请|帮我|替我|为我|能不能|可以帮|我�
 # Explicit imperative frames ("帮我打开…", "请启动…") remain execution.
 _CAPABILITY_QUERY = re.compile(
     r"(?:(?:能不能|能否|是否可以|可以吗|行不行|会不会).{0,16}"
-    r"(?:玩电脑|控制|操作|操控|接入|截屏|截图|运行命令|执行命令|"
+    r"(?:玩电脑|控制|操作|操控|调用|使用|接入|截屏|截图|运行命令|执行命令|"
     r"操作电脑|控制电脑|操作浏览器|控制浏览器|打开浏览器))|"
     r"(?:你|agent).{0,12}(?:能|会|可以).{0,16}"
-    r"(?:玩电脑|控制|操作|操控|接入|截屏|截图|运行命令|执行命令|"
+    r"(?:玩电脑|控制|操作|操控|调用|使用|接入|截屏|截图|运行命令|执行命令|"
     r"操作电脑|控制电脑|操作浏览器|控制浏览器|打开浏览器).{0,12}(?:吗|呢|？|\?)|"
     r"能做什么|可以做什么|支持.{0,12}吗|"
     r"有什么.{0,8}工具|有.{0,8}工具吗|安装什么.{0,8}工具|应该安装什么|"
@@ -56,6 +56,12 @@ _EXPLICIT_ACTION_REQUEST = re.compile(
     r"(?:现在|立刻)?(?:帮我|替我|为我)(?:现在|立刻)?(?:直接)?)"
     r"(?:打开|启动|操作|控制|点击|输入|截屏|截图|关闭|接入|连接|安装|运行|执行|"
     r"open|launch|control|click|type|close|connect|install|run|execute))",
+    re.I,
+)
+_TOOL_CALL_REQUEST = re.compile(
+    r"(?:(?:请(?!问)(?:你)?\s*)?(?:帮我|替我|为我)\s*|"
+    r"请(?!问)(?:你)?\s*)"
+    r"(?:调用|使用)\s+[A-Za-z_][A-Za-z0-9_.-]*",
     re.I,
 )
 
@@ -112,7 +118,8 @@ def classify(text, *, workspace_authorized=False):
     elif historical_query:
         category, reason = "retrieval", "现有会话记忆检索信号"
     else:
-        execute = bool(_EXECUTE.search(normalized))
+        execute = bool(_EXECUTE.search(normalized)
+                       or _TOOL_CALL_REQUEST.search(normalized))
         code_shaped = False
         try:
             import coding_harness
