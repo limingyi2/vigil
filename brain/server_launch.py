@@ -204,19 +204,26 @@ def main():
         os.environ['VIGIL_BIND_HOST'] = '127.0.0.1'
     os.makedirs(HOME_DIR, exist_ok=True)
     os.chdir(HOME_DIR)          # 大脑里所有相对路径的家都在这儿
+    print("[sidecar] phase=seed_core_features:start", flush=True)
     _seed_core_features()
+    print("[sidecar] phase=seed_core_features:done", flush=True)
+    print("[sidecar] phase=skill_host:start", flush=True)
     _start_skill_host()         # 先起技能宿主，大脑加载插件时技能已可用
+    print("[sidecar] phase=skill_host:spawned", flush=True)
     managed = os.environ.get('VIGIL_MANAGED') == '1'
     skill_port = int(os.environ.get('ZX_SKILL_PORT') or 0) if managed else 0
     port = _pick_port(exclude={skill_port} if skill_port else ())
     os.environ["VIGIL_PORT"] = str(port)
 
+    print("[sidecar] phase=server_import:start", flush=True)
     import server               # 大脑本体（导入即完成全部初始化的准备工作）
+    print("[sidecar] phase=server_import:done", flush=True)
 
     # 先发布本进程的候选端口和身份。Electron sidecar 自己探测运行中的
     # /api/runtime 和关键路由后才会转为 ready；这样单一探活者拥有最终判断，
     # 不依赖 Brain 内部后台线程写入通知，也不会把文件存在误当成健康。
     _write_candidate_ready(port)
+    print("[sidecar] phase=ready_file:published", flush=True)
     server.main()
 
 
