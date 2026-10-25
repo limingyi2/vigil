@@ -15,6 +15,28 @@ from home_migration import migrate_legacy_plugins, seed_core_features, seed_plug
 from scripts.plugin_package_contract import assert_no_bundled_plugin_tree
 
 
+def test_server_launch_sets_utf8_replacement_before_startup_diagnostics():
+    script = r'''
+import runpy, sys
+class Stream:
+    def __init__(self): self.options = []
+    def reconfigure(self, **options): self.options.append(options)
+    def write(self, value): return len(value)
+    def flush(self): pass
+out, err = Stream(), Stream()
+sys.stdout, sys.stderr = out, err
+runpy.run_path(sys.argv[1])
+expected = [{"encoding": "utf-8", "errors": "replace"}]
+assert out.options == expected, out.options
+assert err.options == expected, err.options
+'''
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(ROOT / "brain/server_launch.py")],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
+
+
 def test_managed_brain_publishes_candidate_port_and_process_identity(tmp_path, monkeypatch):
     import server_launch
 
