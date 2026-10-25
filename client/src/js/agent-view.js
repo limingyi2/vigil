@@ -142,6 +142,8 @@
     const failed=['failed','unknown','not_dispatched','not_returned','interrupted','denied'].includes(state)
       || (state==='returned' && !!info);
     const rule=classify(name), cat=rule.cat;
+    const purpose=meta.purpose || (cat==='exec' ? '执行本机命令（具体目的未记录）'
+      : '执行工具 '+name+'（具体目的未记录）');
     // The category decides the wording; the state decides which variant.
     // An unknown outcome reads as unknown — never as a plain success.
     const unknownOutcome=state==='unknown'||state==='not_returned'||state==='interrupted';
@@ -179,14 +181,15 @@
       +esc(diagnostics.map(([k,v])=>k+'：'+redact(v)).join('\n'))+'</pre>');
     if(info && info.receipts.length)parts.push('<div class="agent-detail-label">执行凭据</div><pre>'
       +esc(info.receipts.map(r=>[r.state,r.reason,r.detail].filter(Boolean).join(' · ')).join('\n'))+'</pre>');
-    parts.push(Object.entries({参数:input,结果:meta.output,
+    parts.push(Object.entries({执行内容:input,执行结果:meta.output,
       错误:info ? undefined : meta.error}).filter(([,v])=>v!==undefined && v!=='')
       .map(([title,v])=>'<div class="agent-detail-label">'+title+'</div><pre>'+esc(typeof v==='object'?JSON.stringify(redact(v),null,2):redact(v))+'</pre>').join(''));
     const detail=parts.join('');
     // 等待授权的步骤必须一眼看见：默认展开，不藏在折叠区里。
     return '<details class="agent-step" data-step-key="'+esc(key)+'" data-state="'+esc(state)+'" data-error="'+esc(info?.category || '')+'" data-tool-cat="'+esc(cat)+'"'+(open || awaiting ?' open':'')+'>'+
       '<summary><svg class="i xs agent-step-icon" aria-hidden="true"><use href="#'+(rule.icon||'i-activity')+'"/></svg><span>'+esc(label)+'</span>'+badge+why+
-      (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+'</summary>'+detail+'</details>';
+      (preview?'<code class="agent-step-preview">'+esc(String(preview).slice(0,160))+'</code>':'')+'</summary>'+
+      '<div class="agent-step-purpose"><b>操作目的</b>：'+esc(redact(purpose))+'</div>'+detail+'</details>';
   }
   function elapsed(ms) {
     const seconds=Math.max(0,Math.floor(ms/1000));

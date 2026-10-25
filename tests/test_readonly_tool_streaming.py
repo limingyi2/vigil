@@ -129,6 +129,8 @@ def test_readonly_stream_shows_text_deltas_and_executes_only_audited_tool():
         x["function"]["name"] for x in payloads[0]["tools"]}
     assert "reminder_set" not in payloads[0]["tools"]
     assert "local_exec" not in payloads[0]["tools"]
+    assert any(event.get("type") == "tool" and event.get("state") == "started"
+               and "只读工具" in event.get("purpose", "") for event in emitted)
     assert [event["type"] for event in emitted if event["type"] in ("text", "done")] == [
         "text", "text", "done"]
     returned = [event for event in emitted if event.get("type") == "tool"

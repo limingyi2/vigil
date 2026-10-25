@@ -92,8 +92,11 @@ exports.run=async h=>{
     const events=await h.evaluate('window.__vigilE2EEvents');
     assert.equal(events.some(e=>['text','done','run_snapshot','error'].includes(e.type)&&/<(?:tool_call|function|parameter)/i.test(e.text||'')),false);
     assert.ok(events.some(e=>e.type==='tool'&&e.state==='started'));
+    assert.ok(events.some(e=>e.type==='tool'&&e.state==='started'&&e.purpose),'tool start carries its purpose');
     assert.equal(await h.evaluate('document.querySelector("#msgs").textContent.includes("Provider reasoning fixture")'),false);
     assert.equal(await h.evaluate('(()=>{const rows=[...document.querySelectorAll("#msgs .turn:last-child #liveSteps > *")];return rows[0]?.classList.contains("agent-thinking") && rows.findIndex(n=>n.matches("[data-step-key]"))>0})()'),true,'Chinese thinking state precedes actual tool evidence');
+    assert.ok(await h.evaluate('document.querySelector("#msgs .turn:last-child .agent-step-purpose")?.textContent.includes("操作目的")'),'tool purpose is rendered beside evidence');
+    assert.ok(await h.evaluate('[...document.querySelectorAll("#msgs .turn:last-child .agent-thinking")].some(n=>n.textContent.includes("任务已完成"))'),'terminal progress reflects actual completion');
     assert.ok(events.some(e=>e.type==='tool'&&e.state==='returned'));
     assert.equal(await h.evaluate('document.querySelector("#sendBtn").getAttribute("aria-busy")'),'false');
     assert.ok(await h.evaluate('document.querySelector("#msgs").textContent.includes("VIGIL_PLUGIN_CALL_OK") || document.querySelector("#msgs").textContent.includes("你好。")'));

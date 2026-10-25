@@ -1628,7 +1628,7 @@ def _step(db, item, kind, **fields):
     used['steps'] += 1
     used['requests' if kind == 'model' else 'tool_calls'] += 1
     event = dict(step_id=step['step_id'], kind=kind, stage=item['stage'])
-    for key in ('call_id', 'tool', 'input'):
+    for key in ('call_id', 'tool', 'input', 'purpose'):
         if key in step:
             event[key] = _safe_event_value(step[key])
     _event(db, item, 'step_started', event)
@@ -1886,6 +1886,8 @@ def _tool(rid, owner, started, call, ctx):
     用它识别"原地打转"。
     """
     cid, name, args, signature = call
+    purpose = _safe_event_value(tools.operation_purpose(
+        getattr(ctx, 'text', ''), name, getattr(ctx, 'allowed_tool_specs', ())), 240)
     # Same call ID always deduplicates. A new read ID may deliberately observe
     # changes made by an intervening write; writes deduplicate across IDs too.
     dispatch_key = hashlib.sha256(_json([signature, cid]).encode()).hexdigest() if name in READ_ONLY_TOOLS else signature
@@ -1908,7 +1910,7 @@ def _tool(rid, owner, started, call, ctx):
             return None, False
         if not _check_budget(db, item, started, 'tool'):
             return None, False
-        sid = _step(db, item, 'tool', call_id=cid, tool=name,
+        sid = _step(db, item, 'tool', call_id=cid, tool=name, purpose=purpose,
                     input=_safe_event_value(args), input_digest=signature,
                     result=None, result_state='in_flight')
         # Durable intent is committed before invoke_spec. This is the dispatch
@@ -2020,6 +2022,7 @@ def _tool(rid, owner, started, call, ctx):
             ('unknown' if reason else 'completed', step['result'], rid, dispatch_key))
         item['budget']['consumed']['seconds'] = round(time.monotonic()-started, 3)
         _event(db, item, 'tool_finished', dict(step_id=sid, call_id=cid, tool=name,
+            purpose=purpose,
             result_state=step['result_state'], input=step.get('input'),
             output=_safe_event_value(step.get('result') or ''),
             error=_safe_event_value(step.get('error') or '') if reason else '',

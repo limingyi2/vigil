@@ -1897,6 +1897,12 @@ class Brain:
         parts, life = self._build_system_parts_for_runtime(
             user_text, memory_block, api_snapshot, provider)
         import tools as _tools
+        def _operation_purpose(name):
+            builder = getattr(_tools, "operation_purpose", None)
+            if callable(builder):
+                return builder(user_text, name, tool_specs)
+            # Compatibility for embedders with a minimal read-only tool adapter.
+            return "为回答当前问题，调用只读工具 %s" % str(name or "工具")
         try:
             import features as _features
             tools_on = bool(_features.on("tools", src))
@@ -2209,7 +2215,9 @@ class Brain:
                                 result_text = outcome.for_model()
                             else:
                                 tool_calls_count += 1
-                                yield {"type": "tool", "tool": name, "state": "started"}
+                                purpose = _operation_purpose(name)
+                                yield {"type": "tool", "tool": name, "state": "started",
+                                       "purpose": purpose}
                                 try:
                                     from plugin_host import Turn
                                     ctx = Turn(text=user_text, src=src or self._cur_src, brain=self)
@@ -2228,11 +2236,13 @@ class Brain:
                                         result_text += "\n" + search_failure_text + (
                                             "工具仍已授权；这次是执行失败，不是没有联网搜索功能。")
                                 yield {"type": "tool", "tool": name, "state": "returned",
+                                       "purpose": purpose,
                                        "error": not tool_ok, "class": error_class}
                                 if tool_ok and name not in tools_used:
                                     tools_used.append(name)
                     if error_class and error_class != 'tool_execution_failed':
                         yield {"type": "tool", "tool": name, "state": "denied",
+                               "purpose": _operation_purpose(name),
                                "error": True, "class": error_class}
                     self.last_request_diagnostics.setdefault("tool_calls", []).append({
                         "name": name,

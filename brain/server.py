@@ -2059,9 +2059,12 @@ def start_remote_api(brain):
                             yield {'type': 'tool', 'state': 'started',
                                    'tool': payload.get('tool'), 'call_id': payload.get('call_id'),
                                    'step_id': payload.get('step_id'), 'input': payload.get('input'),
+                                   'purpose': payload.get('purpose'),
                                    'run_id': rid, 'seq': event['seq']}
                         else:
-                            yield {'type': 'stage', 'stage': payload['stage'], 'run_id': rid, 'seq': event['seq']}
+                            yield {'type': 'stage', 'stage': payload['stage'],
+                                   'step_id': payload.get('step_id'),
+                                   'run_id': rid, 'seq': event['seq']}
                             yield {'type': 'model_request_started', 'run_id': rid,
                                    'step_id': payload.get('step_id'), 'seq': event['seq']}
                     elif kind == 'step_finished' and payload.get('token_usage'):
@@ -2081,6 +2084,7 @@ def start_remote_api(brain):
                         yield {'type': 'tool', 'tool': payload.get('tool'),
                                'state': payload.get('result_state'), 'call_id': payload.get('call_id'),
                                'step_id': payload.get('step_id'), 'input': payload.get('input'),
+                               'purpose': payload.get('purpose'),
                                'output': payload.get('output'), 'error': payload.get('error'),
                                'approval': payload.get('approval') or None,
                                'run_id': rid, 'seq': event['seq']}
@@ -2096,7 +2100,7 @@ def start_remote_api(brain):
                                 continue
                             evidence = dict(type='tool', tool=step.get('tool'),
                                 step_id=step.get('step_id'), call_id=step.get('call_id'),
-                                input=step.get('input'), run_id=rid,
+                                input=step.get('input'), purpose=step.get('purpose'), run_id=rid,
                                 approval=step.get('approval') or None,
                                 request_id=item['request_id'], historical=True)
                             yield dict(evidence, state='started')

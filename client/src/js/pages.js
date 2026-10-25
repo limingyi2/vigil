@@ -2694,17 +2694,18 @@
       }
       liveReconcile = reconcileRun;
 
-      // Display factual Chinese phase states, never raw provider reasoning.
-      let thinkingRow=null, thinkingFinished=false;
-      function startThinking(){
-        if(thinkingRow || thinkingFinished)return;
+      // This is a user-visible phase summary derived only from received events;
+      // provider reasoning deltas are intentionally never rendered here.
+      let thinkingRow=null;
+      function setProgress(summary,state='running'){
+        if(!summary)return;
         const steps=msgs.querySelector('#'+turnId+' #liveSteps');steps.hidden=false;
-        thinkingRow=document.createElement('div');thinkingRow.className='agent-thinking';
-        thinkingRow.innerHTML=icon('brain','sm')+'<span>思考中</span>';steps.appendChild(thinkingRow);
-      }
-      function finishThinking(label='已完成思考'){
-        if(thinkingRow){thinkingRow.querySelector('span:last-child').textContent=label;thinkingRow=null;}
-        thinkingFinished=true;
+        if(!thinkingRow){
+          thinkingRow=document.createElement('div');thinkingRow.className='agent-thinking';
+          thinkingRow.innerHTML=icon('brain','sm')+'<span></span>';steps.appendChild(thinkingRow);
+        }
+        thinkingRow.dataset.state=state;
+        thinkingRow.querySelector('span:last-child').textContent=String(summary);
       }
       // 监听流式事件
       const onEvent = (evt) => {
@@ -2718,7 +2719,7 @@
         // previous turn overwrite this turn's text or terminal state.
         if (evt.run_id && agentRunId && evt.run_id !== agentRunId) return;
         if (agentRunId && !evt.run_id &&
-            ['stage','tool','tool_reused','run_snapshot','think','text','done','error',
+            ['stage','tool','tool_reused','run_snapshot','think','text','progress','done','error',
              'model_request_started','token_rate'].includes(evt.type)) return;
         if (evt.type === 'agent_run') {
           if (agentRunId && evt.run_id !== agentRunId) return;
@@ -2732,6 +2733,7 @@
         if (streamDone) return;
         if (evt.type === 'model_request_started') {
           startTokenRate();
+          setProgress(agentRunId && !evt.step_id ? '正在准备模型请求' : '正在请求模型生成回复');
         } else if (evt.type === 'image') {
           // 图片四段状态各有各的话：收到 / 分析中 / 看不了 / 已看到。
           // 「看不了」必须说出来 —— 否则她答的是猜的，用户却以为她看过了。
@@ -2757,9 +2759,9 @@
           setComposerMode('pause');
           if (!reconcileTimer) reconcileTimer = setTimeout(reconcileRun, 2000);
         } else if (evt.type && evt.type.startsWith('coding_')) {
-          finishThinking();
           const payload = evt.payload || evt;
           const phase = payload.phase || evt.phase || '';
+          if (phase) setProgress('Coding Agent：' + String(phase));
           if (evt.type === 'coding_phase') {
             statusEl.textContent = 'Coding Agent · ' + phase + ' ';
             if (agentRunId) statusEl.appendChild(agentCancel);
@@ -2788,11 +2790,19 @@
             addStep('coding-workflow', '复杂任务 · ' + label, payload.requires_review || payload.status === 'failed' ? 'warn' : 'neutral');
           }
         } else if (evt.type === 'stage') {
-          if(evt.stage==='generating'){thinkingFinished=false;startThinking();}
+          if(evt.stage==='generating')setProgress(evt.step_id
+            ? '正在处理任务的第 ' + String(evt.step_id) + ' 步'
+            : '正在处理当前任务的下一步');
           statusEl.textContent = ({generating:'模型生成中 ',waiting_tool:'等待工具结果 '})[evt.stage] || '执行中 ';
           if (agentRunId) statusEl.appendChild(agentCancel);
         } else if (evt.type === 'tool') {
-          finishThinking();
+          const toolProgress = evt.state === 'started'
+            ? (evt.purpose || (evt.tool === 'local_exec' ? '执行本机命令' : '正在调用工具 ' + (evt.tool || '工具')))
+            : evt.state === 'awaiting_authorization' ? '等待你审批本次操作'
+            : evt.state === 'denied' ? '本次操作已拒绝，未执行'
+            : ['failed','unknown','not_dispatched'].includes(evt.state) || evt.error ? '本次工具调用未成功'
+            : '工具已返回结果，正在继续';
+          setProgress(toolProgress, evt.state === 'started' ? 'running' : evt.state);
           // 每次工具调用落一行小字：她在干什么、成没成，全程可见。
           // 'denied' 是被明确拒绝，不算执行失败；'returned' 带 error
           // （执行完但没有任何输出）也不能显示成完成。
@@ -2817,17 +2827,17 @@
           remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
-        } else if (evt.type === 'think' && evt.text) {
-          startThinking();
+        } else if (evt.type === 'progress' && evt.summary) {
+          setProgress(evt.summary, evt.state || 'running');
         } else if (evt.type === 'text' && evt.text) {
-          finishThinking();
+          setProgress('正在接收模型回复');
           addVisibleTokenEstimate(evt.text);
           textBuf += evt.text;
           remember({content:textBuf,status:'running'});
           textDirty = true;
           scheduleRender();
         } else if (evt.type === 'done') {
-          finishThinking();
+          setProgress('任务已完成','succeeded');
           finishTokenRate(evt.token_rate);
           streamDone = true;
           finishBusy(turnScope);
@@ -2850,7 +2860,8 @@
             reconcileRun();
             return;
           }
-          finishThinking(evt.type==='error'?'思考已停止':'已完成思考');
+          setProgress(({cancelled:'任务已取消',paused:'任务已暂停',paused_budget:'任务预算已用尽',
+            interrupted:'任务已中断'})[evt.status] || '任务失败',evt.status || 'failed');
           streamDone = true;
           finishBusy(turnScope);
           if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
