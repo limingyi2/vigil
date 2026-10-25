@@ -100,7 +100,7 @@ async function start() {
     const diagnostic = {
       status: health.status, failureKind: health.failureKind, lastErr: health.lastErr,
       lastFailure: health.lastFailure, pid: health.pid, exe: health.exe, home: health.home,
-      diagnosis: health.diagnosis,
+      diagnosis: health.diagnosis, startupPhases: health.startupPhases,
       logTail: (health.logTail || []).map(line => String(line)
         .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
         .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')),
@@ -110,7 +110,7 @@ async function start() {
   assert.equal(health.status, 'ready', health.lastErr || JSON.stringify({
     failureKind: health.failureKind, lastFailure: health.lastFailure, logTail: health.logTail
   }));
-  const startupPhases = (health.logTail || []).map(String)
+  const startupPhases = (health.startupPhases || []).map(String)
     .filter(line => line.includes('[sidecar] phase='));
   for (const phase of ['plugin_migration:done', 'seed_core_features:done',
     'skill_host:spawned', 'server_import:done', 'ready_file:published']) {
