@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const readline = require('readline');
+const { normalizeDipBounds } = require('./native-window-bounds');
 
 const CHANNELS = [
   'video-window:pick-exe', 'video-window:profiles', 'video-window:save-profile',
@@ -122,19 +123,31 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     const target = getWindow();
     if (!target || target.isDestroyed()) return null;
     const content = target.getContentBounds();
-    const dip = {
-      x: content.x + (Number(bounds && bounds.x) || 0),
-      y: content.y + (Number(bounds && bounds.y) || 0),
-      width: Math.max(1, Number(bounds && bounds.width) || 1),
-      height: Math.max(1, Number(bounds && bounds.height) || 1),
-    };
-    const rect = screen.dipToScreenRect(target, dip);
+    const dip = normalizeDipBounds(bounds, content);
+    if (!dip) {
+      console.warn('[video-window] Ignoring non-finite bounds update');
+      return null;
+    }
+    let rect;
+    try { rect = screen.dipToScreenRect(target, dip); }
+    catch (error) {
+      console.warn('[video-window] Could not convert bounds:', String(error && error.message || error).slice(0, 160));
+      return null;
+    }
+    if (![rect && rect.x, rect && rect.y, rect && rect.width, rect && rect.height].every(Number.isFinite)) {
+      console.warn('[video-window] Ignoring invalid screen bounds result');
+      return null;
+    }
     return `BOUNDS\t${Math.round(rect.x)}\t${Math.round(rect.y)}\t${Math.max(1, Math.round(rect.width))}\t${Math.max(1, Math.round(rect.height))}`;
   }
   function pushBounds() {
     if (!helper || !lastBounds) return;
-    const command = boundsCommand(lastBounds);
-    if (command) send(command);
+    try {
+      const command = boundsCommand(lastBounds);
+      if (command) send(command);
+    } catch (error) {
+      console.warn('[video-window] Bounds update failed:', String(error && error.message || error).slice(0, 160));
+    }
   }
   function scheduleBoundsPush() {
     if (boundsTimer) return;
@@ -191,8 +204,12 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     if (!trusted(event)) return;
     lastBounds = bounds;
     if (!helper) return;
-    const command = boundsCommand(bounds);
-    if (command) send(command);
+    try {
+      const command = boundsCommand(bounds);
+      if (command) send(command);
+    } catch (error) {
+      console.warn('[video-window] Bounds update failed:', String(error && error.message || error).slice(0, 160));
+    }
   };
   const onVisible = (event, visible) => { if (trusted(event) && helper) send(visible ? 'SHOW' : 'HIDE'); };
   const onAction = (event, action) => {
@@ -297,3 +314,4 @@ function createNativeWindowService({ ipcMain, getWindow }) {
 }
 
 module.exports = { createNativeWindowService };
+
