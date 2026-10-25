@@ -19,6 +19,7 @@ const https = require('https');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { findWindowForContents } = require('./plugin-load-target');
 if (process.env.VIGIL_USER_DATA) app.setPath('userData', path.resolve(process.env.VIGIL_USER_DATA));
 if (process.platform === 'win32') app.setAppUserModelId('com.vigil.client');
 // Stable only for this Electron process: renderer reloads can restore the
@@ -888,9 +889,9 @@ function startPolling() {
 //  插件 JS 或 XSS 都能借它执行任意脚本）。现在由主进程自己拉
 // /api/plugins/frontend（带服务端 token，渲染层碰不到），只注入
 // 管理员已审核安装的插件代码；渲染层能做的只是"请加载一次"。
-// 把已审核插件的 JS 注入指定窗口（主窗口 + 设置窗口共用）。
-// targets 缺省注入所有窗口；显式传参时只注入给定窗口（设置窗口迟到场景）。
-async function injectPluginFrontends(onlyTarget) {
+// 把已审核插件的 JS 注入调用方指定的窗口，禁止一次刷新重启其他窗口中的插件。
+async function injectPluginFrontends(target) {
+  if (!target || target.isDestroyed()) return { ok: false, loaded: 0, err: '插件目标窗口不存在' };
   const cfg0 = readCfg();
   const b = connectionBase(cfg0);
   if (!b) return { ok: false, loaded: 0, err: '本地 Brain 未就绪' };
@@ -900,7 +901,7 @@ async function injectPluginFrontends(onlyTarget) {
   const plugins = Array.isArray(r.json.plugins) ? r.json.plugins : [];
   let loaded = 0;
   const errors = [];
-  const targets = onlyTarget ? [onlyTarget] : [win, settingsWin].filter((w) => w && !w.isDestroyed());
+  const targets = [target];
   for (const p of plugins) {
     if (!p.enabled || !p.js) continue;
     const name = String(p.name || '').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '');
@@ -920,12 +921,13 @@ async function injectPluginFrontends(onlyTarget) {
   return { ok: true, loaded, version: r.json.version || 0, errors };
 }
 
-ipcMain.handle('plugins:load', async () => {
+ipcMain.handle('plugins:load', async (event) => {
   try {
-    if (!win || win.isDestroyed()) return { ok: false, loaded: 0, err: '窗口没准备好' };
+    const target = findWindowForContents(event && event.sender, [win, settingsWin]);
+    if (!target) return { ok: false, loaded: 0, err: '插件加载请求来自未知窗口' };
     const sidecarOk = sidecar.ready && sidecar.ready() && sidecar.base();
     if (!sidecarOk && !connectionBase(readCfg())) return { ok: false, status: 0, err: sidecar.status().lastErr || '本地 Brain 未就绪' };
-    return await injectPluginFrontends();
+    return await injectPluginFrontends(target);
   } catch (err) {
     return { ok: false, loaded: 0, err: String(err && err.message || err) };
   }
@@ -1340,3 +1342,4 @@ app.on('before-quit', (event) => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
