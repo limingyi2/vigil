@@ -68,7 +68,9 @@ for tracked in sorted(p for p in tracked_skill_host if p):
     if not tracked.startswith("brain/skill_host/"):
         raise RuntimeError("Unexpected Skill Host build path: " + tracked)
     rel_file = tracked[len("brain/skill_host/"):]
-    if rel_file == "skills/.gitkeep":
+    # Repository may carry this launcher state marker for deploy/restart logic;
+    # it is mutable runtime state, not Skill Host infrastructure for releases.
+    if rel_file in {"skills/.gitkeep", ".host_started"}:
         continue
     if rel_file not in SKILL_HOST_ALLOWLIST:
         raise RuntimeError("Unapproved Skill Host build input: " + rel_file)

@@ -299,6 +299,7 @@ def test_release_specs_and_runtime_have_no_plugin_source_fallback():
 
     assert 'CORE_FEATURE_ALLOWLIST = {' in spec
     assert 'SKILL_HOST_ALLOWLIST = {"server.js", "start_host.bat"}' in spec
+    assert 'rel_file in {"skills/.gitkeep", ".host_started"}' in spec
     assert "brain/plugins" in spec and "绝不是打包输入" in spec
     assert "plugins_data" not in spec and "seed_plugins" not in launcher
     assert "retire_superseded_installs" not in launcher
