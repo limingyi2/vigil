@@ -27,7 +27,11 @@ def assert_no_optional_plugin_modules(entries, plugin_source_root=None):
     for entry in entries or ():
         name, sources = _entry_name_and_sources(entry)
         module_parts = [part.casefold() for part in name.replace("\\", "/").replace(".", "/").split("/")]
-        if "plugins" in module_parts:
+        # The optional Python plugin package is the top-level `plugins`
+        # namespace. A core package such as `api.plugins` is unrelated and is
+        # accepted; source-origin checks below still catch renamed modules
+        # originating anywhere under the optional plugin source tree.
+        if module_parts and module_parts[0] == "plugins":
             raise RuntimeError("Release embeds an optional plugin module: " + name)
         if root:
             for source in sources:

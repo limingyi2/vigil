@@ -106,6 +106,7 @@ def test_pyinstaller_archive_guard_rejects_embedded_future_plugin_without_plugin
 
 
 def test_pyinstaller_archive_guard_rejects_plugin_namespace_from_real_archive():
+    assert_no_optional_plugin_modules(["PYZ-00.pyz", "api.plugins"])
     with pytest.raises(RuntimeError, match="optional plugin module"):
         assert_no_optional_plugin_modules(["PYZ-00.pyz", "plugins.future_plugin"])
 
