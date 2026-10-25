@@ -15,6 +15,16 @@ import socket
 import subprocess
 import sys
 
+# Frozen Windows processes can inherit a legacy code page (for example cp1252).
+# Migration diagnostics include Chinese text and must never crash startup while
+# writing stdout/stderr. runtime.py also configures these streams, but it loads
+# only after _seed_core_features(), so configure them here first.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 FROZEN = bool(getattr(sys, "frozen", False))
 CODE_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(
     os.path.abspath(__file__))
@@ -37,7 +47,9 @@ def _seed_core_features():
     if os.environ.get("VIGIL_MANAGED") == "1":
         legacy_roots = json.loads(os.environ.get("VIGIL_LEGACY_HOMES", "[]"))
     try:
+        print("[sidecar] phase=plugin_migration:start", flush=True)
         migrated = migrate_legacy_plugins(HOME_DIR, legacy_roots)
+        print("[sidecar] phase=plugin_migration:done", flush=True)
         if migrated.get("copied"):
             print("[sidecar] 已迁移旧版用户插件 %d 个 -> data/installed_plugins" %
                   migrated["copied"], flush=True)
@@ -52,7 +64,9 @@ def _seed_core_features():
     # 最后铺新版内置；反过来会把旧文件当成"用户改动"复制进 installed，
     # 从而覆盖掉刚铺好的新版。
     try:
+        print("[sidecar] phase=retire_superseded_installs:start", flush=True)
         retired = retire_superseded_installs(HOME_DIR)
+        print("[sidecar] phase=retire_superseded_installs:done", flush=True)
         if retired.get("retired"):
             print("[sidecar] 已停用 %d 个旧版随包插件副本（保留在 installed_plugins/_retired）" %
                   retired["retired"], flush=True)
@@ -60,11 +74,15 @@ def _seed_core_features():
             print("[sidecar] 旧副本停用未完成，原文件已保留：%s" % error, flush=True)
     except Exception as exc:
         print("[sidecar] 旧副本停用失败，Brain 继续启动：%s" % str(exc)[:180], flush=True)
+    print("[sidecar] phase=seed_core_features_payload:start", flush=True)
     seed_core_features(src, HOME_DIR, legacy_roots)
+    print("[sidecar] phase=seed_core_features_payload:done", flush=True)
     bundled = os.path.join(CODE_DIR, "plugins")
     if os.path.isdir(bundled):
         try:
+            print("[sidecar] phase=seed_plugins:start", flush=True)
             seeded = seed_plugins(bundled, HOME_DIR, legacy_roots)
+            print("[sidecar] phase=seed_plugins:done", flush=True)
             print("[sidecar] 内置插件已就位 %d 个（跟踪 %d 个文件）" %
                   (seeded["seeded"], seeded["tracked"]), flush=True)
         except Exception as exc:
@@ -204,19 +222,26 @@ def main():
         os.environ['VIGIL_BIND_HOST'] = '127.0.0.1'
     os.makedirs(HOME_DIR, exist_ok=True)
     os.chdir(HOME_DIR)          # 大脑里所有相对路径的家都在这儿
+    print("[sidecar] phase=seed_core_features:start", flush=True)
     _seed_core_features()
+    print("[sidecar] phase=seed_core_features:done", flush=True)
+    print("[sidecar] phase=skill_host:start", flush=True)
     _start_skill_host()         # 先起技能宿主，大脑加载插件时技能已可用
+    print("[sidecar] phase=skill_host:spawned", flush=True)
     managed = os.environ.get('VIGIL_MANAGED') == '1'
     skill_port = int(os.environ.get('ZX_SKILL_PORT') or 0) if managed else 0
     port = _pick_port(exclude={skill_port} if skill_port else ())
     os.environ["VIGIL_PORT"] = str(port)
 
+    print("[sidecar] phase=server_import:start", flush=True)
     import server               # 大脑本体（导入即完成全部初始化的准备工作）
+    print("[sidecar] phase=server_import:done", flush=True)
 
     # 先发布本进程的候选端口和身份。Electron sidecar 自己探测运行中的
     # /api/runtime 和关键路由后才会转为 ready；这样单一探活者拥有最终判断，
     # 不依赖 Brain 内部后台线程写入通知，也不会把文件存在误当成健康。
     _write_candidate_ready(port)
+    print("[sidecar] phase=ready_file:published", flush=True)
     server.main()
 
 

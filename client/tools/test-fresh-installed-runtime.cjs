@@ -94,7 +94,29 @@ async function start() {
     if (['ready', 'failed'].includes(health.status)) break;
     await sleep(250);
   }
-  assert.equal(health.status, 'ready', health.lastErr);
+  if (health.status !== 'ready') {
+    // Keep the exact installed runtime's startup evidence in the CI artifact.
+    // The message is deliberately limited to sidecar diagnostics, not config contents.
+    const diagnostic = {
+      status: health.status, failureKind: health.failureKind, lastErr: health.lastErr,
+      lastFailure: health.lastFailure, pid: health.pid, exe: health.exe, home: health.home,
+      diagnosis: health.diagnosis, startupPhases: health.startupPhases,
+      logTail: (health.logTail || []).map(line => String(line)
+        .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
+        .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')),
+    };
+    console.error('SIDECAR_STARTUP_DIAGNOSTIC ' + JSON.stringify(diagnostic));
+  }
+  assert.equal(health.status, 'ready', health.lastErr || JSON.stringify({
+    failureKind: health.failureKind, lastFailure: health.lastFailure, logTail: health.logTail
+  }));
+  const startupPhases = (health.startupPhases || []).map(String)
+    .filter(line => line.includes('[sidecar] phase='));
+  for (const phase of ['plugin_migration:done', 'seed_core_features:done',
+    'skill_host:spawned', 'server_import:done', 'ready_file:published']) {
+    assert.ok(startupPhases.some(line => line.includes(`phase=${phase}`)),
+      `Installed Brain did not report completing startup phase: ${phase}`);
+  }
   assert.ok(health.exe.startsWith(install), 'Brain executable was not loaded from the fresh install');
   const runtime = await evaluate("vigil.api('GET','/api/runtime')");
   assert.equal(runtime.status, 200, 'Bundled Brain health endpoint did not return 200');
@@ -237,6 +259,7 @@ async function start() {
     brain_health: 'ready', welcome_page: true, fake_provider_chat: mode === 'first' ? 'passed' : 'restored',
     fake_provider_requests: completionRequests,
     fresh_chat_provider_requests: freshChatRequests,
+    startup_phases: startupPhases,
     wallpaper_uninstalled_and_idle: true, durable_chat_history: mode === 'restart' }));
 }
 

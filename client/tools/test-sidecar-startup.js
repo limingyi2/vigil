@@ -60,6 +60,21 @@ test('synchronous Windows spawn UNKNOWN preserves process creation diagnostics',
   assert.match(status.diagnosis,/code=UNKNOWN/);
 });
 
+test('startup phase markers survive truncation of the recent process log',t=>{
+  let child;
+  const h=harness(t,{spawn:()=>{
+    child=new EventEmitter();child.pid=73;child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>{};return child;
+  }});
+  h.api.maybeStart();
+  child.stdout.emit('data',Buffer.from('[sidecar] phase=plugin_migration:done\n'));
+  child.stdout.emit('data',Buffer.from('[sidecar] phase=server_import:done\n'));
+  for(let i=0;i<30;i++)child.stdout.emit('data',Buffer.from('verbose startup line '+i+'\n'));
+  const status=h.api.status();
+  assert.equal(status.logTail.length,24);
+  assert.deepEqual(Array.from(status.startupPhases),[
+    '[sidecar] phase=plugin_migration:done','[sidecar] phase=server_import:done']);
+});
+
 test('a failed Brain health identity check is classified separately',async t=>{
   let child;
   const h=harness(t,{spawn:()=>{

@@ -8,7 +8,7 @@ const {getSystemErrorName} = require('util');
 const contract = require('./build-contract');
 let app, getter = () => ({}), child = null, timer = null, generation = 0;
 let expected, readyFile = '', checking = false;
-let state = {enabled:false,status:'stopped',exe:'',home:'',port:0,pid:0,restarts:0,lastErr:'',lastFailure:null,failureKind:'',logTail:[]};
+let state = {enabled:false,status:'stopped',exe:'',home:'',port:0,pid:0,restarts:0,lastErr:'',lastFailure:null,failureKind:'',logTail:[],startupPhases:[]};
 const listeners = new Set();
 const ready = () => state.status === 'ready' && !!state.port;
 const base = () => ready() ? 'http://127.0.0.1:' + state.port : '';
@@ -19,6 +19,8 @@ function logLine(chunk) {
   for (const line of text.split('\n')) {
     const t = line.trim();
     if (!t) continue;
+    if (t.includes('[sidecar] phase='))
+      state.startupPhases = [...(state.startupPhases || []), t.slice(0, 300)].slice(-32);
     state.logTail = [...(state.logTail || []), t.slice(0, 300)].slice(-24);
   }
 }
@@ -112,7 +114,7 @@ function maybeStart(cfg = getter()) {
     const manifest=contract.read(path.join(root,'brain-manifest.json'));
     contract.compatible(expected,manifest);contract.verifyTree(root,manifest);
     state={...state,enabled:true,status:'starting',exe:path.join(root,'vigil-brain.exe'),
-      home:path.join(app.getPath('userData'),'brain'),port:0,pid:0,lastErr:'',lastFailure:null,failureKind:'',logTail:[],instanceId:crypto.randomUUID(),build:null};
+      home:path.join(app.getPath('userData'),'brain'),port:0,pid:0,lastErr:'',lastFailure:null,failureKind:'',logTail:[],startupPhases:[],instanceId:crypto.randomUUID(),build:null};
     const run=path.join(app.getPath('userData'),'runtime');fs.mkdirSync(run,{recursive:true});
     readyFile=path.join(run,'ready-'+state.instanceId+'.json');
     const previous=require('./update-transaction').pending(app.getPath('userData'));
