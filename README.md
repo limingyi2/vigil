@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/limingyi2/vigil/releases/latest"><strong>下载 Windows 版</strong></a> ·
+  <a href="https://github.com/limingyi2/vigil/releases/download/v1.1.9-p21.2.20261025.1/Kestrel.Setup.1.1.9-p21.2.20261025.1.exe"><strong>下载 Windows 版</strong></a> ·
   <a href="#开始使用">开始使用</a> ·
   <a href="#开发进度">开发进度</a> ·
   <a href="#文档导航">文档导航</a>
@@ -24,10 +24,10 @@ Vigil 是以 Electron 客户端和 Python Brain 为核心的桌面 Agent。你�
 
 | Windows 安装版 | Windows 便携版 |
 |:---|:---|
-| [下载 Vigil Setup 1.0.2](https://github.com/limingyi2/vigil/releases/download/v1.0.2/Vigil.Setup.1.0.2.exe) | [下载 Vigil 1.0.2](https://github.com/limingyi2/vigil/releases/download/v1.0.2/Vigil.1.0.2.exe) |
+| [下载 Kestrel Setup 1.1.9](https://github.com/limingyi2/vigil/releases/download/v1.1.9-p21.2.20261025.1/Kestrel.Setup.1.1.9-p21.2.20261025.1.exe) | [在 Releases 里选便携包](https://github.com/limingyi2/vigil/releases) |
 | 使用安装向导，适合日常使用 | 解压运行所需组件由启动程序处理 |
 
-校验文件与发布说明见 [Releases](https://github.com/limingyi2/vigil/releases/latest)。当前 Windows 包尚未签名。
+安装包文件名形如 `Kestrel.Setup.<版本>.exe`（`Kestrel` 是桌面端的构建名，产品仍叫 Vigil），上面链接指向当前带安装包的最新发布，版本号和校验值以 [Releases](https://github.com/limingyi2/vigil/releases) 里对应那一条为准。当前 Windows 包尚未签名。
 
 1. 下载并启动客户端。
 2. 在「设置 → 模型与服务商」配置接口地址、模型与自己的密钥。
