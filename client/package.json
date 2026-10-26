@@ -32,10 +32,6 @@
     ],
     "extraResources": [
       {
-        "from": "native-window-host/build/Release/native-window-host.exe",
-        "to": "native-window-host/native-window-host.exe"
-      },
-      {
         "from": "../dist/brain-release/vigil-brain",
         "to": "vigil-brain"
       }

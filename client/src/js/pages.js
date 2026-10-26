@@ -4233,9 +4233,9 @@
     // 收在聊天输入框旁的盾牌面板里（见 renderChat）。
     // 「已绑定设备」删了：连接目标只有本机 Brain，没有设备表要管。
     // 「云端同步」整页删了（P8.1）：桌面端不再把记忆/人设推到任何远端。
-    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['retrieval', '检索与知识库'], ['video-apps', '视频软件'], ['danger', '权限与安全'], ['about', '关于']];
+    const subs = [['conn', '本地内核'], ['model', '模型管理'], ['retrieval', '检索与知识库'], ['danger', '权限与安全'], ['about', '关于']];
     ctx.panel.innerHTML = '<div class="phead"><h2>设置</h2></div><div class="plist">' +
-      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'retrieval' ? 'search' : k === 'video-apps' ? 'video' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
+      subs.map(([k, n], i) => li({ icon: k === 'conn' ? 'bell' : k === 'model' ? 'brain' : k === 'retrieval' ? 'search' : k === 'danger' ? 'x' : 'set', title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
     ctx.topbar.innerHTML = topbar('本地内核', state.base || '');
     ctx.view.innerHTML = '<div class="wrap" id="sView"></div>';
@@ -4850,85 +4850,6 @@
       }));
     }
 
-    async function videoApps() {
-      ctx.topbar.querySelector('h1').textContent = '视频软件';
-      const api = global.vigil && global.vigil.videoWindow;
-      if (!api) {
-        v.innerHTML = '<div class="card">视频窗口配置需要在 Windows 桌面客户端中管理。</div>';
-        return;
-      }
-      let analysis = null;
-      try { analysis = pick(await get('/api/video-analysis/settings')); }
-      catch (error) { analysis = {ok:false, _err:error.message}; }
-      let rows = [];
-      let selectedId = '';
-      let creating = false;
-      const draw = async () => {
-        rows = await api.profiles();
-        if (!creating && !rows.some(row => row.id === selectedId)) selectedId = rows[0] ? rows[0].id : '';
-        const current = rows.find(row => row.id === selectedId) || { id: '', name: '', exePath: '', args: '' };
-        v.innerHTML = '<div class="card video-settings-card"><div class="video-settings-head"><div><b>已保存的软件</b><div class="muted">添加任意本地 Windows EXE，工作台只显示这里保存的软件。</div></div><button class="btn" id="vaNew">新建配置</button></div>' +
-          (rows.length ? '<div class="video-settings-list">' + rows.map(row => '<button class="video-settings-row ' + (row.id === selectedId ? 'on' : '') + '" data-profile="' + esc(row.id) + '"><b>' + esc(row.name) + '</b><small>' + esc(row.exePath) + '</small></button>').join('') + '</div>' : '<div class="video-empty">还没有配置。选择“新建配置”添加软件。</div>') +
-          '<div class="video-settings-form"><label>配置名称<input id="vaName" maxlength="80" placeholder="例如：剪映" value="' + esc(current.name) + '"></label>' +
-          '<label>EXE 路径<div class="video-path-row"><input id="vaExe" readonly placeholder="选择本机 EXE" value="' + esc(current.exePath) + '"><button class="btn" id="vaPick">选择 EXE</button></div></label>' +
-          '<details class="video-advanced"><summary>高级启动选项</summary><label>启动参数<input id="vaArgs" maxlength="2048" placeholder="可留空" value="' + esc(current.args || '') + '"></label></details>' +
-          '<div class="video-actions"><button class="btn primary" id="vaSave">保存配置</button>' + (current.id ? '<button class="btn" id="vaDelete">删除配置</button>' : '') + '<span class="video-status" id="vaStatus" role="status"></span></div></div></div>';
-        const modelCard = '<div class="card video-settings-card"><b>独立视频分析模型</b>' +
-          '<p class="muted">使用视觉模型建立片段描述、筛选相关片段并回看取证。不使用向量模型；失败直接报错，不切换模型。保存设置不会调用模型或自动发送画面。</p>' +
-          (analysis && analysis.ok ? '<label class="field">分析模型<select class="input" id="vaAnalysisModel">' +
-            analysis.models.map(item => '<option value="' + esc(item.id) + '"' + (item.id === analysis.model_id ? ' selected' : '') + '>' + esc(item.name + ' · ' + item.provider) + '</option>').join('') +
-            '</select></label><p class="muted">可在“模型管理”添加其他模型。所选模型须支持图片；切换后片段描述索引需要重新建立。Ego 目前仅独立准备，不加入自动委派。</p><button class="btn" id="vaAnalysisSave">保存分析模型</button><span id="vaAnalysisResult" role="status"></span>' :
-            '<p role="alert">分析模型设置读取失败：' + esc((analysis && (analysis._err || analysis.err)) || '请升级或检查本地内核') + '</p>') + '</div>';
-        v.insertAdjacentHTML('beforeend', modelCard);
-        const modelSave = v.querySelector('#vaAnalysisSave');
-        if (modelSave) modelSave.addEventListener('click', async () => {
-          modelSave.disabled = true;
-          const status = v.querySelector('#vaAnalysisResult');
-          status.textContent = '正在保存…';
-          try {
-            const result = pick(await post('/api/video-analysis/settings', {model_id:v.querySelector('#vaAnalysisModel').value}));
-            if (!result.ok) throw new Error(result._err || result.err || '保存失败');
-            analysis = result;
-            status.textContent = '已保存；未发起模型请求。新模型将使用独立的片段描述索引。';
-          } catch (error) { status.textContent = '保存失败：' + error.message; }
-          finally { modelSave.disabled = false; }
-        });
-        v.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => { creating = false; selectedId = button.dataset.profile; refresh(); }));
-        const setMessage = message => { const target = v.querySelector('#vaStatus'); if (target) target.textContent = message; };
-        v.querySelector('#vaNew').addEventListener('click', () => { creating = true; selectedId = ''; refresh(); });
-        v.querySelector('#vaPick').addEventListener('click', async () => {
-          try {
-            const file = await api.pickExe();
-            if (file) { v.querySelector('#vaExe').value = file; if (!v.querySelector('#vaName').value) v.querySelector('#vaName').value = file.split(/[\\/]/).pop().replace(/\.exe$/i, ''); }
-          } catch (error) { setMessage(error.message); }
-        });
-        v.querySelector('#vaSave').addEventListener('click', async () => {
-          try {
-            const exePath = v.querySelector('#vaExe').value;
-            if (!exePath) { setMessage('请先选择 EXE 文件。'); return; }
-            const saved = await api.saveProfile({ id: selectedId, name: v.querySelector('#vaName').value, exePath, args: v.querySelector('#vaArgs').value });
-            const match = saved.find(row => row.exePath.toLowerCase() === exePath.toLowerCase() && row.name === v.querySelector('#vaName').value.trim());
-            creating = false; selectedId = match ? match.id : selectedId;
-            toast('软件配置已保存'); await refresh();
-          } catch (error) { setMessage(error.message); }
-        });
-        const remove = v.querySelector('#vaDelete');
-        if (remove) remove.addEventListener('click', async () => {
-          if (!await confirmDialog('删除此软件配置？')) return;
-          await api.deleteProfile(selectedId); creating = false; selectedId = ''; await refresh();
-        });
-      };
-      async function refresh() {
-        try { await draw(); }
-        catch (error) {
-          v.innerHTML = '<div class="card err" role="alert"><b>视频软件配置读取失败</b><p>' + esc(error.message || String(error)) + '</p><button class="btn" id="vaRetry">重试</button></div>';
-          v.querySelector('#vaRetry').onclick = refresh;
-        }
-      }
-      v.innerHTML = '<div class="card" role="status">正在读取视频软件配置…</div>';
-      await refresh();
-    }
-
     async function about() {
       ctx.topbar.querySelector('h1').textContent = '关于';
       v.innerHTML = '<div class="card">' +
@@ -5021,7 +4942,7 @@
       });
     }
 
-    const draw = { conn, model, retrieval, 'video-apps': videoApps, danger, about };
+    const draw = { conn, model, retrieval, danger, about };
     bindLi(ctx.panel, (k, n) => {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
@@ -5132,7 +5053,6 @@
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},
       {title:'检索与知识库', desc:'语义检索开关、BM25 与混合检索', icon:'search', page:'system', sub:'retrieval'},
-      {title:'视频软件', desc:'管理视频工作台中的本地软件', icon:'video', page:'system', sub:'video-apps'},
       {title:'日志 / 调试', desc:'查看运行数据和诊断信息', icon:'chart', page:'data'},
       {title:'关于', desc:'版本、更新与项目信息', icon:'set', page:'system', sub:'about'},
     ];

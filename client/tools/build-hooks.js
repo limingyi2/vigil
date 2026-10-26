@@ -3,8 +3,6 @@ const fs=require('fs'),path=require('path'),{execFileSync}=require('child_proces
 const contract=require('../electron/build-contract');
 exports.beforePack=async()=>{
   const root=path.resolve(__dirname,'../..');
-  const nativeHost=path.join(root,'client','native-window-host','build','Release','native-window-host.exe');
-  if(!fs.existsSync(nativeHost))throw new Error('Required native window host is missing; build it with client/native-window-host/build.cmd before packaging.');
   const venv=path.join(root,'venv','Scripts','python.exe');
   const python=process.env.VIGIL_BUILD_PYTHON || (fs.existsSync(venv)?venv:'python');
   execFileSync(python,[path.join(root,'scripts/build_release.py'),'--verify',
@@ -13,8 +11,6 @@ exports.beforePack=async()=>{
 exports.afterPack=async context=>{
   await exports.beforePack();
   const resources=path.join(context.appOutDir,'resources');
-  const packagedNativeHost=path.join(resources,'native-window-host','native-window-host.exe');
-  if(!fs.existsSync(packagedNativeHost))throw new Error('Packaged native window host is missing: '+packagedNativeHost);
   const asar=require('@electron/asar');
   const archive=path.join(resources,'app.asar');
   const files=asar.listPackage(archive).map(file=>file.replace(/\\/g,'/'));

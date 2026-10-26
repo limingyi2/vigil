@@ -195,8 +195,6 @@ class TestRegistry(LocalToolsBase, unittest.TestCase):
             "local_file_write", "local_file_append", "local_file_delete",
             "local_mkdir", "local_move", "local_copy",
             "local_process_kill", "local_clipboard_write", "local_exec",
-            # 会真的把用户正在用的剪辑软件关掉（可能还有没保存的工程）
-            "local_video_window_close",
         })
 
     def test_只读工具不该标danger(self):
@@ -206,11 +204,7 @@ class TestRegistry(LocalToolsBase, unittest.TestCase):
         for n in ("local_system_info", "local_file_list", "local_file_read",
                   "local_file_find", "local_file_grep", "local_file_recent",
                   "local_process_list", "local_active_window",
-                  "local_clipboard_read", "open_url", "local_screenshot",
-                  # 视频窗口的查询/聚焦/显隐/托管都是可逆的，不该逼人点确认
-                  "local_video_window_status", "local_video_window_focus",
-                  "local_video_window_show", "local_video_window_hide",
-                  "local_video_window_attach", "local_video_window_detach"):
+                  "local_clipboard_read", "open_url", "local_screenshot"):
             self.assertFalse(localtools.REMOTE_TOOLS[n]["danger"], n + " 不该标危险")
 
     def test_多步任务需要的工具都在(self):

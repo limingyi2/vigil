@@ -27,7 +27,6 @@
 | 渲染层 | `client/src/js/pages.js` | — | 工作台界面，消费 Brain 的流式事件 |
 | Brain | `brain/server.py`（打包后 `server_launch.py`） | 动态（回落到 `8788`） | HTTP API + 聊天管线 + 任务循环 |
 | 技能宿主 | `brain/skill_host/` | `8790` | 跑 JS 技能，跟 Brain 分开，崩溃不带走聊天 |
-| 原生窗口宿主 | `client/native-window-host/` | — | C++ 小进程，处理窗口层级/穿透这类 Electron 做不干净的事 |
 
 Brain 的端口是启动时挑的空闲端口，写进 `VIGIL_PORT` 交给 `server.py`。所以**不要假设 8788 一定被占用**，它是源码直跑时的回落值。
 
@@ -57,7 +56,6 @@ brain/                     Python Brain
 client/                    Electron 客户端
   electron/                主进程、preload、sidecar、更新、回滚
   src/                     渲染层（js/css/html）
-  native-window-host/      C++ 窗口宿主
 deploy/brain/              PyInstaller spec（构建入口）
 scripts/                   构建、验收、评测脚本
 tests/                     Python 测试
@@ -122,7 +120,7 @@ sequenceDiagram
 | `knowledge_base` | `search` `ingest_text` `ingest_path` `reindex` `status` |
 | `local_tools` | `specs` `call` `status` |
 | `unified_search` | `search` `sync` `reindex` `status` |
-| `workspace` / `model_center` / `codex` / `video_workbench` | 工作区状态、模型状态、任务、视频台控制 |
+| `workspace` / `model_center` / `codex` | 工作区状态、模型状态、任务 |
 
 权限只有三档：
 

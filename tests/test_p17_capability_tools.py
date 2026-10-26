@@ -59,56 +59,8 @@ def test_the_agent_can_discover_capabilities_in_the_real_tool_table():
 def test_status_query_reports_the_real_modules_and_never_pretends_ready():
     snapshot = json.loads(tools.invoke_spec("capability_status", {}, _Ctx()))
     items = {item["name"]: item for item in snapshot["items"]}
-    assert {"codex", "video_workbench", "local_tools", "model_center"}.issubset(items)
-
-    # 注册了 ≠ 真的连着。没连上就必须报没连上。
-    video = items["video_workbench"]
-    assert video["status"]["connected"] is False
-    assert video["status"]["state"] == "unknown"
-    assert video["operations"]
-    # 窗口操作是客户端代办的，注册中心不得假装自己能验证
-    assert video["permissions"]["focus"] == "delegated"
-    assert video["operation_states"]["focus"] == "unavailable"
+    assert {"codex", "local_tools", "model_center"}.issubset(items)
     assert items["codex"]["status"]["connected"] in (True, False)
-
-
-def test_without_a_client_receipt_the_outcome_is_unknown_not_success(monkeypatch):
-    capability_registry.bootstrap()
-    monkeypatch.setattr(localtools, "call", lambda name, args: "本机客户端不在线")
-    out = json.loads(tools.invoke_spec(
-        "capability_call",
-        {"capability": "video_workbench", "operation": "focus", "args": "{}"},
-        _Ctx()))
-    assert out["ok"] is False
-    assert out["status"] == "unknown"
-    assert out["error"] == "receipt_unverified"
-    assert out["task_id"]
-
-
-def test_a_client_receipt_is_what_decides_success(monkeypatch):
-    capability_registry.bootstrap()
-    monkeypatch.setattr(
-        localtools, "call",
-        lambda name, args: json.dumps({"ok": True, "action": "focus",
-                                       "state": "attached",
-                                       "hosted_software": "capcut.exe"}) + "\nfocus done")
-    ok = json.loads(tools.invoke_spec(
-        "capability_call",
-        {"capability": "video_workbench", "operation": "focus", "args": "{}"},
-        _Ctx()))
-    assert ok["status"] == "succeeded"
-    assert ok["result"]["state"] == "attached"
-    assert ok["result"]["hosted_software"] == "capcut.exe"
-
-    monkeypatch.setattr(
-        localtools, "call",
-        lambda name, args: json.dumps({"ok": False, "error": "no_hosted_window"}) + "\n没有窗口")
-    bad = json.loads(tools.invoke_spec(
-        "capability_call",
-        {"capability": "video_workbench", "operation": "focus", "args": "{}"},
-        _Ctx()))
-    assert bad["status"] == "failed"
-    assert bad["error"] == "no_hosted_window"
 
 
 def test_the_model_cannot_grant_itself_permission():

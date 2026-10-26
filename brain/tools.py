@@ -211,7 +211,7 @@ _STATIC_SPECS = {
         "arg_param": "capability",
     },
     "capability_call": {
-        "desc": "调用一个已注册能力（Codex Agent 工作室、视频工作台窗口、本机工具、插件、工作区等）的具体操作。"
+        "desc": "调用一个已注册能力（Codex Agent 工作室、本机工具、插件、工作区等）的具体操作。"
                 "🔴 **先查再调**：先用 capability_status 看这个能力现在是什么状态、有哪些操作，"
                 "不可用就别调。操作会真的动到电脑上（开软件、聚焦窗口、起任务），"
                 "所以只在你确实被要求这么做时才调。"
@@ -228,7 +228,7 @@ _STATIC_SPECS = {
                 "返回 status=awaiting_authorization 表示已出审批卡，把要装的名字和来源说清楚请用户确认，"
                 "**不要换个操作重试**。装完按返回的 ok/err 如实回报。"
                 "list / plugin_status 只查本地已安装清单，反复调它们不会完成安装。",
-        "params": [("capability", "能力名称，如 codex / video_workbench / local_tools / plugins_skills", True),
+        "params": [("capability", "能力名称，如 codex / local_tools / plugins_skills", True),
                    ("operation", "操作名，如 status / tasks / focus / create_task / list / disable", True),
                    ("args", "操作参数，JSON 对象字符串；没有参数就传 {}", False)],
         "arg_param": "capability",

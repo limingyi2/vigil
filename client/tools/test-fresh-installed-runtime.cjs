@@ -178,28 +178,6 @@ async function start() {
   await selectPage('chat', "Boolean(document.querySelector('#ta'))");
   const chatRestored = await evaluate("Boolean(window.__chatSurfaceForPageSmoke&&document.querySelector('#msgs')===window.__chatSurfaceForPageSmoke)");
   assert.ok(chatRestored, 'Chat surfaces were not restored after installed market navigation');
-  if (mode === 'first') {
-    const nativeHelper = path.join(install, 'resources', 'native-window-host', 'native-window-host.exe');
-    assert.ok(fs.existsSync(nativeHelper), 'Installed native window host executable is missing');
-    const testExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'notepad.exe');
-    assert.ok(fs.existsSync(testExe), 'Windows Notepad fixture is unavailable for native-host initialization');
-    const started = await evaluate(`vigil.videoWindow.start(${JSON.stringify({ id: 'release-smoke', name: 'Vigil native host smoke', exePath: testExe, args: '' })},{x:0,y:0,width:320,height:200,dpr:1})`);
-    assert.ok(started?.ok, 'Native window host did not start: '+(started?.detail || started?.error || 'unknown error'));
-    const eventFile = path.join(process.env.VIGIL_USER_DATA, 'native-window-host-events.jsonl');
-    let readyEvent = false;
-    for (let i = 0; i < 100; i++) {
-      if (fs.existsSync(eventFile)) {
-        readyEvent = fs.readFileSync(eventFile, 'utf8').split(/\r?\n/).some(line => {
-          try { return JSON.parse(line).type === 'ready'; } catch (_) { return false; }
-        });
-      }
-      if (readyEvent) break;
-      await sleep(100);
-    }
-    assert.ok(readyEvent, 'Native window host did not initialize its HWND container');
-    await evaluate("vigil.videoWindow.action('CLOSE_APP');true");
-  }
-
   let conversationId;
   if (mode === 'first') {
     const port = provider.address().port;

@@ -104,40 +104,6 @@ def verify_release_manifest(installer, manifest_path, build):
     return manifest
 
 
-def build_native_window_host():
-    if os.name != 'nt':
-        raise RuntimeError('Windows release requires the native window host and a Visual Studio C++ toolchain')
-    exe = ROOT / 'client/native-window-host/build/Release/native-window-host.exe'
-    src = ROOT / 'client/native-window-host/native_window_host.cpp'
-    # 显式复用已构建的宿主：VIGIL_REUSE_NATIVE_HOST=1 表示构建者**知情**地要求
-    # 用现有二进制，此时不再重编译。原先只在「找不到 VS2022」时才允许复用，
-    # 结果在 VS 装了但 SDK 环境残缺的机器上（VsDevCmd 依赖被安全策略拦掉的
-    # reg.exe 去查 SDK 版本，include 路径为空 → windows.h 缺失）会编译失败，
-    # 明明有可用二进制也走不下去。
-    # 防呆改由 mtime 承担：源码比二进制新就拒绝复用，避免真的带上过期组件。
-    if os.environ.get('VIGIL_REUSE_NATIVE_HOST') == '1':
-        if not exe.is_file():
-            raise RuntimeError('VIGIL_REUSE_NATIVE_HOST=1 但 '
-                               'client/native-window-host/build/Release/native-window-host.exe 不存在')
-        if exe.stat().st_mtime < src.stat().st_mtime:
-            raise RuntimeError('native_window_host.cpp 比现有二进制新，拒绝复用过期宿主；'
-                               '请装好 VS2022 C++ x64 与 Windows SDK 后重新编译')
-        print('[release] reusing existing native-window-host.exe (VIGIL_REUSE_NATIVE_HOST=1, source unchanged)')
-        return
-    toolchain = any(
-        (Path(pf) / 'Microsoft Visual Studio/2022' / edition / 'Common7/Tools/VsDevCmd.bat').is_file()
-        for pf in ('C:/Program Files', 'C:/Program Files (x86)')
-        for edition in ('Enterprise', 'Professional', 'Community', 'BuildTools'))
-    if not toolchain:
-        raise RuntimeError('Visual Studio 2022 MSVC x64 工具链未找到；如需复用现有 native-window-host.exe，'
-                           '设置 VIGIL_REUSE_NATIVE_HOST=1')
-    script = ROOT / 'client/native-window-host/build.cmd'
-    helper = ROOT / 'client/native-window-host/build/Release/native-window-host.exe'
-    subprocess.run(['cmd', '/c', str(script)], cwd=ROOT / 'client', check=True)
-    if not helper.is_file():
-        raise RuntimeError('Native window host build completed without producing native-window-host.exe')
-
-
 def verify(candidate=False):
     assert_no_bundled_plugin_tree(OUT)
     build = json.loads((ROOT / 'client/build-info.json').read_text(encoding='utf-8'))
@@ -189,8 +155,6 @@ def build(candidate=False, brain_only=False):
                 source_digest=digest(), protocol=1, capabilities=CAPS, candidate=candidate)
     for rel in ['brain/build-info.json', 'client/build-info.json']:
         (ROOT / rel).write_text(json.dumps(info, indent=2), encoding='utf-8')
-    if not brain_only:
-        build_native_window_host()
     if OUT.exists():
         assert OUT.resolve() == (ROOT / 'dist/brain-release/vigil-brain').resolve() and ROOT in OUT.resolve().parents
         shutil.rmtree(OUT)
@@ -258,8 +222,7 @@ def build(candidate=False, brain_only=False):
         manifest_path.write_text(json.dumps(release, indent=2), encoding='utf-8')
         verify_release_manifest(installer, manifest_path, info)
         contents = {rel: filehash(CLIENT_DIST / 'win-unpacked' / rel) for rel in
-            ['resources/app.asar', 'resources/vigil-brain/vigil-brain.exe', 'resources/vigil-brain/brain-manifest.json',
-             'resources/native-window-host/native-window-host.exe']}
+            ['resources/app.asar', 'resources/vigil-brain/vigil-brain.exe', 'resources/vigil-brain/brain-manifest.json']}
         installer.with_suffix('.contents.json').write_text(json.dumps(contents, indent=2), encoding='utf-8')
 
 

@@ -39,9 +39,6 @@ let win = null;
 let settingsWin = null;
 let settingsWinReady = false;
 let pendingSettingsTarget = null;
-let nativeWindowService = null;
-let nativeWindowQuitPending = false;
-let nativeWindowSafeToQuit = false;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
@@ -75,8 +72,8 @@ function createTray() {
     { label: '显示主界面', click: () => showMainWindow() },
     { type: 'separator' },
     { label: '退出', click: () => {
-        // Start the normal quit lifecycle first. Calling win.close() here skips
-        // before-quit when close is intercepted, so native-window shutdown never runs.
+        // Start the normal quit lifecycle first: win.close() would be caught by
+        // the hide-to-tray handler and never reach before-quit.
         quitting = true;
         app.quit();
       } },
@@ -529,27 +526,6 @@ function createWindow() {
       }
       callback({});
     });
-  nativeWindowService = require('./native-window-service').createNativeWindowService({
-    ipcMain, getWindow: () => win, getSettingsWindow: () => settingsWin,
-  });
-  // 托管的软件窗口是 Electron 窗口的原生子窗口，只能由主进程改显隐。
-  // 这里只广播“主窗口自己是否隐藏”，由渲染层结合当前页面决定要不要重新显示；
-  // 主进程不直接 SHOW，否则停在聊天页时外部窗口会盖住界面。
-  const broadcastWindowVisibility = (visible) => {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send('video-window:window-visible', !!visible);
-  };
-  win.on('hide', () => {
-    if (nativeWindowService) nativeWindowService.hide();
-    broadcastWindowVisibility(false);
-  });
-  // 隐藏到托盘再唤回时没有这层广播，容器就一直藏在原处，页面却以为已经托管好了。
-  win.on('show', () => broadcastWindowVisibility(true));
-  win.on('restore', () => broadcastWindowVisibility(true));
-  win.on('minimize', () => {
-    if (nativeWindowService) nativeWindowService.hide();
-    broadcastWindowVisibility(false);
-  });
   win.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   // Electron 不会自动提供浏览器右键菜单。给聊天输入框补上最小原生菜单，
   // 其中“粘贴”仍由渲染层的 paste 事件读取文本、图片或文件，不绕过附件校验。
@@ -606,8 +582,6 @@ function createWindow() {
     }
   });
   win.on('closed', () => {
-    if (nativeWindowService) nativeWindowService.dispose();
-    nativeWindowService = null;
     win = null;
   });
 }
@@ -693,10 +667,6 @@ function openSettingsWindow(options) {
 // 自己生成在 config.json 里的那把。不需要人填地址、端口、token，也没有
 // "连不上就换一台"的逻辑 —— 起不来就把原因报出来并允许重试。
 const localtool = require('./localtool');
-// The native window host lives in the main process; the video workbench
-// tools reach it through this injection.  Without it those tools must say
-// "unavailable" rather than pretend the window moved.
-localtool.setNativeWindowService(() => nativeWindowService);
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
 const { createPluginResources, shouldCancelLoopbackRequest } = require('./plugin-resource');
@@ -1304,42 +1274,10 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-// 真退出前的放行标记（托盘"退出"已把 quitting 置真；系统关机/注销
-// 也会走 before-quit —— 那时必须放行 close，不然关不了机）
-app.on('before-quit', (event) => {
+// 托盘“退出”已把 quitting 置真；系统关机/注销也会走 before-quit ——
+// 那时必须放行 close，不然关不了机。
+app.on('before-quit', () => {
   pluginResources.close();
-  if (nativeWindowService && !nativeWindowSafeToQuit) {
-    event.preventDefault();
-    if (nativeWindowQuitPending) return;
-    quitting = true;
-    nativeWindowQuitPending = true;
-    nativeWindowService.shutdown().then(safe => {
-      nativeWindowQuitPending = false;
-      if (safe) {
-        nativeWindowSafeToQuit = true;
-        app.quit();
-      } else {
-        quitting = false;
-        if (win && !win.isDestroyed()) {
-          win.show();
-          win.focus();
-        }
-        dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
-          type: 'warning',
-          title: '软件窗口尚未安全恢复',
-          message: 'Vigil 暂时保持运行，正在继续恢复外部软件窗口。恢复成功后可以再次退出。',
-        });
-      }
-    }, error => {
-      nativeWindowQuitPending = false;
-      quitting = false;
-      if (win && !win.isDestroyed()) { win.show(); win.focus(); }
-      dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
-        type: 'warning', title: '无法确认软件窗口状态', message: String(error && error.message || error),
-      });
-    });
-    return;
-  }
   quitting = true;
 });
 

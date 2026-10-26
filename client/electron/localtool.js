@@ -847,85 +847,6 @@ async function tool_clipboard_write(args) {
   return '已放进剪贴板：' + (t.length > 60 ? t.slice(0, 60) + '…' : t) + '（' + t.length + ' 字）';
 }
 
-// ── 视频工作台的原生窗口托管 ────────────────────────────────────
-// 真正的窗口宿主在主进程的 native-window-service 里，本文件拿不到它的
-// 实例 —— 由 main.js 在创建服务后注入。注入不进来就说"客户端没有这个
-// 能力"，**绝不能假装操作成功了**。
-let nativeWindowService = null;
-
-function setNativeWindowService(service) {
-  nativeWindowService = typeof service === 'function' ? service : () => service;
-}
-
-function videoService() {
-  try {
-    return typeof nativeWindowService === 'function' ? nativeWindowService() : nativeWindowService;
-  } catch (_) {
-    return null;
-  }
-}
-
-// 第一行给大脑读的机器可读回执，第二行起才是给人看的说明。
-// 只回中文散文的话，大脑只能靠"文字里有没有『失败』"猜成败 —— 猜错就是
-// 把没执行的操作报成成功。JSON.stringify 不会产生裸换行，首行一定完整。
-function videoReceipt(obj, human) {
-  return JSON.stringify(obj) + '\n' + String(human || '');
-}
-
-async function tool_video_window_status() {
-  const svc = videoService();
-  if (!svc || typeof svc.status !== 'function') {
-    return videoReceipt(
-      { ok: false, error: 'client_capability_missing', state: 'unavailable',
-        detail: '这台客户端没有加载原生窗口托管模块' },
-      '这台客户端没有加载原生窗口托管模块，视频工作台不可用。');
-  }
-  const st = svc.status() || {};
-  const receipt = {
-    ok: true,
-    helper_running: !!st.helper_running,
-    state: String(st.state || 'unknown'),
-    hosted_software: st.hosted_software || null,
-    exe_path: st.exe_path || '',
-    pid: st.pid || 0,
-  };
-  if (!st.helper_running) {
-    return videoReceipt(receipt,
-      '视频工作台当前没有托管任何软件窗口（还没有启动过软件）。');
-  }
-  const lines = ['视频工作台托管状态：' + receipt.state];
-  if (receipt.hosted_software) lines.push('当前软件：' + receipt.hosted_software);
-  if (receipt.exe_path) lines.push('程序路径：' + receipt.exe_path);
-  if (receipt.pid) lines.push('进程 PID：' + receipt.pid);
-  return videoReceipt(receipt, lines.join('\n'));
-}
-
-async function tool_video_window_action(args) {
-  const svc = videoService();
-  const action = String((args && args.action) || '').trim().toLowerCase();
-  if (!svc || typeof svc.action !== 'function') {
-    return videoReceipt(
-      { ok: false, error: 'client_capability_missing', action: action,
-        state: 'unavailable', detail: '这台客户端没有加载原生窗口托管模块' },
-      '这台客户端没有加载原生窗口托管模块，视频工作台不可用。');
-  }
-  const out = svc.action(action) || {};
-  const receipt = {
-    ok: !!out.ok,
-    action: action,
-    state: String(out.state || 'unknown'),
-    hosted_software: out.hosted_software || null,
-    error: out.ok ? '' : String(out.error || 'client_rejected'),
-    detail: String(out.detail || ''),
-  };
-  const human = out.ok
-    ? '窗口操作「' + action + '」已执行。当前状态：' + receipt.state
-      + (receipt.hosted_software ? '（' + receipt.hosted_software + '）' : '')
-    : '窗口操作「' + action + '」没有执行成功：'
-      + String(out.detail || out.error || '未知原因');
-  return videoReceipt(receipt, human);
-}
-
 // ── 命令执行 ──────────────────────────────────────────────────
 // 只读白名单：**默认放行的那些**。属于"看一眼状态"，没什么可改的。
 const CMD_ALLOW = [
@@ -1091,13 +1012,6 @@ const RUN = {
   local_process_kill: tool_process_kill,
   local_clipboard_write: tool_clipboard_write,
   local_exec: tool_exec,
-  local_video_window_status: tool_video_window_status,
-  local_video_window_focus: args => tool_video_window_action({ action: 'focus' }),
-  local_video_window_show: args => tool_video_window_action({ action: 'show' }),
-  local_video_window_hide: args => tool_video_window_action({ action: 'hide' }),
-  local_video_window_attach: args => tool_video_window_action({ action: 'attach' }),
-  local_video_window_detach: args => tool_video_window_action({ action: 'detach' }),
-  local_video_window_close: args => tool_video_window_action({ action: 'close' }),
 };
 
 // ── 工具目录 ──────────────────────────────────────────────────
@@ -1183,27 +1097,6 @@ const CATALOG = [
     desc: '执行一条命令行。只读命令直接放行，其他要先在设置里打开并每次确认',
     params: [{ k: 'cmd', label: '命令', ph: 'ipconfig', req: true }] },
 
-  { name: 'local_video_window_status', group: 'system', danger: false,
-    desc: '看视频工作台当前托管的是哪个软件、PID 和窗口状态',
-    params: [] },
-  { name: 'local_video_window_focus', group: 'system', danger: false,
-    desc: '把已托管的软件窗口切到最前面',
-    params: [] },
-  { name: 'local_video_window_show', group: 'system', danger: false,
-    desc: '把已托管但被藏起来的软件窗口显示出来',
-    params: [] },
-  { name: 'local_video_window_hide', group: 'system', danger: false,
-    desc: '把已托管的软件窗口藏起来（不关掉它）',
-    params: [] },
-  { name: 'local_video_window_attach', group: 'system', danger: false,
-    desc: '把已在运行的软件窗口托管进视频工作台的槽位',
-    params: [] },
-  { name: 'local_video_window_detach', group: 'system', danger: false,
-    desc: '解除托管，让软件窗口恢复成独立窗口',
-    params: [] },
-  { name: 'local_video_window_close', group: 'system', danger: true,
-    desc: '关掉已托管的软件窗口（软件会被真正关闭）',
-    params: [] },
 ];
 
 const GROUP_NAME = { system: '系统', files: '文件', clip: '剪贴板', net: '网络', do: '会改动东西' };
@@ -1251,7 +1144,6 @@ async function run(name, args, cfg) {
 
 module.exports = {
   run, capabilities, defaultRoots, restore,
-  setNativeWindowService,
   CATALOG, GROUP_NAME, DANGER, CMD_ALLOW, CMD_BLOCK, execVerdict,
   inside, expand, isSystemPath, backupFile,
   // 安全加固件（单测要直接钉）：

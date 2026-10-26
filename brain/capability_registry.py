@@ -826,27 +826,6 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
             REGISTRY.register("model_center", status={"connected": False, "state": "unavailable",
                                                        "error": str(exc)[:180]}, source="brain.model_hub")
 
-        # The Electron P15 window host publishes its authoritative state via
-        # /api/capabilities/events.  Until then the truthful state is unknown;
-        # a registered capability is not the same as a claimed running app.
-        REGISTRY.register("video_workbench", status={"connected": False, "state": "unknown",
-                                                       "hosted_software": None},
-                          source="client.electron.native-window-service",
-                          operations={
-                              "status": {"permission": READ,
-                                         "handler": lambda _a: REGISTRY.get("video_workbench")["status"]},
-                              # Window control runs on the client, which asks
-                              # the user before touching anything.  Delegated:
-                              # the registry must not pretend it can verify the
-                              # client's confirmation from here.
-                              "focus": {"permission": DELEGATED, "handler": lambda a: _video_window_call("focus", a)},
-                              "show": {"permission": DELEGATED, "handler": lambda a: _video_window_call("show", a)},
-                              "hide": {"permission": DELEGATED, "handler": lambda a: _video_window_call("hide", a)},
-                              "attach": {"permission": DELEGATED, "handler": lambda a: _video_window_call("attach", a)},
-                              "detach": {"permission": DELEGATED, "handler": lambda a: _video_window_call("detach", a)},
-                              "close": {"permission": DELEGATED, "handler": lambda a: _video_window_call("close", a)},
-                          }, metadata={"window_control": {"status": "client_only",
-                                                          "operations": ["show", "hide", "focus", "attach", "detach", "close"]}})
         REGISTRY.register("workspace", status={"connected": True, "state": "ready"},
                           source="brain.workspaces", operations={
                               "status": {"permission": READ, "handler": lambda _a: {"state": "ready"}},
@@ -1287,43 +1266,6 @@ def _codex_create_task(codex: Any, args: Mapping[str, Any]) -> dict[str, Any]:
                                    "status": (started or {}).get("status"),
                                    "thread_id": (started or {}).get("thread_id") or (task or {}).get("thread_id")},
             "detail": "任务已创建；需要你审批的动作会在 Agent 工作室里等你"}
-
-
-def _video_window_call(action: str, args: Mapping[str, Any]) -> dict[str, Any]:
-    """Route a window action to the Electron client over the existing bridge.
-
-    The Brain must not touch Electron IPC directly: the client owns the native
-    window service and asks the user before acting.  We therefore reuse the
-    same poll/result channel the local tools use, and report the client's real
-    receipt instead of claiming success.
-    """
-    import json as _json
-    import localtools as _lt
-    name = "local_video_window_%s" % str(action or "").strip()
-    if name not in _lt.REMOTE_TOOLS:
-        return {"ok": False, "error": "operation_not_supported",
-                "detail": "客户端没有提供这个窗口操作：%s" % action}
-    text = str(_lt.call(name, dict(args or {})) or "")
-    # 🔴 客户端第一行是机器可读回执，后面才是给人看的说明。以前靠
-    # "文字里有没有『失败』"判成败 —— 那是猜，不是凭据：措辞一改就会把
-    # 没执行的操作报成成功。拿不到回执就只能说"不确定"，不能算成功。
-    head, _, rest = text.partition("\n")
-    receipt: Mapping[str, Any] = {}
-    try:
-        parsed = _json.loads(head.strip())
-        if isinstance(parsed, dict):
-            receipt = parsed
-    except (TypeError, ValueError):
-        receipt = {}
-    if not receipt:
-        return {"ok": False, "status": RUN_UNKNOWN, "error": "receipt_unverified",
-                "result": text[:400],
-                "detail": "没拿到客户端的执行回执，无法确认这一步是否已经生效"}
-    out: dict[str, Any] = {"ok": bool(receipt.get("ok")), "result": receipt,
-                           "detail": rest.strip() or str(receipt.get("detail") or "")}
-    if not out["ok"]:
-        out["error"] = str(receipt.get("error") or "") or "client_rejected"
-    return out
 
 
 __all__ = ["CapabilityRegistry", "CapabilityError", "CapabilityGrant", "REGISTRY",

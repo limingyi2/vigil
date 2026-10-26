@@ -33,7 +33,6 @@
     // Codex / Agent 工作室
     {cat:'codex',icon:'i-puzzle',match:/^codex[_:]|^agent_?center|^dynamic_tool_call$/},
     // 视频工作台
-    {cat:'video',icon:'i-video',match:/video_window|^video_|^window_(attach|detach|focus|show|hide)/},
     // 命令执行
     {cat:'exec',icon:'i-term',match:/^local_exec$|^exec$|^command$|^shell$/},
     // 文件读取
@@ -58,7 +57,6 @@
     web:{run:'正在联网搜索',done:'联网搜索了',fail:'联网搜索'+'失败',denied:'联网搜索被拒绝'},
     capability:{run:'正在调用能力',done:'调用了能力',fail:'能力调用失败',denied:'能力调用被拒绝'},
     codex:{run:'正在操作 Agent 工作室',done:'操作了 Agent 工作室',fail:'Agent 工作室操作失败',denied:'Agent 工作室操作被拒绝'},
-    video:{run:'正在操作视频窗口',done:'操作了视频窗口',fail:'视频窗口操作失败',denied:'视频窗口操作被拒绝'},
     exec:{run:'正在运行命令',done:'运行了命令',fail:'命令执行失败',denied:'命令执行被拒绝'},
     read:{run:'正在读取文件',done:'读取了文件',fail:'文件读取失败',denied:'文件读取被拒绝'},
     edit:{run:'正在编辑文件',done:'编辑了文件',fail:'文件编辑失败',denied:'文件编辑被拒绝'},
@@ -179,7 +177,6 @@
     const preview=cat==='exec'?(input.cmd||input.command||'')
       :cat==='web'?(input.query||input.q||input.url||'')
       :cat==='capability'?(input.operation||input.capability||'')
-      :cat==='video'?(input.action||input.operation||'')
       :(input.path||input.pattern||input.name||input.file||'');
     const key=encodeURIComponent(String(meta.run_id || '')+':'+String(meta.call_id || meta.step_id || name));
     // The short reason stays in the always-visible summary; the raw diagnostic
