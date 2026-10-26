@@ -15,6 +15,8 @@ const path = require('path');
 
 const PORT = Number(process.env.VIGIL_EGO_PORT || 8799);
 const ROOT = process.env.VIGIL_EGO_ROOT || 'F:\\EgoAgent-Eval';
+// 默认走真实视觉模型；想看脚本演示就把 VIGIL_EGO_PROVIDER 设成 fake。
+const PROVIDER = process.env.VIGIL_EGO_PROVIDER || 'mimo';
 const WAIT_MS = 30000;
 const LOG = path.join(os.tmpdir(), 'vigil-ego-service.log');
 
