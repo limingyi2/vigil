@@ -174,7 +174,7 @@ def main():
         # 放两份，验排序：current 最前、blank沉底。
         # base 必须**带正文** —— 只给 name 的空白人设 desc 本来就该是空，
         # 拿它断言 "desc 非空" 是我上一版测试写错了，不是代码错。
-        for key, data in (("base", {"name": "知夏",
+        for key, data in (("base", {"name": "助手",
                                     "personality": "阳光开朗，对你极度偏爱。"}),
                           ("zz", {})):
             p = os.path.join(ps.PERSONA_DIR, key + ".json")

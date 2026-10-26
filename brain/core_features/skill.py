@@ -11,7 +11,7 @@
     }
 
 这套契约依赖 QQ Agent 特有的一堆东西（`ctx.sender.sendMedia`、`contextTier`、
-配置面板…），知夏一个都没有。`skill_host/server.js` 负责垫那一层；
+配置面板…），助手一个都没有。`skill_host/server.js` 负责垫那一层；
 **本文件只管"发现 + 调用 + 报给模型"**，不碰 skill 内部。
 
 ## 为什么不直接把 .js 当插件装
@@ -44,7 +44,7 @@ from urllib.parse import urlsplit
 import plugin_transaction as _file_transaction
 
 NAME = "skill"
-DESC = "接住 JS 技能：让现成的 skill 能在知夏这边用"
+DESC = "接住 JS 技能：让现成的 skill 能在助手这边用"
 
 # 声明开关：整条通道依赖云端那个 Node 进程，Node 没起来时它一整个功能都没有。
 # 不声明的话 App 设置页看不到这个开关，出问题只能 SSH 上去查。
@@ -367,8 +367,8 @@ def call(name, args, ctx=None):
     # 走 persona 读，跟 gate.py 的 _nicknames 同源。
     #
     # 变量必须叫 bot_name，**不能复用 name**：name 是传进来的技能工具名，
-    # 这里一赋值就把它冲掉了，症状是"调什么工具都报『没有这个技能工具：知夏』"。
-    bot_name = "知夏"
+    # 这里一赋值就把它冲掉了，症状是"调什么工具都报『没有这个技能工具：<bot名>』"。
+    bot_name = "助手"
     try:
         b = getattr(ctx, "brain", None)
         if b is not None:
@@ -380,7 +380,7 @@ def call(name, args, ctx=None):
                 import persona_store
                 d = persona_store.load(key) or {}
                 nicks = d.get("nicknames") or []
-                bot_name = str(d.get("name") or (nicks[0] if nicks else "") or "知夏")
+                bot_name = str(d.get("name") or (nicks[0] if nicks else "") or "助手")
     except Exception:
         pass
     src_ctx = {
@@ -692,7 +692,7 @@ def prompt(ctx=None):
 def _r_say(body, query):
     """技能的 sendTextBatch 打到这儿：把它要发的话原样发出去。
 
-    🔴 **只走 App 通道，微信群发不出去。** 知夏目前没有"往微信群发一条
+    🔴 **只走 App 通道，微信群发不出去。** 助手目前没有"往微信群发一条
     消息、不问模型"的接口：`chat(proactive=True)` 会剥"说 "前缀、
     还会把记忆/摘要走一遍；而Turn.say 只往App 推通知（见 plugin_host.py）。
     所以技能在微信群里能**算**运势，但发消息得靠模型自己那条回复 ——

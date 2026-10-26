@@ -81,11 +81,11 @@ def main():
     check("拒答文案带「当作没发生」这种交代", "当作没发生" in r, r)
 
     group("2. 档位：被点名 / 私聊要放行")
-    t = Turn(); t.text = "@知夏 今天运势怎么样"
+    t = Turn(); t.text = "@助手 今天运势怎么样"
     r = S.skill_call(t, name=TOOL, args=json.dumps({"who": "张三"}))
     check("群里@她 -> 放行", "签位" in r, r)
 
-    t = Turn(); t.text = "拍了拍知夏"
+    t = Turn(); t.text = "拍了拍助手"
     r = S.skill_call(t, name=TOOL, args=json.dumps({"who": "张三"}))
     check("群里拍一拍 -> 放行", "签位" in r, r)
 
@@ -99,23 +99,23 @@ def main():
     check("换个昵称也认（换人设场景）", "签位" in r, r)
 
     t = Turn(); t.src = "app"; t.text = "今天运势怎么样"
-    r = S.skill_call(t, name=TOOL, args=json.dumps({"who": "知夏"}))
+    r = S.skill_call(t, name=TOOL, args=json.dumps({"who": "用户"}))
     check("App 私聊 -> 放行", "签位" in r, r)
 
     group("3. 抽签内容")
     t = Turn(); t.src = "app"
-    r = S.skill_call(t, name=TOOL, args=json.dumps({"who": "林知夏"}))
+    r = S.skill_call(t, name=TOOL, args=json.dumps({"who": "用户"}))
     for field in ("签位", "宜", "忌", "幸运"):
         check("结果里有「%s」" % field, field in r, r[:150])
 
     group("4. 确定性（同一天同一人固定，换人/换天不同）")
     t = Turn(); t.src = "app"
-    a1 = S.skill_call(t, name=TOOL, args=json.dumps({"who": "林知夏"}))
-    a2 = S.skill_call(t, name=TOOL, args=json.dumps({"who": "林知夏"}))
+    a1 = S.skill_call(t, name=TOOL, args=json.dumps({"who": "用户"}))
+    a2 = S.skill_call(t, name=TOOL, args=json.dumps({"who": "用户"}))
     check("问两次完全一致", a1 == a2)
     b = S.skill_call(t, name=TOOL, args=json.dumps({"who": "张三"}))
     check("换人结果不同", a1 != b)
-    c = S.skill_call(t, name=TOOL, args=json.dumps({"who": "林知夏", "day": "tomorrow"}))
+    c = S.skill_call(t, name=TOOL, args=json.dumps({"who": "用户", "day": "tomorrow"}))
     check("看明天不同", a1 != c)
 
     group("5. 出错时给人话，不能崩")

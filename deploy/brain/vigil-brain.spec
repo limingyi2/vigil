@@ -102,6 +102,10 @@ a = Analysis(
     excludes=[
         "fastembed", "onnxruntime", "onnx", "torch", "tkinter",
         "matplotlib", "pytest", "IPython", "jupyter", "setuptools",
+        # 以下大包全部未使用，排除以减小体积和启动速度
+        "PyQt6", "PyQt5", "PySide2", "PySide6",
+        "scipy", "sklearn", "pandas",
+        "kubernetes", "studio",
     ],
     noarchive=False,
 )

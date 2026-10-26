@@ -818,7 +818,7 @@ class MemoryStore:
         self._lock = threading.RLock()      # 先于 _load()：读盘也要在锁里
         self._readonly = False              # 原文件坏了又留不了档时置位（见 _load）
         self.path = path
-        # 分区名（去掉 .json）：同步协议里用 "memory" / "linzhixia.app.memory"
+        # 分区名（去掉 .json）：同步协议里用 "memory" / "app.memory"
         # 这种名字指代一份记忆库，两端必须算出同一个名字
         self.name = os.path.splitext(os.path.basename(path))[0]
         self.embed_dir = embed_dir or os.path.dirname(os.path.abspath(path))
