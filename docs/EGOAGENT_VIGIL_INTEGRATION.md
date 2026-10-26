@@ -8,10 +8,13 @@ VR 会话**产出（`egoagent_eval/vr/serve.py` 的 `/ask`），不是 Vigil 内
 
 ```
 视频工作台（渲染层）
-  ├─ 播放：本地文件 → blob URL → <video>
+  ├─ 选片：点「选择视频」（或把文件拖进来）
+  ├─ 播放：主进程签发的票据地址 http://127.0.0.1:<port>/v/<ticket> → <video>
   └─ 提问：fetch POST http://127.0.0.1:8799/ask（SSE）→ 答案 + 证据时间戳
-Electron 主进程（client/electron/ego-service.js）
-  └─ /health 探活 → 未启动就 spawn <EgoAgent>/.venv/Scripts/python.exe
+Electron 主进程
+  ├─ client/electron/video-media.js：单文件票据 + Range 206
+  └─ client/electron/ego-service.js：
+     /health 探活 → 未启动就 spawn <EgoAgent>/.venv/Scripts/python.exe
      -m egoagent_eval.vr.serve --port 8799 --provider mimo
 ```
 
@@ -19,8 +22,12 @@ Electron 主进程（client/electron/ego-service.js）
   `VIGIL_EGO_PROVIDER` 覆盖 provider（默认 `mimo`，设成 `fake` 是脚本演示）。
 - 渲染层直连回环，不经过主进程转发：CSP 的 `connect-src http://127.0.0.1:*`
   本来就允许，把 SSE 塞进 IPC 反而要自己重造分块协议。
-- 建会话用磁盘路径（Electron 28 的 `File.path`）。拿不到路径就明说，不猜。
-- 换视频 = 新会话；索引按视频内容哈希缓存在 EgoAgent 那边，换回同一个视频不重建。
+- 播放走票据回环而不是 `blob:`：大文件拖进度条依赖 HTTP Range。票据只放行被选
+  中的那一个文件、只对 127.0.0.1 生效；非视频扩展名与空文件在登记阶段就拒掉。
+- 建会话用磁盘路径，来自主进程的 `video:pick` 回执（不再依赖渲染层的
+  `File.path`）。拿不到路径就明说，不猜。
+- 换视频 = 新会话，上一段问答同时清空；索引按视频内容哈希缓存在 EgoAgent 那边，
+  换回同一个视频不重建。
 - 离开页面 POST `/close`；App 退出时主进程把自己 spawn 的进程收掉。
 
 ## 服务端改了什么（F:\EgoAgent-Eval）
