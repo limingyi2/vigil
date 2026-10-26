@@ -24,6 +24,15 @@ Electron 主进程
   本来就允许，把 SSE 塞进 IPC 反而要自己重造分块协议。
 - 播放走票据回环而不是 `blob:`：大文件拖进度条依赖 HTTP Range。票据只放行被选
   中的那一个文件、只对 127.0.0.1 生效；非视频扩展名与空文件在登记阶段就拒掉。
+- 打开前先探编码（`video-media.js` 的 `prepare()`）。Chromium 只认 MP4/MOV 里的
+  H.264/AV1/VP9 和 WebM 里的 VP8/VP9/AV1，所以：能播就原样给地址；H.264 装在
+  MKV/AVI 里就 `-c copy` 换封装（几秒、画质不变）；HEVC/MPEG4/ProRes 这类解不了
+  的编码才用 libx264 重编码（带 `-progress` 百分比）。ffmpeg 的找法：`VIGIL_FFMPEG`
+  → 随包 `resources/ffmpeg.exe` → EgoAgent `.venv` 里 imageio-ffmpeg 自带那份；
+  一个都找不到就照原样播，并在状态行说清楚为什么可能放不了。
+- 转换产物落在 `%TEMP%\vigil-media\<路径+大小+mtime 的 sha1>.mp4`，同一文件再次
+  打开直接复用；超过 7 天的在下次开工时清掉。问答读的也是转换后的路径（内容一致，
+  但编码一定能解）。
 - 建会话用磁盘路径，来自主进程的 `video:pick` 回执（不再依赖渲染层的
   `File.path`）。拿不到路径就明说，不猜。
 - 换视频 = 新会话，上一段问答同时清空；索引按视频内容哈希缓存在 EgoAgent 那边，

@@ -599,6 +599,14 @@ ipcMain.handle('ego:status', () => egoService.status());
 // 渲染层拿到的只是地址，读不到别的文件。
 const videoMedia = require('./video-media').createVideoMedia();
 // 播放器改打开别的视频时，旧的号码一起作废，别留一堆能读文件的口子。
+// 打开一个视频可能要换封装或转码，这一步的进度得让界面看得见，
+// 否则大文件看起来就像卡死在"打不开"上。
+const sendVideoPrepare = (state) => {
+  if (win && !win.isDestroyed() && win.webContents) {
+    try { win.webContents.send('video:prepare', state); } catch (e) { /* 窗口换了 */ }
+  }
+};
+
 ipcMain.handle('video:pick', async () => {
   if (!win || win.isDestroyed()) return { ok: false, err: '窗口尚未准备好' };
   try {
@@ -613,18 +621,18 @@ ipcMain.handle('video:pick', async () => {
     });
     if (result.canceled || !result.filePaths || !result.filePaths[0]) return { ok: true, canceled: true };
     videoMedia.close();
-    return await videoMedia.share(result.filePaths[0]);
+    return await videoMedia.share(result.filePaths[0], { onProgress: sendVideoPrepare });
   } catch (error) {
-    return { ok: false, err: String((error && error.message) || error).slice(0, 200) };
+    return { ok: false, err: String((error && error.message) || error).slice(0, 300) };
   }
 });
 // 拖进来的文件走这条：渲染层已经拿到路径，只要换一条可播地址。
 ipcMain.handle('video:share', async (_event, filePath) => {
   try {
-    const info = await videoMedia.share(filePath);
+    const info = await videoMedia.share(filePath, { onProgress: sendVideoPrepare });
     return info;
   } catch (error) {
-    return { ok: false, err: String((error && error.message) || error).slice(0, 200) };
+    return { ok: false, err: String((error && error.message) || error).slice(0, 300) };
   }
 });
 const { createPluginResources, shouldCancelLoopbackRequest } = require('./plugin-resource');

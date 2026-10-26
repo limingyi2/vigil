@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 require('./test-wallpaper-settings-isolation.cjs');
 require('./test-update-manager.cjs');
+require('./test-video-media.cjs');
 require('./test-plugin-market-lifecycle.js');
 require('./test-data-page-lifecycle.js');
 const vm = require('node:vm');

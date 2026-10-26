@@ -73,6 +73,12 @@ contextBridge.exposeInMainWorld('vigil', {
   video: {
     pick: () => ipcRenderer.invoke('video:pick'),
     share: (filePath) => ipcRenderer.invoke('video:share', filePath),
+    // 换封装 / 转码的进度（打不开的文件会先转一遍再播）
+    onPrepare: (fn) => {
+      const handler = (_event, state) => fn(state);
+      ipcRenderer.on('video:prepare', handler);
+      return () => ipcRenderer.removeListener('video:prepare', handler);
+    },
   },
   // 主对话与创作模式共用同一条订阅总线（onCreatorEvent 为兼容别名）。
   onStreamEvent: subscribeStream,

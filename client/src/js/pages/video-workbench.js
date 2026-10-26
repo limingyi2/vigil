@@ -69,7 +69,8 @@
       player.playbackRate = Number($('videoPlaybackRate').value || 1);
       $('videoMediaEmpty').hidden = true;
       player.load();
-      playerStatus.textContent = media.name + ' — 点播放开始；若无法解码，请换 MP4（H.264）或 WebM。';
+      playerStatus.textContent = media.name +
+        (media.note ? '（' + media.note + '）' : '') + ' — 点播放开始。';
       resetLog();
       // 分析服务读的是磁盘路径，不是地址；换视频等于换会话。
       startSession(media.path, media.name);
@@ -86,7 +87,7 @@
       }
       if (!playerActive || !info || info.canceled) return;
       if (!info.ok) { playerStatus.textContent = '打不开这个视频：' + (info.err || '未知原因'); return; }
-      showMedia({ kind: 'ticket', url: info.url, path: info.path, name: info.name });
+      showMedia({ kind: 'ticket', url: info.url, path: info.path, name: info.name, note: info.note });
     };
 
     // input 兜底与拖拽都走这里：能拿到路径就让主进程发播放地址，否则退到本机临时地址。
@@ -100,7 +101,7 @@
         try { info = await api.share(filePath); } catch (error) { info = { ok: false, err: error.message }; }
         if (!playerActive) return;
         if (info && info.ok) {
-          showMedia({ kind: 'ticket', url: info.url, path: info.path, name: info.name });
+          showMedia({ kind: 'ticket', url: info.url, path: info.path, name: info.name, note: info.note });
           return;
         }
         playerStatus.textContent = ((info && info.err) || '没能登记这个文件') + '，改用临时地址播放（问答需要磁盘路径）。';
@@ -131,8 +132,26 @@
       const rate = Number($('videoPlaybackRate').value);
       if (Number.isFinite(rate) && rate >= 0.5 && rate <= 2) player.playbackRate = rate;
     });
+    // 打不开的文件会先换封装或转码，这一步可能几十秒 —— 必须让状态行动起来。
+    (() => {
+      const api = bridge();
+      if (!api || typeof api.onPrepare !== 'function') return;
+      api.onPrepare((state) => {
+        if (!playerActive || !state || !state.phase) return;
+        const say = (text) => { playerStatus.textContent = text; };
+        if (state.phase === 'probing') say('正在看这个视频的编码…');
+        else if (state.phase === 'remuxing') say(state.message || '正在换封装（不重编码）…');
+        else if (state.phase === 'transcoding') say('播放器解不了这个编码，正在转成 H.264：' + (state.percent || 0) + '%（大文件会慢一些）');
+        else if (state.phase === 'ready') say('转换完成，马上播放…');
+        else if (state.phase === 'error') say('转换失败：' + (state.message || '未知原因'));
+      });
+    })();
+
     player.addEventListener('error', () => {
-      if (current && playerActive) playerStatus.textContent = '此视频无法播放，可能是编码不受支持或文件已损坏。请尝试 MP4（H.264）或 WebM。';
+      if (current && playerActive) {
+        playerStatus.textContent = '这个视频放不出来：编码或封装不被支持，也可能文件本身损坏了。'
+          + '本机找到 ffmpeg 时会自动转码，没转成功的话先转成 MP4（H.264）再打开。';
+      }
     });
 
     // ---- 问答 ----
