@@ -121,6 +121,41 @@ class TestMemoryStore(unittest.TestCase):
         self.assertEqual(len(st._ids), 1)
         self.assertEqual(st._matrix().shape, (1, 8))
 
+    def test_atlas_snapshot_does_not_backfill_missing_vectors(self):
+        """星图读取只展示已有向量，不能为了渲染触发 embedding 或写索引。"""
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"items": [{"id": "hand1", "type": "fact",
+                                  "text": "还没有向量", "time": "2026-10-26"}]},
+                      f, ensure_ascii=False)
+        st = self._store()
+
+        def unexpected_embed(_texts):
+            self.fail("atlas snapshot must not call the embedding provider")
+
+        ms.embed_texts = unexpected_embed
+        snapshot = st.atlas_snapshot()
+        self.assertEqual(snapshot["total"], 1)
+        self.assertEqual(snapshot["vectorized"], 0)
+        self.assertEqual(snapshot["unembedded"], 1)
+        self.assertEqual(snapshot["items"], [])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "vectors.npy")))
+
+    def test_atlas_snapshot_reads_persisted_vectors_without_embedding(self):
+        st = self._store()
+        st.add("一条真实记忆")
+        reloaded = self._store()
+
+        def unexpected_embed(_texts):
+            self.fail("atlas snapshot must not call the embedding provider")
+
+        ms.embed_texts = unexpected_embed
+        snapshot = reloaded.atlas_snapshot()
+        self.assertEqual(snapshot["total"], 1)
+        self.assertEqual(snapshot["vectorized"], 1)
+        self.assertEqual(snapshot["unembedded"], 0)
+        self.assertEqual(snapshot["items"][0]["text"], "一条真实记忆")
+        self.assertEqual(snapshot["vectors"][0].shape, (8,))
+
     def test_stats(self):
         st = self._store()
         st.add("一条")

@@ -834,6 +834,7 @@ class MemoryStore:
         self._imap = {}       # id -> 行号
         self._dim = 0         # 实际向量维度，由落盘的矩阵决定
         self._index_loaded = False
+        self._backfill_done = False
         self.last_hits = []          # 上一次 render() 命中的 (相似度, 文本)，见 render
 
     # --- 持久化 ---
@@ -879,9 +880,12 @@ class MemoryStore:
 
     # --- 向量索引 ---
     @_synchronized
-    def _load_index(self):
+    def _load_index(self, backfill=True, migrate=True):
         """把向量索引读进内存。只在第一次调用时产生磁盘 IO，之后检索零读盘"""
         if self._index_loaded:
+            if backfill and not self._backfill_done:
+                self._backfill()
+                self._backfill_done = True
             return
         ids, rows = [], []
         # 换过 embedding 模型（维度会变）就别读旧矩阵了，直接重建
@@ -904,13 +908,17 @@ class MemoryStore:
                     ids, rows = [], []
             except Exception:
                 ids, rows = [], []
-        if not rows:
+        if not rows and migrate:
             ids, rows = self._migrate_legacy()
         self._ids, self._rows = ids, rows
         self._imap = {i: k for k, i in enumerate(ids)}
         self._mat = None
         self._index_loaded = True
-        self._backfill()
+        # Read-only visualizations may inspect the current vector snapshot without
+        # triggering embedding network calls or rewriting the index.
+        if backfill:
+            self._backfill()
+            self._backfill_done = True
 
     def _read_meta(self):
         """读 embed_meta.json（读不到返回 {}）。"""
@@ -944,6 +952,7 @@ class MemoryStore:
         self._imap = {}
         self._mat = None
         self._dim = 0
+        self._backfill_done = False
 
     def _migrate_legacy(self):
         """兼容 v2.0：emb 目录下每条记忆一个 .npy。读过一次后就不再用了"""
@@ -1166,6 +1175,38 @@ class MemoryStore:
     @_synchronized
     def list_items(self):
         return list(self.data["items"])
+
+    @_synchronized
+    def atlas_snapshot(self, limit=100):
+        """Return a bounded, lock-consistent snapshot for the local memory atlas.
+
+        Existing vectors only: loading the index must never cause this read API to
+        call an embedding provider or backfill missing vectors.
+        """
+        try:
+            limit = max(1, min(100, int(limit)))
+        except (TypeError, ValueError):
+            limit = 100
+        self._load_index(backfill=False, migrate=False)
+        matrix = self._matrix()
+        rows = []
+        for item in self.data.get("items", []):
+            item_id = str(item.get("id") or "")
+            row = self._imap.get(item_id)
+            if row is None or row < 0 or row >= matrix.shape[0]:
+                continue
+            rows.append((dict(item), matrix[row].copy()))
+        total = len(self.data.get("items", []))
+        vectorized = len(rows)
+        rows = rows[-limit:]
+        return {
+            "store": self.name,
+            "total": total,
+            "vectorized": vectorized,
+            "unembedded": max(0, total - vectorized),
+            "items": [item for item, _vector in rows],
+            "vectors": [vector for _item, vector in rows],
+        }
 
     # ========================================================================
     # 同步账本（M2 云端权威源）：seq 单调递增 + 墓碑 + 幂等 upsert

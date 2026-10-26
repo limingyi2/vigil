@@ -4421,6 +4421,71 @@ def start_remote_api(brain):
                                  "total": len(items),
                                  "items": items[-limit:][::-1]})
                 return
+            if path == "/api/memory/atlas":
+                # The atlas is a read-only view over vectors that already exist.
+                # `atlas_snapshot()` deliberately disables embedding backfill.
+                import numpy as _np
+                import memory_store_v2 as _ms
+                from urllib.parse import urlparse, parse_qs
+                _q = parse_qs(urlparse(self.path).query)
+                _name = (_q.get("store") or ["memory"])[0]
+                _store = _ms.open_store_by_name(_name)
+                if _store is None:
+                    self._json(400, {"ok": False, "err": "分区名不合法"})
+                    return
+                try:
+                    _limit = min(100, max(1, int((_q.get("limit") or ["100"])[0])))
+                except (TypeError, ValueError):
+                    _limit = 100
+                _snapshot = _store.atlas_snapshot(_limit)
+                _items = _snapshot["items"]
+                _vectors = (_np.asarray(_snapshot["vectors"], dtype=_np.float32)
+                            if _snapshot["vectors"] else _np.zeros((0, 0), dtype=_np.float32))
+                _count = len(_items)
+                _positions = _np.zeros((_count, 3), dtype=_np.float32)
+                if _count > 1 and _vectors.ndim == 2 and _vectors.shape[1] > 0:
+                    _centered = _vectors - _vectors.mean(axis=0, keepdims=True)
+                    _gram = _centered @ _centered.T
+                    _values, _axes = _np.linalg.eigh(_gram)
+                    _order = _np.argsort(_values)[::-1][:3]
+                    for _axis, _column in enumerate(_order):
+                        _positions[:, _axis] = (
+                            _axes[:, _column] * _np.sqrt(max(0.0, float(_values[_column]))))
+                    _scale = _np.maximum(_np.max(_np.abs(_positions), axis=0), 1e-4)
+                    _positions = _positions / _scale * 0.88
+                _norms = _np.linalg.norm(_vectors, axis=1, keepdims=True) if _count else _np.zeros((0, 1))
+                _normalized = _np.divide(
+                    _vectors, _norms, out=_np.zeros_like(_vectors), where=_norms > 1e-9)
+                _similarities = _normalized @ _normalized.T if _count else _np.zeros((0, 0))
+                _edges, _seen = [], set()
+                for _i in range(_count):
+                    _neighbors = [_j for _j in range(_count) if _j != _i]
+                    _neighbors.sort(key=lambda _j: float(_similarities[_i, _j]), reverse=True)
+                    for _j in _neighbors[:min(3, max(0, _count - 1))]:
+                        _a, _b = min(_i, _j), max(_i, _j)
+                        if (_a, _b) in _seen:
+                            continue
+                        _seen.add((_a, _b))
+                        _edges.append({"a": _a, "b": _b,
+                                       "sim": float(_similarities[_i, _j])})
+                _out = []
+                for _i, _item in enumerate(_items):
+                    _out.append({
+                        "id": str(_item.get("id") or ""),
+                        "text": str(_item.get("text") or ""),
+                        "category": str(_item.get("type") or "记忆"),
+                        "tags": list(_item.get("tags") or []),
+                        "created_at": str(_item.get("time") or _item.get("created_at") or ""),
+                        "pos": [float(_v) for _v in _positions[_i]],
+                    })
+                self._json(200, {
+                    "ok": True, "store": _snapshot["store"],
+                    "total": _snapshot["total"], "vectorized": _snapshot["vectorized"],
+                    "unembedded": _snapshot["unembedded"], "visible": _count,
+                    "dimension": int(_vectors.shape[1]) if _vectors.ndim == 2 else 0,
+                    "items": _out, "edges": _edges,
+                })
+                return
             if path == "/api/persona/full":
                 # 给人设编辑器用：读人设的全部字段（不是摘要）。
                 # 放GET 分支：编辑器只是读，POST 那条路留给 save。

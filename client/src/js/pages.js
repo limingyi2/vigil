@@ -3784,7 +3784,8 @@
   // ═══ 4. 知识库 ═════════════════════════════════════════════
   async function renderKb(ctx) {
     ctx.topbar.className = 'topbar';
-    const subs = [['kbdocs', '文档', 'lib'], ['kbsearch', '检索测试', 'search'], ['kbset', '索引设置', 'set']];
+    const subs = [['kbdocs', '文档', 'lib'], ['kbsearch', '检索测试', 'search'],
+      ['kbset', '索引设置', 'set'], ['kbatlas', '记忆星图', 'brain']];
     ctx.panel.innerHTML = '<div class="phead"><h2>知识库</h2></div>' +
       '<div class="plist"><div>' +
       subs.map(([k, n, ic], i) => li({ icon: ic, title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
@@ -3794,6 +3795,14 @@
     ctx.view.innerHTML = '<div class="wrap" id="kbView"></div>';
     const v = ctx.view.querySelector('#kbView');
     const pnl = ctx.panel.querySelector('#kbPanel');
+    let contentCleanup = () => {};
+    let contentGeneration = 0;
+    ctx.onDispose(() => { contentGeneration++; contentCleanup(); });
+
+    function setReindexVisible(visible) {
+      const button = ctx.topbar.querySelector('#kbRe');
+      if (button) button.style.display = visible ? '' : 'none';
+    }
 
     async function docs() {
       const s = pick(await get('/api/plugin/kb/stats'));
@@ -3880,9 +3889,31 @@
       }));
     }
 
-    const draw = { kbdocs: docs, kbsearch: search, kbset: conf };
+    async function atlas() {
+      const generation = ++contentGeneration;
+      setReindexVisible(false);
+      v.innerHTML = '';
+      if (!global.MemoryAtlasPage || typeof global.MemoryAtlasPage.mount !== 'function') {
+        v.innerHTML = errBox('记忆星图未能加载', '检查 client/src/memory-atlas 与本地 Three.js 模块');
+        return;
+      }
+      try {
+        const cleanup = await global.MemoryAtlasPage.mount(v);
+        if (generation !== contentGeneration) cleanup && cleanup();
+        else contentCleanup = cleanup;
+      } catch (exc) {
+        if (generation === contentGeneration)
+          v.innerHTML = errBox('记忆星图启动失败', exc && exc.message || '未知错误');
+      }
+    }
+
+    const draw = { kbdocs: docs, kbsearch: search, kbset: conf, kbatlas: atlas };
     ctx.panel.querySelectorAll('.li[data-k]').forEach((n) => n.addEventListener('click', () => {
+      contentGeneration++;
+      contentCleanup();
+      contentCleanup = () => {};
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
+      setReindexVisible(n.dataset.k !== 'kbatlas');
       draw[n.dataset.k] && draw[n.dataset.k]();
     }));
     ctx.topbar.querySelector('#kbRe').addEventListener('click', async () => {
