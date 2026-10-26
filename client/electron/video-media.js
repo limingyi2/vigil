@@ -80,10 +80,16 @@ function inspect(ffmpeg, file) {
       clearTimeout(timer);
       const v = /Stream #\d+:\d+.*?: Video: ([a-z0-9_]+)/i.exec(text);
       if (!v) { resolve(null); return; }
+      // 同样是 H.264，10bit / 4:2:2 的 Chromium 也解不了（手机和相机的 MP4 常见）。
+      // 像素格式在 Video: 那一行的逗号串里。
+      const vLine = (/Video: [^\n]*/i.exec(text) || [''])[0];
+      const pix = (vLine.split(',').map(s => s.trim()).find(s => /^(yuv|nv|p0|gray|gbr|rgb)/i.test(s)) || '')
+        .split('(')[0].toLowerCase();
       const fmt = /Input #0, ([^,]+(?:,[^,]+)*), from/.exec(text);
       const dur = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(text);
       resolve({
         codec: v[1].toLowerCase(),
+        pix,
         format: (fmt ? fmt[1] : '').toLowerCase(),
         seconds: dur ? (Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3])) : 0,
       });
@@ -288,8 +294,12 @@ function createVideoMedia({ idleMs = 6 * 60 * 60 * 1000 } = {}) {
     const container = containerOf(info, ext);
     const family = container === 'ogg' ? 'ogg' : container;
     const allowed = PLAYABLE[family] || [];
-    const label = container.toUpperCase() + ' / ' + info.codec.toUpperCase();
-    if (allowed.includes(info.codec)) {
+    // 8bit 4:2:0 以外（10bit / 4:2:2 / 4:4:4）Chromium 的 H.264 解不了，
+    // 光换封装没用，得老实重编码。
+    const chromaOk = !info.pix || ['yuv420p', 'yuvj420p', 'nv12'].includes(info.pix);
+    const label = container.toUpperCase() + ' / ' + info.codec.toUpperCase()
+      + (info.pix && !chromaOk ? ' ' + info.pix : '');
+    if (allowed.includes(info.codec) && chromaOk) {
       return Object.assign(direct, { note: '', container, codec: info.codec });
     }
 
@@ -301,8 +311,8 @@ function createVideoMedia({ idleMs = 6 * 60 * 60 * 1000 } = {}) {
       return { file: out, converted: 'cached', note: label + '，已用上次转好的副本', container, codec: info.codec };
     }
 
-    // H.264 只是装在 MKV/AVI 里：换个壳就行，不重编码，几秒
-    if (info.codec === 'h264') {
+    // H.264（8bit 4:2:0）只是装在 MKV/AVI 里：换个壳就行，不重编码，几秒
+    if (info.codec === 'h264' && chromaOk) {
       say('remuxing', 0, label + '：正在换封装（不重编码）…');
       const part = out + '.part';
       const r = await convert(ffmpeg, [
@@ -380,6 +390,21 @@ function createVideoMedia({ idleMs = 6 * 60 * 60 * 1000 } = {}) {
     };
   }
 
+  // 会话级 webRequest 闸门会拦掉所有非白名单的 127.0.0.1 请求。
+  // 播放器自己去取媒体字节时（不走 IPC），要能被认出来放行，
+  // 否则 Range 请求在到达本服务器之前就被 cancel，界面只会看到
+  // 「此视频无法播放 / MEDIA_ELEMENT_ERROR: Format error」。
+  function isApprovedUrl(raw) {
+    if (!server || !server.listening) return false;
+    try {
+      const u = new URL(raw);
+      if (u.origin !== 'http://127.0.0.1:' + port || u.search || u.hash) return false;
+      const match = /^\/v\/([a-f0-9]{48})$/.exec(u.pathname);
+      const entry = match && tickets.get(match[1]);
+      return !!(entry && entry.expiresAt > Date.now());
+    } catch (e) { return false; }
+  }
+
   function close() {
     for (const child of running) { try { child.kill(); } catch (e) { /* 已退 */ } }
     running.clear();
@@ -388,7 +413,7 @@ function createVideoMedia({ idleMs = 6 * 60 * 60 * 1000 } = {}) {
     if (server) { try { server.close(); } catch (e) { /* 已关 */ } server = null; port = 0; }
   }
 
-  return { share, close, extensions: VIDEO_EXTENSIONS };
+  return { share, close, isApprovedUrl, extensions: VIDEO_EXTENSIONS };
 }
 
 module.exports = { createVideoMedia, VIDEO_EXTENSIONS };

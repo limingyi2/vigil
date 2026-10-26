@@ -437,10 +437,14 @@ function createWindow() {
   // Plugin media uses short-lived loopback capabilities. The gate covers every
   // resource type (frames, images, media, workers, fetch and XHR).
   const pluginRendererId = win.webContents.id;
+  // 回环闸门默认只放行"本进程发出去的票据"，不允许渲染层随手连本机任意端口。
+  // 视频播放通道是另一套票据（/v/<ticket>），播放器取字节不经过 IPC，
+  // 必须一起认进来，否则 Range 请求先被 cancel，播放器只报「无法播放」。
+  const approvedLoopback = (raw) => pluginResources.isApprovedUrl(raw) || videoMedia.isApprovedUrl(raw);
   win.webContents.session.webRequest.onBeforeRequest(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*', 'http://[::1]/*'] },
     (details, callback) => {
-      if (shouldCancelLoopbackRequest(details, pluginRendererId, pluginResources.isApprovedUrl.bind(pluginResources))) {
+      if (shouldCancelLoopbackRequest(details, pluginRendererId, approvedLoopback)) {
         callback({ cancel: true });
         return;
       }

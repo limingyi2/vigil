@@ -82,3 +82,24 @@ test('只放行被登记的那一个文件，扩展名不对直接拒', async (t
   const again = await media.share(one);
   assert.notEqual(info.url, again.url);
 });
+
+test('回环闸门只认自己发出去的播放票据', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-media-'));
+  const file = path.join(dir, 'clip.mp4');
+  fs.writeFileSync(file, Buffer.alloc(64, 3));
+  const media = createVideoMedia();
+  t.after(() => { media.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // 还没开工时任何地址都不该被认
+  assert.equal(media.isApprovedUrl('http://127.0.0.1:1234/v/' + 'a'.repeat(48)), false);
+
+  const info = await media.share(file);
+  assert.equal(media.isApprovedUrl(info.url), true, '播放器取字节必须能过闸门');
+
+  // 换端口、换票据、带查询串、路径不对，全部不认
+  assert.equal(media.isApprovedUrl(info.url.replace(/:\d+\//, ':1/')), false);
+  assert.equal(media.isApprovedUrl(info.url.slice(0, -1) + 'f'), false);
+  assert.equal(media.isApprovedUrl(info.url + '?x=1'), false);
+  assert.equal(media.isApprovedUrl(info.url.replace('/v/', '/r/')), false);
+  assert.equal(media.isApprovedUrl('not a url'), false);
+});
