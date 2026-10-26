@@ -25,6 +25,21 @@ let starting = null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// 只允许主窗口顶层页面访问问答 API，插件 iframe 和其他本机端口仍走票据闸门。
+function isApprovedRequest(details, rendererId) {
+  if (details.webContentsId !== rendererId || details.resourceType !== 'xhr'
+      || !details.frame || details.frame.parent) return false;
+  try {
+    const url = new URL(details.url);
+    if (url.origin !== 'http://127.0.0.1:' + PORT || url.username || url.password
+        || url.search || url.hash) return false;
+    const method = details.method;
+    if (url.pathname === '/health') return method === 'GET' || method === 'OPTIONS';
+    return ['/session', '/ask', '/cancel', '/close'].includes(url.pathname)
+      && (method === 'POST' || method === 'OPTIONS');
+  } catch { return false; }
+}
+
 // 探活：能连上并且确实是 EgoAgent 的 VR 服务才算数，别的进程占着这个端口不算。
 function health() {
   return new Promise((resolve) => {
@@ -111,4 +126,4 @@ function dispose() {
   child = null;
 }
 
-module.exports = { ensure, status, dispose, LOG, PORT, ROOT };
+module.exports = { ensure, status, dispose, isApprovedRequest, LOG, PORT, ROOT };

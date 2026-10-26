@@ -209,6 +209,19 @@ REMOTE_TOOLS = {
         "risk": "dangerous",
         "group": "system",
     },
+    "local_patch_status": {
+        "desc": "查看客户端本地补丁状态、base_id 和 patch.json 格式；准备补丁前先调用。",
+        "params": [], "arg_param": "", "danger": False, "risk": "safe", "group": "system",
+    },
+    "local_patch_stage": {
+        "desc": "校验并暂存本地客户端补丁。参数 path 为含 patch.json 和 files/ 的绝对目录；先查 local_patch_status。只支持客户端 JS/CSS/HTML/JSON，不能修改 Brain、依赖、bootstrap 和版本标识。返回 restart_required 后提示用户完全退出并重启。",
+        "params": [("path", "补丁目录绝对路径", True)], "arg_param": "path",
+        "danger": True, "risk": "dangerous", "group": "system",
+    },
+    "local_patch_rollback": {
+        "desc": "安排下次重启恢复上一版本地补丁，不自动退出客户端。",
+        "params": [], "arg_param": "", "danger": True, "risk": "dangerous", "group": "system",
+    },
     "local_exec": {
         "desc": "在这台电脑上执行一条命令行。**危险**，客户端会先问他要不要。"
                 "**只有在没有专用工具能完成任务时才用这个**——文件搜索用 local_file_grep，"

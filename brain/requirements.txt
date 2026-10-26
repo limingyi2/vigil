@@ -5,3 +5,5 @@ numpy>=2.5.3           # 记忆向量矩阵（vectors.npy）
 Pillow>=12.3.0         # 图片压缩与尺寸处理
 fastembed>=0.8.0       # bge-m3 嵌入（记忆检索用）；第一次跑会下载模型，需联网
 websocket-client>=1.8.0  # Optional outbound Kestrel Hub Bridge over the existing /v1/hub protocol
+mcp>=1.30,<2           # Official MCP client: stdio, Streamable HTTP and legacy SSE
+jsonschema>=4.26,<5    # Validate discovered MCP tool arguments before dispatch

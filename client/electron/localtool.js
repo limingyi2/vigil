@@ -1012,6 +1012,20 @@ const RUN = {
   local_process_kill: tool_process_kill,
   local_clipboard_write: tool_clipboard_write,
   local_exec: tool_exec,
+  local_patch_status: () => {
+    const patches = global.__vigilLocalPatches;
+    return JSON.stringify(patches ? patches.status() : { ok: false, error: '当前版本尚未启用补丁加载器，需要先整包更新一次' });
+  },
+  local_patch_stage: (args, cfg) => {
+    const checked = guard(args.path, cfg);
+    if (checked.err) throw Error(checked.err);
+    if (!global.__vigilLocalPatches) throw Error('当前版本尚未启用补丁加载器');
+    return JSON.stringify(global.__vigilLocalPatches.stage(checked.abs));
+  },
+  local_patch_rollback: () => {
+    if (!global.__vigilLocalPatches) throw Error('当前版本尚未启用补丁加载器');
+    return JSON.stringify(global.__vigilLocalPatches.rollback());
+  },
 };
 
 // ── 工具目录 ──────────────────────────────────────────────────
@@ -1019,6 +1033,13 @@ const RUN = {
 // 代价是描述文字跟 brain/localtools.py 里的有一份重复 —— 用 e2e 里的
 // "工具名单对账"盯着两边别漂移（名字对不上会当场报出来）。
 const CATALOG = [
+  { name: 'local_patch_status', group: 'system', danger: false,
+    desc: '查看本地补丁基线、当前版本及补丁格式', params: [] },
+  { name: 'local_patch_stage', group: 'do', danger: true,
+    desc: '校验并暂存本地客户端补丁，完全退出并重启后生效，启动失败自动恢复',
+    params: [{ k: 'path', label: '补丁目录绝对路径', req: true }] },
+  { name: 'local_patch_rollback', group: 'do', danger: true,
+    desc: '安排重启时恢复上一版本地补丁', params: [] },
   { name: 'local_system_info', group: 'system', danger: false,
     desc: '看这台电脑的基本情况：系统版本、CPU、内存、磁盘剩余、当前时间',
     params: [] },
@@ -1106,6 +1127,7 @@ const DANGER = new Set(CATALOG.filter((t) => t.danger).map((t) => t.name));
 // "会改动东西"的那一批默认**关着**，要用自己开（设置 → 本地操控）。
 // 读的那批（看状态、读文件、剪贴板、截图…）默认开着。
 const DEFAULT_OFF = ['local_file_write', 'local_file_append', 'local_file_delete',
+  'local_patch_stage', 'local_patch_rollback',
   'local_mkdir', 'local_move', 'local_copy',
   'local_process_kill', 'local_clipboard_write', 'local_exec'];
 
@@ -1119,7 +1141,9 @@ function capabilities(cfg) {
   const all = CATALOG.map((t) => t.name).filter((n) => !off.includes(n));
   // 危险的那几个还要单独打开（默认关）
   const risky = (c.localRisky && c.localRisky.length) ? c.localRisky : [];
-  return all.filter((n) => !DANGER.has(n) || risky.includes(n));
+  const fullAccess = c.allowAllPaths && c.allowAllCmds && c.localAuto;
+  return all.filter((n) => !DANGER.has(n) || risky.includes(n)
+    || (fullAccess && ['local_patch_stage', 'local_patch_rollback'].includes(n)));
 }
 
 /**

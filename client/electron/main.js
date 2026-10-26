@@ -440,10 +440,15 @@ function createWindow() {
   // 回环闸门默认只放行"本进程发出去的票据"，不允许渲染层随手连本机任意端口。
   // 视频播放通道是另一套票据（/v/<ticket>），播放器取字节不经过 IPC，
   // 必须一起认进来，否则 Range 请求先被 cancel，播放器只报「无法播放」。
+  // 问答 API 另外按窗口、顶层 frame、端口、路径和方法精确放行。
   const approvedLoopback = (raw) => pluginResources.isApprovedUrl(raw) || videoMedia.isApprovedUrl(raw);
   win.webContents.session.webRequest.onBeforeRequest(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*', 'http://[::1]/*'] },
     (details, callback) => {
+      if (egoService.isApprovedRequest(details, pluginRendererId)) {
+        callback({});
+        return;
+      }
       if (shouldCancelLoopbackRequest(details, pluginRendererId, approvedLoopback)) {
         callback({ cancel: true });
         return;
@@ -1222,7 +1227,10 @@ if (!app.requestSingleInstanceLock()) {
     let recoveryShown=false;
     sidecar.onState(async s=>{
       send('sidecar:state',s);
-      if(s.status==='ready') updates.markHealthy(app.getPath('userData'),s.build);
+      if(s.status==='ready') {
+        updates.markHealthy(app.getPath('userData'),s.build);
+        if (global.__vigilLocalPatches) global.__vigilLocalPatches.healthy();
+      }
       if(s.status==='failed' && !recoveryShown && updates.canRollback(app.getPath('userData'),currentBuild)){
         recoveryShown=true;
         const choice=await dialog.showMessageBox({type:'error',title:'Vigil 更新未就绪',message:s.lastErr,

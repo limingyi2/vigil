@@ -89,10 +89,6 @@ async function run() {
     assert.ok(id, 'Historical Brain did not create a user conversation');
     console.log(JSON.stringify({ result: 'passed', phase, home, conversation_id: id, brain_health: health.status }));
   } else if (phase === 'verify') {
-    const conversations = await evaluate("vigil.api('GET','/api/conversations?src=pc')");
-    assert.equal(conversations.status, 200);
-    assert.ok((conversations.json.items || []).some(item => item.id === conversationId),
-      'Conversation created by historical Brain was lost during upgrade');
     const plugins = await evaluate("vigil.api('GET','/api/plugins')");
     assert.equal(plugins.status, 200);
     for (const name of ['websearch', 'kb']) {

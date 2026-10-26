@@ -150,7 +150,7 @@ async function start() {
   };
   const rendererCount = await evaluate("window.PAGES.filter(page=>page.id==='video-workbench'||page.id==='market'||page.id==='data').length");
   assert.equal(rendererCount, 3, 'Modular pages were not registered exactly once');
-  await selectPage('video-workbench', "Boolean(document.querySelector('#videoHostSlot'))");
+  await selectPage('video-workbench', "Boolean(document.querySelector('#videoPlayer'))");
   await selectPage('market', "Boolean(document.querySelector('#pmGrid'))");
   await selectPage('data', "Boolean(document.querySelector('#dView'))");
   const chartWorks = await evaluate("(()=>{if(typeof U.lineChart!=='function')return false;const el=document.createElement('div');document.body.appendChild(el);U.lineChart(el,{series:[{name:'fixture',points:[{x:1,y:1},{x:2,y:2}]}]});const ok=Boolean(el.querySelector('svg'));el.remove();return ok})()");

@@ -99,7 +99,7 @@ def authenticode_presence(path):
     return 'SignedPresent' if certificate_file_offset and certificate_size else 'NotSigned'
 
 
-def run_historical_upgrade(installer, expected_commit, root):
+def run_historical_upgrade(installer, expected_commit, expected_version, root):
     """Use the published P21.2 setup executable, never a synthesized old layout."""
     old_version = '1.1.9-p21.2.20261025.1'
     old_source = 'd0a7e90409614961fda3a4a33523e42d4d4b92dc'
@@ -129,6 +129,7 @@ def run_historical_upgrade(installer, expected_commit, root):
         '--expected-old-version', old_version,
         '--expected-old-sha256', old_sha,
         '--expected-new-source-commit', expected_commit,
+        '--expected-new-version', expected_version,
         '--authenticode-status', auth_status,
         '--output', str(output),
     ], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800)
@@ -319,7 +320,7 @@ def main(installer, expected_commit, output, expected_version=None):
     assert user_data_after == user_data_before, 'Uninstall changed or removed files in the default user-data directory'
     assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
 
-    historical_upgrade = run_historical_upgrade(installer, expected_commit, root)
+    historical_upgrade = run_historical_upgrade(installer, expected_commit, expected_version, root)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     logs_dir = output.parent / (output.stem + '-logs')

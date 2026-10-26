@@ -892,6 +892,8 @@ def bootstrap(api_config: Mapping[str, Any] | None = None) -> CapabilityRegistry
                                                         "error": str(exc)[:180]},
                               source="brain.kb")
 
+        import external_apps
+        external_apps.register_capability(REGISTRY)
         _BOOTSTRAPPED = True
     return REGISTRY
 

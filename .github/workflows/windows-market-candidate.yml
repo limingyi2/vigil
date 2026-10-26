@@ -71,6 +71,12 @@ jobs:
           "client/dist-release/$((Get-Content client/dist-release/release-manifest.json -Raw | ConvertFrom-Json).setup_file)"
           --expected-source-commit "${{ github.sha }}"
           --output "$env:RUNNER_TEMP\vigil-candidate-lifecycle.json"
+      - name: Local patches restart, recovery and keep single-instance integrity
+        working-directory: client
+        run: node tools/test-local-patches-electron.js
+      - name: EgoAgent loopback policy and SSE flow
+        working-directory: client
+        run: npm exec -- electron tools/test-ego-service-electron.js
       - name: Preserve candidate lifecycle report
         if: always()
         uses: actions/upload-artifact@v4

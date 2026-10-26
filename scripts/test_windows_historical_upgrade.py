@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 
@@ -53,8 +54,8 @@ def main(args):
     contents = json.loads(candidate_contents_path.read_text(encoding='utf-8'))
     if manifest.get('candidate') is not True:
         raise RuntimeError('Current installer must be an unpublished candidate')
-    if manifest.get('ver') != '1.1.9-p21.5.20261025.1':
-        raise RuntimeError('Candidate is not labeled P21.5')
+    if manifest.get('ver') != args.expected_new_version:
+        raise RuntimeError('Candidate release-manifest version differs from the expected version')
     if manifest.get('source_commit') != args.expected_new_source_commit:
         raise RuntimeError('Candidate source commit differs from the tested source')
     if manifest.get('sha256') != sha256(candidate) or manifest.get('size') != candidate.stat().st_size:
@@ -129,6 +130,9 @@ def main(args):
                           log_path=logs / 'candidate-first-start.json')
     if json.loads(upgraded.stdout.strip().splitlines()[-1]).get('result') != 'passed':
         raise RuntimeError('P21.5 upgraded Electron/Brain did not preserve history/plugins')
+    with sqlite3.connect(database) as db:
+        if not db.execute('SELECT 1 FROM conversations WHERE id=?', (conversation_id,)).fetchone():
+            raise RuntimeError('Upgrade lost the historical conversation index row')
     if sha256(market_version) != market_hash:
         raise RuntimeError('Upgrade overwrote the previously installed market plugin version')
     if not (installed_plugins / 'kb.py').is_file():
@@ -200,6 +204,7 @@ if __name__ == '__main__':
     parser.add_argument('--expected-old-version', required=True)
     parser.add_argument('--expected-old-sha256', required=True)
     parser.add_argument('--expected-new-source-commit', required=True)
+    parser.add_argument('--expected-new-version', required=True)
     parser.add_argument('--authenticode-status', required=True)
     parser.add_argument('--output', required=True)
     parsed = parser.parse_args()

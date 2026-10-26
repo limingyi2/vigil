@@ -13,6 +13,7 @@ const os = require('os');
 const path = require('path');
 const { createVideoMedia } = require('../electron/video-media');
 const { createPluginResources, shouldCancelLoopbackRequest } = require('../electron/plugin-resource');
+const egoService = require('../electron/ego-service');
 
 const SOURCE = process.argv.find((a, i) => i > 1 && /\.(mp4|mkv|avi|mov|webm)$/i.test(a))
   || path.join(__dirname, '..', '..', '_tmp', 'wallpaper-cloud', 'assets', 'test-93001.mp4');
@@ -45,7 +46,8 @@ app.whenReady().then(async () => {
   win.webContents.session.webRequest.onBeforeRequest(
     { urls: ['http://127.0.0.1/*', 'http://localhost/*', 'http://[::1]/*'] },
     (details, callback) => {
-      const cancelled = shouldCancelLoopbackRequest(details, rendererId, approved);
+      const cancelled = !egoService.isApprovedRequest(details, rendererId)
+        && shouldCancelLoopbackRequest(details, rendererId, approved);
       if (cancelled) log('[gate] cancel ' + details.url.replace(/[a-f0-9]{48}/, '<ticket>'));
       callback(cancelled ? { cancel: true } : {});
     });

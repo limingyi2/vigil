@@ -195,6 +195,7 @@ class TestRegistry(LocalToolsBase, unittest.TestCase):
             "local_file_write", "local_file_append", "local_file_delete",
             "local_mkdir", "local_move", "local_copy",
             "local_process_kill", "local_clipboard_write", "local_exec",
+            "local_patch_stage", "local_patch_rollback",
         })
 
     def test_只读工具不该标danger(self):

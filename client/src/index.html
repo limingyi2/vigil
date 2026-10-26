@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- Most requests use IPC. Plugin media uses short-lived capability URLs;
-     Electron's webRequest gate must restrict renderer fetch/XHR to issued tickets.
+     EgoAgent and renderer fetch/XHR are constrained by the Electron request gate.
      Never relax the gate or add arbitrary remote connect-src origins. -->
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:; media-src 'self' blob: http://127.0.0.1:*; frame-src http://127.0.0.1:*; connect-src http://127.0.0.1:*; object-src 'none'; base-uri 'none'">

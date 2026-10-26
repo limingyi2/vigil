@@ -227,7 +227,20 @@ _STATIC_SPECS = {
                 "返回 state=needs_choice 表示该仓库有多个插件，把 candidates 列给用户挑，**不要猜一个**；"
                 "返回 status=awaiting_authorization 表示已出审批卡，把要装的名字和来源说清楚请用户确认，"
                 "**不要换个操作重试**。装完按返回的 ok/err 如实回报。"
-                "list / plugin_status 只查本地已安装清单，反复调它们不会完成安装。",
+                "list / plugin_status 只查本地已安装清单，反复调它们不会完成安装。"
+                "外部应用统一用 external_apps 能力：list 查看已注册应用和工具；"
+                "register 参数 {id,config:{kind:mcp|cli|skill,...}} 保存连接；probe {id,revision} 真正验证并发现工具；"
+                "call {id,revision,tool,arguments:{...}} 调用，revision 必须用 register/list 返回值；"
+                "CLI 的 tool=run、arguments={argv:[参数]}。"
+                "MCP config 支持 transport=stdio(command,args,cwd,env) / http / sse(url,headers_env)；"
+                "env 和 headers_env 的值填已有环境变量名，不能填密钥明文。"
+                "CLI config 填 command,args,probe_args,cwd；先用 local_exec 安装所需 CLI/MCP 依赖并完成账户登录，"
+                "然后 register/probe，不把安装成功当作连接成功。"
+                "install_skill {path:本机绝对路径,id} 支持 SKILL.md 和 Vigil JS Skill ZIP；"
+                "instruction skill 用 skill_read {id,revision} 读取指南再按任务执行，不获得额外权限。"
+                "写操作沿用审批卡；返回 unknown 时不能自动重试。"
+                "本地客户端补丁使用 local_patch_status/local_patch_stage/local_patch_rollback："
+                "先查 status 获取基线和格式，生成补丁并 stage；只有返回 restart_required 才能说重启后生效。",
         "params": [("capability", "能力名称，如 codex / local_tools / plugins_skills", True),
                    ("operation", "操作名，如 status / tasks / focus / create_task / list / disable", True),
                    ("args", "操作参数，JSON 对象字符串；没有参数就传 {}", False)],

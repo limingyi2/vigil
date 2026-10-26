@@ -14,3 +14,5 @@ httpx>=0.28.1
 # 可选：装了 pytest 也能直接收集这套用例（用例写成 stdlib unittest 风格，
 # 两种 runner 都能跑）。
 pytest>=8.0,<10
+mcp>=1.30,<2
+jsonschema>=4.26,<5
