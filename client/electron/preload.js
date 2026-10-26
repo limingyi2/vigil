@@ -68,6 +68,12 @@ contextBridge.exposeInMainWorld('vigil', {
     ensure: () => ipcRenderer.invoke('ego:ensure'),
     status: () => ipcRenderer.invoke('ego:status'),
   },
+  // 视频文件选择与播放：主进程弹系统对话框、开一条只放行该文件的回环通道，
+  // 渲染层只拿到可播地址和路径，拿不到别的文件。
+  video: {
+    pick: () => ipcRenderer.invoke('video:pick'),
+    share: (filePath) => ipcRenderer.invoke('video:share', filePath),
+  },
   // 主对话与创作模式共用同一条订阅总线（onCreatorEvent 为兼容别名）。
   onStreamEvent: subscribeStream,
   onCreatorEvent: subscribeStream,

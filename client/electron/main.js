@@ -674,6 +674,39 @@ const sidecar = require('./sidecar');
 const egoService = require('./ego-service');
 ipcMain.handle('ego:ensure', () => egoService.ensure());
 ipcMain.handle('ego:status', () => egoService.status());
+
+// 本地视频播放通道：选中的文件登记成带票据的回环地址，Range 由这条通道回，
+// 渲染层拿到的只是地址，读不到别的文件。
+const videoMedia = require('./video-media').createVideoMedia();
+// 播放器改打开别的视频时，旧的号码一起作废，别留一堆能读文件的口子。
+ipcMain.handle('video:pick', async () => {
+  if (!win || win.isDestroyed()) return { ok: false, err: '窗口尚未准备好' };
+  try {
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择要播放的视频',
+      buttonLabel: '打开视频',
+      properties: ['openFile'],
+      filters: [
+        { name: '视频文件', extensions: videoMedia.extensions },
+        { name: '全部文件', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) return { ok: true, canceled: true };
+    videoMedia.close();
+    return await videoMedia.share(result.filePaths[0]);
+  } catch (error) {
+    return { ok: false, err: String((error && error.message) || error).slice(0, 200) };
+  }
+});
+// 拖进来的文件走这条：渲染层已经拿到路径，只要换一条可播地址。
+ipcMain.handle('video:share', async (_event, filePath) => {
+  try {
+    const info = await videoMedia.share(filePath);
+    return info;
+  } catch (error) {
+    return { ok: false, err: String((error && error.message) || error).slice(0, 200) };
+  }
+});
 const { createPluginResources, shouldCancelLoopbackRequest } = require('./plugin-resource');
 const pluginResources = createPluginResources({
   getBase: () => connectionBase(),
@@ -1283,6 +1316,7 @@ if (!app.requestSingleInstanceLock()) {
 // 那时必须放行 close，不然关不了机。
 app.on('before-quit', () => {
   pluginResources.close();
+  videoMedia.close();
   // 自己拉起的分析服务要收干净：它是我们 spawn 的，退出后不该留孤儿进程。
   egoService.dispose();
   quitting = true;

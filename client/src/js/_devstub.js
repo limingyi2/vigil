@@ -136,6 +136,11 @@
       ensure: () => Promise.resolve({ ok: false, error: '预览环境不启动分析服务' }),
       status: () => Promise.resolve({ ok: false }),
     },
+    // 预览里没有主进程，弹不出系统对话框，也不该假装选了文件。
+    video: {
+      pick: () => Promise.resolve({ ok: false, err: '预览环境不能选本地文件，用桌面客户端可以选任意视频' }),
+      share: () => Promise.resolve({ ok: false, err: '预览环境不能读本地文件' }),
+    },
     api: (method, path, body) => {
       const url = new URL(path, 'http://preview');
       if (url.pathname === '/api/conversations' && method === 'GET') return J({ok:true,items:PREVIEW_SESSIONS});
