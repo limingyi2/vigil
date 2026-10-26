@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld('vigil', {
   attachments: {
     chunk: (bytes, headers) => ipcRenderer.invoke('attachment:chunk', { bytes, headers }),
   },
+  // 视频问答服务：主进程探测/拉起，问答流量由渲染层直连 127.0.0.1。
+  ego: {
+    ensure: () => ipcRenderer.invoke('ego:ensure'),
+    status: () => ipcRenderer.invoke('ego:status'),
+  },
   // 主对话与创作模式共用同一条订阅总线（onCreatorEvent 为兼容别名）。
   onStreamEvent: subscribeStream,
   onCreatorEvent: subscribeStream,

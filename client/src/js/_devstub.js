@@ -131,6 +131,11 @@
   ];
 
   window.vigil = {
+    // 夹具不拉起 EgoAgent 进程：预览里问答服务就是不可用，不假装能用。
+    ego: {
+      ensure: () => Promise.resolve({ ok: false, error: '预览环境不启动分析服务' }),
+      status: () => Promise.resolve({ ok: false }),
+    },
     api: (method, path, body) => {
       const url = new URL(path, 'http://preview');
       if (url.pathname === '/api/conversations' && method === 'GET') return J({ok:true,items:PREVIEW_SESSIONS});

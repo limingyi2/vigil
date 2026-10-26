@@ -669,6 +669,11 @@ function openSettingsWindow(options) {
 const localtool = require('./localtool');
 const oplog = require('./oplog');
 const sidecar = require('./sidecar');
+// 视频问答服务跑在用户自己的 EgoAgent 仓库里（不在随包范围）；这里只管
+// 探测与拉起，问答流量由渲染层直连回环，不经过主进程。
+const egoService = require('./ego-service');
+ipcMain.handle('ego:ensure', () => egoService.ensure());
+ipcMain.handle('ego:status', () => egoService.status());
 const { createPluginResources, shouldCancelLoopbackRequest } = require('./plugin-resource');
 const pluginResources = createPluginResources({
   getBase: () => connectionBase(),
@@ -1278,6 +1283,8 @@ if (!app.requestSingleInstanceLock()) {
 // 那时必须放行 close，不然关不了机。
 app.on('before-quit', () => {
   pluginResources.close();
+  // 自己拉起的分析服务要收干净：它是我们 spawn 的，退出后不该留孤儿进程。
+  egoService.dispose();
   quitting = true;
 });
 

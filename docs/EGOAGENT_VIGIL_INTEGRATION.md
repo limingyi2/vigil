@@ -1,85 +1,66 @@
-# EgoAgent 视频子 Agent 接入方案
+# EgoAgent 视频问答接入
 
-本文件是接入设计，不表示服务已经接通。
+现状：视频工作台 = 上方本地播放器 + 下方自然语言问答，答案由 **EgoAgent 自己的
+VR 会话**产出（`egoagent_eval/vr/serve.py` 的 `/ask`），不是 Vigil 内在实现的
+那份内容索引。两边刻意分开，别混。
 
-## 已实现的首版内容索引（2026-10-26）
+## 链路
 
-按用户确认，**不使用向量模型、不做失败降级**。新增 `brain/video_analysis.py`：
-将全片分成默认 30 秒的连续区间，每段取 3 张画面交给同一个视觉模型生成描述；
-提问时由模型分批选择相关片段，再回到原视频取帧并验证回答引用的时间戳。
-这里的内容相关性来自语言/视觉模型判断，不是 embedding 相似度。
-索引表示采样区间覆盖整片，不能称为逐帧看完；短暂事件仍可能漏掉，音频转写不包含在内。
-
-缓存按视频内容哈希、模型、采样参数及 fake/real 分区；中断可显式续建，
-未覆盖全片不能进入问答。解码、模型、JSON、预算或证据校验失败直接报错。
-选不到相关片段返回 `insufficient_evidence`，不编造答案。
-
-“设置 → 视频软件”增加独立分析模型选择，沿用模型管理里的已保存模型与凭据。
-默认为 MiMo 2.6 Flash；切换模型使用不同描述缓存，保存配置本身不调用模型。
-所选模型必须支持图片；不支持时实际请求失败即报错，不换其他模型。
-
-独立开发入口（不是研究实验或准确率评测）：
-
-```powershell
-python tools/ego_video_search.py --ego-root F:/EgoAgent-Eval --video C:/clips/demo.mp4 --question "钥匙放在哪里？"
+```
+视频工作台（渲染层）
+  ├─ 播放：本地文件 → blob URL → <video>
+  └─ 提问：fetch POST http://127.0.0.1:8799/ask（SSE）→ 答案 + 证据时间戳
+Electron 主进程（client/electron/ego-service.js）
+  └─ /health 探活 → 未启动就 spawn <EgoAgent>/.venv/Scripts/python.exe
+     -m egoagent_eval.vr.serve --port 8799 --provider mimo
 ```
 
-上述命令只报告配置与待授权状态，不发送图片。实际调用须显式加
-`--allow-model-calls`，可用 `--max-calls` 限制本轮总请求数（默认 40）。
-每次请求前写独立审计记录，结果和失败均记录，不自动重试。
-该适配层仅复用 EgoAgent 公开的本地视频解码接口，不改其冻结实验或实验账本；
-这些独立产品调用不应混入 EgoAgent 研究实验，也不证明它的准确性。
+- 端口固定 8799；`VIGIL_EGO_ROOT` 覆盖仓库位置（默认 `F:\EgoAgent-Eval`），
+  `VIGIL_EGO_PROVIDER` 覆盖 provider（默认 `mimo`，设成 `fake` 是脚本演示）。
+- 渲染层直连回环，不经过主进程转发：CSP 的 `connect-src http://127.0.0.1:*`
+  本来就允许，把 SSE 塞进 IPC 反而要自己重造分块协议。
+- 建会话用磁盘路径（Electron 28 的 `File.path`）。拿不到路径就明说，不猜。
+- 换视频 = 新会话；索引按视频内容哈希缓存在 EgoAgent 那边，换回同一个视频不重建。
+- 离开页面 POST `/close`；App 退出时主进程把自己 spawn 的进程收掉。
 
-当前尚未把工作台输入框接到此独立入口，也未执行真实付费模型测试。
+## 服务端改了什么（F:\EgoAgent-Eval）
 
-## 当前范围：先独立接入，不自动委派
+`vr/serve.py` 原本硬拦 `provider != "fake"`，理由是「真实 MiMo 要冻结清单与
+ledger 门禁，交互式场景无法满足」。改成：
 
-用户尚未确认 EgoAgent 的准确性，因此第一阶段只准备视频区域的独立接入，
-不注册为 Vigil 自动可调用的子 Agent，不将输出视为已验证事实。
-基础内置播放器已经实现；文本问答和 worker 协议仍为设计，尚未连接模型。
+- `--provider {fake,mimo}` + `--env-file`（默认 `.env`，读 `MIMO_API_KEY`）。
+- `open_session` 放开真实 provider；没有 key 直接报错，不静默退回假 provider。
+- factory 在真实模式返回 `MiMoVLMProvider(store, run_id, request_gate=…)`。
+- **台账分离**：`vlm.py` 强制真实调用必须带 request gate。研究用的
+  `ExperimentLedger` 要冻结清单和实验注册，人为问答套不上；新增
+  `InteractiveLedger`（`artifacts/vr/interactive_requests.sqlite`）保留同样的
+  「先落名额再发请求、崩溃后停在 unknown 不重试」语义，但不写研究账本，
+  也不产生可引用的实验结论。
+- `--scripted` 只对 fake 生效；`/health` 如实回报 `provider` / `is_fake`。
 
-## 后续可选：一个后端、两个入口
+## 事件与呈现
 
-- Vigil 聊天把视频问答任务委派给 EgoAgent。
-- 视频工作台提供播放器、文本输入、答案和证据列表，调用同一个 EgoAgent 后端。
-- 外部剪辑软件窗口托管作为单独模式保留；视频理解不依赖剪映窗口或截图。
+`/ask` 是 `data: {json}\n\n` 的 SSE，事件类型：`store`、`classification`、
+`memory`、`tool`、`round`、`final`、`error`、`done`。
 
-## 已核查的现有能力
+工作台只消费三样：`round`（第几轮）、`tool`（正在看什么）、`final`
+（答案 + `evidence_timestamps` + `uncertainties` + `rounds`/`observed_frames`/
+`usage`）。证据时间戳渲染成可点按钮，点了就把播放头跳过去并暂停，方便对着
+画面自己核。`final.is_fake` 为真时界面明写「假 provider：不含真实视觉判断」。
 
-`F:/EgoAgent-Eval/egoagent_eval/vr/session.py` 的 `VideoSession` 已提供
-`ask`、`followup`、`cancel`、`close`；一个会话绑定一个视频及其索引。
-`VRSessionResult` 有答案、证据时间戳、不确定项、状态、Token 用量、Trace 路径和错误。
-CLI 有 `ask` 和 `chat`，但交互 stdout 混合提示语和 JSON，不宜直接当稳定 RPC。
-该项目当前负责视频理解与证据检索，不是现成的剪辑软件控制 Agent。
+## 与内置 `brain/video_analysis.py` 的关系
 
-## 进程和协议
+那份是另一条路：不走 EgoAgent 的 agent 循环，用 Vigil 的视觉模型做 30 秒分片
+描述 + 回原视频取帧 + 校验时间戳，`/api/video-analysis/settings` 是它唯一的
+HTTP 入口，没有问答端点，界面也不再用它。保留是因为它自带缓存/预算/审计，
+将来若要「不依赖 EgoAgent 也能问」可以接上；现在不作为答案来源。
 
-优先使用独立 Python worker，通过带请求 ID 的 JSON Lines stdin/stdout 交换消息；
-日志写 stderr。避免把 OpenCV、模型依赖和视频资源生命周期塞入 Vigil Brain。
-新建 worker 包装层，不直接依赖私有 CLI 函数，不修改正在冻结验收的 EgoAgent 实验逻辑。
+## 验收
 
-建议操作：`session.open`、`question.ask`、`question.followup`、`run.cancel`、`session.close`。
-建议事件：`accepted`、`progress`、`evidence`、`answer`、`usage`、`error`、`cancelled`。
-每条携带 `request_id`、`session_id`，问题运行另带 `run_id`；支持取消、超时、进程退出恢复。
-已有结果保留原始结构，不能把 `insufficient_evidence` 或 `is_fake=true` 显示成真实分析成功。
+- 协议：fake 模式 `/health` → `/session` → `/ask` 全通（含 `store/round/final`）。
+- 真答案：`synthetic.mp4`（0–2 秒红、2–4 秒蓝）问「视频里有什么？」→ 答
+  「前半段红色、后半段蓝色，约 2.08 秒切换」，4 个证据时间戳，`citations_valid: true`。
+- 界面：Electron 夹具里真开视频、真提问、真收 SSE；点 `0.5s` 播放头跳到 0.5 秒并暂停；
+  亮/暗两套主题文字都可读。
 
-待独立验收通过、用户确认后，再由 Vigil 注册 `video_analysis` 能力，两个 UI 入口复用相同任务记录和事件流。
-绑定已认证 owner、人设、conversation、视频 ID 与内容哈希；不得跨会话继承视频或答案。
-任务结果通过现有会话任务回执进入后续聊天上下文。
-
-## 播放器与文本交互
-
-基础版采用 Electron/Chromium 的 HTML video：打开视频、播放/暂停、拖动、音量、倍速、全屏。
-通过本地文件选择及受控媒体 URL 授权资源，避免放开任意文件读取。
-视频区域旁显示文本输入、回答、不确定项和证据时间戳；点击时间戳 seek 到对应画面。
-更换视频创建新分析会话，普通文字追问复用当前会话。卸载页面隐藏播放器，活动任务不因此重发。
-
-不承诺任意编码、逐帧、字幕编辑、时间轴或导出剪辑；这些需独立评估解码/FFmpeg方案。
-
-## 模型与验收
-
-沿用 EgoAgent 的 Provider、请求账本和预算门禁，真实请求不能绕开其冻结和授权要求。
-先以 fake 验证进程协议、UI、取消、会话隔离，再以明确的真实 Provider 小预算验证视频问答。
-不为制作 UI 自动启动真实付费请求，不把研究用冻结门禁误包装成通用产品 API。
-
-交付顺序：修复设置与窗口几何 → 内置播放和文本 UI → worker + 能力注册 → 真实问答与时间戳跳转。
+**没有做的事**：没做准确率评测。EgoAgent 答得对不对仍需人工按证据时间戳核对。
