@@ -92,8 +92,19 @@ contextBridge.exposeInMainWorld('vigil', {
   // 启动本地内核 / 查看它为什么没起来（见 main.js 的 sidecar 通道）
   autoConnect: () => ipcRenderer.invoke('auto:connect'),
 
-  // 推送更新：mode 省略=只查状态；'ask'=发现新版就弹窗引导下载安装
-  updater: { check: (mode) => ipcRenderer.invoke('updater:check', mode || 'status') },
+  // 推送更新：全无弹窗。state() 读快照，onState() 收进度，
+  // 点圆圈时才 download/install —— 界面只反映主进程的状态机。
+  updater: {
+    check: (mode) => ipcRenderer.invoke('updater:check', mode || 'status'),
+    state: () => ipcRenderer.invoke('updater:state'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    onState: (fn) => {
+      const handler = (_event, state) => fn(state);
+      ipcRenderer.on('updater:state', handler);
+      return () => ipcRenderer.removeListener('updater:state', handler);
+    },
+  },
 
   // 本地内核（sidecar）：状态 / 重启 / 向导的模型配置
   sidecar: {

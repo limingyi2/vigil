@@ -86,15 +86,14 @@ function createTray() {
   });
 }
 
-// ── 推送更新（2026-10-09）：跟手机 App 一套思路 ─────────────────────
-// 云端 C:\Vigil\app\client\ 放安装包 + client_version.json（code 递增），
-// 内核加两条只读路由 /api/client/version、/api/client/setup。
-// 客户端启动 15s 后查一次、之后每小时查一次；有新版先问、同意了后台
-// 下载（sha256 校验），完成后弹窗 —— 走安装向导覆盖装，配置不会丢。
-// 本地包里的 version.json（打进 asar）是"我是谁"：code 就是版本号。
+// ── 推送更新（2026-10-26 改版）：不再弹窗，改成一个圆圈 ──────────────
+// 以前是「发现新版 → 弹框问要不要下 → 进度只写窗口标题 → 下完再弹框问装不装」，
+// 用户既看不到下没下，也不知道下到哪。现在：
+//   启动 / 每小时只「发现」→ 发现新版，左下角圆圈出现；
+//   点圆圈开始下载，进度由 updater:state 推给渲染层画成闭合的环；
+//   校验通过 → 圆圈变成可安装，再点一下才装（会退出客户端）。
+// 状态机本身在 update-manager.js（能直接在 node 里测），这里只做接线。
 const UPD_DL = path.join(os.tmpdir(), 'vigil-setup-download.exe');
-let updBusy = false;
-let updDeclinedCode = 0;   // 用户这轮会话里拒绝过的版本，别每小时弹一次
 
 function readLocalCode() {
   try {
@@ -105,105 +104,26 @@ function readLocalCode() {
   }
 }
 
-function sha256File(p) {
-  return new Promise((resolve) => {
-    try {
-      const h = crypto.createHash('sha256');
-      fs.createReadStream(p).on('data', (c) => h.update(c))
-        .on('end', () => resolve(h.digest('hex')))
-        .on('error', () => resolve(''));
-    } catch (e) { resolve(''); }
-  });
-}
-
-async function checkUpdate(mode) {
-  // mode='status' → 只查版本状态，绝不弹窗不下载（关于页进页展示用）
-  // mode='ask'    → 关于页按钮：查 → 有新版先问 → 下载 → 问安装
-  // mode=false    → 启动/定时自动查：全静默，有新版也先问（拒绝过这版就不再烦）
-  const interactive = mode === 'ask';
-  const cur = readLocalCode();
-  const base = { current: cur, ver: app.getVersion() };
-  if (process.env.VIGIL_TEST_NO_UPDATES === '1') return Object.assign(base, { ok: true, update: false, test: true });
-  if (updBusy) return Object.assign(base, { ok: true, update: false, busy: true });
-  // 只认公开发布源（GitHub Releases）。跟着阿里云 Brain 走的那条更新通道
-  // 在 P8.1 去掉了：Brain 不再托管安装包，更新也不该依赖它。
-  const v = await require('./public-updates').latest();
-  const j = (v && v.json) || {};
-  if (!v.ok || !j.code) {
-    return Object.assign(base, { ok: false, update: false, err: (j && j.err) || (v ? v.err || ('HTTP ' + v.status) : '无响应') });
-  }
-  const latest = Number(j.code) || 0;
-  if (latest <= cur) {
-    return Object.assign(base, { ok: true, update: false, latest, ver: j.ver || '' });
-  }
-  const have = { ok: true, update: true, latest, ver: j.ver || '', notes: j.notes || '' };
-  if (mode === 'status') return have;                       // 只报状态
-  if (!interactive && updDeclinedCode === latest) {
-    return Object.assign(have, { declined: true });         // 这版已经拒绝过，别再弹
-  }
-  // 有新版：先问一次（自动检查也问 —— 装不装什么时候装是用户的事）
-  updBusy = true;
-  try {
-    const ask = await dialog.showMessageBox(win || undefined, {
-      type: 'info', title: '发现新版本',
-      message: '客户端有更新：v' + (j.ver || ('code ' + latest)) + '（当前 code ' + cur + '）',
-      detail: String(j.notes || '修复与改进。') + '\n\n现在开始下载吗？下载完成后可以再选安装时间。',
-      buttons: ['下载', '下次再说'], defaultId: 0, cancelId: 1, noLink: true,
-    });
-    if (ask.response !== 0) {
-      updDeclinedCode = latest;
-      return Object.assign(base, { ok: true, update: true, latest, ver: j.ver || '', declined: true });
-    }
-    // 已下载过且校验通过的就不重下（sha 一致 = 就是这个版本）
-    const wantSha = String(j.sha256 || '').toLowerCase();
-    if (!/^[a-f0-9]{64}$/.test(wantSha) || !Number.isSafeInteger(j.size) || j.size <= 0) {
-      return {...base,ok:false,err:'更新清单缺少有效的 SHA-256 或文件大小，已拒绝安装'};
-    }
-    let dl = { ok: false };
-    if (fs.existsSync(UPD_DL) && wantSha && (await sha256File(UPD_DL)) === wantSha) {
-      dl = { ok: true, cached: true };
-    } else {
-      const progress = (got, total) => {
-          // 进度写进窗口标题（没有专门的进度页，title 不打扰界面）
-          if (win && !win.isDestroyed() && total) {
-            win.setTitle('正在下载更新 ' + Math.round((got / total) * 100) + '%');
-          }
-        };
-      dl = await require('./public-updates').download(j.setup_url, UPD_DL, progress);
-      if (win && !win.isDestroyed()) win.setTitle('');
-    }
-    if (!dl.ok) {
-      dialog.showErrorBox('更新下载失败', String(dl.err || '网络错误'));
-      return Object.assign(base, { ok: false, update: true, latest, err: dl.err });
-    }
-    if (wantSha) {
-      const sha = await sha256File(UPD_DL);
-      if (sha !== wantSha || fs.statSync(UPD_DL).size !== j.size) {
-        fs.unlinkSync(UPD_DL);
-        dialog.showErrorBox('更新失败', '安装包校验不一致，已删除重试下次。');
-        return Object.assign(base, { ok: false, update: true, latest, err: 'sha256 不匹配' });
+const updater = require('./update-manager').createUpdateManager({
+  readCode: readLocalCode,
+  source: require('./public-updates'),
+  downloadPath: UPD_DL,
+  // 两个窗口都发：设置窗口里也挂了同一套渲染层，别让它们状态不一致
+  emit: (state) => {
+    for (const w of [win, settingsWin]) {
+      if (w && !w.isDestroyed() && w.webContents) {
+        try { w.webContents.send('updater:state', state); } catch (e) { /* 窗口正在销毁 */ }
       }
     }
-    const go = await dialog.showMessageBox(win || undefined, {
-      type: 'question', title: '更新就绪',
-      message: '新版本已下载，现在安装吗？',
-      detail: '安装会退出客户端（配置和数据都在，不会丢）。装完从开始菜单或桌面重新打开。',
-      buttons: ['立即安装', '下次启动再说'], defaultId: 0, cancelId: 1, noLink: true,
-    });
-    if (go.response === 0) {
-      updDeclinedCode = 0;
-      // 不带参数跑安装向导（assisted NSIS）：静默覆盖运行中的程序有锁文件风险，
-      // 向导点两下但一定成功。退出客户端前把安装器先拉起来。
-      spawn(UPD_DL, [], { detached: true, stdio: 'ignore' }).unref();
-      quitting = true;
-      setTimeout(() => app.quit(), 300);
-      return Object.assign(base, { ok: true, update: true, latest, installing: true });
-    }
-    updDeclinedCode = latest;   // 装包留在临时目录，下次弹窗直接可装
-    return Object.assign(base, { ok: true, update: true, latest, ver: j.ver || '', downloaded: true });
-  } finally {
-    updBusy = false;
-  }
+  },
+  // 不带参数跑安装向导（assisted NSIS）：静默覆盖运行中的程序有锁文件风险，
+  // 向导点两下但一定成功。退出客户端前先把安装器拉起来。
+  spawnInstaller: (file) => { spawn(file, [], { detached: true, stdio: 'ignore' }).unref(); },
+  quit: () => { quitting = true; app.quit(); },
+});
+
+function checkUpdate(mode) {
+  return updater.check(mode);
 }
 
 
@@ -1084,9 +1004,12 @@ ipcMain.handle('local:reveal', (_e, p) => {
   catch (e) { return { ok: false, err: String(e && e.message || e) }; }
 });
 
-// 手动检查更新（关于页按钮）。结果回给渲染层画状态，弹窗逻辑在 checkUpdate 里。
-// 渲染层只能给 'ask' 或默认 'status'——不会绕过弹窗直接下载。
-ipcMain.handle('updater:check', (_e, mode) => checkUpdate(mode === 'ask' ? 'ask' : 'status'));
+// 更新：查 / 读状态 / 下载 / 安装四条命令，全都不弹窗。
+// 界面（左下角圆圈）只读 updater:state 的快照 + 事件，不自己猜进度。
+ipcMain.handle('updater:check', (_e, mode) => updater.check(mode === 'ask' ? 'ask' : 'status'));
+ipcMain.handle('updater:state', () => updater.snapshot());
+ipcMain.handle('updater:download', () => updater.download());
+ipcMain.handle('updater:install', () => updater.install());
 
 ipcMain.handle('api', async (_e, { method = 'GET', path: p = '/', body = null, base = null, timeoutMs = null }) => {
   if (!p.startsWith('/')) return { ok: false, status: 0, err: '路径要以 / 开头' };

@@ -4866,17 +4866,28 @@
         '<div class="muted" style="font-size:11.5px;margin-top:10px">本地操控已并入聊天页：确认在气泡里，权限/目录/工具在输入框旁的盾牌面板里，输入框下方的“仅授权目录”标签打开同一个面板。桌宠 Live2D（阶段5）未开始。</div>' +
         '</div>';
 
-      const show = (u) => {
-        v.querySelector('#abCode').textContent = String(u.current != null ? u.current : '0');
+      let offState = null;
+      // 这页只读主进程的更新状态机（左下角圆圈才是操作入口），
+      // 所以同一个 showState 既接主动检查的结果，也接后续的进度事件。
+      const showState = (u) => {
+        if (!v.isConnected) { if (offState) offState(); return; }
+        const code = v.querySelector('#abCode');
         const m = v.querySelector('#abMsg');
-        if (u.busy) { m.textContent = '上一次检查还没跑完…'; return; }
-        if (u.err) { m.textContent = '检查失败：' + u.err; return; }
-        if (!u.update) { m.textContent = '已是最新。'; return; }
-        if (u.installing) { m.textContent = '安装器已启动，客户端即将退出。'; return; }
-        if (u.downloaded) { m.textContent = '新版本已下载，下次启动会再提醒。'; return; }
-        if (u.declined) { m.textContent = '发现新版本 v' + (u.ver || '') + '（你这次先不更）。'; return; }
-        m.textContent = '发现新版本 v' + (u.ver || '') + '。';
+        if (!code || !m) return;
+        if (u && u.current != null) code.textContent = String(u.current);
+        const phase = (u && u.phase) || 'idle';
+        if (phase === 'available') { m.textContent = '发现新版本 v' + (u.ver || '') + '，点左下角圆圈开始下载。'; return; }
+        if (phase === 'downloading') { m.textContent = '正在下载更新 ' + (u.percent || 0) + '%…'; return; }
+        if (phase === 'verifying') { m.textContent = '正在校验安装包…'; return; }
+        if (phase === 'ready') { m.textContent = '更新已下载好，点左下角圆圈安装。'; return; }
+        if (phase === 'installing') { m.textContent = '安装器已启动，客户端即将退出。'; return; }
+        if (phase === 'error') { m.textContent = '更新失败：' + (u.err || '未知错误') + '（点圆圈重试）'; return; }
+        if (u && u.ok === false && u.err) { m.textContent = '检查失败：' + u.err; return; }
+        m.textContent = '已是最新。';
       };
+      if (window.vigil.updater && window.vigil.updater.onState) {
+        offState = window.vigil.updater.onState(showState);
+      }
 
       v.querySelector('#abCheck').addEventListener('click', async () => {
         const btn = v.querySelector('#abCheck');
@@ -4884,19 +4895,20 @@
         btn.disabled = true;
         msg.textContent = '检查中…';
         try {
-          const u = await global.vigil.updater.check('ask');
-          show(u || { err: '无响应' });
+          // 'ask' = 用户主动点的检查：查到了就直接开始下载（没有任何弹窗）
+          const u = await window.vigil.updater.check('ask');
+          showState(u || { ok: false, err: '无响应' });
         } catch (e) {
           msg.textContent = '检查失败：' + String(e && e.message || e);
         }
         if (btn && !btn.isDestroyed) btn.disabled = false;
       });
 
-      // 进页只查状态（不弹窗不下载）；版本号和"有没有新版"顺便画上
+      // 进页只查状态（不下载）；版本号和"有没有新版"顺便画上
       try {
-        const u = await global.vigil.updater.check();
-        if (u) show(u);
-      } catch (e) { /* 无云端配置等，静默 */ }
+        const u = await window.vigil.updater.check();
+        if (u) showState(u);
+      } catch (e) { /* 网络不通等，静默 */ }
     }
 
     async function retrieval() {

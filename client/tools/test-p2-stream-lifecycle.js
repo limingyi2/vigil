@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 require('./test-wallpaper-settings-isolation.cjs');
+require('./test-update-manager.cjs');
 require('./test-plugin-market-lifecycle.js');
 require('./test-data-page-lifecycle.js');
 const vm = require('node:vm');

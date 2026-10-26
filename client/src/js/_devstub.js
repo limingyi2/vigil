@@ -131,6 +131,25 @@
   ];
 
   window.vigil = {
+    // 更新：预览里可以按状态摆拍（控台里 __upd('downloading', {percent:42})），
+    // 真实客户端读的是主进程那份状态机，结构一样。
+    updater: (() => {
+      let cur = { phase: 'idle', current: 42, latest: 0, ver: '', got: 0, total: 0, percent: 0, err: '' };
+      let listeners = [];
+      const push = (next) => {
+        cur = Object.assign({}, cur, next);
+        listeners.forEach((fn) => { try { fn(cur); } catch (e) {} });
+        return cur;
+      };
+      window.__upd = (phase, patch) => push(Object.assign({ phase }, patch || {}));
+      return {
+        state: () => Promise.resolve(cur),
+        check: () => Promise.resolve(Object.assign({ ok: true, update: cur.phase !== 'idle' }, cur)),
+        download: () => push({ phase: 'downloading', percent: 0 }),
+        install: () => push({ phase: 'installing' }),
+        onState: (fn) => { listeners.push(fn); return () => { listeners = listeners.filter((x) => x !== fn); }; },
+      };
+    })(),
     // 夹具不拉起 EgoAgent 进程：预览里问答服务就是不可用，不假装能用。
     ego: {
       ensure: () => Promise.resolve({ ok: false, error: '预览环境不启动分析服务' }),

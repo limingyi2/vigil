@@ -100,11 +100,23 @@ input, select, textarea { font: inherit; color: inherit; }
 .gnav-label { display:none; }
 
 /* ── 左侧主导航：紧凑图标栏，页名由 tooltip 显示 ── */
+/* 分两段：.gnav-items 自己滚（页面可以很多），.gnav-foot 固定在底部
+   （更新圆圈 + 设置）。gnav 本身不裁切，圆圈的提示气泡要能伸出栏外。 */
 .gnav {
   grid-column: 1; grid-row: 2; min-height: 0; min-width: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 10px 6px;
-  overflow-y: auto; border-right: 1px solid var(--line); background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; gap: 0; padding: 10px 6px 8px;
+  overflow: visible; border-right: 1px solid var(--line); background: var(--bg);
 }
+.gnav-items {
+  flex: 1 1 auto; width: 100%; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
+}
+.gnav-foot {
+  flex: none; width: 100%; display: flex; flex-direction: column; align-items: center;
+  gap: 7px; padding-top: 8px;
+}
+body.has-update .gnav-foot { border-top: 1px solid var(--line-soft); }
 .gbtn {
   width: 48px; height: 48px; flex: none; display: grid; place-items: center;
   border-radius: 10px; color: var(--text-3); position: relative;
@@ -115,7 +127,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .gbtn:focus-visible { outline-offset: 2px; }
 .gnav .gbtn .i { width:20px; height:20px; }
 /* 一级栏拖宽（>=112px）后自动带文字标签：窄是纯图标，宽是图标+页名 */
-body.rail-wide .gnav { align-items: stretch; }
+body.rail-wide .gnav-items, body.rail-wide .gnav-foot { align-items: stretch; }
 body.rail-wide .gbtn { width: 100%; height: 40px; grid-template-columns: 20px minmax(0, 1fr); place-items: center start; gap: 10px; padding: 0 10px; }
 body.rail-wide .gnav-label { display: inline; font-size: var(--type-control); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body[data-vigil-page="market"] .body { grid-template-columns:minmax(0,1fr); }
@@ -133,6 +145,56 @@ body[data-vigil-page="market"] #gPanel { display:none; }
 @media (max-width:700px) { .market-wrap { padding:16px; } }
 .nav-spacer { flex: 1; min-height: 12px; }
 .nav-settings { border-top: 1px solid var(--line-soft); border-radius: 0 0 10px 10px; }
+
+/* ── 左下角的更新圆圈 ─────────────────────────────────────────────
+   平常整颗隐藏；有新版才出现。下载时圆环按百分比闭合，
+   下好了变成可点的实心提示，再点一下才装。不许用弹窗。 */
+.upd-ring {
+  position: relative; width: 44px; height: 44px; flex: none;
+  display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--text-2); cursor: pointer;
+  transition: color 140ms var(--ease), background 140ms var(--ease);
+}
+.upd-ring[hidden] { display: none; }
+.upd-ring:hover, .upd-ring:focus-visible { color: var(--text); background: var(--bg-hover); }
+.upd-ring-svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.upd-ring-track { fill: none; stroke: var(--line-strong); stroke-width: 2.5; }
+.upd-ring-bar {
+  fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round;
+  transition: stroke-dashoffset 260ms linear;
+}
+.upd-ring-glyph {
+  position: relative; display: grid; place-items: center; width: 24px; height: 24px;
+  font-size: 10.5px; font-weight: 700; font-family: var(--mono); line-height: 1; color: inherit;
+}
+.upd-ring-glyph .i { width: 17px; height: 17px; }
+/* 有新版本 / 已下好：环用强调色勾出来，一眼能看出"有个东西在等我点" */
+.upd-ring[data-phase="available"] { color: var(--accent); }
+.upd-ring[data-phase="available"] .upd-ring-track { stroke: color-mix(in srgb, var(--accent) 30%, transparent); }
+.upd-ring[data-phase="downloading"] { color: var(--accent); }
+.upd-ring[data-phase="verifying"] { color: var(--accent); }
+.upd-ring[data-phase="verifying"] .upd-ring-svg,
+.upd-ring[data-phase="installing"] .upd-ring-svg { animation: updSpin 1.6s linear infinite; }
+.upd-ring[data-phase="ready"] { color: var(--accent); animation: updReady 2.4s ease-in-out infinite; }
+.upd-ring[data-phase="error"] { color: var(--err); }
+.upd-ring[data-phase="error"] .upd-ring-track { stroke: color-mix(in srgb, var(--err) 45%, transparent); }
+.upd-ring[data-phase="error"] .upd-ring-bar { stroke: var(--err); }
+@keyframes updSpin { to { transform: rotate(270deg); } }
+@keyframes updReady {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  55% { box-shadow: 0 0 0 7px transparent; }
+}
+/* 提示气泡：栏本身很窄，气泡往右伸出去（gnav 不裁切） */
+.upd-ring-tip {
+  position: absolute; left: calc(100% + 12px); top: 50%;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-sub); color: var(--text); font-size: 12px; line-height: 1.35;
+  white-space: nowrap; box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
+  opacity: 0; transform: translateY(-50%) scale(.97); transform-origin: left center;
+  pointer-events: none; z-index: 80;
+  transition: opacity 130ms var(--ease), transform 130ms var(--ease);
+}
+.upd-ring:hover .upd-ring-tip, .upd-ring:focus-visible .upd-ring-tip { opacity: 1; transform: translateY(-50%) scale(1); }
 .settings-window .app { grid-template-columns: minmax(0, 1fr); }
 .settings-window .gnav { display: none; }
 .settings-window .body { grid-column: 1; }

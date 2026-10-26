@@ -30,19 +30,30 @@
     const navPages = PAGES.filter(p => p.id !== 'system' && p.id !== 'settings' && p.id !== 'market');
     const marketPage = PAGES.find(p => p.id === 'market');
     if (marketPage) navPages.splice(navPages.findIndex(p => p.id === 'chat') + 1, 0, marketPage);
-    navPages.push({id:'settings',name:'设置',icon:'set'});
+    // 设置固定钉在最底部。以前它只是列表最后一项 + 一个弹性占位块，
+    // 插件把页面加多、列表一溢出，它就跟着内容滚到半中间去了，
+    // 看着像"没到底"。现在上半个列表自己滚，底部这一格不动。
+    const settingsPage = Object.assign({id:'settings',name:'设置',icon:'set'},
+      PAGES.find(p => p.id === 'settings') || {});
     let saved=[];try{saved=JSON.parse(localStorage.getItem('vigil.primary-nav.order.v1')||'[]');}catch(_){}
     if(!Array.isArray(saved))saved=[];
     const order=[...new Set([...saved,...navPages.map(p=>p.id)])];
     navPages.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
-    gnavEl.innerHTML = '<div class="gnav-brand" aria-label="Vigil">Vigil</div>' +
-      navPages.map((p) => {
+    const navBtn = (p) => {
       // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，别让按钮变成空白图标
       const ic = String(p.icon === 'image' ? 'img' : p.icon || '').replace(/^i-/, '') || 'puzzle';
-      return (p.id==='settings' && navPages.at(-1).id==='settings' ? '<div class="nav-spacer" aria-hidden="true"></div>' : '') + '<button draggable="true" '+(p.id==='settings'?'id="settingsBtn" ':'')+'class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) + '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
-      U.icon(ic, 'md') +
-      '<span class="gnav-label">' + esc(p.id === 'chat' ? '会话' : p.name) + '</span></button>'; }).join('') +
-      '';
+      const isSet = p.id === 'settings';
+      return '<button draggable="' + (isSet ? 'false' : 'true') + '" ' + (isSet ? 'id="settingsBtn" ' : '') +
+        'class="gbtn' + (p.id === state.page ? ' on' : '') + '" data-page="' + esc(p.id) +
+        '" data-tip="' + esc(p.name) + '" title="' + esc(p.name) + '" aria-label="' + esc(p.name) + '">' +
+        U.icon(ic, 'md') +
+        '<span class="gnav-label">' + esc(p.id === 'chat' ? '会话' : p.name) + '</span></button>';
+    };
+    gnavEl.innerHTML = '<div class="gnav-brand" aria-label="Vigil">Vigil</div>' +
+      '<div class="gnav-items">' + navPages.map(navBtn).join('') + '</div>' +
+      '<div class="gnav-foot">' + navBtn(settingsPage) + '</div>';
+    // 更新圆圈挂在设置上方；没有新版时它自己隐藏，不留空位
+    if (window.VigilUpdater) window.VigilUpdater.mount(gnavEl.querySelector('.gnav-foot'));
     let dragged=null;
     gnavEl.querySelectorAll('.gbtn').forEach(b=>{
       b.addEventListener('dragstart',e=>{dragged=b.dataset.page;e.dataTransfer.setData('text/plain',dragged);e.dataTransfer.effectAllowed='move';b.classList.add('dragging');});
