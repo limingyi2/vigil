@@ -246,11 +246,13 @@ def test_legacy_memory_recent_fallback_cannot_supply_other_entity(tmp_path, monk
 
 def test_kb_guarded_empty_never_uses_legacy_vector_fallback(monkeypatch):
     import kb.engine as engine
+    from storage import search, unified
     monkeypatch.setattr(engine._cfg, 'load', lambda: dict(enabled=True, search_k=5, min_score=0))
-    embed = Mock(side_effect=AssertionError('must not fall back'))
-    monkeypatch.setattr(engine._emb, 'embed_one', embed)
+    monkeypatch.setattr(unified, 'semantic_enabled', lambda *_: False)
+    default_backend = Mock(side_effect=AssertionError('semantic-disabled search must not create an embedder'))
+    monkeypatch.setattr(search, '_default_backend', default_backend)
     assert engine.search('他的工资', persona_key='p', src='pc', query_context=context('张三和李四')) == []
-    embed.assert_not_called()
+    default_backend.assert_not_called()
 
 
 def test_raw_search_legacy_call_and_rank_before_top_k(monkeypatch):

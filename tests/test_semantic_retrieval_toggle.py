@@ -13,7 +13,9 @@ sys.path.insert(0, str(ROOT / "brain"))
 @pytest.fixture
 def retrieval_off(tmp_path, monkeypatch):
     import paths
-    from storage import unified
+    from storage import db, unified
+    old_db_dir = db._DB_DIR
+    db.set_dir(str(tmp_path / "db"))
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps({"retrieval": {
         "unified": True, "semantic_enabled": False,
@@ -21,7 +23,10 @@ def retrieval_off(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "CONFIG_PATH", str(cfg_path))
     assert unified.unified_enabled()
     assert not unified.semantic_enabled()
-    return cfg_path
+    try:
+        yield cfg_path
+    finally:
+        db.set_dir(old_db_dir)
 
 
 def test_semantic_setting_is_independent_of_unified(retrieval_off):
@@ -72,34 +77,22 @@ def test_unified_retrieve_keeps_bm25_entry_when_semantic_off(retrieval_off, monk
 
 def test_kb_ingest_text_uses_no_embed_when_off(retrieval_off, monkeypatch):
     from kb import engine as kb_engine
+    from storage import search
 
-    class FakeStore:
-        def __init__(self):
-            self.upserts = []
-        def upsert_text(self, name, chunks):
-            self.upserts.append((name, chunks))
-            return len(chunks)
-        def set_source_meta(self, *args, **kwargs):
-            pass
-
-    store = FakeStore()
-    monkeypatch.setattr(kb_engine, "store_for", lambda *a: store)
     monkeypatch.setattr(kb_engine, "split_text", lambda *a: [{"text": "keyword paragraph"}])
     monkeypatch.setattr(kb_engine._cfg, "load", lambda: {
-        "chunk_size": 500, "chunk_overlap": 0, "batch": 10,
-        "sync_to_unified": True,
+        "enabled": True, "inject": True, "top_k": 3, "min_score": 0.0,
+        "max_chars": 1200, "search_k": 5, "chunk_size": 500,
+        "chunk_overlap": 0, "batch": 10, "backend": "api", "model": "none",
     })
-    monkeypatch.setattr(kb_engine._emb, "embed", lambda *a: (_ for _ in ()).throw(
-        AssertionError("semantic-disabled ingest must not embed")))
-    monkeypatch.setattr(kb_engine, "_sync_chunks_to_unified", lambda *a, **kw: {
-        "ok": True, "indexed": 1, "vectorized": 0,
-    })
+    monkeypatch.setattr(search, "index_embeddings", lambda *a, **kw: (_ for _ in ()).throw(
+        AssertionError("semantic-disabled ingest must not index embeddings")))
 
-    result = kb_engine.ingest_text("keyword paragraph", "test.txt", "", "app")
+    result = kb_engine.ingest_text("keyword paragraph", "test.txt", "", "pc")
     assert result["ok"]
     assert result["chunks"] == 1
     assert result["unified_sync"]["vectorized"] == 0
-    assert store.upserts[0][0] == "test.txt"
+    assert kb_engine.list_docs(src="pc")[0]["name"] == "test.txt"
 
 
 def test_kb_text_only_persistence(tmp_path):

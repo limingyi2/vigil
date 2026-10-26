@@ -48,34 +48,29 @@ def fake_vec(text, dim=DIM):
 class KBTestBase:  # 只是个 mixin，别继承 TestCase：tests/test_source_hygiene.py 会挑出没有 test_* 的 TestCase
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="kbtest_")
-        self._root_old = engine.ROOT_OVERRIDE
-        self._settings_old = config.SETTINGS_PATH
-        engine.ROOT_OVERRIDE = self.tmp
-        config.SETTINGS_PATH = os.path.join(self.tmp, "settings.json")
-        engine.reset_cache()
-        # 统一混合检索还会把块同步进**主库**（search_docs / search_fts）。只钉
-        # ROOT_OVERRIDE 的话那一份照样写真实开发库 —— 症状是"删干净了还搜得到"，
-        # 而且测试之间互相污染（先跑过的用例在库里留了块）。所以连库目录一起钉。
+        import paths
         from storage import db as _db
+        self._config_path_old = config.CONFIG_PATH
+        self._settings_old = config.SETTINGS_PATH
+        self._paths_config_old = paths.CONFIG_PATH
         self._db_dir_old = _db._DB_DIR
+        self._test_config = os.path.join(self.tmp, "config.json")
+        with open(self._test_config, "w", encoding="utf-8") as f:
+            json.dump({"retrieval": {"unified": True, "semantic_enabled": False}}, f)
+        config.CONFIG_PATH = self._test_config
+        paths.CONFIG_PATH = self._test_config
+        config.SETTINGS_PATH = os.path.join(self.tmp, "settings.json")
         _db.set_dir(os.path.join(self.tmp, "db"))
-        import kb.embedder as emb
-        self._orig_embed = emb.embed
-        self._orig_embed_one = emb.embed_one
-        emb.embed = lambda texts: ([fake_vec(t) for t in texts], "fake-model")
-        emb.embed_one = lambda t: (fake_vec(t), "fake-model")
+        config.load(force=True)
 
     def tearDown(self):
-        import kb.embedder as emb
-        emb.embed = self._orig_embed
-        emb.embed_one = self._orig_embed_one
-        engine.ROOT_OVERRIDE = self._root_old
-        config.SETTINGS_PATH = self._settings_old
-        engine.reset_cache()
+        import paths
         from storage import db as _db
-        # 传 None 而不是旧值：set_dir(None) 会 close_all()，把临时库的句柄放掉，
-        # 否则 Windows 上 rmtree 会撞 WinError 32（文件被占）。
-        _db.set_dir(self._db_dir_old or None)
+        _db.set_dir(self._db_dir_old)
+        config.CONFIG_PATH = self._config_path_old
+        paths.CONFIG_PATH = self._paths_config_old
+        config.SETTINGS_PATH = self._settings_old
+        config.load(force=True)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
@@ -195,7 +190,7 @@ class TestEngine(KBTestBase, unittest.TestCase):
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["chunks"], 1)
         self.assertEqual(r["scope"], "p1.app")
-        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "p1.app")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "p1.app")))
 
         rows = kb.search("怎么装依赖", persona_key="p1", src="app", min_score=0.0)
         self.assertTrue(rows)
@@ -206,7 +201,8 @@ class TestEngine(KBTestBase, unittest.TestCase):
 
         s = kb.stats(persona_key="p1", src="app")
         self.assertEqual(s["count"], 1)
-        self.assertEqual(s["model"], "fake-model")
+        self.assertEqual(s["dim"], 0)
+        self.assertEqual(s["model"], "")
         self.assertTrue(s["enabled"])
 
     def test_分区互不串(self):
@@ -251,8 +247,10 @@ class TestEngine(KBTestBase, unittest.TestCase):
         self.assertLess(len(kb.format_block(rows, max_chars=300)), 600)
 
     def test_嵌入全挂时检索返回空不抛(self):
-        import kb.embedder as emb
-        emb.embed_one = lambda t: (None, "")
+        from storage import unified
+        original = unified.retrieve
+        unified.retrieve = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline"))
+        self.addCleanup(setattr, unified, "retrieve", original)
         self.assertEqual(kb.search("随便", persona_key="p", src="app"), [])
 
 
@@ -275,7 +273,7 @@ class TestConfig(KBTestBase, unittest.TestCase):
         self.assertNotIn("乱写的键", saved)
 
 
-class TestPluginContract(unittest.TestCase):
+class TestPluginContract(KBTestBase, unittest.TestCase):
     """插件接线：规格、路由、注入开关。这三处错了都是"看着装了其实没用"。"""
 
     @classmethod
@@ -328,12 +326,7 @@ class TestPluginContract(unittest.TestCase):
             text = "嗯"
             src = "app"
             brain = None
-        engine.ROOT_OVERRIDE = tempfile.mkdtemp(prefix="kbshort_")
-        try:
-            self.assertEqual(self.mod.on_turn_in(Ctx()), "")
-        finally:
-            engine.ROOT_OVERRIDE = None
-            engine.reset_cache()
+        self.assertEqual(self.mod.on_turn_in(Ctx()), "")
 
 
 if __name__ == "__main__":
