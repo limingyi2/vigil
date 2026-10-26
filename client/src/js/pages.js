@@ -1216,8 +1216,8 @@
       '      <div class="localpop pluspop" id="plusPop" hidden role="dialog" aria-label="添加内容与运行模式"></div>' +
       '      <div class="wsPop localpop" id="wsPop" hidden role="dialog" aria-label="选择工作空间"></div>' +
       '      <div class="col">' +
-      '      <div class="attach" id="attach" hidden></div>' +
-      '      <div class="cbox"><textarea id="ta" rows="2" aria-label="消息内容" placeholder="今天帮你做些什么？@ 添加上下文，/ 调用技能与指令"></textarea>' +
+      '      <div class="cbox"><div class="attach" id="attach" hidden></div>' +
+      '        <textarea id="ta" rows="2" aria-label="消息内容" placeholder="今天帮你做些什么？@ 添加上下文，/ 调用技能与指令"></textarea>' +
       '        <div class="cbar">' +
       '          <button class="ibtn cbar-add" id="clipBtn" title="添加图片、视频或普通文件" aria-label="添加附件">' + icon('plus', 'sm') + '</button>' +
       '          <button class="chip" id="creatorBtn" title="创作模式：用自然语言让 Agent 生成插件/技能草稿">创作：关</button>' +
@@ -2421,9 +2421,11 @@
         const atts = mine && Array.isArray(m.attachments) ? m.attachments.map((a) =>
           '<div class="msg-attachment">' + icon(a.kind === 'image' ? 'img' : 'clip', 'sm') + ' ' +
           esc(a.name || '附件') + (a.size ? ' · ' + esc(bytes(a.size)) : '') + '</div>').join('') : '';
+        const savedImage = mine && m.img ? '<img class="msgimg" src="/api/img?name=' +
+          encodeURIComponent(String(m.img).split(/[\\/]/).pop()) + '" alt="聊天图片" loading="lazy">' : '';
         // 不画头像、不写名字：这是工具界面，不是"跟谁对话"。
         // 她说的在左、你说的在右，不用再靠头像区分。
-        if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + atts + '</div></div></div>';
+        if (mine) return '<div class="turn me"><div class="bdy"><div class="txt">' + t + savedImage + atts + '</div></div></div>';
         // 状态说明（执行中/已取消…）不再塞进正文气泡：小字一行跟在下面，
         // 取消也只是一条文字链，不是按钮气泡。
         const runable = m.run && ['queued','running'].includes(m.run.status);
@@ -3712,6 +3714,21 @@
     let all = [];
     let curStore = 'memory';
     const storeSel = () => ctx.view.querySelector('#memStore');
+    function storeLabel(name) {
+      if (name === 'memory') return '主记忆库 · 未分区';
+      const stem = String(name).replace(/\.memory$/, '');
+      const channels = [
+        ['wechat_group', '微信群'], ['wechat', '微信'], ['app', '旧 App'], ['pc', 'PC'],
+      ];
+      for (const [key, label] of channels) {
+        const suffix = '.' + key;
+        if (stem.endsWith(suffix)) {
+          const persona = stem.slice(0, -suffix.length);
+          return (persona ? persona + ' · ' : '默认人设 · ') + label + ' 渠道';
+        }
+      }
+      return String(name) + ' · 历史分区';
+    }
 
     async function loadStores() {
       const r = pick(await get('/api/memory/stores'));
@@ -3719,7 +3736,8 @@
       const sel = storeSel();
       sel.innerHTML = names.map((n) =>
         '<option value="' + esc(n) + '"' + (n === curStore ? ' selected' : '') + '>' +
-        esc(n === 'memory' ? 'memory（主库）' : n) + '</option>').join('');
+        esc(storeLabel(n)) + '</option>').join('');
+      sel.title = '按人设与来源渠道隔离的记忆分区；切换这里只查看对应分区，不会搬动或删除数据。';
       sel.onchange = () => { curStore = sel.value; load(); };
     }
 
@@ -3966,16 +3984,15 @@
   }
 
   // ═══ 6. 能力 ═══════════════════════════════════════════════
-  // 插件 / 技能管理，一屏一页：运行环境（技能）、添加区（拖 zip）、
-  // 已装清单（每行：名字 + 状态 + 说明 + 能力明细 + 渠道开关 + 卸载）。
+  // 插件管理与本机功能开关。技能由聊天中的自然语言创作/调用，不在此管理。
   // 渠道清单来自服务端（paths.CHANNELS 的真源），不在前端写死。
   async function renderAbility(ctx) {
     ctx.topbar.className = 'topbar';
-    const subs = [['pl', '插件', 'plug'], ['sk', '技能', 'puzzle'], ['ft', '开关', 'set']];
+    const subs = [['pl', '插件', 'plug'], ['ft', '开关', 'set']];
     ctx.panel.innerHTML = '<div class="phead"><h2>能力</h2></div><div class="plist">' +
       subs.map(([k, n, ic], i) => li({ icon: ic, title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
       '</div>';
-    ctx.topbar.innerHTML = topbar('能力与技能', '插件 · 技能 · 功能开关',
+    ctx.topbar.innerHTML = topbar('能力与扩展', '插件 · 功能开关',
       '<button class="btn oline" id="abRe">' + icon('refresh', 'sm') + '刷新</button>');
     ctx.view.innerHTML = '<div class="wrap" id="abView"></div>';
     const v = ctx.view.querySelector('#abView');
@@ -4010,23 +4027,14 @@
         if (f) onZip(f);
       });
     }
-    async function installZip(file, url, body, kind) {
+    async function installZip(file, url, body) {
       if (!/\.zip$/i.test(file.name)) { toast('要 .zip 包'); return; }
       toast('正在装 ' + file.name + ' …');
       const b64 = await fileToB64(file);
       const r = pick(await post(url, Object.assign({ zip_b64: b64 }, body || {})));
       if (!r.ok) { toast('装失败：' + (r._err || r.err || '')); return; }
-      // C1：插件和技能的重启提示不能混用同一句话 —— 两者的"重启"根本不是
-      // 同一个东西。插件要重启**内核**（start() 起的线程不会自己换掉），
-      // 技能要重启**技能宿主**（热重载已让它当下可用，覆盖安装后才需要宿主
-      // 进程重启一次才完全干净）。说错对象，用户会去重启错的东西，
-      // 然后以为问题已经解决。
-      const RN = {
-        plugin: '有后台线程的插件要重启内核才完全生效',
-        skill: '覆盖了已有技能，重启技能宿主后才完全干净',
-      };
       toast('已装上（共 ' + (r.count || '?') + ' 个）' +
-        (r.restart_needed ? ' · ' + (RN[kind] || RN.plugin) : ''));
+        (r.restart_needed ? ' · 有后台线程的插件要重启内核才完全生效' : ''));
       ctx.refresh();
     }
 
@@ -4129,7 +4137,7 @@
           '</div></div>').join('')
           : empty('一个插件都没装', '上面拖一个 .zip 试试'));
 
-      bindDrop(v.querySelector('#plDrop'), (f) => installZip(f, '/api/plugins/install', { source: '客户端' }, 'plugin'));
+      bindDrop(v.querySelector('#plDrop'), (f) => installZip(f, '/api/plugins/install', { source: '客户端' }));
       v.querySelector('#plReload').addEventListener('click', async () => {
         const rr = pick(await post('/api/plugins/reload', {}));
         toast(rr.ok ? '插件已重载' : ('重载失败：' + (rr._err || rr.err || '未知错误')));
@@ -4162,78 +4170,6 @@
       drawCurrent = plugins;
     }
 
-    // ── 技能 ──
-    async function skills() {
-      const r = pick(await post('/api/skill/status', {}));
-      const list = r.skills || [];
-      v.__items = list;
-      // C3（技能侧）：判据同上，但"重启"指的是**技能宿主**（Node 进程），
-      // 不是内核。宿主自己启动时会登记 started_at，所以这条提示同样
-      // 会一直显示到宿主真的重启过为止。
-      const skPend = r.pending_restart || {};
-      const skPendOn = !!skPend.pending;
-      const skPendWhy = (skPend.reasons || []).filter(Boolean).join('；');
-      v.innerHTML =
-        (skPendOn ? '<div class="card" style="margin-bottom:12px;border-color:var(--warn)">' +
-          '<div style="display:flex;align-items:center;gap:8px"><b>有改动还没生效</b>' +
-          tag('warn', '待重启技能宿主') + '</div>' +
-          '<div class="muted" style="font-size:12px;margin-top:6px">' +
-          esc(skPendWhy || '技能目录有改动') +
-          '。热重载已经让新版本能用，但要宿主进程重启一次才完全干净 —— ' +
-          '上面这份清单是磁盘上的样子。</div></div>' : '') +
-        '<div class="sech"><b>运行环境</b><div class="sp"></div>' +
-        (r.alive ? tag('ok', '可以装') : tag('err', '宿主没起来，装了不生效')) + '</div>' +
-        '<div class="env">' +
-        '<div class="kv"><span>技能宿主</span><b>' + esc(r.host || '—') + (r.alive ? '' : '（没连上）') + '</b></div>' +
-        '<div class="kv"><span>Node</span><b>' + esc(r.node || '未安装') + '</b></div>' +
-        '<div class="kv"><span>技能目录</span><b class="mono" style="font-size:11.5px">' + esc(r.dir || '—') + '</b></div>' +
-        '</div>' +
-        '<div class="sech"><b>添加技能</b><div class="sp"></div><span class="muted">zip 上传</span></div>' +
-        '<div class="drop" id="skDrop">' + icon('puzzle', 'md') +
-        '<b>把技能 .zip 拖到这里</b><span class="muted">或点击选择文件 · 宿主自动热重载，不用重启内核</span></div>' +
-        '<div class="sech"><b>已安装的技能</b><div class="sp"></div>' +
-        '<span class="tag neutral">' + list.length + ' 个</span>' +
-        (skPendOn ? tag('warn', '待重启生效') : '') +
-        '<button class="btn oline" id="skRe">重载宿主</button></div>' +
-        (r.ok === false && !list.length ? errBox('读不到技能清单', r._err || '技能宿主（Node）没起来的话装了也不生效') :
-         list.length ? list.map((s) =>
-          '<div class="pkg">' +
-          '<div class="pkg-ic">' + icon('puzzle', 'sm') + '</div>' +
-          '<div class="pkg-main">' +
-          '<div class="pkg-h"><b>' + esc(s.name || s.id) + '</b>' + tag('ok', '已装载') + '</div>' +
-          '<div class="pkg-desc">' + esc(s.desc || '') + '</div>' +
-          '<div class="pkg-meta"><span>' + esc((s.id || '') + (s.version ? ' v' + s.version : '')) + '</span>' +
-          '<span>· 工具 ' + ((s.tools || []).length) + ' 个</span></div>' +
-          ((s.tools || []).length ? '<div class="pkg-tools">' +
-            s.tools.map((t) => '<span class="toolchip mono" title="' + esc(t.name) + '">' +
-              esc(t.label || t.name) + '</span>').join('') + '</div>' : '') +
-          '</div>' +
-          '<div class="pkg-side">' +
-          chanChips(r.channels, s.channels, s.id || s.name, false) +
-          '<button class="btn pkg-un" data-sun="' + esc(s.id || s.name) + '">卸载</button>' +
-          '</div></div>').join('')
-          : empty('还没有装技能', '技能是 Node 里的独立程序，跟 .py 插件是两条通道'));
-
-      bindDrop(v.querySelector('#skDrop'), (f) => installZip(f, '/api/skill/install', { note: '客户端' }, 'skill'));
-      v.querySelector('#skRe').addEventListener('click', async () => {
-        await post('/api/skill/reload', {});
-        toast('宿主重载中…');
-        setTimeout(skills, 1200);
-      });
-      v.querySelectorAll('[data-sun]').forEach((b) => b.addEventListener('click', async () => {
-        if (!await confirmDialog('卸载技能 ' + b.dataset.sun + '？')) return;
-        // C2（技能侧同理）：文件删了不等于宿主里那份也没了。
-        const rr = pick(await post('/api/skill/uninstall', { skill: b.dataset.sun }));
-        if (!rr.ok) { toast('卸载失败：' + (rr._err || rr.err || '')); return; }
-        toast(rr.restart_needed
-          ? '文件已卸载，宿主里那份可能还在 —— 重启技能宿主后才完全干净'
-          : '已卸载');
-        skills();
-      }));
-      bindChanChips('/api/skill/channels', 'skill');
-      drawCurrent = skills;
-    }
-
     // ── 功能开关 ──
     // 这里只管本机控制台（pc）这一路。App / 微信那几路归各自的客户端和微信
     // 桥接，桌面端改不到、也不该假装改得到（P8.1 起桌面端只连本机 Brain）。
@@ -4260,7 +4196,7 @@
       }));
     }
 
-    const draw = { pl: plugins, sk: skills, ft: features };
+    const draw = { pl: plugins, ft: features };
     window.__vigilRefreshExtensions = () => {
       if (!document.querySelector('#abView')) return;
       const active = ctx.panel.querySelector('.li.on')?.dataset.k || 'pl';
@@ -5069,8 +5005,25 @@
       ctx.view.appendChild(body);
       const cfgBody = body.querySelector('#cfgBody');
       const subnav = body.querySelector('#cfgSubnav');
+      let subGeneration = 0;
+      let subCleanups = [];
+
+      function runSubCleanups(cleanups) {
+        for (const cleanup of cleanups.splice(0).reverse()) {
+          try { cleanup(); } catch (e) { console.warn('[page dispose]', e); }
+        }
+      }
+      function disposeSub() {
+        runSubCleanups(subCleanups);
+        subCleanups = [];
+      }
+      ctx.onDispose(disposeSub);
 
       async function drawSub(k) {
+        const generation = ++subGeneration;
+        disposeSub();
+        const cleanups = [];
+        subCleanups = cleanups;
         const it = items.find((x) => x.k === k) || items[0];
         cur = it.k;
         ctx.panel.querySelectorAll('.li').forEach((n) => n.classList.toggle('on', n.dataset.k === it.k));
@@ -5080,10 +5033,26 @@
         subnav.hidden = true; subnav.innerHTML = '';
         const fakePanel = document.createElement('div');
         try {
-          await it.render({ view: cfgBody, panel: fakePanel, topbar: ctx.topbar, src: ctx.src, refresh: () => drawSub(it.k) });
+          await it.render({
+            view: cfgBody, panel: fakePanel, topbar: ctx.topbar, src: ctx.src,
+            refresh: () => drawSub(it.k), navigate: ctx.navigate,
+            onDispose: (cleanup) => {
+              if (typeof cleanup !== 'function') return;
+              if (generation === subGeneration) cleanups.push(cleanup);
+              else { try { cleanup(); } catch (e) { console.warn('[page dispose]', e); } }
+            },
+          });
         } catch (e) {
+          if (generation !== subGeneration) {
+            runSubCleanups(cleanups);
+            return;
+          }
           console.error('功能分区渲染失败:', e);
           cfgBody.innerHTML = '<div class="wrap">' + errBox('这一分区画不出来', e.message || '') + '</div>';
+        }
+        if (generation !== subGeneration) {
+          runSubCleanups(cleanups);
+          return;
         }
         if (fakePanel.innerHTML.trim()) {          // 功能项自带的副导航（渠道切换 / 插件分类 / 连接分区）
           fakePanel.classList.add('cfg-subnav-inner');

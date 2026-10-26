@@ -141,6 +141,20 @@ def test_recent_window_differs_by_mode_and_reduces_under_pressure(setup):
     assert '消息 9' in json.dumps(tight, ensure_ascii=False)
 
 
+def test_oversized_latest_assistant_turn_does_not_erase_all_context(setup):
+    b, _ = setup
+    b.api['context_compression']['local_work_tokens'] = 200
+    b.api['context_compression']['local_trigger_tokens'] = 150
+    b.api['context_compression']['local_target_tokens'] = 120
+    b._commit_turn('请查一下这个项目', '项目身份：codex-bailong-desktop-pet。' + '背景信息。' * 500,
+                   src=b._cur_src, conversation_id=b._cur_conversation, life=False)
+    msgs, info = build(b, '有没有类似的 DeepSeek 项目？')
+    rendered = json.dumps(msgs, ensure_ascii=False)
+    assert '项目身份：codex-bailong-desktop-pet' in rendered
+    assert '较长的上一条回复已截短' in rendered
+    assert info['estimated_input_tokens'] <= info['input_budget']
+
+
 @pytest.mark.parametrize('turns', [20, 50, 100, 200])
 def test_long_history_exact_recovery_and_unchanged_archive(setup, turns):
     b, p = setup

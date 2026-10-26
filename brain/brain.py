@@ -1709,7 +1709,7 @@ class Brain:
     # --- 流式聊天：实时产出思考过程和正文 ---
     def stream_chat(self, user_text, src=None, conversation_id=None, native_content=None,
                     no_tools=False, tool_policy=None, capability_query=False,
-                    request_id=None, route_entry=None):
+                    request_id=None, route_entry=None, image_path=None):
         """流式聊天生成器。逐块产出事件，供 SSE 转发给客户端。
 
         产出的事件格式：
@@ -1733,6 +1733,7 @@ class Brain:
         if tool_policy == "readonly" and not no_tools:
             yield from self._stream_readonly_tool_chat(
                 user_text, src, conversation_id, native_content, _api0, mp,
+                image_path=image_path,
                 capability_query=capability_query, request_id=request_id,
                 route_entry=route_entry)
             return
@@ -1872,7 +1873,7 @@ class Brain:
         # 的路径在上面 return，不会走到这里；SSE 中途断开时生成器被
         # GeneratorExit 关掉，同样到不了这里 —— 不完整的答案绝不入账。
         if full_text.strip():
-            self._commit_turn(user_text, full_text, src=self._cur_src,
+            self._commit_turn(user_text, full_text, img=image_path, src=self._cur_src,
                               conversation_id=self._cur_conversation)
 
         from agent_context import usage_record
@@ -1887,7 +1888,7 @@ class Brain:
 
     def _stream_readonly_tool_chat(self, user_text, src, conversation_id,
                                    native_content, api_snapshot, provider,
-                                   capability_query=False, request_id=None,
+                                   image_path=None, capability_query=False, request_id=None,
                                    route_entry=None):
         """Stream ordinary chat while allowing only audited read-only tools."""
         import json
@@ -2175,7 +2176,7 @@ class Brain:
                     self.last_tools_used = tools_used
                     self.last_cloud_seconds = round(request_seconds, 2)
                     if final_text.strip():
-                        self._commit_turn(user_text, final_text, src=self._cur_src,
+                        self._commit_turn(user_text, final_text, img=image_path, src=self._cur_src,
                                           conversation_id=self._cur_conversation)
                     token_rate = usage_record(
                         {"prompt_tokens": input_tokens,
@@ -2538,7 +2539,7 @@ class Brain:
                     self.last_tools_used = tools_used
                     self.last_cloud_seconds = round(request_seconds, 2)
                     if final_text.strip():
-                        self._commit_turn(user_text, final_text, src=self._cur_src,
+                        self._commit_turn(user_text, final_text, img=image_path, src=self._cur_src,
                                           conversation_id=self._cur_conversation)
                     token_rate = usage_record(
                         {"prompt_tokens": input_tokens,

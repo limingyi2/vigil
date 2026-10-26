@@ -3443,6 +3443,8 @@ def start_remote_api(brain):
                                                       tool_policy='readonly')
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
+                                if _img_path:
+                                    _stream_kwargs['image_path'] = _img_path
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
                             elif _task_entry == 'retrieval_unavailable':
                                 yield {'type': 'done', 'text':
@@ -3456,6 +3458,8 @@ def start_remote_api(brain):
                                         route_entry=_task_entry)
                                     if _native_content is not None:
                                         _stream_kwargs['native_content'] = _native_content
+                                    if _img_path:
+                                        _stream_kwargs['image_path'] = _img_path
                                     yield from _LOCAL['brain'].stream_chat(
                                         _in_text, **_stream_kwargs)
                                 else:
@@ -3476,6 +3480,8 @@ def start_remote_api(brain):
                                                       tool_policy='readonly')
                                 if _native_content is not None:
                                     _stream_kwargs['native_content'] = _native_content
+                                if _img_path:
+                                    _stream_kwargs['image_path'] = _img_path
                                 yield from _LOCAL['brain'].stream_chat(_in_text, **_stream_kwargs)
                     if _agent_item:
                         _events = self._agent_chat_events(_agent_item, self._display_owner(body), _agent_after)

@@ -67,6 +67,9 @@ function harness() {
       {t: 1_800_000_000_000, tok_in: 4, tok_out: 6},
     ]},
     '/api/trace?last=60': {ok: true, items: []},
+    '/api/trace?last=200': {ok: true, items: [
+      {t: 1_800_000_000_000, src: 'pc', model: 'test-model', in_len: 12, tok_in: 8, tok_out: 3, ms: 900},
+    ]},
     '/api/history?limit=200&src=pc': {ok: true, items: []},
     '/api/logs?src=server&n=200': {ok: true, items: []},
   };
@@ -156,6 +159,28 @@ test('data renderer is registered once and chart/data/pages scripts load in orde
   assert.match(dataSource, /U\.lineChart\(chartEl/);
 });
 
+test('ability page no longer exposes the skills management interface', () => {
+  const pages = fs.readFileSync(path.join(root, 'src/js/pages.js'), 'utf8');
+  const start = pages.indexOf('  async function renderAbility(ctx) {');
+  const end = pages.indexOf('  // ═══ 7. 数据', start);
+  assert.ok(start >= 0 && end > start, 'ability page source boundary exists');
+  const ability = pages.slice(start, end);
+  assert.doesNotMatch(ability, /\['sk', '技能'/);
+  assert.doesNotMatch(ability, /\/api\/skill\//);
+  assert.match(ability, /\['pl', '插件'/);
+  assert.match(ability, /\['ft', '开关'/);
+});
+
+test('chat attachments render as preview cards inside the composer', () => {
+  const pages = fs.readFileSync(path.join(root, 'src/js/pages.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(root, 'src/styles.css'), 'utf8');
+  const chat = pages.slice(pages.indexOf("'    <div class=\"composer\">"), pages.indexOf("const msgs = view.querySelector('#msgs')"));
+  assert.match(chat, /<div class="cbox"><div class="attach" id="attach" hidden><\/div>/);
+  assert.match(styles, /\.athumb \{ width: 184px; height: 148px/);
+  assert.match(styles, /\.attach \{ display: flex; align-items: flex-start/);
+  assert.match(styles, /\.attachment-row #atClr/);
+});
+
 test('first entry preserves the stats request and initializes the page', async () => {
   const h = harness();
   await h.renderer(h.ctx);
@@ -183,7 +208,7 @@ test('switching to Token analysis keeps its requests, query parameters, and char
   assert.ok(h.calls.slice(1).every(call => JSON.stringify(call[2]) === '{"timeoutMs":8000}'));
 });
 
-test('Trace, history, and logs keep their original endpoint query parameters', async () => {
+test('Trace, history, and logs read the expected local endpoints', async () => {
   const h = harness();
   await h.renderer(h.ctx);
   await settle();
@@ -192,8 +217,12 @@ test('Trace, history, and logs keep their original endpoint query parameters', a
     await settle();
   }
   assert.deepEqual(h.calls.filter(call => call[0] === 'GET').map(call => call[1]), [
-    '/api/stats', '/api/trace?last=60', '/api/history?limit=200&src=pc', '/api/logs?src=server&n=200',
+    '/api/stats', '/api/trace?last=60', '/api/history?limit=200&src=pc',
+    '/api/logs?src=server&n=200', '/api/trace?last=200',
   ]);
+  assert.match(h.elements.get('dView').innerHTML, /本机运行记录与错误/);
+  assert.match(h.elements.get('dView').innerHTML, /test-model/);
+  assert.match(h.elements.get('dView').innerHTML, /清空错误/);
 });
 
 test('leaving and re-entering disposes the previous renderer and does not retain listeners', async () => {

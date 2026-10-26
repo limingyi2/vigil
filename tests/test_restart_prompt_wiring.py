@@ -40,35 +40,23 @@ def _handler_after(source, anchor, handler, terminator="\n      }));"):
 
 
 class C1ToastWordingByKind(unittest.TestCase):
-    """Skill 的提示不许再被叫成"插件"。"""
+    """插件管理页只安装插件，不暴露独立技能管理界面。"""
 
     @classmethod
     def setUpClass(cls):
         cls.src = _read(PAGES)
 
-    def test_install_zip_takes_a_kind_argument(self):
-        self.assertIn("async function installZip(file, url, body, kind)",
-                      self.src, "installZip 少了 kind 参数 —— 它没法区分装的是插件还是技能")
+    def test_install_zip_is_for_plugins_only(self):
+        self.assertIn("async function installZip(file, url, body)", self.src)
+        self.assertIn("installZip(f, '/api/plugins/install', { source: '客户端' })", self.src)
+        self.assertNotIn("installZip(f, '/api/skill/install'", self.src)
 
-    def test_wording_map_has_both_kinds(self):
-        self.assertIn("const RN = {", self.src)
-        self.assertIn("plugin:", self.src)
-        self.assertIn("skill:", self.src)
-
-    def test_plugin_and_skill_wordings_differ(self):
-        """同一句话两边复用就是 C1 本身。"""
-        i = self.src.index("const RN = {")
-        block = self.src[i:i + 400]
-        self.assertIn("重启内核", block)
-        self.assertIn("重启技能宿主", block)
-
-    def test_plugin_call_passes_plugin_kind(self):
-        self.assertIn("installZip(f, '/api/plugins/install', { source: '客户端' }, 'plugin')",
-                      self.src)
-
-    def test_skill_call_passes_skill_kind(self):
-        self.assertIn("installZip(f, '/api/skill/install', { note: '客户端' }, 'skill')",
-                      self.src)
+    def test_ability_page_has_no_skills_management_controls(self):
+        start = self.src.index("  async function renderAbility(ctx) {")
+        end = self.src.index("  // ═══ 7. 数据", start)
+        block = self.src[start:end]
+        self.assertNotIn("['sk', '技能'", block)
+        self.assertNotIn("/api/skill/", block)
 
     def test_old_single_wording_is_not_hardcoded_anymore(self):
         """原来那句被所有类型共用；现在它只能出现在 plugin 分支里。"""
@@ -89,11 +77,10 @@ class C2UninstallConsumesRestartNeeded(unittest.TestCase):
         self.assertIn("rr.restart_needed", block,
                       "插件卸载没有消费 restart_needed —— 后台线程还在跑，界面却说卸完了")
 
-    def test_skill_uninstall_reads_restart_needed(self):
-        block = _handler_after(self.src, "data-sun",
-                               "v.querySelectorAll('[data-sun]')")
-        self.assertIn("rr.restart_needed", block,
-                      "技能卸载没有消费 restart_needed")
+    def test_skill_uninstall_control_is_not_rendered(self):
+        start = self.src.index("  async function renderAbility(ctx) {")
+        end = self.src.index("  // ═══ 7. 数据", start)
+        self.assertNotIn("data-sun", self.src[start:end])
 
     def test_uninstall_failure_is_reported(self):
         """以前卸载是 await 完就重画，失败也看着像成功。"""
@@ -140,13 +127,16 @@ class C3PendingStateHasAReliableSource(unittest.TestCase):
                 self.assertNotIn(bad, block,
                                  "待重启状态落在 %s 里就刷新即丢" % bad)
 
-    def test_both_pages_have_the_banner(self):
-        self.assertEqual(self.pages.count("有改动还没生效"), 2,
-                         "插件页和技能页都该有这条持久提示")
+    def test_plugin_page_keeps_its_banner_and_skills_management_is_hidden(self):
+        self.assertEqual(self.pages.count("有改动还没生效"), 1,
+                         "插件页保留持久提示；技能管理 UI 已移除")
+        start = self.pages.index("  async function renderAbility(ctx) {")
+        end = self.pages.index("  // ═══ 7. 数据", start)
+        self.assertNotIn("/api/skill/status", self.pages[start:end])
 
     def test_banner_names_the_right_restart_target(self):
         self.assertIn("待重启内核", self.pages)
-        self.assertIn("待重启技能宿主", self.pages)
+        self.assertNotIn("待重启技能宿主", self.pages)
 
     def test_plugins_get_returns_the_judgement(self):
         i = self.server.index('if path == "/api/plugins":')

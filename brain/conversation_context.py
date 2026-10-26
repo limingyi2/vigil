@@ -686,9 +686,33 @@ def build_context(brain, user_text, *, system_text='', tool_specs=None,
     history_goal = max(0, goal - reserved)
     keep_hist = []
     for msg in reversed(hist):
-        if estimate_messages([msg] + keep_hist) > history_goal:
+        candidate = msg
+        if estimate_messages([candidate] + keep_hist) > history_goal:
+            # A single long assistant answer at the end of the visible chat used
+            # to make this loop break immediately, dropping *all* earlier turns.
+            # Preserve its leading context within the available budget so a
+            # short follow-up such as "about this project?" remains grounded.
+            content = msg.get('content') if isinstance(msg, dict) else None
+            if not keep_hist and msg.get('role') == 'assistant' and isinstance(content, str):
+                lo, hi, best = 0, len(content), None
+                marker = "\n[较长的上一条回复已截短]"
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    shortened = dict(msg, content=content[:mid] + marker)
+                    if estimate_messages([shortened]) <= history_goal:
+                        best = shortened
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                if best is not None:
+                    candidate = best
+                else:
+                    break
+            else:
+                break
+        if estimate_messages([candidate] + keep_hist) > history_goal:
             break
-        keep_hist.insert(0, msg)
+        keep_hist.insert(0, candidate)
     remaining = history_goal - estimate_messages(keep_hist)
     summary = _render_summary(state, remaining, info)
     # If recent history occupied everything, free oldest messages for old evidence.

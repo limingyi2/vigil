@@ -243,19 +243,37 @@
       const isCurrent = () => renderId === dataRenderId && v.isConnected;
       ctx.topbar.querySelector('h1').textContent = '日志';
       v.innerHTML = '<div class="muted" role="status" aria-live="polite" style="padding:20px 0">正在读取日志…</div>';
-      const r = pick(await dget('/api/logs?src=server&n=200'));
+      // 错误日志只在异常时写入；正常对话记录在 Trace 中。之前日志页只读 error_server，
+      // 没发生异常时会显得整页“什么都没有”，也看不到最近实际运行过的请求。
+      const [lr, tr] = await Promise.all([
+        dget('/api/logs?src=server&n=200'), dget('/api/trace?last=200'),
+      ]);
       if (!isCurrent()) return;
-      if (fail(r)) return;
-      const items = r.items || [];
-      v.innerHTML = '<div class="card hd"><div class="h"><h3>服务端日志</h3><div class="sp"></div>' +
-        '<button class="btn oline" id="lgClear">清空</button></div>' +
+      const logs = pick(lr);
+      const traces = pick(tr);
+      if (fail(logs)) return;
+      if (fail(traces)) return;
+      const errors = (logs.items || []).map(x => ({kind: 'error', t: x.t, level: x.level,
+        text: [x.where, x.type, x.msg].filter(Boolean).join(' · '), detail: x.trace || ''}));
+      const runs = (traces.items || []).map(x => ({kind: 'trace', t: x.t,
+        level: '运行', text: [x.src, x.model].filter(Boolean).join(' · ') || '对话请求',
+        detail: '输入 ' + (x.in_len == null ? '—' : fmtNum(x.in_len)) +
+          ' · Token 入 ' + (x.tok_in == null ? '—' : fmtNum(x.tok_in)) +
+          ' · Token 出 ' + (x.tok_out == null ? '—' : fmtNum(x.tok_out)) +
+          ' · 耗时 ' + (x.ms ? (x.ms / 1000).toFixed(1) + 's' : '—')}));
+      const items = errors.concat(runs).sort((a, b) => toMs(b.t) - toMs(a.t)).slice(0, 200);
+      v.innerHTML = '<div class="card hd"><div class="h"><h3>本机运行记录与错误</h3><div class="sp"></div>' +
+        '<button class="btn oline" id="lgClear">清空错误</button></div>' +
+        '<div class="muted" style="font-size:11.5px;padding:0 14px 8px">运行记录来自对话 Trace；错误记录来自错误日志。清空操作只清除错误记录。</div>' +
         (items.length ? items.map((x) => '<div class="row" style="padding:8px 14px">' +
-          '<span class="muted mono" style="font-size:11.5px">' + esc(fmtTime(x.t, 'time')) + '</span>' +
-          tag(x.level === 'ERROR' ? 'err' : x.level === 'WARN' ? 'warn' : 'neutral', x.level || 'INFO') +
-          '<div class="lb"><span class="mono" style="font-size:12px">' + esc(String(x.msg || '').slice(0, 160)) + '</span></div>' +
-          '</div>').join('') : empty('没有日志')) + '</div>';
+          '<span class="muted mono" style="font-size:11.5px">' + esc(fmtTime(x.t, 'full')) + '</span>' +
+          tag(x.kind === 'error' ? (x.level === 'WARN' ? 'warn' : 'err') : 'neutral',
+            x.kind === 'error' ? (x.level || 'ERROR') : '运行') +
+          '<div class="lb"><span class="mono" style="font-size:12px">' + esc(String(x.text || '').slice(0, 220)) +
+          (x.detail ? '<br><span class="muted">' + esc(String(x.detail).slice(0, 300)) + '</span>' : '') +
+          '</span></div>' + '</div>').join('') : empty('暂无运行或错误记录', '对话请求会从 Trace 显示在这里')) + '</div>';
       v.querySelector('#lgClear')?.addEventListener('click', async () => {
-        if (!await confirmDialog('清空服务端日志？此操作不可恢复。')) return;
+        if (!await confirmDialog('清空本机错误日志？对话 Trace 不会被删除。此操作不可恢复。')) return;
         await dpost('/api/logs/clear', { src: 'server' });
         lg();
       });

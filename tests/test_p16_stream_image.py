@@ -61,6 +61,7 @@ class FakeBrain:
     def __init__(self):
         self.seen = []
         self.native = []
+        self.image_paths = []
 
     def use_src(self, *a, **kw):
         pass
@@ -76,6 +77,7 @@ class FakeBrain:
     def stream_chat(self, text, native_content=None, **kw):
         self.seen.append(text)
         self.native.append(native_content)
+        self.image_paths.append(kw.get('image_path'))
         yield {'type': 'text', 'text': 'reply text'}
         yield {'type': 'done', 'text': 'reply text'}
 
@@ -123,6 +125,9 @@ class StreamImageTests(unittest.TestCase):
         self.home = patch.object(paths, 'DATA_DIR', self.temp.name)
         self.home.start()
         self.addCleanup(self.home.stop)
+        self.upload_home = patch.object(paths, 'UPLOAD_DIR', os.path.join(self.temp.name, 'upload'))
+        self.upload_home.start()
+        self.addCleanup(self.upload_home.stop)
         display_turns.INITIALIZED.clear()
         self.addCleanup(display_turns.INITIALIZED.clear)
         self.ns = _namespace({})
@@ -175,6 +180,8 @@ class StreamImageTests(unittest.TestCase):
         self.assertIsNotNone(native, '模型请求里必须带原生图片内容')
         self.assertEqual(native[0]['text'], '这图里写了什么')
         self.assertTrue(native[1]['image_url']['url'].startswith('data:image/png;base64,'))
+        self.assertTrue(self.brain.image_paths[0])
+        self.assertTrue(os.path.isfile(self.brain.image_paths[0]))
         # The image state is announced before the answer, not after.
         kinds = [e.get('type') for e in events]
         self.assertEqual(kinds[0], 'image')
