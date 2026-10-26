@@ -12,7 +12,7 @@ const CHANNELS = [
   'video-window:visible', 'video-window:action',
 ];
 
-function createNativeWindowService({ ipcMain, getWindow }) {
+function createNativeWindowService({ ipcMain, getWindow, getSettingsWindow = () => null }) {
   let helper = null;
   let helperReady = false;
   let pending = [];
@@ -20,6 +20,7 @@ function createNativeWindowService({ ipcMain, getWindow }) {
   let shutdownWaiter = null;
   let helperExitSafe = true;
   let hosted = null;                 // {profileName, exePath, pid} —— 托管的到底是哪个软件
+  let invalidGeometry = false;
   const profileFile = path.join(app.getPath('userData'), 'p15-video-apps.json');
 
   function profiles() {
@@ -32,9 +33,13 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     fs.mkdirSync(path.dirname(profileFile), { recursive: true });
     fs.writeFileSync(profileFile, JSON.stringify(data, null, 2), 'utf8');
   }
+  function senderWindow(event, allowSettings = false) {
+    const windows = [getWindow(), ...(allowSettings ? [getSettingsWindow()] : [])];
+    return windows.find(target => target && !target.isDestroyed() &&
+      event.sender === target.webContents);
+  }
   function trusted(event) {
-    const target = getWindow();
-    return target && !target.isDestroyed() && event.sender === target.webContents;
+    return !!senderWindow(event);
   }
   function emit(message) {
     try {
@@ -65,6 +70,21 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     readline.createInterface({ input: helper.stdout }).on('line', line => {
       try {
         const event = JSON.parse(line);
+        if (event.type === 'attached' && Array.isArray(event.screenRect)) {
+          const [left, top, right, bottom] = event.screenRect;
+          invalidGeometry = event.screenRect.length !== 4 ||
+            !event.screenRect.every(Number.isFinite) || right - left <= 1 || bottom - top <= 1;
+          if (invalidGeometry) {
+            nativeState = 'bounds-invalid';
+            emit({ type: 'bounds-error', state: nativeState, screenRect: event.screenRect,
+              message: '软件窗口尺寸无效，正在解除托管并恢复独立窗口；请重新进入工作台后再启动。' });
+            send('DETACH');
+            return;
+          }
+        }
+        if (event.type === 'state' && event.state === 'attached' && invalidGeometry) {
+          event.state = 'bounds-invalid';
+        }
         if (event.type === 'state') {
           nativeState = event.state || nativeState;
           helperExitSafe = ['idle', 'detached', 'fallback', 'resident'].includes(event.state) || !event.state;
@@ -125,7 +145,7 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     const content = target.getContentBounds();
     const dip = normalizeDipBounds(bounds, content);
     if (!dip) {
-      console.warn('[video-window] Ignoring non-finite bounds update');
+      console.warn('[video-window] Ignoring missing or invalid bounds update');
       return null;
     }
     let rect;
@@ -134,11 +154,23 @@ function createNativeWindowService({ ipcMain, getWindow }) {
       console.warn('[video-window] Could not convert bounds:', String(error && error.message || error).slice(0, 160));
       return null;
     }
-    if (![rect && rect.x, rect && rect.y, rect && rect.width, rect && rect.height].every(Number.isFinite)) {
+    if (![rect && rect.x, rect && rect.y, rect && rect.width, rect && rect.height].every(Number.isFinite) ||
+        rect.width <= 1 || rect.height <= 1) {
       console.warn('[video-window] Ignoring invalid screen bounds result');
       return null;
     }
-    return `BOUNDS\t${Math.round(rect.x)}\t${Math.round(rect.y)}\t${Math.max(1, Math.round(rect.width))}\t${Math.max(1, Math.round(rect.height))}`;
+    return `BOUNDS\t${Math.round(rect.x)}\t${Math.round(rect.y)}\t${Math.round(rect.width)}\t${Math.round(rect.height)}`;
+  }
+  function requireBounds(bounds) {
+    const next = bounds == null ? lastBounds : bounds;
+    const command = boundsCommand(next);
+    if (!command) {
+      const message = '视频工作台显示区域尚未就绪或尺寸换算失败，请保持工作台可见后重试。';
+      emit({ type: 'bounds-error', state: nativeState, message });
+      throw new Error(message);
+    }
+    lastBounds = next;
+    return command.split('\t').slice(1);
   }
   function pushBounds() {
     if (!helper || !lastBounds) return;
@@ -160,19 +192,20 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     }
     return exePath;
   }
-  function handle(channel, callback) {
+  function handle(channel, callback, allowSettings = false) {
     ipcMain.handle(channel, (event, ...args) => {
-      if (!trusted(event)) throw new Error('Unexpected video window IPC sender');
-      return callback(...args);
+      const sender = senderWindow(event, allowSettings);
+      if (!sender) throw new Error('Unexpected video window IPC sender');
+      return callback(...args, sender);
     });
   }
 
-  handle('video-window:pick-exe', async () => {
-    const target = getWindow();
+  handle('video-window:pick-exe', async target => {
     const result = await dialog.showOpenDialog(target, { properties: ['openFile'], filters: [{ name: 'Windows 应用程序', extensions: ['exe'] }] });
     return result.canceled ? null : selectedExe(result.filePaths[0]);
-  });
-  handle('video-window:profiles', () => profiles());
+  }, true);
+  // The settings window can manage profiles, but cannot control hosted windows.
+  handle('video-window:profiles', () => profiles(), true);
   handle('video-window:save-profile', profile => {
     const exePath = selectedExe(profile && profile.exePath);
     const data = profiles();
@@ -182,36 +215,40 @@ function createNativeWindowService({ ipcMain, getWindow }) {
     if (index < 0) data.push(item); else data[index] = item;
     saveProfiles(data);
     return data;
-  });
+  }, true);
   handle('video-window:delete-profile', id => {
     const data = profiles().filter(p => p.id !== String(id || ''));
     saveProfiles(data); return data;
-  });
+  }, true);
   handle('video-window:start', (profile, bounds) => {
     if (process.platform !== 'win32') throw new Error('原生窗口托管目前仅支持 Windows。');
     const exePath = selectedExe(profile && profile.exePath);
     const target = getWindow();
+    const rectFields = requireBounds(bounds);
     startHelper(target);
     emit({ type: 'start-requested', exePath, profileName: String(profile && profile.name || '') });
     if (target && !target.isDestroyed()) target.focus();
-    lastBounds = bounds || lastBounds;
-    const rectFields = (boundsCommand(bounds) || 'BOUNDS\t0\t0\t1\t1').split('\t').slice(1);
     send(`START\t${encode(exePath)}\t${encode(profile && profile.args)}\t${rectFields.join('\t')}`);
     send('SHOW');
     return { ok: true, exePath, state: nativeState };
   });
   const onBounds = (event, bounds) => {
     if (!trusted(event)) return;
-    lastBounds = bounds;
-    if (!helper) return;
     try {
       const command = boundsCommand(bounds);
-      if (command) send(command);
+      if (command) {
+        lastBounds = bounds;
+        if (helper) send(command);
+      }
     } catch (error) {
       console.warn('[video-window] Bounds update failed:', String(error && error.message || error).slice(0, 160));
     }
   };
-  const onVisible = (event, visible) => { if (trusted(event) && helper) send(visible ? 'SHOW' : 'HIDE'); };
+  const onVisible = (event, visible) => {
+    if (!trusted(event)) return;
+    if (!visible) lastBounds = null;
+    if (helper) send(visible ? 'SHOW' : 'HIDE');
+  };
   const onAction = (event, action) => {
     if (!trusted(event) || !helper) return;
     if (['ATTACH', 'DETACH', 'FOCUS', 'CLOSE_APP', 'STATUS'].includes(action)) send(action);
@@ -266,13 +303,17 @@ function createNativeWindowService({ ipcMain, getWindow }) {
       if (!item) return { ok: false, error: 'profile_not_found', detail: '没有这个软件配置：' + profileId };
       if (process.platform !== 'win32') return { ok: false, error: 'unsupported_platform', detail: '原生窗口托管目前仅支持 Windows' };
       const target = getWindow();
+      let rectFields;
+      try {
+        rectFields = requireBounds(bounds);
+      } catch (error) {
+        return { ok: false, error: 'invalid_bounds', detail: error.message };
+      }
       try {
         startHelper(target);
       } catch (error) {
         return { ok: false, error: 'helper_start_failed', detail: String(error && error.message || error) };
       }
-      lastBounds = bounds || lastBounds;
-      const rectFields = (boundsCommand(bounds) || 'BOUNDS\t0\t0\t1\t1').split('\t').slice(1);
       send(`START\t${encode(item.exePath)}\t${encode(item.args)}\t${rectFields.join('\t')}`);
       send('SHOW');
       hosted = { profileName: item.name, exePath: item.exePath, pid: null };

@@ -4857,6 +4857,9 @@
         v.innerHTML = '<div class="card">视频窗口配置需要在 Windows 桌面客户端中管理。</div>';
         return;
       }
+      let analysis = null;
+      try { analysis = pick(await get('/api/video-analysis/settings')); }
+      catch (error) { analysis = {ok:false, _err:error.message}; }
       let rows = [];
       let selectedId = '';
       let creating = false;
@@ -4870,9 +4873,29 @@
           '<label>EXE 路径<div class="video-path-row"><input id="vaExe" readonly placeholder="选择本机 EXE" value="' + esc(current.exePath) + '"><button class="btn" id="vaPick">选择 EXE</button></div></label>' +
           '<details class="video-advanced"><summary>高级启动选项</summary><label>启动参数<input id="vaArgs" maxlength="2048" placeholder="可留空" value="' + esc(current.args || '') + '"></label></details>' +
           '<div class="video-actions"><button class="btn primary" id="vaSave">保存配置</button>' + (current.id ? '<button class="btn" id="vaDelete">删除配置</button>' : '') + '<span class="video-status" id="vaStatus" role="status"></span></div></div></div>';
-        v.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => { creating = false; selectedId = button.dataset.profile; draw(); }));
+        const modelCard = '<div class="card video-settings-card"><b>独立视频分析模型</b>' +
+          '<p class="muted">使用视觉模型建立片段描述、筛选相关片段并回看取证。不使用向量模型；失败直接报错，不切换模型。保存设置不会调用模型或自动发送画面。</p>' +
+          (analysis && analysis.ok ? '<label class="field">分析模型<select class="input" id="vaAnalysisModel">' +
+            analysis.models.map(item => '<option value="' + esc(item.id) + '"' + (item.id === analysis.model_id ? ' selected' : '') + '>' + esc(item.name + ' · ' + item.provider) + '</option>').join('') +
+            '</select></label><p class="muted">可在“模型管理”添加其他模型。所选模型须支持图片；切换后片段描述索引需要重新建立。Ego 目前仅独立准备，不加入自动委派。</p><button class="btn" id="vaAnalysisSave">保存分析模型</button><span id="vaAnalysisResult" role="status"></span>' :
+            '<p role="alert">分析模型设置读取失败：' + esc((analysis && (analysis._err || analysis.err)) || '请升级或检查本地内核') + '</p>') + '</div>';
+        v.insertAdjacentHTML('beforeend', modelCard);
+        const modelSave = v.querySelector('#vaAnalysisSave');
+        if (modelSave) modelSave.addEventListener('click', async () => {
+          modelSave.disabled = true;
+          const status = v.querySelector('#vaAnalysisResult');
+          status.textContent = '正在保存…';
+          try {
+            const result = pick(await post('/api/video-analysis/settings', {model_id:v.querySelector('#vaAnalysisModel').value}));
+            if (!result.ok) throw new Error(result._err || result.err || '保存失败');
+            analysis = result;
+            status.textContent = '已保存；未发起模型请求。新模型将使用独立的片段描述索引。';
+          } catch (error) { status.textContent = '保存失败：' + error.message; }
+          finally { modelSave.disabled = false; }
+        });
+        v.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => { creating = false; selectedId = button.dataset.profile; refresh(); }));
         const setMessage = message => { const target = v.querySelector('#vaStatus'); if (target) target.textContent = message; };
-        v.querySelector('#vaNew').addEventListener('click', () => { creating = true; selectedId = ''; draw(); });
+        v.querySelector('#vaNew').addEventListener('click', () => { creating = true; selectedId = ''; refresh(); });
         v.querySelector('#vaPick').addEventListener('click', async () => {
           try {
             const file = await api.pickExe();
@@ -4886,16 +4909,24 @@
             const saved = await api.saveProfile({ id: selectedId, name: v.querySelector('#vaName').value, exePath, args: v.querySelector('#vaArgs').value });
             const match = saved.find(row => row.exePath.toLowerCase() === exePath.toLowerCase() && row.name === v.querySelector('#vaName').value.trim());
             creating = false; selectedId = match ? match.id : selectedId;
-            toast('软件配置已保存'); await draw();
+            toast('软件配置已保存'); await refresh();
           } catch (error) { setMessage(error.message); }
         });
         const remove = v.querySelector('#vaDelete');
         if (remove) remove.addEventListener('click', async () => {
           if (!await confirmDialog('删除此软件配置？')) return;
-          await api.deleteProfile(selectedId); creating = false; selectedId = ''; await draw();
+          await api.deleteProfile(selectedId); creating = false; selectedId = ''; await refresh();
         });
       };
-      await draw();
+      async function refresh() {
+        try { await draw(); }
+        catch (error) {
+          v.innerHTML = '<div class="card err" role="alert"><b>视频软件配置读取失败</b><p>' + esc(error.message || String(error)) + '</p><button class="btn" id="vaRetry">重试</button></div>';
+          v.querySelector('#vaRetry').onclick = refresh;
+        }
+      }
+      v.innerHTML = '<div class="card" role="status">正在读取视频软件配置…</div>';
+      await refresh();
     }
 
     async function about() {
@@ -5003,7 +5034,7 @@
     if (want && draw[want]) {
       modelRenderId++;
       ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x.dataset.k === want));
-      draw[want]();
+      await draw[want]();
       return;
     }
     modelRenderId++;

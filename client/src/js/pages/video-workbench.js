@@ -3,19 +3,36 @@
   const { state } = API;
 
   async function renderVideoWorkbench(ctx) {
-    ctx.topbar.innerHTML = '<div class="top-title">视频工作台</div><div class="top-subtitle">托管本机 Windows 软件</div>';
+    ctx.topbar.innerHTML = '<div class="top-title">视频工作台</div><div class="top-subtitle">本地播放与外部软件</div>';
     ctx.view.innerHTML = `
       <section class="video-workbench">
-        <div class="video-host-frame"><div class="video-host-slot" id="videoHostSlot"><span>启动软件后，窗口将在此处显示</span></div></div>
-        <div class="video-tools">
+        <div class="video-mode-tools" role="group" aria-label="视频工作台模式">
+          <button class="btn" id="videoModePlayer" aria-pressed="true">内置播放器</button>
+          <button class="btn" id="videoModeExternal" aria-pressed="false">外部软件</button>
+        </div>
+        <div class="video-media-frame" id="videoMediaPane">
+          <video id="videoPlayer" controls playsinline preload="metadata" aria-label="本地视频播放器"></video>
+          <span class="video-media-empty" id="videoMediaEmpty">打开本地视频开始播放</span>
+        </div>
+        <div class="video-host-frame" id="videoExternalPane" hidden><div class="video-host-slot" id="videoHostSlot"><span>启动软件后，窗口将在此处显示</span></div></div>
+        <div class="video-tools" id="videoPlayerTools">
+          <input type="file" id="videoFileInput" accept="video/*,.mkv,.mov,.m4v,.avi" hidden>
+          <button class="btn primary" id="videoOpenFile">打开视频</button>
+          <label class="video-speed-label">倍速<select id="videoPlaybackRate" aria-label="播放速度">
+            <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+          </select></label>
+          <span class="video-status" id="videoPlayerStatus" role="status">视频只在本机播放，不会自动发送给模型。</span>
+        </div>
+        <div class="video-tools" id="videoExternalTools" hidden>
           <label class="video-profile-label"><span>软件</span><select id="videoProfileSelect"><option value="">尚未配置软件</option></select></label>
           <button class="btn primary" id="videoStart">启动并托管</button>
           <button class="btn" id="videoDetach">解除托管</button>
           <button class="btn video-settings-link" id="videoSettings">软件设置</button>
           <span class="video-status" id="videoStatus" role="status">在“软件设置”中添加本机 Windows 软件。</span>
         </div>
-        <section class="video-ai-workspace" aria-label="AI 剪视频工作区预留区域">
-          <div><span class="video-ai-eyebrow">后续接入</span><h2>AI 剪视频工作区</h2><p>此区域预留给后续 AI 视频剪辑功能。</p></div>
+        <section class="video-ai-workspace" aria-label="独立视频问答预留区域">
+          <div><span class="video-ai-eyebrow">后续独立接入</span><h2>EgoAgent 视频问答</h2><p>文本问答尚未连接；当前仅提供本地播放，不启动分析任务。</p></div>
         </section>
       </section>`;
 
@@ -23,7 +40,70 @@
     const api = global.vigil && global.vigil.videoWindow;
     const status = $('videoStatus');
     const setStatus = value => { status.textContent = String(value || ''); };
-    if (!api) { setStatus('此页面需要在 Windows 桌面客户端中运行。'); return; }
+    const player = $('videoPlayer');
+    const playerStatus = $('videoPlayerStatus');
+    const input = $('videoFileInput');
+    let mediaUrl = null;
+    let playerActive = true;
+    let syncHostedVisibility = () => {};
+    let mode = state.videoWorkbenchMode === 'external' ? 'external' : 'player';
+    const switchMode = next => {
+      mode = next;
+      state.videoWorkbenchMode = mode;
+      const internal = mode === 'player';
+      $('videoMediaPane').hidden = !internal;
+      $('videoPlayerTools').hidden = !internal;
+      $('videoExternalPane').hidden = internal;
+      $('videoExternalTools').hidden = internal;
+      $('videoModePlayer').setAttribute('aria-pressed', String(internal));
+      $('videoModeExternal').setAttribute('aria-pressed', String(!internal));
+      if (!internal) player.pause();
+      syncHostedVisibility();
+    };
+    const releaseMedia = () => {
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      if (mediaUrl) global.URL.revokeObjectURL(mediaUrl);
+      mediaUrl = null;
+    };
+    $('videoModePlayer').onclick = () => switchMode('player');
+    $('videoModeExternal').onclick = () => switchMode('external');
+    $('videoOpenFile').onclick = () => input.click();
+    input.addEventListener('change', () => {
+      if (!playerActive) return;
+      const file = input.files && input.files[0];
+      input.value = ''; // Selecting the same video again must still fire change.
+      if (!file) return;
+      if (!file.size || (!String(file.type || '').startsWith('video/') &&
+          !/\.(mp4|webm|mov|mkv|m4v|ogv|ogg|avi)$/i.test(file.name))) {
+        playerStatus.textContent = '请选择非空的视频文件。'; return;
+      }
+      try {
+        releaseMedia();
+        mediaUrl = global.URL.createObjectURL(file);
+        player.src = mediaUrl;
+        player.playbackRate = Number($('videoPlaybackRate').value || 1);
+        $('videoMediaEmpty').hidden = true;
+        playerStatus.textContent = file.name + ' — 点击播放开始；若无法解码，请尝试 MP4（H.264）或 WebM。';
+        switchMode('player');
+        player.load();
+      } catch (error) { playerStatus.textContent = '打开视频失败：' + error.message; }
+    });
+    $('videoPlaybackRate').addEventListener('change', () => {
+      const rate = Number($('videoPlaybackRate').value);
+      if (Number.isFinite(rate) && rate >= 0.5 && rate <= 2) player.playbackRate = rate;
+    });
+    player.addEventListener('error', () => {
+      if (mediaUrl && playerActive) playerStatus.textContent = '此视频无法播放，可能是编码不受支持或文件已损坏。请尝试 MP4（H.264）或 WebM。';
+    });
+    switchMode(mode);
+    ctx.onDispose(() => { playerActive = false; releaseMedia(); });
+    if (!api) {
+      $('videoModeExternal').disabled = true;
+      switchMode('player');
+      setStatus('外部软件托管需要 Windows 桌面客户端。'); return;
+    }
     const slot = $('videoHostSlot');
     const select = $('videoProfileSelect');
     let profileRows = [];
@@ -34,15 +114,17 @@
       const rect = slot.getBoundingClientRect();
       return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, dpr: window.devicePixelRatio || 1 };
     };
-    const updateBounds = () => { if (active && slot.isConnected) api.bounds(getBounds()); };
+    const updateBounds = () => { if (active && slot.isConnected && mode === 'external') api.bounds(getBounds()); };
     // 容器的显隐由“页面还在 + 主窗口没藏起来 + 绑定区域在视口里”共同决定。
     // 不用 document.visibilityState：窗口被别的程序遮住时它也会变 hidden，
     // 而恢复时并不保证回发事件，容器会一直停在隐藏状态。
     const applyVisibility = () => {
       if (!active || !slot.isConnected) return;
+      if (mode !== 'external') { api.visible(false); return; }
       updateBounds();
       api.visible(windowShown && slotInView);
     };
+    syncHostedVisibility = applyVisibility;
     const observer = new ResizeObserver(updateBounds);
     observer.observe(slot);
     window.addEventListener('resize', updateBounds);
@@ -79,10 +161,12 @@
         slot.classList.add('is-hosted');
         applyVisibility();
       } else if (event.type === 'detached' || event.type === 'fallback' || event.type === 'exited' ||
-                 event.type === 'window-closed-resident' || event.type === 'helper-exit') {
+                 event.type === 'window-closed-resident' || event.type === 'helper-exit' ||
+                 (event.type === 'bounds-error' && event.state === 'bounds-invalid')) {
         slot.classList.remove('is-hosted');
       }
       const labels = {
+        'bounds-error': event.message || '窗口显示区域未就绪，请保持工作台可见后重试。',
         ready: '原生窗口模块已就绪。', started: '软件进程已启动，正在发现主窗口…',
         'adopted-existing': '软件已经在运行，正在接管它现有的窗口…',
         attached: `软件窗口已就位（PID ${event.pid}）。`,
@@ -106,7 +190,7 @@
         'tracking-fallback': 'Windows 作业跟踪不可用，正在跟踪已发现的进程。',
         recreated: '检测到软件重建窗口，正在重新托管…',
         exited: '软件已退出，可以启动其他配置。',
-        state: ({ idle: '请选择并启动软件。', starting: '软件正在启动或等待窗口。', attaching: '正在重新托管已运行的软件窗口。', attached: '软件窗口已托管。', 'window-hidden': '软件窗口暂时隐藏。', 'window-rebuilding': '软件正在重建主窗口。', detached: '软件仍在运行，窗口已解除托管。', resident: '软件进程仍驻留，可以启动其他配置。', fallback: '软件正在独立窗口运行。', busy: '另一个配置仍在运行。', 'restore-failed': '窗口恢复失败，保留 HWND 并自动重试。' })[event.state] || `软件状态：${event.state || '未知'}`,
+        state: ({ idle: '请选择并启动软件。', starting: '软件正在启动或等待窗口。', attaching: '正在重新托管已运行的软件窗口。', attached: '软件窗口已托管。', 'bounds-invalid': '软件窗口尺寸无效，正在恢复独立窗口。', 'window-hidden': '软件窗口暂时隐藏。', 'window-rebuilding': '软件正在重建主窗口。', detached: '软件仍在运行，窗口已解除托管。', resident: '软件进程仍驻留，可以启动其他配置。', fallback: '软件正在独立窗口运行。', busy: '另一个配置仍在运行。', 'restore-failed': '窗口恢复失败，保留 HWND 并自动重试。' })[event.state] || `软件状态：${event.state || '未知'}`,
       };
       if (labels[event.type]) setStatus(labels[event.type]);
       else if (event.type === 'error') setStatus(`窗口托管错误（${event.stage}，${event.code}）：${event.message}`);
@@ -125,20 +209,37 @@
       try {
         const launchProfile = profileRows.find(row => row.id === select.value);
         if (!launchProfile) { setStatus('请先在“软件设置”中添加或选择软件。'); return; }
+        const bounds = getBounds();
+        if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) ||
+            bounds.width <= 1 || bounds.height <= 1) {
+          setStatus('视频工作台显示区域尚未就绪，请保持工作台可见后重试。'); return;
+        }
         await api.action('ATTACH');
+        if (!active || !slot.isConnected) return;
         setStatus('正在启动软件…'); await api.start(launchProfile, getBounds()); applyVisibility();
       } catch (error) { setStatus(error.message); }
     });
     $('videoDetach').onclick = () => api.action('DETACH');
-    $('videoSettings').onclick = () => { state.settingsDetail = true; state.settingsSub = 'video-apps'; ctx.navigate('system'); };
-    await refreshProfiles();
-    api.action('STATUS');
-    applyVisibility();
+    $('videoSettings').onclick = async () => {
+      try {
+        if (global.vigil?.settings?.open) {
+          await global.vigil.settings.open({section: 'video-apps'});
+        } else {
+          state.settingsDetail = true; state.settingsSub = 'video-apps';
+          await ctx.navigate('system');
+        }
+      } catch (error) { setStatus('无法打开软件设置：' + error.message); }
+    };
     ctx.onDispose(() => {
       active = false; observer.disconnect(); intersection.disconnect();
       window.removeEventListener('resize', updateBounds); offWindowVisibility(); offEvents();
       api.visible(false);
     });
+    try { await refreshProfiles(); }
+    catch (error) { setStatus('软件配置读取失败：' + error.message); }
+    if (!active) return;
+    api.action('STATUS');
+    applyVisibility();
   }
 
 

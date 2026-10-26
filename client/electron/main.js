@@ -529,7 +529,9 @@ function createWindow() {
       }
       callback({});
     });
-  nativeWindowService = require('./native-window-service').createNativeWindowService({ ipcMain, getWindow: () => win });
+  nativeWindowService = require('./native-window-service').createNativeWindowService({
+    ipcMain, getWindow: () => win, getSettingsWindow: () => settingsWin,
+  });
   // 托管的软件窗口是 Electron 窗口的原生子窗口，只能由主进程改显隐。
   // 这里只广播“主窗口自己是否隐藏”，由渲染层结合当前页面决定要不要重新显示；
   // 主进程不直接 SHOW，否则停在聊天页时外部窗口会盖住界面。

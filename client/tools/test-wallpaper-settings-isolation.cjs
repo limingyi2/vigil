@@ -21,13 +21,12 @@ test('plugin loads reject unknown or destroyed BrowserWindow senders', () => {
   assert.equal(findWindowForContents(sender, null), null);
 });
 
-test('bounds conversion uses finite rectangle coordinates and safe defaults', () => {
+test('bounds conversion keeps valid coordinates and rejects missing layout', () => {
   assert.deepEqual(
     normalizeDipBounds({ x: 11, y: 12, width: 640, height: 360, dpr: 2 }, { x: 100, y: 200 }),
     { x: 111, y: 212, width: 640, height: 360 },
   );
-  assert.deepEqual(normalizeDipBounds(undefined, { x: 100, y: 200 }),
-    { x: 100, y: 200, width: 1, height: 1 });
+  assert.equal(normalizeDipBounds(undefined, { x: 100, y: 200 }), null);
 });
 
 test('non-finite or overflowing geometry is rejected before reaching Electron screen APIs', () => {

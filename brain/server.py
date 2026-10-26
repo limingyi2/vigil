@@ -2692,6 +2692,18 @@ def start_remote_api(brain):
                     import localtools as _lt
                     self._json(200, {"ok": True, "items": _lt.audit()})
                     return
+                if path == "/api/video-analysis/settings":
+                    if not self._is_admin():
+                        self._json(403, {"ok": False, "err": "视频分析设置只允许管理员修改"})
+                        return
+                    import video_analysis
+                    try:
+                        with _chat_lock():
+                            result = video_analysis.save_settings(API_CFG, body)
+                        self._json(200, result)
+                    except ValueError as exc:
+                        self._json(400, {"ok": False, "err": str(exc)})
+                    return
                 if path == "/api/retrieval/settings":
                     # Desktop retrieval preference. This is independent of
                     # retrieval.unified: switching off semantic keeps BM25.
@@ -4589,6 +4601,9 @@ def start_remote_api(brain):
                                       for k, v in model_hub.PROVIDERS.items()],
                         "groups": dict(model_hub.FALLBACK),
                         "source": "fallback", "count": 0})
+            elif path == "/api/video-analysis/settings":
+                import video_analysis
+                self._json(200, video_analysis.settings(API_CFG))
             elif path == "/api/retrieval/settings":
                 from storage import unified as _retrieval
                 self._json(200, {"ok": True,

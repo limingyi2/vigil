@@ -22,6 +22,12 @@ function harness() {
     const listeners = new Map();
     const item = {
       id, textContent: '', value: '', isConnected: true, listeners,
+      paused: true, playbackRate: 1,
+      pause() { this.paused = true; calls.push(['pause', id]); },
+      load() { calls.push(['load', id]); },
+      click() { calls.push(['click', id]); },
+      setAttribute(name, value) { this[name] = value; },
+      removeAttribute(name) { delete this[name]; },
       classList: {
         values: new Set(),
         add(value) { this.values.add(value); },
@@ -47,8 +53,12 @@ function harness() {
     disconnect() { this.disconnected = true; }
   }
 
-  const state = {settingsDetail: false, settingsSub: ''};
+  const state = {settingsDetail: false, settingsSub: '', videoWorkbenchMode: 'external'};
   const window = {
+    URL: {
+      createObjectURL(file) { const url = 'blob:fixture/' + file.name; calls.push(['create-url', file.name]); return url; },
+      revokeObjectURL(url) { calls.push(['revoke-url', url]); },
+    },
     devicePixelRatio: 2,
     addEventListener(type, fn) {
       const set = windowListeners.get(type) || new Set();
@@ -208,7 +218,7 @@ test('entering from chat preserves markup, profile/actions and capability reques
 test('leaving and re-entering releases observers and listeners without duplicate subscriptions', async () => {
   const h = harness();
   await h.renderer(h.ctx);
-  const cleanup = h.cleanups[0];
+  const cleanup = () => h.cleanups.forEach(fn => fn());
   assert.equal(h.windowListeners.get('resize').size, 1);
   assert.equal(h.windowCallbacks.size, 1);
   assert.equal(h.eventCallbacks.size, 1);
@@ -229,8 +239,133 @@ test('leaving and re-entering releases observers and listeners without duplicate
   assert.equal(h.windowCallbacks.size, 1);
   assert.equal(h.eventCallbacks.size, 1);
   assert.equal(h.calls.filter(row => row[0] === 'profiles').length, 2);
-  h.cleanups[1]();
+  cleanup();
   assert.equal(h.windowListeners.get('resize').size, 0);
   assert.equal(h.windowCallbacks.size, 0);
   assert.equal(h.eventCallbacks.size, 0);
+});
+
+test('unlaid-out workbench does not attach or launch software', async () => {
+  const h = harness();
+  await h.renderer(h.ctx);
+  h.nodes.get('videoProfileSelect').value = 'profile-1';
+  h.nodes.get('videoHostSlot').getBoundingClientRect = () => ({left: 0, top: 0, width: 0, height: 0});
+  await h.nodes.get('videoStart').listeners.get('click')();
+  assert.equal(h.calls.filter(row => row[0] === 'start').length, 0);
+  assert.deepEqual(h.calls.filter(row => row[0] === 'action'), [['action', 'STATUS']]);
+  assert.match(h.nodes.get('videoStatus').textContent, /显示区域尚未就绪/);
+});
+
+test('invalid native geometry removes hosted placeholder state and reports a usable error', async () => {
+  const h = harness();
+  await h.renderer(h.ctx);
+  for (const callback of h.eventCallbacks) callback({type: 'attached', state: 'attached', pid: 41});
+  const slot = h.nodes.get('videoHostSlot');
+  assert.ok(slot.classList.values.has('is-hosted'));
+  for (const callback of h.eventCallbacks) callback({
+    type: 'bounds-error', state: 'bounds-invalid', message: '软件窗口尺寸无效，正在恢复独立窗口。',
+  });
+  assert.ok(!slot.classList.values.has('is-hosted'));
+  assert.match(h.nodes.get('videoStatus').textContent, /尺寸无效/);
+  assert.equal(h.calls.filter(row => row[0] === 'api').at(-1)[3].status.connected, false);
+});
+
+test('software settings opens the dedicated settings window at video-apps and reports failures', async () => {
+  const h = harness();
+  h.window.vigil.settings = {async open(options) {h.calls.push(['settings-open', options]);}};
+  await h.renderer(h.ctx);
+  await h.nodes.get('videoSettings').onclick();
+  assert.equal(h.calls.find(row => row[0] === 'settings-open')[1].section, 'video-apps');
+  assert.ok(!h.calls.some(row => row[0] === 'navigate'));
+  h.window.vigil.settings.open = async () => {throw new Error('settings failed');};
+  await h.nodes.get('videoSettings').onclick();
+  assert.match(h.nodes.get('videoStatus').textContent, /settings failed/);
+});
+
+test('software settings API errors are visible and retry can recover', async () => {
+  const source = fs.readFileSync(path.join(root, 'src/js/pages.js'), 'utf8');
+  const start = source.indexOf('    async function videoApps() {');
+  const end = source.indexOf('    async function about() {', start);
+  const nodes = new Map();
+  const v = {innerHTML: '', insertAdjacentHTML(_where, html) {this.innerHTML += html;}, querySelectorAll: () => [], querySelector(id) {
+    if (id === '#vaDelete' && !this.innerHTML.includes('id="vaDelete"')) return null;
+    if (!nodes.has(id)) nodes.set(id, {addEventListener(type, fn) {this[type] = fn;}});
+    return nodes.get(id);
+  }};
+  let failed = true;
+  let posted = null;
+  const modelSettings = {ok:true, model_id:'fixture', models:[{id:'fixture',name:'Vision',provider:'fixture'}]};
+  const render = vm.runInNewContext(`(${source.slice(start, end).trim()})`, {
+    ctx: {topbar: {querySelector: () => ({textContent: ''})}}, v,
+    global: {vigil: {videoWindow: {async profiles() {
+      if (failed) throw new Error('Unexpected video window IPC sender');
+      return [];
+    }}}}, esc: value => String(value), toast() {}, confirmDialog: async () => false,
+    pick: value => value, get: async () => modelSettings,
+    post: async (path, body) => {posted = {path, body}; return modelSettings;},
+  });
+  await render();
+  assert.match(v.innerHTML, /视频软件配置读取失败/);
+  assert.equal(typeof nodes.get('#vaRetry').onclick, 'function');
+  failed = false;
+  await nodes.get('#vaRetry').onclick();
+  assert.match(v.innerHTML, /新建配置/);
+  assert.doesNotMatch(v.innerHTML, /读取失败/);
+  assert.equal(posted, null, 'opening settings must not save or call a model');
+  v.querySelector('#vaAnalysisModel').value = 'fixture';
+  await nodes.get('#vaAnalysisSave').click();
+  assert.equal(posted.path, '/api/video-analysis/settings');
+  assert.equal(posted.body.model_id, 'fixture');
+  assert.match(nodes.get('#vaAnalysisResult').textContent, /未发起模型请求/);
+});
+
+test('built-in player is the default and selecting a file does not upload or invoke analysis', async () => {
+  const h = harness();
+  delete h.state.videoWorkbenchMode;
+  await h.renderer(h.ctx);
+  assert.equal(h.nodes.get('videoMediaPane').hidden, false);
+  assert.equal(h.nodes.get('videoExternalPane').hidden, true);
+  assert.ok(!h.calls.some(row => row[0] === 'visible' && row[1]));
+  h.nodes.get('videoFileInput').files = [{name: '<local>.webm', type: 'video/webm', size: 100}];
+  h.nodes.get('videoFileInput').listeners.get('change')();
+  assert.equal(h.nodes.get('videoPlayer').src, 'blob:fixture/<local>.webm');
+  assert.match(h.nodes.get('videoPlayerStatus').textContent, /<local>.webm/);
+  assert.equal(h.calls.filter(row => row[0] === 'api').length, 0);
+  assert.equal(h.calls.filter(row => row[0] === 'start').length, 0);
+});
+
+test('replacing and disposing media releases object URLs, and switching modes pauses playback', async () => {
+  const h = harness();
+  await h.renderer(h.ctx);
+  const input = h.nodes.get('videoFileInput');
+  const change = input.listeners.get('change');
+  input.files = [{name: 'first.webm', type: 'video/webm', size: 100}]; change();
+  input.files = [{name: 'second.webm', type: 'video/webm', size: 100}]; change();
+  assert.ok(h.calls.some(row => row[0] === 'revoke-url' && row[1] === 'blob:fixture/first.webm'));
+  h.nodes.get('videoPlaybackRate').value = '1.5';
+  h.nodes.get('videoPlaybackRate').listeners.get('change')();
+  assert.equal(h.nodes.get('videoPlayer').playbackRate, 1.5);
+  h.nodes.get('videoPlayer').paused = false;
+  h.nodes.get('videoModeExternal').onclick();
+  assert.equal(h.nodes.get('videoPlayer').paused, true);
+  assert.equal(h.nodes.get('videoExternalPane').hidden, false);
+  h.cleanups.forEach(fn => fn());
+  assert.equal(h.nodes.get('videoPlayer').src, undefined);
+  assert.ok(h.calls.some(row => row[0] === 'revoke-url' && row[1] === 'blob:fixture/second.webm'));
+});
+
+test('player works without native hosting and exposes invalid-file and decode errors', async () => {
+  const h = harness();
+  delete h.window.vigil;
+  await h.renderer(h.ctx);
+  assert.equal(h.nodes.get('videoModeExternal').disabled, true);
+  const input = h.nodes.get('videoFileInput');
+  input.files = [{name: 'unsafe.html', type: 'text/html', size: 100}];
+  input.listeners.get('change')();
+  assert.equal(h.calls.filter(row => row[0] === 'create-url').length, 0);
+  input.files = [{name: 'clip.mkv', type: '', size: 100}];
+  input.listeners.get('change')();
+  h.nodes.get('videoPlayer').listeners.get('error')();
+  assert.match(h.nodes.get('videoPlayerStatus').textContent, /编码不受支持/);
+  h.cleanups.forEach(fn => fn());
 });
