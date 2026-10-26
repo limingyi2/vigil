@@ -226,22 +226,15 @@ def sync_memory(owner, src, persona, chan):
 
 
 def sync_kb(owner, src, persona, chan):
-    """知识库语料块 → 检索索引。
-
-    块只能从 `kb.store_for(...).chunks()` 拿。`kb.list_docs()` 只给文档清单
-    而且字段名是 `name` 不是 `source` —— 拿它去取块会一条都取不到
-    （之前这里调的 `kb.load_chunks` 在仓库里根本不存在，异常被吞掉，
-    结果是知识库永远同步不进统一索引，检索时知识库看起来"没有内容"）。
-    """
+    """知识库直接写入统一索引；此函数只报告当前范围里的索引条数。"""
     try:
-        import kb
-        chunks = kb.store_for(persona or "", src or "app").chunks()
+        conn = db.connection("main")
+        count = conn.execute(
+            "SELECT COUNT(*) FROM search_docs WHERE scope_kind='kb' AND owner=? AND src=? AND persona=? AND chan=?",
+            (owner or "", src or "", persona or "", chan or "")).fetchone()[0]
     except Exception:
         return {"indexed": 0, "error": "kb_unavailable"}
-    if not chunks:
-        return {"indexed": 0}
-    return indexer.sync_kb_chunks(chunks, owner=owner, src=src,
-                                  persona=persona, chan=chan)
+    return {"indexed": int(count or 0)}
 
 
 def sync_workspaces(owner, src, persona, chan):

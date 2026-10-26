@@ -30,6 +30,9 @@ INITIALIZED = set()
 TRANSIENT = {}
 TERMINAL = frozenset({'succeeded', 'failed', 'cancelled', 'interrupted'})
 STOPPED = TERMINAL | {'paused_budget', 'paused'}
+# 可续跑的状态：resume() 校验 `status in STOPPED`，这里比它多排除一个
+# succeeded —— 成功的任务没有"继续"的语义，界面不该给它续跑按钮。
+RESUMABLE = (STOPPED - {'succeeded'})
 # One configuration source. Requests may lower these limits, never raise them.
 # 预算放开（2026-10-20）：默认预算不变，但配置可以往小时级调 —— 长任务的
 # "有没有进展"由看门狗管，预算只兜底"最多跑多久"。
@@ -935,12 +938,33 @@ def hide(owner):
             _save(db, item)
 
 
+def _can_resume(status):
+    """这个状态能不能续跑。界面与 resume() 共用同一个口径。
+
+    🔴 曾经两边不一致：后端 resume() 接受 STOPPED 里的全部状态，前端
+    只认 paused/paused_budget/interrupted，于是 failed（模型连接中断、
+    工具报错等最常见的失败）永远拿不到续跑入口 —— 用户只能重新发一遍，
+    前面跑了几十步的上下文全部作废。
+    """
+    return str(status or '') in RESUMABLE
+
+
 def display_records(owner):
+    """给界面看的运行摘要。
+
+    `can_resume` 是**显式契约**：客户端据此决定发送键画成"发送"还是"继续"，
+    不必自己猜哪些状态能续跑。判定口径与 `resume()` 的准入条件一致 ——
+    后端能续的，前端就得能续；否则会出现「刷新页面能续跑，任务当场失败
+    时却不能」的行为不一致（前端曾经漏掉 failed 与 cancelled）。
+
+    succeeded 不算可续跑：成功的任务没有"继续"的语义。
+    """
     return [dict(request_id=i['request_id'], run_id=i['run_id'], input=i['intent'],
         content=i['content'], result=i.get('result'), steps=[dict(s,
             input=_safe_event_value(s.get('input')),
             result=_safe_event_value(s.get('result'))) if s['kind']=='tool' else s for s in i['steps']],
         status=i['status'], error=i['error'], created_at=i['created_at'],
+        can_resume=_can_resume(i['status']),
         kind=i.get('kind', 'chat'), workspace_root=i.get('workspace_root'),
         coding=_safe_event_value(i.get('coding') or {}))
         for i in listing(owner)]
@@ -1474,6 +1498,10 @@ def resume(rid, owner, cfg, body=None, brain=None, start=True, workflow_scope=No
         if not item:
             raise ValueError('任务不存在')
         if item['status'] not in STOPPED:
+            # STOPPED 比界面的 RESUMABLE 多一个 succeeded —— 从技术上说
+            # 成功的 run 也能派生新 run（种子取它的检查点简报），但界面
+            # 不会给成功任务显示续跑键。两侧口径的差异只在这里一处，
+            # 改 RESUMABLE 时记得同步看这里。
             raise ValueError('任务仍在执行中，不能续跑')
         workflow_id = (item.get('coding') or {}).get('task_workflow_id')
         if workflow_id:

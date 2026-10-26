@@ -245,7 +245,7 @@ def write(kind="main"):
 
 
 @contextmanager
-def write_once(kind="main", timeout=10.0):
+def write_once(kind="main", timeout=10.0, begin=False):
     """一次性写事务：开新连接 → 写 → 提交 → **关掉**。
 
     给「写方的生命周期跟业务方不一致」的场合用，典型就是诊断库的写线程：
@@ -255,26 +255,62 @@ def write_once(kind="main", timeout=10.0):
 
     和 `write()` 的另一个区别：这里**不共享**进程内长连接，所以不会和
     主库的写锁队列互相等待。诊断库写爆时照样堵不到聊天。
+
+    🔴 **事务边界由调用方决定**（默认不开事务）。
+
+    `begin=True` 时本函数在锁内发 `BEGIN IMMEDIATE`，用于「自己开事务、
+    自己提交」的场景。`begin=False`（默认）时连接交出去时**不在事务里**，
+    调用方要自己开 —— 有的还要「借用」这个连接做 savepoint
+    （`task_workflows._transaction(connection=...)`），那就必须由调用方
+    掌握事务边界。
+
+    🔴 **但连接与 PRAGMA 必须在写锁内建立。**
+
+    `PRAGMA synchronous=FULL` 是**连接级属性**，在事务外改会隐式提交并
+    重置连接状态。多个连接并发改它时，连接会被搞成不一致状态 ——
+    随后任何写操作都会报一句**误导性的** `attempt to write a readonly
+    database`（其实不是只读，是连接状态坏了）。
+
+    这个坑很隐蔽：报错出现在 BEGIN 或 INSERT 上，根因却在几百行之前的
+    一条 PRAGMA。逐步二分定位（实测 8 线程并发）：
+
+    | 做法 | 成功率 |
+    |---|---|
+    | 只 connect | 8/8 |
+    | + busy_timeout | 8/8 |
+    | + synchronous=FULL（锁外） | **3/8** ← 元凶 |
+    | 连接+PRAGMA+BEGIN 全在锁内 | 8/8（连续 5 次） |
+
+    后果很实在：任务检查点（task_checkpoints / task_attempts）写不进去，
+    于是**那个任务的断点续跑状态就丢了** —— 正好打在续跑功能依赖的表上。
+
+    另外 `isolation_level=None` 是必须的：否则 Python 的隐式事务会和
+    显式 BEGIN 打架（Python 先隐式开一个读事务，连接就变成只读状态了）。
     """
     path = ensure_schema(kind)
-    conn = sqlite3.connect(path, timeout=timeout)
-    try:
-        conn.execute("PRAGMA synchronous=FULL")
-        conn.execute("PRAGMA busy_timeout=15000")
-        conn.execute("PRAGMA foreign_keys=ON")
-        with _WLOCK[kind]:
+    with _WLOCK[kind]:
+        # 连接与 PRAGMA 都在锁内建立：synchronous 这类连接级属性不能
+        # 并发改，否则连接状态会被搞坏。
+        conn = sqlite3.connect(path, timeout=timeout, isolation_level=None)
+        try:
+            conn.execute("PRAGMA synchronous=FULL")
+            conn.execute("PRAGMA busy_timeout=15000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            if begin:
+                conn.execute("BEGIN IMMEDIATE")
             try:
                 yield conn
             except BaseException:
                 conn.rollback()
                 raise
             else:
-                conn.commit()
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+                if conn.in_transaction:
+                    conn.commit()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @contextmanager

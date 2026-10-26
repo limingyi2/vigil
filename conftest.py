@@ -29,8 +29,31 @@ unittest 的 tearDown 里删不掉。
 🔴 而且不能只包 `unittest.TestCase.tearDown`：`RunTests` 这类子类
 **自己 override 了 tearDown**，包基类会被直接绕开。必须按 MRO 解析出
 "这个类真正会调到的那个 tearDown"，把包出来的版本挂到类自己身上。
+
+## 数据目录隔离（`_isolated_data_dir`）
+
+改造前 `tests/` 与 `brain/tests/` 下共 130+ 个测试文件**没有任何一个**
+统一隔离数据目录 —— 全量跑测试时直接连生产库 `brain/data/db/vigil.db`，
+既污染用户真实数据，又会因 WAL + `BEGIN IMMEDIATE` 竞争报
+`sqlite3.OperationalError: attempt to write a readonly database`，
+表现为「单跑通过、全量失败」且失败数在 3~6 之间波动。
+
+`storage.db.set_dir()` 本来就是为这件事准备的（`test_kb.py`、
+`test_p18_workflows.py` 等 6 个文件已经在用），这里把「各自手动隔离」
+升级成「默认就隔离」。实现见 `brain/_test_data_isolation.py`。
 """
+import os
+import sys
 import unittest
+
+# brain/ 与仓库根目录进 sys.path —— `brain/tests/test_codex_timeline.py`
+# 需要 `from tests import test_codex_adapter`（把 tests/ 当 namespace 包），
+# 而 brain/tests/ 里的测试直接 import 顶层模块（`import management`）。
+# 放在这里统一注入，`tests/` 与 `brain/tests/` 两个 testpath 都覆盖得到。
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.join(_ROOT, "brain"), _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 _MARK = "_p17_teardown_wrapped"
 
@@ -91,3 +114,30 @@ def pytest_collection_modifyitems(session, config, items):
 def pytest_runtest_teardown(item, nextitem):
     """给非 unittest 风格的测试（纯函数 + fixture）兜同样的底。"""
     _teardown_process_state()
+
+
+# --------------------------------------------------------------------------
+# 数据目录隔离
+# --------------------------------------------------------------------------
+# 用 pytest fixture 而不是 pytest_runtest_setup 钩子：fixture 拿到
+# tmp_path 与 monkeypatch 两个注入对象，且能保证在测试结束后才复位
+# （monkeypatch 的复位由 pytest 自动做，比钩子里手动恢复可靠）。
+
+try:
+    import pytest as _pytest
+
+    @_pytest.fixture(autouse=True)
+    def _isolated_data_dir(tmp_path, monkeypatch):
+        """每个测试的数据目录与数据库目录都指向自己的 tmp_path。
+
+        autouse + function 作用域：每个测试都跑一次，测试之间互不影响。
+        """
+        from _test_data_isolation import isolate
+
+        cleanup = isolate(monkeypatch, tmp_path)
+        try:
+            yield
+        finally:
+            cleanup()
+except ImportError:      # pragma: no cover —— 没有 pytest 时本文件只提供钩子
+    pass

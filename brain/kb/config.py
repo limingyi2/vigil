@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
 """知识库的全部可调项 —— 一处定义，别处只读。
 
-两类设置的归属，照 paths.py 的规矩分：
-
-- **你会手改的**放 `config/config.json` 的 `kb` 段（换嵌入后端、换模型）。
-- **程序自己写的**放 `data/kb/settings.json`（界面上的开关、阈值、top_k）。
-
-读的时候后者覆盖前者；写的时候**只写后者**。不写 config.json 有两个原因：
-插件不该重写用户的配置文件（注释和键序都会丢），而且两份真源一定会打架。
+运行时界面设置放在 `data/kb/settings.json`，检索向量后端由主库统一配置管理。
+读取时界面设置覆盖默认值与 `config/config.json` 的兼容字段；写入只更新
+`data/kb/settings.json`，避免插件重写用户配置文件。
 """
 import json
 import os
@@ -32,10 +28,8 @@ DEFAULTS = {
     "chunk_size": 800,      # 切块字数
     "chunk_overlap": 80,    # 块间重叠，防止语义被切断
     "batch": 32,            # 向量化批量
-    "backend": "api",       # api | local | fastembed，见 embedder.py
-    "model": "BAAI/bge-m3",  # local 后端加载的模型名
-    "use_unified_search": True,  # 检索走统一检索（storage），旧 npy 做降级
-    "sync_to_unified": True,     # 投喂时自动同步到统一检索（文本+向量）
+    "backend": "api",       # 与主库共享的 Embedding 后端
+    "model": "BAAI/bge-m3",  # 兼容旧界面显示；实际模型由主库后端配置决定
 }
 
 # 只允许这几个键被写进 settings.json —— 别的键进来就是拼错了名字。

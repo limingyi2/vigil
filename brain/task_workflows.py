@@ -105,10 +105,19 @@ _ATTEMPT_TRANSITIONS = {
 def _write():
     # write_once provides the existing per-main-DB lock, rollback and close.
     # BEGIN IMMEDIATE also serializes other processes / legacy Run connections.
+    #
+    # 🔴 用 begin=True 让 write_once 在**锁内**发 BEGIN IMMEDIATE。
+    #
+    # 为什么不自己发：WAL 模式下多个连接并发发这条语句时，后来者会拿到
+    # 一句误导性的 "attempt to write a readonly database"（实测失败耗时
+    # 仅 0.002~0.007 秒，busy_timeout 对它不生效）。
+    #
+    # 真正的根因在更前面：write_once 里的 PRAGMA synchronous=FULL 是
+    # 连接级属性，事务外并发改它会把连接状态搞坏。修法是让 write_once
+    # 把「连接建立 + PRAGMA + BEGIN」整段放进写锁里 —— 详见那里的注释。
     from storage import db as store
-    with store.write_once('main') as conn:
+    with store.write_once('main', begin=True) as conn:
         conn.row_factory = sqlite3.Row
-        conn.execute('BEGIN IMMEDIATE')
         yield conn
 
 

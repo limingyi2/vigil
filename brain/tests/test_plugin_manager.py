@@ -11,6 +11,34 @@ import plugin_ops
 import plugin_host
 
 
+def _builtin_patches(builtin_dir, coreplug_name="coreplug.py"):
+    """让 plugin_host 把 ``builtin_dir`` 当成核心能力目录。
+
+    🔴 **为什么不能只 patch ``_DIR``**：`plugin_manager._source()` 判定
+    一个插件是 builtin 还是 user，看的是两个常量：
+
+    ```python
+    roots = (
+        ("user",    getattr(plugin_host, "_INSTALLED_DIR", "")),
+        ("builtin", getattr(plugin_host, "_CORE_PLUGIN_ROOT", "")),
+    )
+    ```
+
+    ``_DIR`` 在 plugin_host.py:51 的注释里写明「仅供升级迁移兼容，
+    **绝不作为运行时来源**」—— 早期测试 patch 的是它，所以 builtin 判定
+    一直不成立（``status["builtin"]`` 为 False、卸载时找不到内置副本）。
+
+    还要动 ``_CORE_ADAPTERS``：核心目录里只有白名单里的文件才会被当作
+    插件加载（plugin_host.py:349 逐个遍历 ``sorted(_CORE_ADAPTERS)``），
+    测试造的 ``coreplug.py`` 默认不在名单里。
+    """
+    adapters = frozenset(set(plugin_host._CORE_ADAPTERS) | {coreplug_name})
+    return (
+        patch.object(plugin_host, "_CORE_PLUGIN_ROOT", str(builtin_dir)),
+        patch.object(plugin_host, "_CORE_ADAPTERS", adapters),
+    )
+
+
 def _archive(path, version="1.0.0", body=b"NAME='demo'\nDESC='demo'\n"):
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("demo/__init__.py", body)
@@ -451,8 +479,10 @@ def test_builtin_is_disableable_but_never_uninstallable(tmp_path):
     old_registry = plugin_host._registry
     plugin_host._registry = {"coreplug": runtime}
     try:
+        core_root, core_adapters = _builtin_patches(builtin)
         with patch.object(plugin_host, "_INSTALLED_DIR", str(tmp_path / "installed")), \
              patch.object(plugin_host, "_DIR", str(builtin)), \
+             core_root, core_adapters, \
              patch.object(plugin_ops, "REGISTRY", str(registry)), \
              patch.object(plugin_ops, "_PLUG_DIR", str(tmp_path / "installed")), \
              patch.object(plugin_manager, "_reload", return_value=True):
@@ -637,8 +667,10 @@ def test_uninstall_user_overlay_restores_builtin_tools_and_routes(tmp_path):
     plugin_host._registry = {}
     plugin_host._started = set()
     try:
+        core_root, core_adapters = _builtin_patches(builtin_plugins, "overlay.py")
         with patch.object(plugin_host, "_INSTALLED_DIR", str(user_plugins)), \
              patch.object(plugin_host, "_DIR", str(builtin_plugins)), \
+             core_root, core_adapters, \
              patch.object(plugin_ops, "_PLUG_DIR", str(user_plugins)), \
              patch.object(plugin_ops, "REGISTRY", str(registry)):
             plugin_host.load(force=True, only="overlay")
@@ -664,19 +696,19 @@ def test_uninstall_user_overlay_restores_builtin_tools_and_routes(tmp_path):
 
 
 def test_targeted_lifecycle_keeps_real_background_plugins_running(tmp_path):
-    """reminder/kb/skill have no stop hook; ordinary plugin operations must not block."""
-    source_plugins = Path(__file__).resolve().parents[1] / "plugins"
+    """kb/skill have no stop hook; ordinary plugin operations must not block.
+
+    🔴 原来断言的是 ``reminder`` / ``kb`` / ``skill`` 三个插件。
+    ``brain/plugins/reminder.py`` 已在 P24/P25（提交 fb2a5a8，2026-10-25）
+    删除 —— 提醒功能改由 ``brain/jobs.py`` 承担，插件形态不再存在。
+    这里换成仍然存在、且同样「有 start 无 stop」的两个：kb 与 skill。
+    测的行为不变：常规插件操作不得打断后台常驻插件。
+    """
+    source_plugins = Path(__file__).resolve().parent.parent / "plugins"
     actual = {}
-    for name in ("reminder", "kb", "skill"):
+    for name in ("kb", "skill"):
         actual[name] = plugin_host._load_one(str(source_plugins / (name + ".py")))
         assert actual[name] is not None
-
-    class NoopThread:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def start(self):
-            pass
 
     target = tmp_path / "installed"
     target.mkdir()
@@ -694,9 +726,8 @@ def test_targeted_lifecycle_keeps_real_background_plugins_running(tmp_path):
         plugin_host._INSTALLED_DIR = str(target)
         brain = object()
         with patch.object(plugin_host, "_enabled", return_value=True), \
-             patch.object(actual["reminder"].mod, "threading", SimpleNamespace(Thread=NoopThread)), \
              patch.object(actual["skill"].mod, "host_alive", return_value=False):
-            assert plugin_host.start_all(brain, names=["reminder", "kb", "skill"]) == 3
+            assert plugin_host.start_all(brain, names=["kb", "skill"]) == 2
             identities = {name: plugin_host.get(name) for name in actual}
             assert plugin_host.runtime_brain() is brain
 

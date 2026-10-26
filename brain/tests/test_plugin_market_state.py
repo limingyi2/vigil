@@ -10,6 +10,36 @@ import paths
 from core_features import plugin_market as market
 
 
+def _builtin_patches(builtin_dir, coreplug_name="coreplug.py"):
+    """让 plugin_host 把 ``builtin_dir`` 当成核心能力目录。
+
+    🔴 **为什么不能只 patch ``_DIR``**：`plugin_manager._source()` 判定
+    一个插件是 builtin 还是 user，看的是两个常量：
+
+    ```python
+    roots = (
+        ("user",    getattr(plugin_host, "_INSTALLED_DIR", "")),
+        ("builtin", getattr(plugin_host, "_CORE_PLUGIN_ROOT", "")),
+    )
+    ```
+
+    ``_DIR`` 在 plugin_host.py:51 的注释里写明「仅供升级迁移兼容，
+    **绝不作为运行时来源**」—— 早期测试 patch 的是它，所以 builtin 判定
+    一直不成立（卸载用户版后恢复不到内置副本，state 报 'uninstalled'
+    而不是 'builtin_restored'）。
+
+    还要动 ``_CORE_ADAPTERS``：核心目录里只有白名单里的文件才会被当作
+    插件加载（plugin_host.py:349 逐个遍历 ``sorted(_CORE_ADAPTERS)``），
+    测试造的 ``overlay.py`` 默认不在名单里。
+    """
+    import plugin_host
+    adapters = frozenset(set(plugin_host._CORE_ADAPTERS) | {coreplug_name})
+    return (
+        patch.object(plugin_host, '_CORE_PLUGIN_ROOT', str(builtin_dir)),
+        patch.object(plugin_host, '_CORE_ADAPTERS', adapters),
+    )
+
+
 def test_market_repo_is_resolved_from_runtime_config_dir_not_developer_path():
     with tempfile.TemporaryDirectory() as home:
         config_dir = Path(home) / "config"
@@ -273,8 +303,10 @@ def test_market_uninstall_reports_builtin_recovery_and_refreshes_status(tmp_path
     market_doc = {'state': 'ready', 'version': '1', 'plugins': [
         {'name': 'overlay', 'version': '2.0.0', 'desc': 'overlay fixture'}]}
     try:
+        core_root, core_adapters = _builtin_patches(builtin_plugins, 'overlay.py')
         with patch.object(plugin_host, '_INSTALLED_DIR', str(user_plugins)), \
              patch.object(plugin_host, '_DIR', str(builtin_plugins)), \
+             core_root, core_adapters, \
              patch.object(plugin_ops, '_PLUG_DIR', str(user_plugins)), \
              patch.object(plugin_ops, 'REGISTRY', str(registry)), \
              patch.object(market, '_plugins_dir', return_value=str(user_plugins)), \

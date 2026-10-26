@@ -2327,7 +2327,21 @@
         if (['chat', 'coding'].includes(item.kind) && item.run_id) {
           if ((item.created_at || 0) >= newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; lastActive = null; }
           if (['queued', 'running'].includes(status)) lastActive = item;
-          if (item.can_resume !== false && ['paused','paused_budget','interrupted'].includes(status)) lastResumable = item;
+          // 🔴 可续跑状态必须与后端 agent_runs.STOPPED 对齐。
+          //
+          // 之前这里只列 paused/paused_budget/interrupted，漏掉 failed 与
+          // cancelled —— 于是「模型连接中断(connection_lost)」这类最常见的
+          // 失败，终态是 failed，续跑按钮永远不出现，用户只能重新发一遍。
+          //
+          // 后端 agent_runs.py 的定义：
+          //   TERMINAL = {succeeded, failed, cancelled, interrupted}
+          //   STOPPED  = TERMINAL | {paused_budget, paused}
+          // resume() 校验的是 `status in STOPPED`，所以 succeeded 也在里面 ——
+          // 但成功的任务没有「继续」的语义，这里按后端语义排除掉。
+          //
+          // 也不依赖 item.can_resume：后端 display_records 从不返回这个字段，
+          // 那个判断恒为 true，等于没有约束。要改判定口径，改这里一处即可。
+          if (['failed','cancelled','interrupted','paused','paused_budget'].includes(status)) lastResumable = item;
         }
         // Successful legacy chat already has its own durable pair. Reuse it.
         if (item.kind === 'chat' && status === 'succeeded' && items.some((m,i)=>m.role==='user'&&m.text===input&&items[i+1]?.text===item.content)) {
@@ -2886,7 +2900,15 @@
                    detail:evt.detail || ''},can_resume:evt.can_resume !== false});
           // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
           uncertainRunId = null; liveReconcile = null;
-          const resumable = evt.can_resume !== false && ['paused','paused_budget','interrupted'].includes(evt.status);
+          // 🔴 与上面 loadMsgs 的判定口径必须一致 —— 两处都漏过 failed，
+          // 结果是：刷新页面能续跑，但任务当场失败时按钮不出现。用户在
+          // 失败现场看着是"发送"，刷新一下变成"继续"，行为不一致。
+          //
+          // 后端 agent_runs.STOPPED = TERMINAL | {paused_budget, paused}，
+          // TERMINAL = {succeeded, failed, cancelled, interrupted}。
+          // succeeded 不在续跑语义内（成功的任务没有"继续"），其余终态都可续。
+          const resumable = evt.can_resume !== false &&
+            ['failed','cancelled','interrupted','paused','paused_budget'].includes(evt.status);
           if (resumable && agentRunId) resumableRunId = agentRunId;
           setComposerMode(resumable && resumableRunId ? 'resume' : 'send');
           // detail 是"哪个工具、哪个参数、哪种错误"的唯一载体：非法工具
@@ -2902,7 +2924,7 @@
             textEl.innerHTML = U.md(textBuf || evt.text || '', { codeActions: true }) + '<br><span style="color:var(--err)">出错了：' + esc(evt.msg || '未知错误') + '（结果不完整）</span>' + errDetail;
           }
           statusEl.textContent = ({cancelled:'已取消',paused:'已暂停',paused_budget:'预算已用尽',
-            interrupted:'执行中断'})[evt.status] || '失败';
+            interrupted:'执行中断'})[evt.status] || (resumable ? '已中断，可继续' : '失败');
           finishBusy(turnScope);
           refreshConversations().catch(() => {});
         }
@@ -3778,7 +3800,7 @@
       const d = pick(await get('/api/plugin/kb/docs'));
       pnl.innerHTML = (d.items || []).length
         ? d.items.map((x) => li({ icon: 'book', title: x.name, sub: x.chunks + ' 块', meta: bytes(x.size) })).join('')
-        : empty('还没有文档', '把 .md/.txt 丢进 brain/data/kb/ 或调 ingest');
+        : empty('还没有文档', '通过客户端知识库导入接口或 Brain ingest API 添加文档');
       v.innerHTML =
         '<div class="grid g4" style="margin-bottom:14px">' +
         '<div class="card"><div class="muted" style="font-size:12px">文档</div><div style="font-size:22px;font-weight:600">' + esc(s.docs || 0) + '</div></div>' +
@@ -3788,7 +3810,7 @@
         '</div>' +
         (s.ok === false ? errBox('知识库插件没响应', s._err || '确认 brain/plugins/kb.py 已加载') : '') +
         '<div class="card hd"><div class="h"><h3>文档</h3><div class="sp"></div>' +
-        '<span class="muted" style="font-size:11.5px">分区：' + esc(s.scope || '') + ' · 目录 ' + esc(s.dir || '') + '</span></div>' +
+        '<span class="muted" style="font-size:11.5px">分区：' + esc(s.scope || '') + ' · 主库 ' + esc(s.dir || '') + '</span></div>' +
         '<table class="tbl"><tr><th>文件</th><th>切块</th><th>加入时间</th><th>操作</th></tr>' +
         ((d.items || []).length ? d.items.map((x) =>
           '<tr><td>' + esc(x.name) + '</td><td class="mono">' + esc(x.chunks) + '</td>' +

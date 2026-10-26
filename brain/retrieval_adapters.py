@@ -94,7 +94,7 @@ def memory_block(brain, store, query, top_k=5, chan=None):
         return store.render(query=query, top_k=top_k, chan=src)
 
 
-def kb_rows(query, persona_key='', src='app', top_k=None, min_score=None,
+def kb_rows(query, persona_key='', src='pc', top_k=None, min_score=None,
             query_context=None):
     import kb
     cfg = kb.config.load()
@@ -103,16 +103,8 @@ def kb_rows(query, persona_key='', src='app', top_k=None, min_score=None,
         return []
     try:
         from storage import unified
-        # Also repairs indexes created before ingestion hooks were installed.
-        synced = unified.sync_kb('', src, persona_key, '')
-        if synced.get('error'):
-            raise RuntimeError(synced['error'])
-        chunks = kb.store_for(persona_key, src).chunks()
-        doc_ids = ['kb:%s:%s:%s:%s' % (persona_key or '-', src or '-',
-                   c.get('source', ''), c.get('chunk', 0)) for c in chunks]
         results, info = retrieve(
             query, src=src, persona=persona_key, kinds=['kb'],
-            document_ids=doc_ids,
             top_k=int(top_k or cfg['search_k']), budget_chars=2400,
             query_context=query_context)
         if info.get('error') or info.get('method') == 'legacy' or info.get('unified') is False:
@@ -121,9 +113,8 @@ def kb_rows(query, persona_key='', src='app', top_k=None, min_score=None,
                  'score': float(r.score or 0), 'chunk': (r.meta or {}).get('chunk', 0)}
                 for r in results]
     except Exception:
-        # Keep legacy kwargs and result schema intact on failure.
-        return kb.search(query, persona_key=persona_key, src=src, top_k=top_k,
-                         min_score=min_score, query_context=query_context)
+        # Main DB is the only KB store; a retrieval fault must not consult stale files.
+        return []
 
 
 def chat_messages(brain, query, key, token_budget):

@@ -33,10 +33,9 @@ a = Analysis(
     datas=_datas,
     hiddenimports=[
         'websocket',
-        # Core Knowledge Base engine modules are separate from the optional
-        # plugin adapter under brain/plugins/kb.py.
-        'kb', 'kb.config', 'kb.chunker', 'kb.embedder', 'kb.engine',
-        'kb.ingest', 'kb.kb_core', 'kb.reader', 'kb.search', 'kb.store',
+        # Core Knowledge Base engine uses the unified SQLite search index.
+        'kb', 'kb.config', 'kb.chunker', 'kb.engine',
+        'kb.ingest', 'kb.kb_core', 'kb.reader', 'kb.search',
     ],
     hookspath=[],
     hooksconfig={},

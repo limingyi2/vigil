@@ -362,7 +362,7 @@ def sync_memories(items, owner="", src="", persona="", chan=""):
     return {"indexed": indexed}
 
 
-def sync_kb_chunks(chunks, owner="", src="", persona="", chan="", doc_ref=""):
+def sync_kb_chunks(chunks, owner="", src="", persona="", chan="", doc_ref="", size=0):
     """同步知识库块到检索索引。"""
     indexed = 0
     for chunk in chunks or []:
@@ -378,6 +378,7 @@ def sync_kb_chunks(chunks, owner="", src="", persona="", chan="", doc_ref=""):
             source=source, locator="%s#%s" % (source, ordinal),
             owner=owner, src=src, persona=persona, chan=chan,
             content_hash=content_hash(str(text)),
+            size=int(size or 0),
             meta={"chunk": ordinal, "source": source, "doc_ref": doc_ref})
         indexed += 1
     return {"indexed": indexed}

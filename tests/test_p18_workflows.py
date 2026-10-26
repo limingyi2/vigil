@@ -661,3 +661,53 @@ def test_dispatch_key_and_execution_evidence_survive_plan_replacement(env):
     assert state['attempts'][0]['evidence'] == [EVIDENCE]
     assert state['historical_plan']['steps'][0]['evidence'] == [EVIDENCE]
     assert state['steps'][0]['evidence'] == []
+
+
+def test_concurrent_checkpoints_all_land(env):
+    """并发写检查点不能丢 —— 这条卡的是 WAL 下的连接状态竞态。
+
+    🔴 **曾经的真实故障**：`_write()` 走 `storage.db.write_once()`，
+    而 write_once 里的 `PRAGMA synchronous=FULL` 是**连接级属性**，
+    在事务外并发改它会把连接状态搞坏。随后任何写操作都会报一句
+    **误导性的** `attempt to write a readonly database`（其实不是只读）。
+
+    后果不是"数据库坏了"，而是**任务检查点写不进去** —— 于是那个任务的
+    断点续跑状态丢了。用户看到的是"任务跑了半天，续跑时从头再来"。
+
+    修法：write_once 把「连接建立 + PRAGMA + BEGIN」整段放进写锁里。
+    这个测试锁住该行为：8 个线程并发写，8 条都要落库。
+
+    没有它的话，这个 bug 会静默回归 —— 单元测试全绿（单线程路径没问题），
+    只有真并发时才偶发失败（实测修复前 8 轮里有 3 轮掉到 3/8）。
+    """
+    import threading
+
+    scope, _ = env
+    flow = Flow(scope)
+    flow.active()
+
+    errors = []
+    written = []
+
+    def worker(index):
+        try:
+            with tasks._write() as conn:
+                conn.execute(
+                    "INSERT INTO settings(key,value,updated_at) VALUES (?,?,0)",
+                    ('p18-concurrent-%d' % index, 'ok'))
+            written.append(index)
+        except Exception as exc:                     # noqa: BLE001 - 收集全部失败
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, '并发写失败：%s' % errors[:3]
+    assert len(written) == 8
+    with db.read_once() as conn:
+        landed = conn.execute(
+            "SELECT COUNT(*) FROM settings WHERE key LIKE 'p18-concurrent-%'").fetchone()[0]
+    assert landed == 8

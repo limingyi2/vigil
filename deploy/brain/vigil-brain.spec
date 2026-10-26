@@ -91,8 +91,8 @@ a = Analysis(
     datas=core_feature_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
     hiddenimports=[
         "websocket",  # Optional Hub Bridge imports websocket-client lazily.
-        "kb", "kb.config", "kb.chunker", "kb.embedder", "kb.engine",
-        "kb.ingest", "kb.kb_core", "kb.reader", "kb.search", "kb.store",
+        "kb", "kb.config", "kb.chunker", "kb.engine",
+        "kb.ingest", "kb.kb_core", "kb.reader", "kb.search",
         # 核心能力适配器按文件路径动态加载（不在静态分析图里），它们 import 的
         # 顶层模块必须手动带进包 —— localtools 只被 remote 能力用
         "localtools", "devices", "agent_runs",

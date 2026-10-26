@@ -10,6 +10,33 @@ import pytest
 from brain import Brain
 
 
+def _bare_brain():
+    """造一个绕开 ``Brain.__init__`` 的测试用实例。
+
+    为什么不用真的 ``Brain()``：它会去读人设、加载配置、建库 —— 这些
+    都不是这些用例要测的东西，真实初始化只会让测试变脆。
+
+    但 ``__init__`` 里有几样东西是**必须**有的：``contextvars`` 上下文。
+    ``Brain`` 把「当前渠道」「当前会话」放在 ContextVar 里，让同一个实例
+    能被多个请求线程共用而互不串味。``draft_native`` 会读
+    ``self._cur_conversation``（brain.py:1233），缺了就直接
+    ``AttributeError`` —— 用例根本走不到断言那一步。
+
+    这里补齐 ``__init__`` 里全部 6 个 ContextVar，与真实实例行为一致。
+    以后 ``__init__`` 再加新的 ContextVar，记得同步到这里。
+    """
+    brain = Brain.__new__(Brain)
+    brain._src_context = contextvars.ContextVar("test_src", default="pc")
+    brain._conversation_context = contextvars.ContextVar("test_conv", default=None)
+    brain._turn_note_context = contextvars.ContextVar("test_note", default='')
+    brain._turn_task_context = contextvars.ContextVar("test_task", default=())
+    brain._turn_workspace_status_context = contextvars.ContextVar(
+        "test_ws_status", default={"selected": False})
+    brain._prompt_environment_context = contextvars.ContextVar(
+        "test_prompt_env", default=None)
+    return brain
+
+
 def test_key_masking_never_exposes_short_or_middle_contents():
     assert model_hub.mask_key("short") == "*****"
     masked = model_hub.mask_key("0123456789abcdef")
@@ -113,8 +140,7 @@ def test_xml_tool_text_is_rejected_without_execution(monkeypatch):
                 "<tool_call><function=run_command><parameter=command>whoami</parameter>"
                 "</function></tool_call>"}}]}
 
-    brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="pc")
+    brain = _bare_brain()
     brain.api = {"api_key": "unit", "model": "unit-model"}
     brain._cur_src = "pc"
     brain.draft_rules = ""
@@ -147,8 +173,7 @@ def test_unsupported_xml_file_tool_is_rejected_without_touching_temp_dir(monkeyp
                 + str(tmp_path)
                 + "</parameter></function></tool_call>"}}]}
 
-    brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="pc")
+    brain = _bare_brain()
     brain.api = {"provider": "custom", "api_key": "unit", "api_base": "https://example.test/v1",
                  "model": "text-model"}
     brain._cur_src = "pc"
@@ -200,8 +225,7 @@ def test_mimo_structured_file_tool_reads_isolated_directory(monkeypatch, tmp_pat
             return {"choices": [{"message": {"content": "找到 mimo-marker.txt"}}]}
 
     provider = FakeProvider()
-    brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="pc")
+    brain = _bare_brain()
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
@@ -275,8 +299,7 @@ def test_mimo_xml_file_tool_uses_existing_authorized_queue(monkeypatch, tmp_path
             return {"choices": [{"message": {"content": "找到 xml-marker.txt"}}]}
 
     provider = FakeProvider()
-    brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="pc")
+    brain = _bare_brain()
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
@@ -370,8 +393,7 @@ def test_fake_provider_calls_plugin_tool_and_receives_result_in_followup(monkeyp
             return {"choices": [{"message": {"content": marker}}]}
 
     provider = FakeProvider()
-    brain = Brain.__new__(Brain)
-    brain._src_context = contextvars.ContextVar("test_src", default="pc")
+    brain = _bare_brain()
     brain.api = {"provider": "xiaomi", "api_key": "unit", "api_base": "https://api.xiaomimimo.com/v1",
                  "model": "mimo-v2.6-flash"}
     brain._cur_src = "pc"
