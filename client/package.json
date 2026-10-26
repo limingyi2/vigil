@@ -1,6 +1,6 @@
 {
   "name": "vigil-client",
-  "version": "1.1.9-p21.9.20261026.1",
+  "version": "1.1.9-p21.9.20261026.2",
   "private": true,
   "description": "Vigil 桌面客户端：聊天 + 管理面板 + 本地操控（骨架阶段）",
   "main": "electron/main.js",
