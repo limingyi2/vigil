@@ -28,7 +28,7 @@
   // 在线壁纸：画面放在 HTTPS 主机上，插件不打包视频（安装包只有 4MB），
   // 用户点一下才下载到本机 DATA_DIR/cloud，之后离线可用。
   let cloudy = [];
-  // ── 内置壁纸（随插件分发，不需要 Wallpaper Engine）
+  // ── 内置壁纸（随插件分发，不需要 Wallpaper Engine）───────────────────
   // 插件安装器只接受 .py/.json/.md/.txt/.js/.css，装不进 .html/.jpg 资源目录，
   // 所以三张壁纸以「内联 HTML 文档 + data URI 缩略图」的形式活在前端里：文档经
   // 客户端 documentUrl() 挂到 ticket 化 loopback 上再进 iframe，既不受应用
@@ -477,7 +477,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
     root.style.opacity = String(opacity);
     scrim.style.opacity = String(overlay);
     document.documentElement.style.setProperty('--vigil-wallpaper-blur', Math.max(0, Number(config.blur) || 0) + 'px');
-    //  玻璃主题只跟"是否启用且选了壁纸"走，不等渲染器挂载完成。
+    // 🔴 玻璃主题只跟"是否启用且选了壁纸"走，不等渲染器挂载完成。
     // 渲染要经过 配置→壁纸库→票据→解码 四步，把主题绑在 active 上会让整窗
     // 在每一步之间退回应用默认底色（黑屏闪一下的根因）。
     const on = !!config.enabled && (!!active || !!config.wallpaper_id);
@@ -499,7 +499,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
     scrim = document.getElementById('vigil-wallpaper-scrim') || document.createElement('div');
     scrim.id = 'vigil-wallpaper-scrim';
     if (!scrim.parentNode) root.appendChild(scrim);
-    //  徽章必须挂在 body 上：root 是 z-index:0 的层叠上下文，而应用壳是
+    // 🔴 徽章必须挂在 body 上：root 是 z-index:0 的层叠上下文，而应用壳是
     // z-index:1 —— 徽章放 root 里会被应用整层压住，加载失败时用户永远
     // 看不到任何报错（"壁纸不生效却毫无提示"的直接原因之一）。
     badge = document.getElementById('vigil-wallpaper-live-badge') || document.createElement('div');
@@ -522,14 +522,14 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
     gpuDiag = null;
   }
   function frameDocument(type, src, fit, sceneFile) {
-    //  mediaBase 不能带尾斜杠：渲染器用 `mediaBase + '/' + src + '/...'`
+    // 🔴 mediaBase 不能带尾斜杠：渲染器用 `mediaBase + '/' + src + '/...'`
     // 裸拼接，尾斜杠会产生 `//`，ticket 服务器按非法路径回 400。
     const base = (() => { try { return new URL('./', src).href.replace(/\/+$/, ''); } catch (_) { return src; } })();
     const params = new URLSearchParams({ type, mediaBase: base, fit: fit || 'cover',
       sceneFps: String(config.fps || 60), muted: config.muted === false ? 'false' : 'true',
       renderDpr: '0', resources: 'native', webSandbox: type === 'web' ? 'strict' : '',
       quality: config.quality || 'high',
-      //  src 的语义按类型不同：scene 渲染器把 `mediaBase/src` 当**壁纸
+      // 🔴 src 的语义按类型不同：scene 渲染器把 `mediaBase/src` 当**壁纸
       // 目录**再往下拼 `/project.json`、`/scene.pkg`（还带着 mediaBase 的
       // 尾斜杠拼出 `//`，ticket 服务器直接 400）。传 '.' 让 `/./` 被 URL
       // 规范化消掉，所有资源请求都落到 ticket 根 = 壁纸目录；web 渲染器
@@ -619,7 +619,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
           frame = document.createElement('iframe'); frame.title = 'Vigil Wallpaper Engine ' + typeLabel(item.type); frame.setAttribute('sandbox', 'allow-scripts allow-same-origin'); frame.src = await documentUrl('wallpaper-renderer.html', frameDocument(item.type, src, config.fit, file)); stage.appendChild(frame);
           resizeObserver = new ResizeObserver(() => { try { frame.contentWindow?.postMessage({ vigilWallpaper: true, command: 'resize' }, '*'); } catch (_) {} }); resizeObserver.observe(stage);
           showBadge('实时 ' + typeLabel(item.type));
-          //  渲染失败目前是静默的（渲染器不把加载失败写进 webError）：
+          // 🔴 渲染失败目前是静默的（渲染器不把加载失败写进 webError）：
           // WebGL 创建失败、场景资源 404 都会让 canvas 永远不就绪。挂一个
           // 看门狗，超时就把诊断顶到徽章上，不让用户对着灰屏猜。
           if (readyWatchdog) clearTimeout(readyWatchdog);
@@ -693,7 +693,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0b0809}
   }
   function startCloudPoll() {
     if (cloudTimer || disposed) return;
-    // 500ms 足够跟手；没有在途任务就立刻停，避免定时器常驻。
+    // 500ms 足够跟手；没有在途任务就立刻停，别让定时器常驻。
     cloudTimer = setInterval(() => {
       api('GET', '/api/plugin/wallpaper/cloud').then((r) => {
         if (disposed || !r || !r.ok) return;

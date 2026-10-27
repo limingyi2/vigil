@@ -299,7 +299,7 @@ def api_resource(body: dict[str, Any], query: dict[str, str]) -> dict[str, Any]:
     return {"__file__": str(path), "__mime__": mime, "__cache__": "no-store"}
 
 
-# ── 在线壁纸：按需下载，不随插件打包
+# ── 在线壁纸：按需下载，不随插件打包 ─────────────────────────────────
 #
 # 插件市场安装包有 4 MB 硬上限（brain/plugin_ops.py 的 MAX_ZIP_BYTES），视频壁纸
 # 不可能塞进去。所以插件只装「清单 + 播放器」：画面放在 HTTPS 主机上，用户点一下
