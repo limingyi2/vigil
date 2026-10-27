@@ -14,14 +14,15 @@
 这正是这一整轮反复出现的形状：**失败不报错**。
 
 这条判据钉三件事：
-  ① `plan_decision` 给得出**为什么**（将来要靠它区分"关键词命中"和
-     "长度兜底命中"，后者才是最容易误判的那类）
-  ② `should_plan` 不许和 `plan_decision` 分叉（判据只有一个来源）
+  ① `entry_decision` 给得出**为什么**（直接取 task_intent 分类的 reason，
+     trace 里能看到每一轮"为什么进/不进规划"）
+  ② 入口判据只有一个来源：`planner.entry_decision(task_decision)`，
+     不得再出现第二套启发式（原关键词词表 `plan_decision`/`should_plan`
+     已于 2026-10-27 删除，不许回流）
   ③ server.py 里那几种结果**都写了 trace**，别再退化成只有成功留痕
 """
 import io
 import os
-import re
 import sys
 import unittest
 
@@ -29,34 +30,62 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "brain"))
 
 import planner  # noqa: E402
+import task_intent  # noqa: E402
 
 SERVER = os.path.join(ROOT, "brain", "server.py")
 
 
-class TestPlanDecisionWhy(unittest.TestCase):
+class TestEntryDecisionWhy(unittest.TestCase):
     def test_给得出为什么(self):
-        for text, want, frag in (
-                ("在吗", False, "跳过词"),
-                ("帮我查一下今天的天气", True, "规划词"),
-                ("今晚吃什么", False, "没命中"),
-                ("帮我整理一下这几个文件，再顺便查一下天气，另外还要对比两个方案",
-                 True, "规划词")):
-            yes, why = planner.plan_decision(text)
-            self.assertEqual(yes, want, "%r 判错了：%s" % (text, why))
-            self.assertIn(frag, why, "%r 的原因不对：%s" % (text, why))
+        for decision, yes_want, frag in (
+                ({"task_category": "complex_execution",
+                  "reason": "多个独立操作需要分步执行"}, True, "多个独立操作"),
+                ({"task_category": "chat",
+                  "reason": "社交问候使用普通回答入口"}, False, "社交")):
+            yes, why = planner.entry_decision(decision)
+            self.assertEqual(yes, yes_want,
+                             "%s 判错了：%s" % (decision["task_category"], why))
+            self.assertIn(frag, why, "原因里看不出为什么：%s" % why)
 
-    def test_should_plan_不许分叉(self):
-        """判据只能有一个来源。抄第二遍的话迟早两边不一样。"""
-        for t in ("在吗", "帮我查天气", "今晚吃什么", "哈哈",
-                  "帮我整理一下这几个文件，再顺便查一下天气"):
-            self.assertEqual(planner.should_plan(t),
-                             planner.plan_decision(t)[0], "两处判据分叉了：%r" % t)
+    def test_简单任务一律直答(self):
+        """入口只有两个：非 complex_execution（或带 fallback）都算简单任务。"""
+        for category in ("chat", "retrieval", "capability", "simple_execution"):
+            yes, why = planner.entry_decision(
+                {"task_category": category, "reason": "r"})
+            self.assertFalse(yes, "%s 不该进规划：%s" % (category, why))
 
-    def test_长句的理由要能区分有没有并列(self):
-        long_no = "你还记得我们上次说的那个事吗我最近一直在想也不知道该怎么说才好" * 4
-        yes, why = planner.plan_decision(long_no)
-        self.assertFalse(yes)
-        self.assertIn("没并列", why, "长句的理由看不出是哪一类：%s" % why)
+    def test_带fallback的复杂任务不规划(self):
+        yes, why = planner.entry_decision(
+            {"task_category": "complex_execution", "reason": "r",
+             "fallback_reason": "workspace_not_authorized"})
+        self.assertFalse(yes, "fail-closed 姿态变了：带 fallback 还进规划")
+        self.assertIn("workspace_not_authorized", why)
+
+    def test_判据不许再长出第二套(self):
+        """原关键词启发式已删除。判据只有 entry_decision 一处。"""
+        self.assertFalse(hasattr(planner, "plan_decision"),
+                         "plan_decision 又回来了 —— 两处判据迟早分叉")
+        self.assertFalse(hasattr(planner, "should_plan"),
+                         "should_plan 又回来了 —— 两处判据迟早分叉")
+        self.assertFalse(hasattr(planner, "_PLAN_KEYWORDS"),
+                         "关键词词表又回来了")
+
+
+class TestEntryDecisionAgainstClassify(unittest.TestCase):
+    """entry_decision 必须吃得下 task_intent.classify 的真实输出。"""
+
+    def test_分类输出能直接喂判据(self):
+        complex_text = ("重构整个项目的所有模块，修复所有测试失败，"
+                        "然后更新依赖并运行构建验证")
+        decision = task_intent.classify(complex_text, workspace_authorized=True)
+        self.assertEqual(decision["task_category"], "complex_execution")
+        yes, why = planner.entry_decision(decision)
+        self.assertTrue(yes, why)
+        for simple_text in ("在吗", "帮我查一下明天的天气",
+                            "解释一下什么是哈希表"):
+            decision = task_intent.classify(simple_text)
+            yes, _ = planner.entry_decision(decision)
+            self.assertFalse(yes, "%r 不该进规划" % simple_text)
 
 
 class TestPlanStats(unittest.TestCase):
@@ -109,11 +138,13 @@ class TestServerMarksEveryOutcome(unittest.TestCase):
                       "收尾那步 no_tools=True 是规划路径已知的短板，"
                       "不记下来就数不出'有多少轮收尾其实还需要工具'")
 
-    def test_用了_plan_decision(self):
-        self.assertIn("planner.plan_decision(", self.src,
-                      "server 没走 plan_decision —— 那就拿不到'为什么规划'")
-        self.assertNotIn("planner.should_plan(", self.src,
-                         "server 又直接调 should_plan 了，拿不到原因")
+    def test_入口判据走_entry_decision(self):
+        self.assertIn("planner.entry_decision(", self.src,
+                      "server 没走 entry_decision —— 入口判据不再只有一个来源")
+        self.assertNotIn("plan_decision(", self.src,
+                         "server 还在调已删除的关键词启发式")
+        self.assertNotIn("should_plan(", self.src,
+                         "server 在自己另判一遍，判据就分叉了")
 
     def test_关了要记_off_不能记成失败(self):
         """🔴 关掉规划之后最容易犯的错，是把它记成"规划失败"。

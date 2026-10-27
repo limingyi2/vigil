@@ -174,29 +174,37 @@ class TestPlannerToolParsing(unittest.TestCase):
         self.assertEqual(planner._split_tool("", None), (None, None))
 
 
-class TestPlannerShouldPlan(unittest.TestCase):
-    """长情绪句子不该被当成"复杂任务"（会多花两次模型调用还改掉说话框架）。"""
+class TestPlannerEntryDecision(unittest.TestCase):
+    """入口只有两个（2026-10-27 起）：task_intent 分类折算成简单/复杂，
+    不再有关键词启发式。长情绪句子天然落回 chat → 直答，不会进规划。"""
+
+    @staticmethod
+    def _yes(text, workspace_authorized=False):
+        import task_intent
+        return planner.entry_decision(
+            task_intent.classify(text, workspace_authorized=workspace_authorized))[0]
 
     def test_long_emotional_message_is_not_a_task(self):
         t = ("你还记得我们上次说的那个事吗，我最近一直在想，"
              "感觉有点拿不定主意，想听听你的看法")
-        self.assertFalse(planner.should_plan(t))
+        self.assertFalse(self._yes(t))
 
     def test_long_plain_message_is_not_a_task(self):
         t = ("我今天被领导说了一顿，心里挺难受的，想跟你说说话，"
              "你有空吗，我就是想找个人聊聊而已")
-        self.assertFalse(planner.should_plan(t))
+        self.assertFalse(self._yes(t))
 
-    def test_plan_keyword_still_plans(self):
-        self.assertTrue(planner.should_plan("帮我查一下明天的天气"))
+    def test_retrieval_answers_directly(self):
+        # 简单任务：检索类由 FC 工具直答，不花规划的钱。
+        self.assertFalse(self._yes("帮我查一下明天的天气"))
 
-    def test_multi_task_still_plans(self):
-        t = ("帮我看看杭州天气，然后再查一下我那个快递到哪了，"
-             "顺便算一下 128*3 是多少，另外看看明天要不要带伞")
-        self.assertTrue(planner.should_plan(t))
-
-    def test_skip_words_win(self):
-        self.assertFalse(planner.should_plan("在吗，帮我查天气"))
+    def test_complex_coding_task_plans(self):
+        # workspace_authorized=True 是模拟 server 里 D1 委派路由确认过
+        # 授权工作区之后的事实（classify 的文档要求它由作用域查出，不从
+        # 文本推断）；不带这个事实时 fail-closed，带 fallback 不进规划。
+        t = ("重构整个项目的所有模块，修复所有测试失败，"
+             "然后更新依赖并运行构建验证")
+        self.assertTrue(self._yes(t, workspace_authorized=True))
 
 
 class TestPluginTurnDataDir(unittest.TestCase):
