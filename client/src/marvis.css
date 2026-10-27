@@ -348,6 +348,30 @@ body.vigil-wallpaper-active .mv-crumb { background: rgba(255, 255, 255, .10); }
 body.vigil-wallpaper-active .card { box-shadow: none; }
 body.vigil-wallpaper-active .statusbar { background: transparent; }
 
+/* 主按钮在壁纸模式下会"隐身"，必须先写清楚原因再修：
+   壁纸插件有一条 `body.vigil-wallpaper-active :is(.settings-shell, .persona-view, …)
+   :is(input, select, textarea, .btn) { background-color: var(--vigil-wallpaper-surface)
+   !important }`，把表单页里**所有** .btn 刷成深色玻璃 —— 连主按钮 .btn.fill 也一起。
+   而 .btn.fill 的文字色是 --on-fill（壁纸模式下 #12141d，深色），于是深底 + 深字，
+   「召唤」「安装」这类按钮整块消失：位置还在、点得到，但看不见。
+
+   主按钮是页面上唯一需要人点的地方，不该被降级成玻璃。这里用 (0,4,2) 的选择器
+   （插件那条是 (0,3,1)）把实色填充抢回来 —— 不靠插件版本，已装旧插件的用户
+   升级客户端就立刻正常。刻意不碰 .cbox 里的发送键：那里插件想让 hover 变亮，
+   是有意的。 */
+html body.vigil-wallpaper-active :is(.persona-view, .settings-shell, .settings-home,
+  .settings-detail-view, .ac-workspace, .vigil-confirm) .btn.fill {
+  background-color: var(--fill) !important;
+  color: var(--on-fill) !important;
+  border-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html body.vigil-wallpaper-active :is(.persona-view, .settings-shell, .settings-home,
+  .settings-detail-view, .ac-workspace, .vigil-confirm) .btn.fill:hover {
+  background-color: var(--fill-hover) !important;
+}
+
 /* ── 13. 窄窗 ────────────────────────────────────────────── */
 @media (max-width: 1240px) { .statusbar > .mono:nth-last-child(2) { display: none; } }
 @media (max-width: 1180px) { :root { --panel: 248px; } }

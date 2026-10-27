@@ -75,9 +75,12 @@ body.vigil-wallpaper-active :is(.card, .ac-card, .ac-agent-card, .pcard,
   -webkit-backdrop-filter: var(--vigil-wallpaper-frost-soft);
 }
 /* 设置/市场这类"表单页"里的字段与按钮才需要玻璃底（聊天壳自己有一套）。
-   插件自己的壁纸页同理 —— 它的搜索框/下拉/工具按钮就长在玻璃上。 */
+   插件自己的壁纸页同理 —— 它的搜索框/下拉/工具按钮就长在玻璃上。
+   .btn:not(.fill)：主按钮要排除。玻璃底是深色、而 .btn.fill 的文字是
+   深色的 --on-fill，一起套上去就是"深底深字"，按钮整块看不见 ——
+   召唤/保存/安装这类主操作会凭空消失，只剩一个点得到的空位。 */
 body.vigil-wallpaper-active :is(.settings-shell, .settings-home, .settings-detail-view,
-  .ac-workspace, .persona-view, .vigil-confirm, .vigil-wallpaper-page) :is(input:not([type=range]), select, textarea, .btn) {
+  .ac-workspace, .persona-view, .vigil-confirm, .vigil-wallpaper-page) :is(input:not([type=range]), select, textarea, .btn:not(.fill)) {
   background-color: var(--vigil-wallpaper-surface) !important;
   background-image: none !important;
   border-color: var(--vigil-wallpaper-line) !important;
