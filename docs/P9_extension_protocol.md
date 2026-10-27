@@ -1,5 +1,7 @@
 # P9 扩展通信与兼容契约（P9.0 契约，P9.1 Wallpaper 实施状态）
 
+> 适用范围：P9 阶段的接口与兼容基线。下文的旧 Wallpaper 宿主、vendor 和插件目录布局不代表 P21 之后的分发方式；当前实现见 [架构说明](ARCHITECTURE.md) 与 [可选插件清单](P21-可选插件独立分发清单.md)。
+
 状态：本文件定义跨组件兼容契约。P9.1 已实现 Wallpaper 的本地安装、启停、健康检查、版本暂存/切换与 fail-closed Manifest 校验；未实现扩展进程沙箱、签名发行验证或通用 RPC。WeChat Bridge 继续独立运行，不受 Wallpaper 生命周期管理。
 
 ## 1. 当前基线和边界

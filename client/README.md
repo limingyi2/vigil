@@ -1,296 +1,79 @@
-# Vigil 桌面客户端
+# 客户端开发
 
-Vigil 桌面 Agent，由 Electron 客户端与本地 Brain 组成，提供聊天、管理、设置和
-本地工具执行。云端 Brain 用于可选同步、跨设备入口和远程服务。
-不连接云端 Brain 时仍可使用本地运行端；完全离线生成回答需要配置本机模型。
-部分人设管理页面仍依赖云端接口，这项限制与本地聊天能力分别说明。
-**桌宠 Live2D（阶段5）还没开始。**
+客户端使用 Electron 和原生 JavaScript。主进程管理窗口、Brain 子进程、本机工具、更新和凭据；渲染层通过 preload 提供的接口访问这些能力。
 
-排版定稿见 [`docs/client-layout-v1.html`](../docs/client-layout-v1.html)（可点开的可交互稿），
-开发计划见 [`docs/03-客户端/客户端开发待办.md`](../docs/03-客户端/客户端开发待办.md)。
+## 环境与启动
 
----
+使用 Python 3.12 和 Node.js 22。在仓库根目录安装 Brain 依赖，在 `client/` 安装前端依赖：
 
-## 打开
-
-**桌面上的 `Vigil` 快捷方式**（开始菜单里也有一个）。它指向源码里的 Electron：
-
-```
-目标：client\node_modules\electron\dist\electron.exe
-参数：.
-起始于：client
-图标：client\assets\icon.ico
-```
-
-指向源码而不是打包产物，是因为**改完代码双击就是新的**，不用重新打包。
-`启动 Vigil.cmd` 是备用入口：快捷方式被删了、或者从别的机器拷了这份源码，
-双击那个也能起（它会把 `ELECTRON_RUN_AS_NODE` 清掉再启动）。
-
-想脱离源码跑：
-
-```bash
-npm run pack     # 出 dist\win-unpacked\Vigil.exe（约 170MB 的快照，改完要重打）
-```
-
-> 打包要下 Electron 时如果卡在 GitHub（国内常见），已经配了
-> `"electronDist": "node_modules/electron/dist"` 让它用本地那份，不再下载。
-
----
-
-## 跑起来（开发）
-
-```bash
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r brain/requirements.txt
 cd client
+npm ci
 npm start
 ```
 
-依赖已经装在 `node_modules`（electron 28 / electron-builder 24 / keytar 7）。
-**没有 package.json 里的依赖需要重新下**，第一次跑直接就行。
+如果终端设置了 `ELECTRON_RUN_AS_NODE`，先移除该环境变量，否则 Electron 会按普通 Node 进程运行：
 
-> ⚠️ 如果启动时报 `Cannot read properties of undefined (reading 'handle')`，
-> 那是环境里设了 `ELECTRON_RUN_AS_NODE=1`（某些终端/沙箱会设），
-> Electron 被当成普通 Node 跑了。先 `set ELECTRON_RUN_AS_NODE=` 再 `npm start`。
-
-启动后**通常什么都不用填**：客户端会自己按顺序试
-
-```
-http://127.0.0.1:18787   ← 桌宠那条 SSH 隧道
-http://127.0.0.1:8788    ← 本机直接跑着 brain
+```powershell
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+npm start
 ```
 
-哪一个通，就调它的 `GET /api/panel/connect-config`（brain 里那个**免鉴权、
-只认回环地址**的接口，Web 面板也靠它自动配置）拿到主人钥匙，
-**再拿这把钥匙换一把本机专用的设备 token**（`POST /api/device/register`），
-存进系统钥匙串，主人钥匙不留在客户端上。
+安装版由 `sidecar.js` 启动随包的 Brain。源码运行需要可用的 Brain 构建产物，或在连接设置中指定独立运行的本地 Brain。不要根据固定端口判断托管 Brain 是否已启动，应查看本地内核状态和启动日志。
 
-之后在「设置 → 已绑定设备」里能看到所有端、各自最近上线时间，
-并且能单独吊销某一台（设备 token 只能解绑自己，吊销别人要用主人钥匙）。
-换掉一台设备时点「重新绑定本机」：先把本机那条吊销，再重新注册。
+独立调试 Brain 时，在仓库根目录复制并编辑示例配置，然后运行：
 
-**什么时候要手填**：只有直连公网 IP 时。那种情况服务端看到的来源不是回环，
-它会拒绝交出 token（403）—— 客户端会落到「设置 → 连接与设备」，把
-试过哪些地址、各自什么错都列出来。
-
-token 存进 **系统钥匙串**（Windows 凭据管理器）；密钥包里那条边界是：
-渲染层拿不到 token，它只知道"请求成功/失败"。
-
----
-
-## 目录
-
-```
-electron/
-  main.js        主进程：窗口、配置、钥匙串、HTTP 代理、单实例
-  preload.js     渲染层唯一的桥（window.vigil.*）
-src/
-  index.html     外壳 + 图标 sprite
-  styles.css     设计 token 与组件（跟定稿排版稿同一套）
-  js/ui.js       DOM/格式化/提示/分段器
-  js/api.js      与 brain 的接口层 + 全局状态
-  js/pages.js    八个页面
-  js/app.js      壳：导航、分栏、主题、渠道、启动
-  js/_devstub.js 开发用假桥（没有 brain 也能看界面）
+```powershell
+Copy-Item brain/config/config.example.json brain/config/config.json
+.\.venv\Scripts\python.exe brain/server.py
 ```
 
----
+## 主要目录
 
-## 本地操控（阶段3）
+| 位置 | 内容 |
+| --- | --- |
+| `electron/bootstrap.js` | 应用启动与本地补丁选择 |
+| `electron/main.js` | 窗口、托盘、配置和 IPC 接口 |
+| `electron/preload.js` | 渲染层接口白名单 |
+| `electron/sidecar.js` | Brain 进程、就绪检测与启动诊断 |
+| `electron/localtool.js` | 本机工具、路径和命令权限 |
+| `electron/plugin-resource.js` | 插件资源访问 |
+| `electron/video-media.js` | 视频文件票据、Range 请求和转码 |
+| `electron/update-manager.js` | 更新状态与下载校验 |
+| `electron/public-updates.js` | GitHub Release 和更新清单读取 |
+| `src/js/pages.js` | 工作台、聊天与通用页面 |
+| `src/js/pages/` | 数据、视频与插件市场等页面模块 |
+| `src/js/agent-center.js` | Agent Center |
+| `src/js/memory-atlas.js` | 记忆星图接入 |
+| `tools/` | Node 与 Electron 验收脚本 |
 
-她可以用这台电脑做事：看系统状态、列目录、读文件、找文件、打开网页、截图，
-以及**默认关着**的写文件 / 删文件（进回收站）/ 执行命令。
+## 数据与凭据
 
-**三步走完一次调用：**
+托管 Brain 的数据目录由 `app.getPath('userData')` 下的 `brain/` 提供，通过 `VIGIL_HOME` 传给子进程。程序安装目录用于存放可替换的应用文件。
 
-```
-她决定调 local_file_list
-  → brain 把调用排进队列并阻塞等（brain/localtools.py）
-  → 客户端后台轮询（1.5 秒）认领，执行（electron/localtool.js）
-  → POST 回结果，brain 接着把这一轮说完
-```
+渲染层不直接持有 Brain 访问令牌。网络请求经主进程代理；新增 IPC 接口时需要同时检查参数、调用来源与权限。普通浏览器预览不具备本机工具能力。
 
-用 HTTP 轮询而不是 WebSocket：服务端零依赖、隧道/反代不用改、出问题两个普通请求就能看清。
-代价是最多 1.5 秒延迟，聊天本来就在等模型，感觉不出来。
+本机工具使用只读、默认和全部允许等权限模式。操作是否需要确认由当前设置决定，不能在文档中笼统承诺每次写操作都会弹窗。
 
-**防线全在客户端**（服务端拦不了本机操作），`electron/localtool.js` 里三条：
+## 检查
 
-| 防线 | 做法 |
-|---|---|
-| 路径白名单 | 只在配置的目录里读写；解析绝对路径 + 展开 `~` + **逐段比对**，不是 `startsWith`（`DesktopX` 那种会被放过去） |
-| 命令白名单 | `local_exec` 只放行只读命令（ipconfig / tasklist / git status…）。黑名单永远漏，白名单不会 |
-| 危险操作要人点 | 写/删/执行前弹**挡住全屏**的确认框，60 秒不理算拒绝；拒绝会明确告诉模型"别重试也别绕" |
+在仓库根目录运行客户端的基础回归：
 
-开关在「设置 → 本地操控」：目录可以加减，每个工具单独开关，危险的那三个默认关。
-关掉之后对应工具**不会出现在提示词里**，她也想不起来用。
-
----
-
-## 端到端自测
-
-```bash
-npm run e2e     # 真 brain + 真客户端，21+ 项
-npm run agent   # 多步任务演练：模拟"整理桌面文件"，11 项
+```powershell
+node --test client/tools/test-p2-stream-lifecycle.js client/tools/test-unified-runtime.js client/tools/test-public-updates.js
+node --check client/src/js/pages.js
 ```
 
-`npm run agent` 是专测**多步任务**的：在临时沙箱里造 6 个混合文件，
-然后按顺序调工具（列目录 → 建 5 个分类目录 → 写脚本 → 追加 → 移动 6 个文件），
-最后核对每个文件都到了该去的地方。它逮到过一个很阴的 bug：
+涉及 preload、SSE、页面恢复、插件资源或安装目录的改动，需要补充相应的 Electron 验收。用例应使用独立用户目录，避免读取或修改真实会话。
 
-> **撤销一次"移动"等于把文件删了。** 移动的撤销记录写成了"新建文件"，
-> 于是撤销走的是"删掉"那条分支 —— 搬过去的那份和原来的位置一起没了。
+## 构建
 
-`npm run e2e` 覆盖的是整条链：
+完整安装包从仓库根目录构建：
 
-| 验什么 | 怎么验 |
-|---|---|
-| brain 起来了 | 轮询 `/api/persona` |
-| 客户端自动探测 → 注册设备 → 存设备 token | 读临时目录的 `config.json` 和 `devices.json` |
-| 界面真的进了聊天页（不是停在设置页） | 通过 CDP 读 DOM |
-| 聊天记录显示与服务端一致 | 界面条数 vs `/api/history` 条数 |
-| 设备表里只有哈希、没有明文 token | 直接读文件 |
-| 能力声明没被服务端丢掉 | 读设备记录 |
-| 客户端在持续轮询 | `last_seen` 5 秒内有没有动 |
-| **客户端与 brain 的工具名单一致** | 两边各拿一份列表比 —— 有一份是手写的，靠这条防漂移 |
-| **工具真的在本机跑起来** | 点「运行」跑 `local_system_info`，读回结果里的主机名 |
-| **写文件 → 界面撤销 → 文件真的没了** | 全程关在临时沙箱目录里（配置里把允许目录改到 `tmp/sandbox`） |
-| 截图 | `_shots/e2e.png` |
-
-**它不碰你的真实数据**：brain 是副本，客户端配置写临时目录、允许目录指向临时沙箱，
-跑完还会清掉钥匙串里那条临时 token。每次都清——不清的话下次启动
-会以为"已经配好了"而跳过自动探测，整个测试白跑（第一次写完就踩了这个坑）。
-
-**不发真实聊天**：那要调 LLM、要花钱、还会往她的记忆里写一条测试消息。
-本地操作那一段现在由上面两条真跑了（不需要 LLM）。
-
----
-
-## 在聊天里指挥它干活（像 agent 一样）
-
-**主要用法就是这个**：在聊天窗口下指令，她自己拆步骤、连续调本地工具干完。
-
-```
-你：把桌面的文件按类型分好类
-她：① 列目录 → ② 建 5 个分类目录 → ③ 写个整理脚本 → ④ 逐个移动 → ⑤ 回报结果
+```powershell
+.\.venv\Scripts\python.exe scripts/build_release.py --candidate
 ```
 
-一次任务可以连续调**几十次**工具，跨任意目录。为此做了四件事：
-
-| 做什么 | 为什么 |
-|---|---|
-| 工具循环 6 轮 → **24 轮 / 30 分钟预算** | 6 轮连"列目录+建目录+搬一批文件"都跑不完，最后只能说"我脑子转不动了"。上限仍然有限，是防跑飞的闸 |
-| 新增**建目录 / 移动 / 复制 / 追加写** | 原来的 9 个工具里**没有一个能改文件位置** —— "整理文件"这类活根本做不了 |
-| **允许整台机器**开关 | 卡在白名单目录里，每换一个目录就被拒一次。打开后任何盘符都能读写 |
-| **允许执行命令**开关 | `local_exec` 原来只放行只读命令，"搭个脚本"就不够用了 |
-
-### 安全靠三道，不是靠路径白名单
-
-1. **系统目录硬拦** —— `C:\Windows`、`Program Files`、盘根，写死在代码里，改设置也放不开
-2. **每条危险操作都要你点确认** —— 写、删、移动、复制、建目录、执行命令，一个都不例外；
-   确认框会**挡住全屏**，60 秒不理算拒绝
-3. **每个改动都有备份，能逐条撤销** —— 操作日志里一行一个「撤销」按钮
-
-聊天页会**逐条显示进度**（`建目录：~/Desktop/文档` → `移动：a.pdf → 文档/`），
-等在确认框上时也标出来，不用对着省略号猜它在干嘛。
-
-危险命令（`format`、`diskpart`、`mkfs`、`shutdown /f`…）**永远不执行**，
-不管开关怎么开 —— 那些不是"危险"，是一执行就可能不可逆地毁掉这台机器。
-
----
-
-## 本地操作页（手动跑单个工具）
-
-客户端也能自己直接跑，不必绕一圈找她：
-
-```
-「本地操作」页 → 选工具 → 填参数 → 运行 → 看结果 → 不满意点撤销
-```
-
-不走 LLM 的好处很实在：**不烧 token、不用等模型判意、断网也能用**（纯本地）。
-她那边（聊天里）也能调同一批工具，走的是 brain 排队 + 客户端轮询那条路。
-
-**每次操作都留痕**（`userData/oplog.jsonl`）：
-
-| | |
-|---|---|
-| 谁做的 | 你点的（`me`）还是她调的（`her`）—— 同一张表里分得清 |
-| 能不能撤 | 写/删之前自动备份到 `userData/backups/`；新建的文件也有记录，撤销=删掉它 |
-| 撤不了的情况 | 目录、超过 50MB 的文件**不备份**，日志里直接写「不可撤销」，不给你一个点了没反应的按钮 |
-
-日志留在客户端本地、不上服务端：这是**这台机器**上发生过的事，换台机器就不该看见。
-最多存 3000 条，超了丢最老的。
-
----
-
-## 三条不能破的边界
-
-1. **渲染层不碰 Node、不碰 token。**
-   `nodeIntegration:false` + `contextIsolation:true` + `sandbox:true`，
-   preload 只暴露函数（不暴露 `ipcRenderer` 本身）。
-   CSP 里 `connect-src 'none'` —— 渲染层连 fetch 都发不出去，所有网络走 IPC。
-
-2. **所有请求在主进程加鉴权头。**
-   只有一处加 token，就不会出现"某个接口忘了带"这种漏。
-
-3. **失败要看得见。**
-   接口层统一返回 `{ok, status, err}`，页面把失败渲染成一句能看懂的话
-   （例如"读不到人设列表 / 检查设置 → 连接与设备"），不是空白页。
-
----
-
-## 开发：没有 brain 也能看界面
-
-`_devstub.js` 用真实接口的返回结构造了一组假数据。想用它：
-
-```bash
-# 1) 复制一份带假桥的入口
-python -c "import io;p='src/index.html';s=io.open(p,encoding='utf-8').read();io.open('src/_harness.html','w',encoding='utf-8').write(s.replace('<script src=\"js/ui.js\"></script>','<script src=\"js/_devstub.js\"></script>\n<script src=\"js/ui.js\"></script>'))"
-# 2) 用浏览器打开（带 hash 直接进那一页）
-#    src/_harness.html#kb  /  #ability  /  #data  /  #settings …
-```
-
-好处是改界面不用起 Electron、不弹窗；坏处是假数据会过时 ——
-对不上时先看真接口返回什么。
-
----
-
-## 打包
-
-```bash
-npm run pack     # 只出目录（快，验证用）
-npm run dist     # NSIS 安装包 + 绿色版
-```
-
-keytar 是原生模块，`package.json` 里已经声明 `asarUnpack`。
-打包产物在 `dist/`（没进版本管理）。
-
----
-
-## 现在有什么 / 没有什么
-
-| 页面 | 状态 | 说明 |
-|---|---|---|
-| 对话 | ✅ 能用 | 读历史、流式发消息、右侧上下文；支持图片、视频、PDF、TXT 和常见代码文件附件，显示文件名、大小和上传状态。上传失败会阻止聊天请求；视频无法直接理解时会提示关键帧方案。**不画头像、不写名字** —— 这版客户端是工具，不是"跟某个角色聊天" |
-| **本地操作** | ✅ 能用 | **直接在本机跑工具**（不经过 LLM）+ 操作日志 + 一键撤销 |
-| 人设 | ✅ 只读 | 列人设、看字段、切当前、重载人格；**保存还没接**（要补脏检查） |
-| 记忆 | ⚠️ 半成品 | 只有统计。后端没有"列出/编辑记忆"的接口，页面里写明了 |
-| 知识库 | ✅ 能用 | 统计、文档列表、删除、检索测试、重建索引、注入开关 |
-| 生活 | ✅ 能用 | 日记列表/正文、朋友圈、快递（删单号） |
-| 能力 | ✅ 能用 | 插件（渠道多选/卸载）、技能（宿主状态/重载/卸载）、功能开关 + 说话多少 |
-| 数据 | ✅ 能用 | 概览、**Token 分析（用量折线：按天 / 按轮次 + 两个口径的精确合计）**、Trace（数字右对齐 + 合计行）、聊天历史、服务端日志 |
-| 设置 | ✅ 能用 | 左下角设置入口打开独立设置窗口；地址/token/测试连接、已绑定设备（列表 + 吊销 + 重新绑定本机）、**本地操控（目录白名单 + 工具开关）**、模型与服务商、危险操作三连、关于 |
-| 模型管理 | ✅ 能用 | 添加自定义模型并填写名称、Provider、Base URL、Model ID 和 API Key；列表只显示脱敏后的密钥状态。保存配置持久化，已添加模型可直接从聊天模型选择器切换。 |
-| Agent Center | ✅ 能用 | Agent 卡片显示名称、真实连接状态、当前任务和最近活动；Codex 卡片进入现有任务、事件、审批和安全详情。DeepSeek Harness 与 Work Buddy 是待接入占位，不显示虚假在线状态。 |
-
-**还没有的**：桌宠 Live2D（阶段5）、消息通知、开机自启、自动更新、语音发送。
-
-按方案的说法，这些都排在骨架之后，而且大半卡在 brain 侧的前置依赖上。
-
-
-## 一体化开发分支（1.1.0）
-
-Windows 安装包包含同一提交构建的 Electron 与 Brain。首次启动默认连接随包本地 Brain，配置模型后即可聊天与使用 Creator。无需安装 Python/Node 或填写 Brain 地址。旧 sidecar 路径只用于迁移数据，不作为运行目标。
-
-用户数据位于 `%APPDATA%/vigil-client/brain`，更新不覆盖模型、数据库、插件及 Skill 数据。远程 Brain 在连接设置里明确选择；云端同步及微信桥独立保留。未配置个人云服务器时，更新检查使用公共 GitHub release 清单。
-
-开发：仓库根运行 `scripts/start_dev.bat`，缺失或过期的配套 Brain 会先生成候选构建，开发数据隔离在 `.vigil-dev`。正式打包运行 `python scripts/build_release.py`，要求干净已提交源码；验收阶段用 `--candidate --installer-test`，候选包不发布。
-
-迁移风险、版本门禁、恢复见 [统一执行契约](../docs/VIGIL_AGENT_EXECUTION_STAGE1_CONTRACT.md)。
+`npm run pack` 和 `npm run dist` 只负责 Electron 部分，不能单独证明随包 Brain 与客户端的版本一致。正式发布流程见 [打包与更新](../docs/03-客户端/客户端打包与推送更新流程.md)。

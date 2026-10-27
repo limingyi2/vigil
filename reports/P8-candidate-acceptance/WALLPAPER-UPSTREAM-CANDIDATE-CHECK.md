@@ -5,7 +5,7 @@
 ## 对照范围
 
 - Vigil PR #8 被测产品提交：`193f297234a36a91ef61a4dedd63d4564df41c87`。
-- Vigil vendored DSH host：1.3.1；WebWallGL 2.1.0，快照 commit `4ba71c406fbc78f24c99b1bb1edd9d9cef9793c8`（见 [`UPSTREAM.md`](../../client/vendor/dsh-wallpaper-engine/UPSTREAM.md) 和 [WebWallGL metadata](../../client/vendor/dsh-wallpaper-engine/lib/webwallgl/.upstream.json)）。
+- Vigil vendored DSH host：1.3.1；WebWallGL 2.1.0，快照 commit `4ba71c406fbc78f24c99b1bb1edd9d9cef9793c8`（见 `client/vendor/dsh-wallpaper-engine/UPSTREAM.md` 和 `client/vendor/dsh-wallpaper-engine/lib/webwallgl/.upstream.json`（历史 vendor 路径，已移除））。
 - 上游 DSH `main`：`01fbb8b8e66fd7e405e9c878d18dbd456187f111`，插件版本 1.3.3；`package.json` 声明 `webwallgl: ^3.0.0`，lockfile 固定 3.0.0。
 - WebWallGL 3.0.0 tag commit：`26acdd7f8630b47376b26cc4f36a9d7de378193d`。
 

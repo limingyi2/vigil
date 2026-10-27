@@ -1,5 +1,7 @@
 # PC Core 与微信遗留边界
 
+> 历史资料：本文保留对应阶段的设计、用法或验证记录，部分模块已移除。当前桌面版请查阅 [文档索引](https://github.com/limingyi2/vigil/blob/dev/docs/README.md)，不要直接照本文部署或推断已交付功能。
+
 Core 的运行渠道只有 `pc`。普通聊天、流式聊天、Agent Run、工具和人设管理省略 `src` 时使用 PC；显式未知渠道返回 400，`app`、`wechat`、`wechat_group` 返回 410，不会改写成 PC 请求。
 
 `GET/POST /api/route` 和 `GET /ws/brain` 保留为 410 退役响应。Core 不再装载 WebSocket 双大脑 Hub，不向本机转发微信消息，不执行迟到回复补写，不读取或更改 `wechat_route` / `wechat_enabled`，不自动收藏微信入站图片，也不注入微信群上下文。独立扩展需要单独的接入设计与授权，不能恢复这些硬编码入口。

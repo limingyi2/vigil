@@ -1,5 +1,7 @@
 # Vigil UI V2 — 第二轮视觉与回归修正
 
+> 历史资料：本文保留对应阶段的设计、用法或验证记录，部分模块已移除。当前桌面版请查阅 [文档索引](https://github.com/limingyi2/vigil/blob/dev/docs/README.md)，不要直接照本文部署或推断已交付功能。
+
 日期：2026-10-11。分支：`ui/v2-chat-redesign`。工作目录：`F:/vigil-ui-v2`。本轮起点：`6d34472`。
 
 ## 检查结论
