@@ -161,7 +161,7 @@ function createUpdateManager(options) {
         return Object.assign(info, { phase: upd.phase });
       }
       set({ phase: 'available', got: 0, total: 0, percent: 0, err: '' });
-      // 用户自己点的「检查更新」：顺手接着下，别让他再点一次圆圈
+      // 用户自己点的「检查更新」：顺手接着下，避免他再点一次圆圈
       if (mode === 'ask' && validManifest(j)) download(j);
       return Object.assign(info, { phase: upd.phase });
     })();

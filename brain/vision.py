@@ -132,7 +132,7 @@ def _describe_bytes_once(blob, api_config, timeout=90):
 
     payload = {
         "model": model,
-        # 🔴 上限给 1024，别给 200：mimo v2.6 这类推理模型**思考默认开启**，
+        #  上限给 1024，别给 200：mimo v2.6 这类推理模型**思考默认开启**，
         # 2026-10-07 实测 max_tokens=40 时推理就把预算吃光、content 返回空 ——
         # 看着像"看图失败"，其实是没空间说话了。max_tokens 只是上限，
         # 计费按实际用量，给大没有任何代价（Qwen3-VL 说到点就停）。

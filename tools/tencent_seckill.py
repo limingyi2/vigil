@@ -35,7 +35,7 @@ except ImportError:
     print("请先安装 playwright：pip install playwright && playwright install chromium")
     sys.exit(1)
 
-# ── 配置 ──────────────────────────────────────────────
+# ── 配置
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "tencent_seckill_config.json"
 LOG_PATH = SCRIPT_DIR / "seckill.log"
@@ -46,7 +46,7 @@ def load_config():
 
 CFG = load_config()
 
-# ── 日志 ──────────────────────────────────────────────
+# ── 日志
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -57,7 +57,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("seckill")
 
-# ── 工具函数 ──────────────────────────────────────────
+# ── 工具函数
 def now_str():
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
@@ -92,7 +92,7 @@ async def load_cookie(context, path):
     log.info(f"cookie 已加载（{len(cookies)} 条）")
     return True
 
-# ── 核心抢购逻辑 ──────────────────────────────────────
+# ── 核心抢购逻辑
 async def login_if_needed(page, cookie_path):
     """检查登录状态，未登录则等待用户手动登录"""
     await page.goto(CFG["activity_url"], wait_until="domcontentloaded")

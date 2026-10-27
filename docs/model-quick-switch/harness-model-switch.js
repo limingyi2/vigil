@@ -74,7 +74,7 @@ function freePort() {
   });
 }
 
-// ── 两家假服务商 ──────────────────────────────────────────────
+// ── 两家假服务商
 // GET  /v1/models            → 给 probe_provider / 清单用（认密钥）
 // POST /v1/chat/completions  → 记下"哪句话打到了哪家、用的是哪个模型"
 function makeProvider(name, models) {
@@ -150,7 +150,7 @@ function makeProvider(name, models) {
     });
   });
 }
-// 🔴 必须是真身引用，不能用 {name,base,…} 字面量 + Object.assign 抄一份：
+//  必须是真身引用，不能用 {name,base,…} 字面量 + Object.assign 抄一份：
 // pending / hold / chatDelay 都是原始值属性，抄一份之后两边就各改各的
 // （chats / probes 是数组才碰巧还对得上），"扣住回复"这类开关会静默失效。
 let A = null, B = null;
@@ -158,7 +158,7 @@ const MODEL_SF = 'sf-chat-model';
 const MODEL_SF2 = 'sf-second-model';
 const MODEL_XM = 'xm-chat-model';
 
-// ── Brain 子进程 ──────────────────────────────────────────────
+// ── Brain 子进程
 async function pickPython() {
   const extra = String(process.env.VIGIL_PYTHON_CANDIDATES || '')
     .split(';').map((s) => s.trim()).filter(Boolean);
@@ -249,7 +249,7 @@ function brainApi(method, p, body) {
   });
 }
 
-// ── Electron + CDP ────────────────────────────────────────────
+// ── Electron + CDP
 let app = null, ctl = null, sendCdp;
 let CDP = 0;
 const PROF = path.join(ROOT, 'profile');
@@ -337,7 +337,7 @@ async function popState() {
       msg:(document.querySelector('#mqMsg')||{}).textContent||''};})()`);
 }
 
-// ── 主流程 ────────────────────────────────────────────────────
+// ── 主流程
 async function main() {
   log('[0] 起两家假服务商…');
   A = await makeProvider('A硅基', [MODEL_SF, MODEL_SF2]);

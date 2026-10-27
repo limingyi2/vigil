@@ -401,7 +401,7 @@ def api_list(body, query):
         for item in plugin_manager.list_plugins(market.get("plugins", [])):
             if item.get("name") in known:
                 continue
-            # 🔴 这些条目没有市场元数据；别让界面显示成"未知作者/市场 v未知"。
+            #  这些条目没有市场元数据；避免界面显示成"未知作者/市场 v未知"。
             # 内置插件标明身份；版本、作者、描述尽量从运行时补齐。
             item["in_market"] = False
             if item.get("builtin") or item.get("source_kind") == "builtin":

@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
-"""全进程共享的配置与状态（原来糊在 server.py 开头的那一坨）。
+"""共享运行时配置与诊断状态。
 
-这里只放"各模块都要用、且必须是同一个对象"的东西：
-- api_config / API_CFG 是**可变共享字典**：路由里换人设/换声音/换模型都是原地
-  clear+update，所有模块拿到的都是同一份。谁都不许重新赋值（rebind），一 rebind
-  就分成两张皮，"看着换了实际没换"。
-- _LOCAL 是大脑进程的唯一位柄；trace 落盘也归这里。
-"""
+api_config、API_CFG 和 _LOCAL 由模块间共享，配置更新应维护对象身份。
+API_CFG_KEYS 定义传入 Brain 的配置字段；新增运行时配置时同步核对此清单。"""
 import os
 import re
 import sys
@@ -56,15 +52,15 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 # （vision 和 voice 各栽过一次，persona_file 是第三次，
 #  server.py 里换模型后又抄了一份短的，第四次）。
 #
-# 🔴 persona_file 特别要紧：Brain 只认 API_CFG（self.api 就是它），
+#  persona_file 特别要紧：Brain 只认 API_CFG（self.api 就是它），
 # 漏了这个键 → key_from_config 返回 "default" → 所有分区名都算成空 →
 # 换人设不换记忆、换渠道不换存档，**看着分区建了，其实全写进同一份**。
 
-# 键的列表是**唯一真源**，放在函数里而不是散在各处。
+# 键的列表是**统一定义**，放在函数里而不是散在各处。
 # 以前 runtime.API_CFG 和 server.py 换模型那段各写一份 ——
 # 两份迟早不等，而 update 是整体替换，少一个键那个键就消失。
 # 现在别处要刷新内存配置，只能调 api_cfg_subset()，不许再抄。
-# 🔴 `provider` 与 `api_keys` 也在名单里，别删。
+#  `provider` 与 `api_keys` 也在名单里，需保留。
 # 少了 provider：换服务商后磁盘存了新家、内存里还是旧家
 # （`API_CFG.update` 是整体替换，缺键即当場消失）→ 面板显示已切换，
 # 而 Brain 构造时读到的仍是旧家的 base，模型接口直接连错地方。
@@ -93,7 +89,7 @@ API_CFG = api_cfg_subset(api_config)
 
 
 def config_path():
-    """config.json 的绝对路径（路由里写人设/声音用，别处别再拼一遍）。"""
+    """主配置绝对路径，供人设和声音路由写入时使用。"""
     try:
         from paths import CONFIG_DIR
         return os.path.join(str(CONFIG_DIR), "config.json")
@@ -173,7 +169,7 @@ def _trace_tail(n=20):
     p = _trace_path()
         # 夹紧入参：`int(n)` 若在 try 外面，`/api/trace?last=abc` 会抛 ValueError
     # 冒到 do_GET —— 而 do_GET 没有兜底 except，连接直接断，客户端收不到响应。
-    # 顺手封顶，别让人用 ?last=999999999 把整个文件拽进内存。
+    # 顺手封顶，避免人用 ?last=999999999 把整个文件拽进内存。
     try:
         cap = int(n)
     except (TypeError, ValueError):

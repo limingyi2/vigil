@@ -63,7 +63,7 @@ class TestMigrateJsonOnly(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def _write(self, path, items):
-        # 🔴 磁盘格式是 {"items": [...], "meta": {...}}，**不是裸 list**。
+        #  磁盘格式是 {"items": [...], "meta": {...}}，**不是裸 list**。
         # 写成裸 list 会走进 v1 兼容分支（`self.data.get("facts", {}).items()`
         # 对 list 取 .items()）→ AttributeError。这条曾把三条判据一起带崩。
         with open(path, "w", encoding="utf-8") as f:
@@ -79,7 +79,7 @@ class TestMigrateJsonOnly(unittest.TestCase):
         """把源分区的 json 原样拷成目标分区的文件名 →
         开一次 store、检索一次之后，条目必须能召回来。
 
-        🔴 **索引是懒加载的**：`__init__` 里 `_load_index()` 不会被调，
+         **索引是懒加载的**：`__init__` 里 `_load_index()` 不会被调，
         第一次 `retrieve()`/`add()` 才触发。所以判据必须**先检索**再断言索引 ——
         否则会误判成"索引没生成"。这正是"只搬 json 就够"的关键机制：
         `_load_index` 末尾无条件 `_backfill()`，给没向量的条目补算。
@@ -98,7 +98,7 @@ class TestMigrateJsonOnly(unittest.TestCase):
         hits = st.retrieve("糖包", top_k=2)
         self.assertEqual(len(st._ids), 2, "索引没补上：%r" % (st._ids,))
         self.assertTrue(hits, "召不回任何东西")
-        # 🔴 retrieve 返回的是 **(相似度, 文本) 元组**，不是 dict。
+        #  retrieve 返回的是 **(相似度, 文本) 元组**，不是 dict。
         # （降级路径也一样 —— 以前那里返回纯文本列表，render 解包直接崩。）
         self.assertIsInstance(hits[0], tuple, repr(hits[0]))
         # Tiny corpora can rank differently across embedding backends/platforms;
@@ -125,7 +125,7 @@ class TestMigrateJsonOnly(unittest.TestCase):
     def test_merging_keeps_existing_entries_and_dedupes_by_text(self):
         """目标分区已有条目时，合并不能覆盖、不能重复。
 
-        ⚠️ 顺序：先按 id 去重，再按正文去重。所以"同 id 同文"那条
+        注意： 顺序：先按 id 去重，再按正文去重。所以"同 id 同文"那条
         只会记进 `by_id`，`by_text` 保持 0 —— 两条判据各管一段，
         写 `by_text == 1` 会误以为正文去重没生效。
         """
@@ -191,7 +191,7 @@ def _merge(old, new):
 
     返回 (merged, skipped_same, skipped_text)：后两个是真正跳过的条数。
 
-    🔴 **id 相同不等于重复。** 原来写成"id 在集合里就 continue"，于是
+     **id 相同不等于重复。** 原来写成"id 在集合里就 continue"，于是
     "id 相同但正文不同"的条目**整条静默消失** —— 迁移场景下这是丢数据，
     而且日志上看不出来。现在拆成三档：
       1. id 相同**且正文相同** → 真重复，跳过

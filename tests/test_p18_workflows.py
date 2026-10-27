@@ -666,7 +666,7 @@ def test_dispatch_key_and_execution_evidence_survive_plan_replacement(env):
 def test_concurrent_checkpoints_all_land(env):
     """并发写检查点不能丢 —— 这条卡的是 WAL 下的连接状态竞态。
 
-    🔴 **曾经的真实故障**：`_write()` 走 `storage.db.write_once()`，
+     **曾经的真实故障**：`_write()` 走 `storage.db.write_once()`，
     而 write_once 里的 `PRAGMA synchronous=FULL` 是**连接级属性**，
     在事务外并发改它会把连接状态搞坏。随后任何写操作都会报一句
     **误导性的** `attempt to write a readonly database`（其实不是只读）。

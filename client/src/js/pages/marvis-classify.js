@@ -13,7 +13,7 @@
 (function (global) {
   'use strict';
 
-  // ── 从 http_server.pyd 提取的常量（原样移植） ────────────────────────────
+  // ── 从 http_server.pyd 提取的常量（原样移植）
   const TABLES = {
     video: ['mp4', 'mov', '3gp', 'rmvb', 'avi', 'flv', 'ts', 'webm', 'm4v', 'wmv', 'rm', 'mkv', 'mpg', 'mpeg', 'vob'],
     audio: ['wav', 'wma', 'mp3', 'ape', 'aac', 'flac', 'm4a', 'ogg'],

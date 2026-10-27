@@ -159,7 +159,7 @@ class TestNativeFunctionCalling(unittest.TestCase):
         self.assertFalse(br.last_request_diagnostics["capability_check"]["success"])
 
     def test_只有一条拼提示词的链(self):
-        """🔴 `draft()` / `draft_router()` 必须保持**不存在**。
+        """ `draft()` / `draft_router()` 必须保持**不存在**。
 
         它们被删掉不是因为"没人用"，而是因为**同一件事有两份实现**：
         `draft()` 是唯一会拼 draft_rules 的地方，而 chat() 不再调它 ——

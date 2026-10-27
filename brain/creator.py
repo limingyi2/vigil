@@ -32,7 +32,7 @@ import secrets
 import paths
 
 
-# ── 草稿工作区 ────────────────────────────────────────────────
+# ── 草稿工作区
 
 def drafts_root():
     """草稿根目录：跟着 VIGIL_HOME 走（测试/多实例各一份），不存在就建。"""
@@ -61,7 +61,7 @@ def _draft_dir(draft_id):
     return d
 
 
-# ── 文件名安全（落盘前的硬闸） ────────────────────────────────
+# ── 文件名安全（落盘前的硬闸）
 
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL",
@@ -148,7 +148,7 @@ def _extract_json(text):
     return None
 
 
-# ── 提示词 ───────────────────────────────────────────────────
+# ── 提示词
 
 _PLUGIN_CONTRACT = """Vigil 插件契约（Creator 生成可审查的 Python 插件）：
 - 必须有模块级字符串 NAME（英文/数字/下划线/短横线，唯一）和 DESC（一句话描述）。
@@ -229,7 +229,7 @@ def _build_messages(kind, requirement, prev=None, feedback=""):
     return system, user
 
 
-# ── 模型调用（真实链路，无假装） ──────────────────────────────
+# ── 模型调用（真实链路，无假装）
 
 def _call_model(api_cfg, system, user):
     """走 Brain 同款 provider 链路。返回 (text, err)。"""
@@ -277,7 +277,7 @@ def _call_model(api_cfg, system, user):
         return None, "模型响应里没有 choices（格式不对）"
 
 
-# ── 草稿读写 ─────────────────────────────────────────────────
+# ── 草稿读写
 
 def _meta_path(d):
     return os.path.join(d, "meta.json")
@@ -327,7 +327,7 @@ def _write_files(d, files, kind):
 def _history_dir(draft_id):
     """历史版本放草稿目录**外面**（`.history/<id>/`）。
 
-    🔴 不能放 `<id>/history/`：插件静态检查器拒绝嵌套目录，历史目录会把
+     不能放 `<id>/history/`：插件静态检查器拒绝嵌套目录，历史目录会把
     一份本来合格的草稿判成 nested_directory（MVP-1 实测踩过）。
     """
     did = str(draft_id or "")

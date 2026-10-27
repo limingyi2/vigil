@@ -46,7 +46,7 @@ import zipfile
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# 🔴 单反斜杠。这里的常量是写进 Python 源码的，不经过 cmd，
+#  单反斜杠。这里的常量是写进 Python 源码的，不经过 cmd，
 # 但仍要跟仓库里其它脚本一致 —— 写成双反斜杠会在 Windows 上被当 UNC。
 VENV_PY = os.path.normpath("F:/vigil/venv/Scripts/python.exe")
 
@@ -364,7 +364,7 @@ if __name__ == "__main__":
                 host = fh.FakeHost(skill_dir).start()
                 print("[0] 假宿主已起：127.0.0.1:%d  dir=%s"
                       % (host.port, skill_dir))
-                # 🔴 宿主和大脑必须看**同一个**技能目录，只改 config 的 host
+                #  宿主和大脑必须看**同一个**技能目录，只改 config 的 host
                 # 是不够的。踩过：假宿主指着临时目录、大脑指着默认的
                 # brain/skill_host/skills —— 文件照装成功（install 返回 ok:true），
                 # 但宿主重扫自己的目录当然看不见新技能，于是

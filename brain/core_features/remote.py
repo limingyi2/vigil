@@ -23,7 +23,7 @@ NAME = "remote"
 DESC = "本地操控：她可以用这台电脑看文件、截图、打开网页"
 FEATURE = None               # 始终启用——这是 agent 的核心能力，不是可选功能
 
-# 渠道裁剪的唯一真源在 localtools.specs()，执行层第二道关卡是
+# 渠道裁剪的统一定义在 localtools.specs()，执行层第二道关卡是
 # localtools.clearance()。本插件不自己维护渠道黑名单，免得两份名单漂移。
 # （core 只跑 pc，那两处现在对 pc 一律放行。）
 
@@ -102,7 +102,7 @@ def _h_poll(body, query):
     还会跟**注册时声明过**的能力取交集：客户端当次多报一个，
     也不至于拐到它本来没有的能力上去。声明过的是空表（老客户端）就不卡它。
 
-    🔴 归属校验：设备 token 轮询时，query 的 device 必须就是凭据绑定的
+     归属校验：设备 token 轮询时，query 的 device 必须就是凭据绑定的
     那台设备（缺省也按自己算）—— 否则一台设备能认领派给别的设备的活。
     """
     who, who_id = _principal()

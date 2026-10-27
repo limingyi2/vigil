@@ -386,7 +386,7 @@
       if (watchTimer) { global.clearInterval(watchTimer); watchTimer = null; }
       if (asking) { try { asking.abort(); } catch (e) { /* already done */ } }
       if (service && sessionReady) {
-        // 离开页面就放掉会话，别让服务端占着视频句柄。
+        // 离开页面就放掉会话，避免服务端占着视频句柄。
         fetch(service.base + '/close', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
           .catch(() => { /* 服务可能已退出 */ });
       }

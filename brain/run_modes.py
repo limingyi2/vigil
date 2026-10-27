@@ -69,7 +69,7 @@ def cloud_ready(cfg):
                 and str(cfg.get("model") or "").strip())
 
 
-# ── 租约：谁在用这个模型 ─────────────────────────────────────────
+# ── 租约：谁在用这个模型
 def acquire(owner, model):
     """登记"某个作业正在用这个模型"，卸载时据此跳过。"""
     m = str(model or "").strip()
@@ -116,7 +116,7 @@ def _busy_models():
         return set(_LEASES.values())
 
 
-# ── 与 Ollama 对话 ───────────────────────────────────────────────
+# ── 与 Ollama 对话
 def _tags(cfg, timeout=4):
     r = httpx.get(base_url(cfg) + "/api/tags", timeout=timeout)
     if r.status_code != 200:
@@ -160,7 +160,7 @@ def find_executable():
 def ensure_service(cfg, timeout=DEFAULT_START_TIMEOUT):
     """服务没起就拉一次 `ollama serve`；已经在跑就绝不动它。
 
-    🔴 只负责"起"，从不负责"停"：Ollama 可能是用户自己装的、别的应用也在用，
+     只负责"起"，从不负责"停"：Ollama 可能是用户自己装的、别的应用也在用，
     结束进程会把别人的请求一起打断。
     """
     ok, detail = service_ready(cfg, timeout=4)
@@ -305,7 +305,7 @@ def unload_idle(cfg):
     return out
 
 
-# ── 状态 ─────────────────────────────────────────────────────────
+# ── 状态
 def status(cfg, probe=False):
     """给界面看的当前模式。probe=True 才真的去碰 Ollama（会慢一点）。"""
     cfg = cfg or {}

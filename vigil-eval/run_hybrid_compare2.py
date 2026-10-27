@@ -46,7 +46,7 @@ OLD_COMMIT = "8ae1d8f"                  # 优化前最后一次提交（P3 对�
 _REAL_LOCAL_CALL = localtools.call      # A 组打桩后要靠它恢复
 
 
-# ── 在线 PC 桩：等价于一个授权了该工作区的在线 Electron 客户端 ──────────
+# ── 在线 PC 桩：等价于一个授权了该工作区的在线 Electron 客户端
 class OnlinePCStub(object):
     """把 local_file_* 四个只读工具落到任务沙箱执行；其余工具一律"不在线"。
 
@@ -233,7 +233,7 @@ def _dl_summary(res):
     }
 
 
-# ── B 组：旧版代码 worktree 子进程 ────────────────────────────────────
+# ── B 组：旧版代码 worktree 子进程
 def run_old_in_worktree(worktree, task_id, env_extra):
     """用旧版脚本在 worktree 跑单任务 B 组，解析它落盘的 raw_events。"""
     old_script = os.path.join(worktree, "vigil-eval", "run_hybrid_compare.py")

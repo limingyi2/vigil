@@ -20,7 +20,7 @@ anything else
     A write/control operation.  It needs an explicit **grant** that is scoped
     to identity, session and target resource.
 
-🔴 A grant is the only thing that authorizes a write.  There is deliberately
+ A grant is the only thing that authorizes a write.  There is deliberately
 no ``authorized=True`` style flag: the caller of :meth:`CapabilityRegistry.invoke`
 used to be able to pass it and thereby declare every operation pre-approved,
 which meant "the caller is an administrator" was silently equal to "every
@@ -451,7 +451,7 @@ class CapabilityRegistry:
             items = [self._public_request(v) for v in items]
         return items
 
-    # 🔴 敏感字段识别按**组成部分**判定，不做裸子串匹配：api_key /
+    #  敏感字段识别按**组成部分**判定，不做裸子串匹配：api_key /
     # access_token / refresh_token / client_secret 都能命中（api、access、
     # refresh、client、token 等组成部分），而 keyboard、monkey、keyframe
     # 这类恰好包含子串的普通字段不受影响。data/content/zip_b64 等整字段
@@ -506,7 +506,7 @@ class CapabilityRegistry:
     def approve(self, request_id: str, *, approved_by: str = "") -> dict[str, Any]:
         """Approve a pending request and execute it exactly once.
 
-        🔴 执行授权不经过 registry 的 grant 表。approve 在**同一次加锁内**
+         执行授权不经过 registry 的 grant 表。approve 在**同一次加锁内**
         把请求置为 executing 并签发一次性执行令牌；:meth:`invoke` 校验
         令牌 + 完整参数 + 身份/会话/目标严格相等后**原子消费**令牌再跑
         handler —— 并发重放（哪怕拿着同一个请求号）最多进入 handler 一次。
@@ -593,7 +593,7 @@ class CapabilityRegistry:
                _via_token: str = "") -> dict[str, Any]:
         """Run one capability operation and report a unified receipt.
 
-        🔴 There is no ``authorized`` parameter.  The caller's identity is an
+         There is no ``authorized`` parameter.  The caller's identity is an
         input to the decision, not a way to skip it: a write needs a grant.
 
         ``_via_request`` 是审批路径的私有入口：approve() 执行时带上请求
@@ -605,7 +605,7 @@ class CapabilityRegistry:
         key, op = str(name or "").strip(), str(operation or "").strip()
         tid = str(task_id or ("capt_" + uuid.uuid4().hex[:12]))
         if _via_request:
-            # 🔴 一次性执行令牌：approve 签发（同一次加锁内写入），这里
+            #  一次性执行令牌：approve 签发（同一次加锁内写入），这里
             # 校验后**原子消费**。两个线程并发重放同一请求时，令牌只能被
             # 消费一次 —— handler 最多执行一次。identity/session/target
             # 必须与请求创建时的绑定值**严格相等**（空绑定只接受空调用方，
@@ -1185,7 +1185,7 @@ def _approved_link_request(url: str) -> bool:
 def _install_link_handler(args):
     """从链接安装插件。可信来源直接装，其他来源先出审批卡。
 
-    🔴 分层放行不等于放松校验：两条路都要过 market.json 校验、制品
+     分层放行不等于放松校验：两条路都要过 market.json 校验、制品
     SHA-256 与 Manifest 逐文件哈希；差别只在"要不要人点头"。
     """
     import link_install as _link

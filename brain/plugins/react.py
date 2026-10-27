@@ -59,7 +59,7 @@ _stats = {"turns": 0, "parsed": 0, "think_chars": 0}
 def _cfg():
     """读 config.json 的 react 段。
 
-    🔴 原来写的是 `from config import CONFIG` —— brain/ 下**没有 config.py**，
+     原来写的是 `from config import CONFIG` —— brain/ 下**没有 config.py**，
     那个 import 必然抛 ImportError，被except 吞掉之后 _cfg() 永远返回 {}，
     于是 on_reply 第一行就 return，整个插件静默不干活。
     没有报错、没有日志，只有"她怎么不落盘了"。跟 gate.py 用同一套写法。
@@ -78,7 +78,7 @@ def _data_dir():
     刻意放 data 下面 —— 那是唯一确定会被备份的地方，
     放日志目录会被人清日志时一起清掉。
 
-    🔴 DATA_DIR 在 paths.py 里，原来写的 `from config import DATA_DIR`
+     DATA_DIR 在 paths.py 里，原来写的 `from config import DATA_DIR`
     同样是那个不存在的模块。跟 reminder.py 用同一个来源。
     """
     try:
@@ -95,7 +95,7 @@ def _data_dir():
 
 # ---------- 解析 ----------
 
-# 🔴 老格式兜底：**只有标签、没有 think**。
+#  老格式兜底：**只有标签、没有 think**。
 #
 # 为什么不写进 REACT_RE：REACT_RE 要求有 <think> 才命中，老格式（她直接写
 # [tool:...] 不写 think）会整段回落成 rest —— 结果是**工具标签原样漏给用户**，
@@ -188,7 +188,7 @@ def on_reply(ctx, reply, meta=None):
         brain = getattr(ctx, "brain", None)
         if brain is not None:
             think = getattr(brain, "last_think", "") or ""
-            # 🔴 **工具名从 brain 读，不要只靠解析正文。**
+            #  **工具名从 brain 读，不要只靠解析正文。**
             # 线上是原生 function calling：工具走结构化 tool_calls，
             # 正文里**根本没有** `[tool:...]` —— 只解析标签的话，
             # 这里的 tools 永远是空列表，"她到底调没调工具"就看不出来。
@@ -287,7 +287,7 @@ def last_for(src=None):
 def prompt(ctx=None):
     """教她在回答前先写一段 <think>，把思考过程留在本地、不发给用户。
 
-    🔴 这个函数之前缺失，导致 think 格式教学从来没被注入系统提示词——
+     这个函数之前缺失，导致 think 格式教学从来没被注入系统提示词——
     模型不知道要输出 <think>，于是 brain.last_think 永远为空，
     react.on_reply 只能落一个空 think，"思维链落盘"形同虚设。
     config.json 里写的"提示词已加 think 格式教学"是错的，实际没加。
@@ -327,7 +327,7 @@ def _r_recent(body, query):
     return {"ok": True, "items": recent(limit, src)}
 
 
-# 🔴 两项都只写 (method, path) 而缺第三个 handler 时，route_table() 会判
+#  两项都只写 (method, path) 而缺第三个 handler 时，route_table() 会判
 # "ROUTES 项不完整"直接跳过，两个接口全 404。补齐 handler（签名 (body,query)）。
 ROUTES = [
     ("POST", "/api/react/stats", _r_stats),

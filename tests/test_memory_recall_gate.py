@@ -41,7 +41,7 @@ DATA = os.path.join(ROOT, "brain", "data")
 def _snapshot():
     """真实 data/ 里所有 jsonl 的 (大小, 修改时间)。
 
-    🔴 这个测试**调用的是真的 `chat()`**，而 `chat()` 会把一来一回写进
+     这个测试**调用的是真的 `chat()`**，而 `chat()` 会把一来一回写进
     聊天存档。以前没把它指到临时目录，于是每跑一次测试就往她真实的
     `chat_history.jsonl` 里灌一对"在吗/好" —— 跑了几十次之后，那份存档里
     全是假模型的"好"（重复 33 次那种）。
@@ -115,7 +115,7 @@ class TestShortQueryStillRecalls(unittest.TestCase):
         return br
 
     def test_短但有事要检索(self):
-        """🔴 核心：4 个字的"康神是谁"必须去检索。"""
+        """ 核心：4 个字的"康神是谁"必须去检索。"""
         for q in ("康神是谁", "康神开播了", "他是谁", "那个快递呢"):
             self.mem.queries = []
             self._brain().chat(q, None)

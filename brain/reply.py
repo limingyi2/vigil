@@ -89,7 +89,7 @@ def resolve_voice_tag(text, api_config):
     正文里的（语气：xxx）在合成前抽走：它给 TTS 当 instruction，不该出现在
     语音条下方的转写文字里。
 
-    🔴 受 features 的 voice 开关管（默认开）。关掉时**只剥标记不合成**，
+     受 features 的 voice 开关管（默认开）。关掉时**只剥标记不合成**，
     退化成纯文字。必须在这里判、而不是靠提示词教她别发：群里没有能渲染音频条的
     界面，`[voice:xxx.mp3]` 会被当纯文本原样发出去，真人不在群里甩 mp3 文件。
     提示词那段（persona_store 里）是所有渠道共用的，按渠道改它就要把整套提示词

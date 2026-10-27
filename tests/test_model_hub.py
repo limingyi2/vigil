@@ -134,7 +134,7 @@ class TestFallbackList(unittest.TestCase):
         self.assertTrue(any("mimo" in m for m in allids), M.FALLBACK["chat"])
 
     def test_xiaomi_fallback_entries_are_real_ids(self):
-        """🔴 兜底清单里的小米 id 必须真实存在。
+        """ 兜底清单里的小米 id 必须真实存在。
 
         2026-10-06 实测：文档里写的 mimo-v2-flash / mimo-7b-instruct /
         mimo-v2.5-omni 都不在真实列表里，照文档抄进兜底清单 =

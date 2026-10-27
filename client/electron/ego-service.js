@@ -5,7 +5,7 @@
 //
 // 服务不在随包范围内：它跑在用户自己的 EgoAgent 仓库里（默认
 // F:\EgoAgent-Eval，可用 VIGIL_EGO_ROOT 覆盖）。找不到就如实报错，
-// 不假装能用，也不去猜别的路径。
+// 未找到服务环境时返回不可用状态，不尝试其他目录。
 
 const { spawn } = require('child_process');
 const fs = require('fs');

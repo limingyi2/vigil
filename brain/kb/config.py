@@ -59,7 +59,7 @@ def load(force=False):
         for k, v in cfg.items():
             if k not in DEFAULTS:
                 continue
-            # 类型按默认值收口：界面上传上来的是字符串，别让 "3" 混进算术里。
+            # 类型按默认值收口：界面上传上来的是字符串，避免 "3" 混进算术里。
             d = DEFAULTS[k]
             try:
                 if isinstance(d, bool):

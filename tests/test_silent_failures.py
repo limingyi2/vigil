@@ -106,7 +106,7 @@ class TestMemoryStoreDurability(unittest.TestCase):
 
 
 class TestRelativeDates(unittest.TestCase):
-    """长词优先匹配，别让"后天"吃掉"大后天"；"度"别误伤真实约定。"""
+    """长词优先匹配，避免"后天"吃掉"大后天"；"度"别误伤真实约定。"""
 
     def test_da_hou_tian_is_three_days(self):
         import datetime

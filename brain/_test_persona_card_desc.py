@@ -39,7 +39,7 @@ OK, BAD = [], []
 
 
 def check(label, cond, extra=""):
-    #🔴 参数顺序是 (label, cond)。写成 (cond, label) 的话，
+    # 参数顺序是 (label, cond)。写成 (cond, label) 的话，
     # 非空字符串恒为真 —— 满屏 OK 而一条都没真测。上一版就栽在这。
     (OK if cond else BAD).append(label)
     print("  %-4s %s%s" % ("OK" if cond else "BAD", label,
@@ -135,7 +135,7 @@ def main():
     print("\n[3] markdown 修饰要剥掉")
     # 语义：**去掉这一种标记，其余正文全留**。标记之外的正文不能丢 ——
     # 剥 `**` 时 `` `code` `` 在那对标记之外，丢掉就是凭空删正文。
-    # 🔴 判据要落在 `_strip_md`（一种标记），别用 `_first_sentence`
+    #  判据要落在 `_strip_md`（一种标记），别用 `_first_sentence`
     # 串两个标记测：它先剥 `**` 再剥反引号，两次串起来的结果不好归因。
     for raw, mark, want in [
             ("**软是底色**，嘴硬是保护色", "**", "软是底色，嘴硬是保护色"),

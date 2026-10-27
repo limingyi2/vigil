@@ -150,7 +150,7 @@
         onState: (fn) => { listeners.push(fn); return () => { listeners = listeners.filter((x) => x !== fn); }; },
       };
     })(),
-    // 夹具不拉起 EgoAgent 进程：预览里问答服务就是不可用，不假装能用。
+    // 夹具不拉起 EgoAgent 进程：预览仅返回问答服务不可用状态。
     ego: {
       ensure: () => Promise.resolve({ ok: false, error: '预览环境不启动分析服务' }),
       status: () => Promise.resolve({ ok: false }),

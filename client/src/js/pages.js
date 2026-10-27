@@ -2,7 +2,7 @@
 /**
  * 八个页面。
  *
- * 一条规矩：**后端没有的能力就如实写出来**（例如记忆列表现在没有接口），
+ * 约定：**后端没有的能力就如实写出来**（例如记忆列表现在没有接口），
  * 不要摆一个永远为空的假列表 —— 那种"看着有、其实不工作"最容易误导人。
  *
  * 每个页面是 { id, name, tip, icon, subs?, render(ctx) }：
@@ -48,7 +48,7 @@
     });
   }
 
-  // ── 通用零件 ────────────────────────────────────────────────
+  // ── 通用零件
   const UI_RECORD_LIMITS = { count: 100, chars: 16384, days: 30 };
   function recordKey() {
     const cfg = state.cfg || {};
@@ -439,7 +439,7 @@
     root.querySelectorAll('.li[data-k]').forEach((n) => n.addEventListener('click', () => fn(n.dataset.k, n)));
   }
 
-  // ═══ 模型快速切换（主页 composer 旁的模型名）═══════════════════
+  // ═══ 模型快速切换（主页 composer 旁的模型名）
   //
   // 产品意图：在设置里选过一次的模型，之后在聊天框旁边就该点得到，
   // 不用每次都跑一趟设置页。
@@ -470,7 +470,7 @@
 
     const nameOf = (m) => m.name || String(m.model || '').split('/').pop() || m.model || '（未命名）';
     const provOf = (m) => m.provider_name || m.provider || '';
-    // 🔴 顶栏那颗模型名不在 view 里（在 ctx.topbar 里）—— 用 view.querySelector
+    //  顶栏那颗模型名不在 view 里（在 ctx.topbar 里）—— 用 view.querySelector
     // 拿到的永远是 null，表现就是"composer 上写着 A、顶栏还写着 B"这种自相矛盾。
     const topEl = () => ((ctx && ctx.topbar) || view).querySelector('.chat-model');
     function say(text, bad) {
@@ -630,7 +630,7 @@
         if (fresh) m = fresh;
       }
       if (!m.has_key && m.provider !== 'custom') {
-        // 真缺密钥就直说，别让服务端回落到上一个能用的模型 —— 那正是要避免的"看着切了"
+        // 真缺密钥就直说，避免服务端回落到上一个能用的模型 —— 那正是要避免的"看着切了"
         say('「' + provOf(m) + '」还没存过密钥：先加一次它的 key（点下面「添加或管理模型」）', true);
         return;
       }
@@ -717,7 +717,7 @@
     return { load, label };
   }
 
-  // ═══ 1. 对话 ═══════════════════════════════════════════════
+  // ═══ 1. 对话
   let chatTimer = null;
 
   async function renderChat(ctx) {
@@ -1299,7 +1299,7 @@
     });
     // 创作模式开关：chip 循环 关 → 插件 → 技能 → 关
     // 创作模式 bar 里的类型直选（不用循环也能一步切到目标类型）
-    // 🔴 监听注册可以提前，但 applyCreatorMode() 的立即调用必须晚于
+    //  监听注册可以提前，但 applyCreatorMode() 的立即调用必须晚于
     // let creatorMode 声明（TDZ：提前调会 "Cannot access before initialization"，
     // 整页画不出来 —— 2026-10-12 实测踩过）
     view.querySelector('#creatorBtn').addEventListener('click', () => {
@@ -1660,7 +1660,7 @@
         showWelcomeHome(false);
       }
     }
-    // ── 创作模式（Creator Mode MVP-1）─────────────────────────
+    // ── 创作模式（Creator Mode MVP-1）
     // 主页对话里的一个模式：切到「创作」后，发给 Agent 的自然语言不再进
     // /api/chat，而是进 /api/creator/draft 生成草稿卡。草稿只存独立工作区、
     // 不安装、不执行 —— 这一层边界在服务端 creator.py 钉死，UI 只负责展示。
@@ -1685,7 +1685,7 @@
     bindComposerFoot();
     drawComposerFoot();
 
-    // ── 运行模式（云端 / 本地 / 混合）与加号菜单 ─────────────────
+    // ── 运行模式（云端 / 本地 / 混合）与加号菜单
     // 运行模式 = "这一轮由谁执行"，创作模式 = "要不要产出草稿"，两者独立。
     // 切模式只改服务端配置与输入区标记：不跳页、不新建会话、不清历史、
     // 不动工作区归属，conversation_id 和滚动位置都保持原样。
@@ -2328,7 +2328,7 @@
         if (['chat', 'coding'].includes(item.kind) && item.run_id) {
           if ((item.created_at || 0) >= newestChatTs) { newestChatTs = item.created_at || 0; lastResumable = null; lastActive = null; }
           if (['queued', 'running'].includes(status)) lastActive = item;
-          // 🔴 可续跑状态必须与后端 agent_runs.STOPPED 对齐。
+          //  可续跑状态必须与后端 agent_runs.STOPPED 对齐。
           //
           // 之前这里只列 paused/paused_budget/interrupted，漏掉 failed 与
           // cancelled —— 于是「模型连接中断(connection_lost)」这类最常见的
@@ -2903,7 +2903,7 @@
                    detail:evt.detail || ''},can_resume:evt.can_resume !== false});
           // 暂停/中断不是"出错"：给出续跑指引，发送键随即变成继续键。
           uncertainRunId = null; liveReconcile = null;
-          // 🔴 与上面 loadMsgs 的判定口径必须一致 —— 两处都漏过 failed，
+          //  与上面 loadMsgs 的判定口径必须一致 —— 两处都漏过 failed，
           // 结果是：刷新页面能续跑，但任务当场失败时按钮不出现。用户在
           // 失败现场看着是"发送"，刷新一下变成"继续"，行为不一致。
           //
@@ -2980,7 +2980,7 @@
               pendingInterjectOf = interjectOf;
               if (!ta.value) ta.value = text;
               // 旧 run 可能还在跑：重新拉一次会话状态，让发送键回到
-              // 暂停/插话态，别让 UI 和一个还在执行的任务脱节。
+              // 暂停/插话态，避免 UI 和一个还在执行的任务脱节。
               setTimeout(() => { void loadMsgs(true); }, 300);
             }
             onEvent({type:'error',class:'connection_lost',status:'interrupted',
@@ -3084,7 +3084,7 @@
     const taEl = view.querySelector('#ta');
     // ── 创作模式发送：需求 → /api/creator/draft → 草稿卡气泡 ──
     // 不走 /api/chat/stream：创作不产生对话历史，草稿是独立工作区里的
-    // 文件 + 静态验证结果。模型失败时明说，不假装生成了东西。
+    // 文件 + 静态验证结果。模型失败时显示实际错误，不报告生成成功。
     async function creatorSend(text) {
       if (busy) return;
       if (!await loadRecordScope() || busy) return;
@@ -3108,7 +3108,7 @@
       msgs.scrollTop = msgs.scrollHeight;
       let r = null;
       try {
-        // 🔴 必须 pick() 拆包：API.post 返回的是 {ok,status,json}，
+        //  必须 pick() 拆包：API.post 返回的是 {ok,status,json}，
         // draft 在 r.json 里。直接读 r.draft 会永远拿到失败+未知错误
         // （2026-10-12 实测：HTTP 200 也被显示成"生成失败：未知错误"）。
         r = pick(await API.post('/api/creator/jobs',
@@ -3225,7 +3225,7 @@
       if (!document.body.contains(msgs)) { dropSink(); offDoc(); clearInterval(t); }
     }, 3000);
 
-    // ── 危险操作确认：落在聊天气泡里 ─────────────────────────
+    // ── 危险操作确认：落在聊天气泡里
     // 主进程执行写/删/执行命令前会把问题发过来（app.js 负责收，
     // 不在聊天页时自动切过来并排队）。确认卡就挂在消息流末尾，
     // 和"她为什么要做这件事"出现在同一条对话流里。
@@ -3428,13 +3428,13 @@
     }, 8000);
   }
 
-  // ═══ 1.5 工具（本地操作，不经过 LLM） ═══════════════════════
+  // ═══ 1.5 工具（本地操作，不经过 LLM）
   // 这一页是整件事的重点：客户端现在就是干本地活的，那它自己就该能直接干。
-  // 好处很实在 —— 不烧 token、不用等模型判意、断网也能用（纯本地）。
+  // 好处很实在 —— 不消耗 token、不用等模型判意、断网也能用（纯本地）。
   async function renderTools(ctx) {
-    // ⚠️ 这里不能把 ctx.topbar 解构成 `topbar` —— 那样会把上面那个
+    // 注意： 这里不能把 ctx.topbar 解构成 `topbar` —— 那样会把上面那个
     // 同名的 topbar() 工具函数遮住，`topbar(...)` 就变成"把 DOM 元素当函数调"，
-    // 异步抛错、页面一片空白（这个错我刚犯过一次）。
+    // 异步抛错、页面一片空白（这个错曾出现过）。
     const view = ctx.view, panel = ctx.panel, bar = ctx.topbar;
     bar.className = 'topbar';
     const cat = await (global.vigil ? global.vigil.local.tools() : Promise.resolve({ items: [], groups: {} }));
@@ -3591,7 +3591,7 @@
     draw();
   }
 
-  // ═══ 2. 人设 ═══════════════════════════════════════════════
+  // ═══ 2. 人设
   // PC persona selection edits the local Core's persona_file.
   async function renderPersona(ctx) {
     ctx.view.classList.add('persona-view');
@@ -3763,7 +3763,7 @@
     draw();
   }
 
-  // ═══ 3. 记忆 ═══════════════════════════════════════════════
+  // ═══ 3. 记忆
   // 当前「人设 × 渠道」分区的记忆条目（本机 GET /api/memory）。
   // 写入仍在对话里由她的抽取管线负责 —— 这页是给人看的账本。
   async function renderMemory(ctx) {
@@ -3879,7 +3879,7 @@
     }));
   }
 
-  // ═══ 4. 知识库 ═════════════════════════════════════════════
+  // ═══ 4. 知识库
   async function renderKb(ctx) {
     ctx.topbar.className = 'topbar';
     const subs = [['kbdocs', '文档', 'lib'], ['kbsearch', '检索测试', 'search'],
@@ -4023,7 +4023,7 @@
     docs();
   }
 
-  // ═══ 6. 能力 ═══════════════════════════════════════════════
+  // ═══ 6. 能力
   // 插件管理与本机功能开关。技能由聊天中的自然语言创作/调用，不在此管理。
   // 渠道清单来自服务端（paths.CHANNELS 的真源），不在前端写死。
   async function renderAbility(ctx) {
@@ -4249,12 +4249,12 @@
     plugins();
   }
 
-  // ═══ 7. 数据 ═══════════════════════════════════════════════
+  // ═══ 7. 数据
   function renderData(ctx) {
     return global.VigilRenderData(ctx, { li, topbar, tag, toMs, bindLi, confirmDialog });
   }
 
-  // ═══ 8. 设置 ═══════════════════════════════════════════════
+  // ═══ 8. 设置
   async function renderSettings(ctx) {
     ctx.topbar.className = 'topbar';
     let modelRenderId = 0;
@@ -5003,7 +5003,7 @@
     conn();
   }
 
-  // ═══ 9. 功能分组页（按功能分类的聚合壳）════════════════════
+  // ═══ 9. 功能分组页（按功能分类的聚合壳）
   // 顶部导航：01 工作台 · 插件市场 · 设置 · 02 知识库 · 03 能力与扩展 · 04 连接与系统 · 统一管理 · 数据。
   // 原有各页面**一个不少**，按功能归入分组，作为组内功能项
   // （左栏 § 编号 + 等宽路径尾标）。各渲染器一行不改：给它们一个
@@ -5142,7 +5142,7 @@
     }));
   }
 
-  // ═══ 统一管理 ═══════════════════════════════════════════════
+  // ═══ 统一管理
   let mgmtTimer = null;
   async function renderManagement(ctx) {
     ctx.topbar.className = 'topbar';
@@ -5232,14 +5232,14 @@
     await ov();
   }
 
-  // ── 插件市场 ──────────────────────────────────────────────
+  // ── 插件市场
   // ═══ Creator Mode（MVP-1）：自然语言草稿 + 静态验证 ═══
   // 边界（与 brain/creator.py 的约定一一对应）：
   // - 生成走 Brain 的真实模型链路（/api/creator/draft），没有假装生成的旁路；
   // - 草稿落 Brain 的独立工作区，不碰正式插件/技能目录；
   // - 静态验证复用 P4 检查器，只查结构不执行代码；
   // - MVP-2 在静态验证通过后展示人工审核与一次性受控安装；生成完成不会自动安装。
-  // ═══ Creator Mode：草稿卡（聊天页内创作 + 草稿列表共用）═══════
+  // ═══ Creator Mode：草稿卡（聊天页内创作 + 草稿列表共用）
   // 入口在主页对话：composer 的「创作」chip 切到创作模式后，直接把需求
   // 当消息发给 Agent，回来的就是一个草稿卡。这里只负责"一个草稿怎么画、
   // 卡上几个按钮怎么绑"，不管入口在哪。

@@ -91,7 +91,7 @@ class TestRemotePlugin(unittest.TestCase):
 
     def test_没声明能力就不派给它(self):
         """手机没声明 local_screenshot，这条调用它就认领不到。"""
-        # loops 给小值：确认领不到就收工，别让轮询线程污染后面的用例。
+        # loops 给小值：确认领不到就收工，避免轮询线程污染后面的用例。
         t, box = self._fake_client(["local_file_list"], loops=6)
         out = PLUGIN.TOOLS["local_screenshot"]("")
         t.join(2)
@@ -133,7 +133,7 @@ class TestRemotePlugin(unittest.TestCase):
 
         以前这里钉的是"微信渠道返回空集（总闸默认关）"；微信运行时在 P21.2
         整块下线，core 只跑 pc，那套裁剪已经是没有作用对象的安全戏。现在钉
-        的是"别再把按渠道裁剪的逻辑偷偷加回来"。
+        的是"避免再次把按渠道裁剪的逻辑偷偷加回来"。
         """
         everything = set(PLUGIN.tool_specs("pc"))
         self.assertTrue(everything)

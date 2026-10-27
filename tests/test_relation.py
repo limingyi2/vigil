@@ -363,7 +363,7 @@ class TestAssistantChannel(unittest.TestCase):
             self.assertNotIn("你是 AI 助手", t)
 
     def test_pc_is_the_only_assistant_channel(self):
-        """渠道名单是显式的 —— 加渠道要改这里，别让别处悄悄走错底线。"""
+        """渠道名单是显式的 —— 加渠道要改这里，避免别处悄悄走错底线。"""
         self.assertEqual(ps.ASSISTANT_SRCS, ("pc",))
 
     def test_the_two_rule_sets_do_not_overlap(self):

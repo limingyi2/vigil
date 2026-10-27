@@ -133,7 +133,7 @@ body.vigil-wallpaper-active .chatwrap .localpop {
 body.vigil-wallpaper-active :is(.panel, .composer-foot, .cbox .cbar, .vigil-wallpaper-head) {
   text-shadow: 0 1px 2px rgba(6, 9, 16, .6);
 }
-/* ── 左侧整列 ──────────────────────────────────────────────
+/* ── 左侧整列
    整列背景透明，列表项本身也不给底色：只有 hover / 选中才浮起一层淡玻璃。
    之前每个行内按钮各带一块深色底，在浅色壁纸上就是一串错位的黑框。 */
 body.vigil-wallpaper-active .panel,
@@ -170,7 +170,7 @@ body.vigil-wallpaper-active .titlebar {
   background: transparent !important; border-color: transparent !important;
   backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
 }
-/* ── 输入框：只要最外面那一个玻璃框 ────────────────────────
+/* ── 输入框：只要最外面那一个玻璃框
    .cbox 本体就是那个框，保留；里面所有控件一律透明无边框 —— 加号、创作
    模式、权限、模型、发送、底部那排标签都不再各自成框。 */
 body.vigil-wallpaper-active .cbox {
@@ -248,7 +248,7 @@ body.vigil-wallpaper-active .settings-detail-view { background: transparent !imp
   background: rgba(10, 14, 24, .58); border: 1px solid rgba(255, 255, 255, .18);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 /* 首次进入（没装 Wallpaper Engine、也还没启用壁纸）时的引导条。
-   ⚠️ 配色只能用 currentColor 调：浅色主题下是浅灰底深字，壁纸模式下是浅字深底，
+   注意： 配色只能用 currentColor 调：浅色主题下是浅灰底深字，壁纸模式下是浅字深底，
    写死深底/浅底都会有一边变成"灰底黑字"看不清。 */
 .vigil-wallpaper-hint { margin: 0 0 10px; padding: 10px 13px; border-radius: 12px; font-size: 13px; line-height: 1.55;
   color: inherit; background: color-mix(in srgb, currentColor 7%, transparent);

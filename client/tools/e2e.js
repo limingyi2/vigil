@@ -242,7 +242,7 @@ function cdp(wsUrl) {
       return r.result && r.result.result && r.result.result.value;
     };
     // 测试窗口是会弹到前台的，旁边有人动鼠标就可能点到左侧导航。
-    // 所以先显式切回对话页，别让"当前在哪一页"变成一个随机因素。
+    // 所以先显式切回对话页，避免"当前在哪一页"变成一个随机因素。
     // （导航改版后按钮类名从 .rbtn 变成了 .gbtn/.li，改按 data-page 找，
     //   再也别把选择器写死在某一版布局上。）
     await ev("(document.querySelector('[data-page=\"chat\"]')||{click(){}}).click()");
@@ -437,7 +437,7 @@ function cdp(wsUrl) {
     const writeOut = await runTool('local_file_write', { path: targetFile, text: 'hello from e2e' });
     const wrote = fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : '';
     if (!wrote && !/SKIPPED/.test(writeOut)) {
-      // 诊断：写没成功时，把工具页的真实状态打出来，别让人猜
+      // 诊断：写没成功时，把工具页的真实状态打出来，避免人猜
       const diag = await ev("JSON.stringify({hasRun:!!document.querySelector('#tRun')," +
         "runDisabled:(function(){var b=document.querySelector('#tRun');return b?b.disabled:null})()," +
         "hasOk:!!document.querySelector('#tOk')," +

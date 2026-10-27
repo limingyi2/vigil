@@ -35,7 +35,7 @@ sys.path.insert(0, str(BRAIN_DIR))
 import model_hub  # noqa: E402
 
 
-# ── 假服务商：OpenAI 兼容，两个实例就是两家 ────────────────────
+# ── 假服务商：OpenAI 兼容，两个实例就是两家
 # GET  /v1/models           → 给 probe_provider / 设置页拉清单用（认密钥）
 # POST /v1/chat/completions → 记下每次请求的 model，回一句可辨认的文本；
 #                             请求里带 ZXFIX_DRAFT 时回一份草稿 JSON（给 Creator 用）
@@ -97,7 +97,7 @@ class FakeProvider:
                 for m in msgs:
                     if isinstance(m, dict) and m.get("role") == "user":
                         blob = str(m.get("content") or "")
-                # 🔴 记下请求里的用户文本：脑子的"后台记忆抽取"是一条**异步**
+                #  记下请求里的用户文本：脑子的"后台记忆抽取"是一条**异步**
                 # 线程，回复返回后还会再打一次模型（拿的是切换前的 provider）。
                 # 只数请求条数会被它误伤 —— 判据必须落到"哪句话打到了哪家"。
                 owner.chats.append({"provider": owner.name, "model": model,
@@ -164,7 +164,7 @@ def _http(method, url, body=None, token=None, timeout=30):
             return e.code, {}
 
 
-# ── 单元层 ───────────────────────────────────────────────────
+# ── 单元层
 
 class ModelHubUnitTests(unittest.TestCase):
     """不依赖网络与子进程：只验清单与切换的判定。"""
@@ -329,7 +329,7 @@ class ModelHubUnitTests(unittest.TestCase):
         self.assertFalse(removed2)
 
 
-# ── HTTP 层：一家 Brain，两家假服务商 ──────────────────────────
+# ── HTTP 层：一家 Brain，两家假服务商
 
 class _BrainHarness:
     """起一个隔离的 Brain 子进程。"""
@@ -452,11 +452,11 @@ class QuickSwitchHttpTests(unittest.TestCase):
         return self.saved()["models"]
 
     def assert_all_loopback(self):
-        """🔴 安全闸：清单里任何一条的地址都必须指向本机假服务商。
+        """ 安全闸：清单里任何一条的地址都必须指向本机假服务商。
 
         这条断言是给"切服务商没带 api_base"那个坑兜底的 —— apply_cfg 会
         套用 PROVIDERS 里的**真实**厂商地址（api.xiaomimimo.com 之类），
-        一旦漏传 base，测试就会真的打出去。宁可断言炸掉，也不碰真服务商。
+        一旦漏传 base，测试就会真的打出去。宁可断言失败，也不碰真服务商。
         """
         for r in self.rows():
             self.assertTrue(str(r.get("base") or "").startswith("http://127.0.0.1:"),

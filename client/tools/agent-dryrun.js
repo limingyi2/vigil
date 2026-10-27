@@ -41,7 +41,7 @@ app.whenReady().then(async () => {
     if (ok) { pass += 1; } else { fail += 1; }
   };
   // 自己记一份操作台账。
-  // 🔴 不要指望 oplog.jsonl 有东西：往日志里写的是 **main.js**（进程里那条
+  //  不要指望 oplog.jsonl 有东西：往日志里写的是 **main.js**（进程里那条
   // IPC 路径），这个脚本绕过了它直接调 localtool.run，所以日志是空的。
   // 第一版就踩了这个，然后拿空日志去读 .backup → 抛异常 → 因为是 async
   // 回调里未捕获的 rejection，Electron 不退出，整个脚本永久挂住。
@@ -137,7 +137,7 @@ app.whenReady().then(async () => {
   console.log('沙箱：' + desk);
   app.exit(fail ? 1 : 0);
 }).catch((e) => {
-  // 🔴 少了这个 catch，async 回调里抛的异常会变成"未捕获的 rejection"，
+  //  少了这个 catch，async 回调里抛的异常会变成"未捕获的 rejection"，
   // Electron 不退出、脚本永久挂住（第一版就是这样，查了半天）。
   console.log('!! 脚本异常：' + (e && e.stack || e));
   app.exit(2);

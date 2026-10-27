@@ -182,7 +182,7 @@ def import_legacy_files(conn, data_dir=None, force=False):
       `INSERT OR IGNORE` 去重，失败的表这次拿到机会，不会漏记录。
     - `failed`：文件打不开 → 下次重试
 
-    🔴 曾经的 bug：一张表搬失败，错误信息先写进 detail，紧接着又被
+     曾经的 bug：一张表搬失败，错误信息先写进 detail，紧接着又被
     `dict(moved, skipped=...)` 整体覆盖掉，然后无条件记 `ok`。结果
     台账显示成功、下次直接跳过，失败的表**永远**不会重试，
     而调用方看到的统计里连错误都没有 —— 静默丢数据。

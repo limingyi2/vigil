@@ -1,39 +1,8 @@
 # -*- coding: utf-8 -*-
-"""skill 桥：把 Node 侧宿主上的 JS 技能，接进大脑的工具清单。
+"""历史 skill 模块兼容副本。
 
-## 为什么要有这一层
-
-Python 插件（`plugins/*.py`）是直接 import 进大脑进程的。
-但外面能下到的 skill 大多是 JS + skill.json，契约是这样：
-
-    export function setup(api) {
-      api.registerTool({ id, name, description, parameters, async execute(ctx, args) {} })
-    }
-
-这套契约依赖 QQ Agent 特有的一堆东西（`ctx.sender.sendMedia`、`contextTier`、
-配置面板…），助手一个都没有。`skill_host/server.js` 负责垫那一层；
-**本文件只管"发现 + 调用 + 报给模型"**，不碰 skill 内部。
-
-## 为什么不直接把 .js 当插件装
-
-用户试过：把 skill 的 zip 拖进面板的插件上传区，浏览器直接报"不支持"。
-原因是 `plugin_ops.ALLOWED_EXT` 只准 `.py/.json/.md/.txt` —— 而 skill 里是
-`index.js`。**这个限制是对的，不该放宽**：放宽的后果不是"能跑了"，
-而是装上一个必然 import 失败的假条目，列表里看着有、开关也能点，就是不生效。
-所以另开一条通道，而不是把 .js 塞进 .py 的通道。
-
-## 挂哪个钩子
-
-不挂钩子，只出 `TOOLS`。工具清单是 `Brain()` 构造时拼进 `draft_rules` 的，
-所以 `load_plugins()` 必须在 `Brain()` 之前（本文件因此不能被延迟导入）。
-
-## 档位怎么算（这一段最容易写错，见下）
-
-skill 侧判"群里有没有被点名"读的是 `ctx.session.contextTier`，
-**数字** 1=被@、2=群里随便聊。而"有没有人喊她"这件事，`gate.py` 已经
-用代码算过一次了（`_called_by_name`）—— 复用它的结果，不要在这里重算一遍。
-判错的后果不对称：把"没被点名"当成"被点名"，她会在群里乱发运势。
-"""
+当前随包适配器为 brain/core_features/skill.py。此文件保留旧安装和升级兼容用途，
+不能因位于源码插件目录而自动加载。JS 技能由独立宿主发现和执行。"""
 import os
 import json
 import sys
@@ -227,7 +196,7 @@ def _post_json(path, payload, timeout):
 def host_alive(timeout=3):
     """宿主活着没。面板判活、start 里决定要不要拉起来都用它。
 
-    ⚠️ 这里**必须把异常打出来**，不能纯静默返回 False。
+    注意： 这里**必须把异常打出来**，不能纯静默返回 False。
     踩过：`_get_json` 里少写一个 import（`u` 没定义）→ NameError →
     host_alive 静默返回 False → 表现为「宿主没起来」，而真实原因是代码有 bug。
     静默降级是对的，但**降级得留痕**，否则这个错能藏很久。
@@ -288,7 +257,7 @@ def _all_tools_now():
 def tools(src=None):
     """给模型看/ 调的工具表。带 60 秒缓存。
 
-    🔴 **缓存必须按渠道分开。**
+     **缓存必须按渠道分开。**
     `_tools_now()` 拉出来的清单**已经是按渠道过滤过的**，而缓存原来是一个
     单槽（不看 src）。于是：App 那一轮先把"App 可见"的清单算出来缓存住，
     60 秒内来一条微信消息 → 缓存命中 → **把 App 的技能清单喂给微信**，
@@ -410,7 +379,7 @@ def call(name, args, ctx=None):
 def skill_list(ctx=None, name="", args=""):
     """列出服务器上现在有哪些技能工具。**用这个代替把技能名硬编进清单。**
 
-    🔴 为什么是"先问再调"而不是直接把每个技能名注册成工具：
+     为什么是"先问再调"而不是直接把每个技能名注册成工具：
     `TOOLS` 是 plugin_host **构造时快照**（plugin_host.py 第 151 行
     `self.tools = dict(getattr(mod, "TOOLS", {}))`）。而 Node 宿主可能比大脑
     晚起几十秒（甚至云端重启后才起）—— 那时抓到的技能表是空的，
@@ -469,7 +438,7 @@ def skill_call(ctx, name="", args=""):
 def owns_tool(name):
     """认领宿主上真实存在的技能工具名。plugin_host 拿它做动态兜底。
 
-    🔴 **为什么必须有这个**：插件的 `TOOLS` 是**装载时**拍的快照，
+     **为什么必须有这个**：插件的 `TOOLS` 是**装载时**拍的快照，
     只有 `skill_list` / `skill_call` 两个壳。宿主上几十个真实工具名
     （`包名__工具名`）是运行时从 Node 那边问来的，永远进不了快照 ——
     于是模型按它最熟悉的样子写出
@@ -572,7 +541,7 @@ _HOWTO_TAG = """
 """
 
 # 原生版：工具名就是 schema 里的名字，直接调用。
-# 🔴 线上走的是这条。上面那套标签在这条链路上**没有任何人执行**，
+#  线上走的是这条。上面那套标签在这条链路上**没有任何人执行**，
 # 写了就是没查（详见 persona_store.build_draft_rules 的 native 说明）。
 _HOWTO_NATIVE = """
 怎么调 —— 上面每个名字就是它的**工具名**，直接调用就行：
@@ -673,7 +642,7 @@ def TOOL_HELP_FN(native=False):
 def prompt(ctx=None):
     """**只补一条硬判据**，技能清单已经在 TOOL_HELP 里了，不重复塞。
 
-    🔴 为什么不把清单搬到这里：`prompt` 和 `TOOL_HELP` 都进系统提示，
+     为什么不把清单搬到这里：`prompt` 和 `TOOL_HELP` 都进系统提示，
     两处都写技能名就等于两个真源，改一处忘一处，模型会读到互相矛盾的说法
     （"运势要调 daily-fortune__today" vs "先 skill_list 看看有什么"）。
 
@@ -692,7 +661,7 @@ def prompt(ctx=None):
 def _r_say(body, query):
     """技能的 sendTextBatch 打到这儿：把它要发的话原样发出去。
 
-    🔴 **只走 App 通道，微信群发不出去。** 助手目前没有"往微信群发一条
+     **只走 App 通道，微信群发不出去。** 助手目前没有"往微信群发一条
     消息、不问模型"的接口：`chat(proactive=True)` 会剥"说 "前缀、
     还会把记忆/摘要走一遍；而Turn.say 只往App 推通知（见 plugin_host.py）。
     所以技能在微信群里能**算**运势，但发消息得靠模型自己那条回复 ——
@@ -812,7 +781,7 @@ def _skill_dir():
 def _backup_path(path):
     """给 path 找一个还没被占用的备份名。返回 None 表示挪不动。
 
-    🔴 **不能只用时间戳**：一秒内两次操作就撞名了
+     **不能只用时间戳**：一秒内两次操作就撞名了
     （`os.rename` 报 `WinError 183 当文件已存在时，无法创建该文件`），
     而「装一次→卸一次→再装一次」这种连着操作很常见。
     所以时间戳后面再补一个递增序号，直到不撞为止。
@@ -836,7 +805,7 @@ def _pkg_name_ok(name):
 def _read_manifest_from_zip(zf, names):
     """从 zip 里读 skill.json，拿 name/id/version。读不到返回空 dict。
 
-    🔴 **manifest 是给人看的，宿主认不认它靠的是 index.js 在不在**。
+     **manifest 是给人看的，宿主认不认它靠的是 index.js 在不在**。
     所以 manifest 解析失败**不能当失败处理** —— 那种包照样能跑，
     只是列表里显示成目录名。判据是「有 index.js」，不是「manifest 齐」。
     """

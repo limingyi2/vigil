@@ -54,7 +54,7 @@ delete process.env.ZX_SKILL_AUTH_TOKEN
 // 不能被它拖死 —— 超时后大脑那边照样能回话，只是这个工具算失败。
 const CALL_TIMEOUT = Number(process.env.ZX_SKILL_TIMEOUT || 25000)
 
-// 🔴 不用 console.log 直接转发：它**不认 %s 占位符**，
+//  不用 console.log 直接转发：它**不认 %s 占位符**，
 // 多参数转发过去会打成字面量 "装载 %s 失败：%s"（已知问题）。
 // 自己拼字符串，顺便统一加前缀。
 const log = (...a) => console.log('[skill-host]', ...a.map(x => (typeof x === 'string' ? x : String(x))))
@@ -286,16 +286,16 @@ async function loadOne(name, dir, targetSkills = skills) {
     log(fmt('%s 外面多包了一层，已进到 %s', name, path.basename(realDir)))
   }
 
-  // 🔴 必须用 pathToFileURL 转一下再 import：Windows 上直接传 'C:\a\b.js'
+  //  必须用 pathToFileURL 转一下再 import：Windows 上直接传 'C:\a\b.js'
   // 会被当成 URL 协议头，报 "Only file URLs are supported"。
   //
-  // 🔴 还要带个时间戳当 query：**Node 的 import() 会缓存模块**。
+  //  还要带个时间戳当 query：**Node 的 import() 会缓存模块**。
   // 不加的话 /reload 只是把同一个旧模块对象再拿出来一次，
   // 表现为"重载了但改了代码没生效"，查起来很怀疑人生。
   // 源文件一改时间戳就变，于是拿到的是新模块。
   const bust = Date.now()
   const mod = await import(pathToFileURL(main).href + '?v=' + bust)
-  // 🔴 **入口函数认两个名字：setup（本宿主契约）和 register（QQ Agent 契约）。**
+  //  **入口函数认两个名字：setup（本宿主契约）和 register（QQ Agent 契约）。**
   //
   // 这不是"顺手兼容一下"。QQ Agent 的 skill 一律是
   // `export function register(api)`，而这层 api 本来就是**照着 QQ Agent 垫出来的**
@@ -320,7 +320,7 @@ async function loadOne(name, dir, targetSkills = skills) {
     // 的话日志里会出现 "[[daily-fortune] ...]" 这种双括号。
     log: (...a) => log(a.map(x => (typeof x === 'string' ? x : String(x))).join(' ')),
     registerTool: (def) => {
-      // 🔴 registerTool 强制要求 name：QQ Agent 的 src/tool-registry.js 会直接抛
+      //  registerTool 强制要求 name：QQ Agent 的 src/tool-registry.js 会直接抛
       // 「工具 X 必须提供 name」，少了它整个 setup 中断、工具一个都注册不上。
       // 这里自己也要挡一道 —— 报错要说清是哪个包缺，否则只看到"技能装载失败"。
       if (!def || !def.name) {
@@ -340,7 +340,7 @@ async function loadOne(name, dir, targetSkills = skills) {
     try { ok = await mod.available() } catch (e) { ok = false }
     if (!ok) { log(fmt('%s 自称不可用，跳过', name)); return }
   }
-  // 🔴 记 realDir 而不是外层 dir：面板和卸装要靠它定位文件，
+  //  记 realDir 而不是外层 dir：面板和卸装要靠它定位文件，
   // 记外层的话会指到那个空壳目录上。
   targetSkills.set(meta.id || name, { id: meta.id || name, dir: realDir, mod, meta, tools })
   log(fmt('技能 %s 就绪，工具：%s', meta.id || name, Object.keys(tools).join(', ') || '（无）'))
@@ -351,15 +351,15 @@ async function loadOne(name, dir, targetSkills = skills) {
 // skill 侧要的是 QQ Agent 的 ctx.sender / ctx.session。这里把它们接到
 // 知夏的大脑上：发消息就是回调大脑的 /api/chat/say，档位由 python 那边算好传进来。
 // 档位：QQ Agent 用数字（1 = 被@ / 拍一拍，2+ = 群里随便聊，缺省是不给）。
-// 🔴 **必须传数字，不能传 'group' / 'mentioned' 这种字符串。**
+//  **必须传数字，不能传 'group' / 'mentioned' 这种字符串。**
 // skill 侧是 `Number(ctx.session.contextTier)`，字符串会变成 NaN，
 // 而作者为此写了条兜底「宿主没给档位就不拦」——于是传字符串等于闸门全程失效：
 // 群里没被点名照样给签。原 skill 的 `gate()` 就是这个组合，判据 4 由此而来。
 // 传错格式的代价不是"拦错"，是"完全不拦"，所以宁可多写一个转换。
-// 🔴 档位数字必须跟技能作者看到的一致，也就是 QQ Agent 的 resolveContextTier：
+//  档位数字必须跟技能作者看到的一致，也就是 QQ Agent 的 resolveContextTier：
 //   1 = 被 @ / 拍了拍我   2/3 = 群里随便聊   4 = 私聊消息
 //
-// 🔴 私聊必须映射成 **4**，不能是 0。技能那边只认 `tier === 1`（被点名放行）
+//  私聊必须映射成 **4**，不能是 0。技能那边只认 `tier === 1`（被点名放行）
 // 和 `ctx.kind === 'private'`（私聊放行）；映射成 0 时两边都不成立，
 // 私聊里调用会被当成"群里没被点名"拒掉，回复一句
 // "这次在群里没被点名（档位 0）"。tier=4 传进来也照样拒。
@@ -390,7 +390,7 @@ function makeCtx(src) {
       if (!r.ok) throw new Error('大脑拒收了：HTTP ' + r.status)
       return { ok: true }
     },
-    // 🔴 媒体发送**故意不实现**。QQ Agent 的 sendMedia 能把图文合并成一条气泡，
+    //  媒体发送**故意不实现**。QQ Agent 的 sendMedia 能把图文合并成一条气泡，
     // 知夏这边没有等价通道 —— 硬凑会发成两条，气泡就裂了。
     // 不实现的话 skill 会走它的纯文字兜底分支（那段写得很清楚），一条也不裂。
   }
@@ -399,7 +399,7 @@ function makeCtx(src) {
     // 这几个字段 skill 会读，缺了会走 undefined 分支。
     // kind 和 session.contextTier 是两套判据，QQ Agent 上两个都给，
     // 这里也两个都给 —— 只给一个的话，换个 skill 换了写法就漏。
-    // 🔴 这里的 4 必须跟上面 TIER 表一致。写错的话 kind 永远判成 'group'，
+    //  这里的 4 必须跟上面 TIER 表一致。写错的话 kind 永远判成 'group'，
     // 连 kind 这条更宽松的判据也一起失效 —— 技能里
     // `if (ctx?.kind === 'private') return ''` 就再也走不到。
     kind: tierOf(src.tier) === 4 ? 'private' : 'group',
@@ -413,7 +413,7 @@ function makeCtx(src) {
       // 它只用在拒答文案里拼接，不影响判断。
       contextReason: '',
     },
-    // 🔴 消息原文必须带上，而且**必须放在最外层**。
+    //  消息原文必须带上，而且**必须放在最外层**。
     //
     // 起因：daily-fortune 要判「群里被点名时，他到底有没有在问运势」——
     // 「@麦麦 在吗」不该抽签，「@麦麦 今日运势」才该。这个判断只能看原文。
@@ -493,7 +493,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'POST' && p === '/skills/call') {
     let raw = ''
-    // 限长：body 超 1MB 直接掐掉，别让一个坏客户端把内存吃光
+    // 限长：body 超 1MB 直接掐掉，避免一个坏客户端把内存吃光
     req.on('data', (c) => {
       raw += c
       if (raw.length > 1024 * 1024) { req.destroy(); send(res, 413, { ok: false, err: 'body 太大' }) }
@@ -509,7 +509,7 @@ const server = http.createServer((req, res) => {
     return
   }
 
-  // 🔴 装/卸技能不用重启大脑：python 侧把文件放好就打这个路由重载一次。
+  //  装/卸技能不用重启大脑：python 侧把文件放好就打这个路由重载一次。
   // 走 HTTP 而不是"装完自己重启"，是因为大脑在云端一跑就是一周，
   // 为了加个技能把微信断一下不划算。
   if (req.method === 'POST' && p === '/reload') {

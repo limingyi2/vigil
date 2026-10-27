@@ -106,7 +106,7 @@ def _write():
     # write_once provides the existing per-main-DB lock, rollback and close.
     # BEGIN IMMEDIATE also serializes other processes / legacy Run connections.
     #
-    # 🔴 用 begin=True 让 write_once 在**锁内**发 BEGIN IMMEDIATE。
+    #  用 begin=True 让 write_once 在**锁内**发 BEGIN IMMEDIATE。
     #
     # 为什么不自己发：WAL 模式下多个连接并发发这条语句时，后来者会拿到
     # 一句误导性的 "attempt to write a readonly database"（实测失败耗时

@@ -1,40 +1,11 @@
 # -*- coding: utf-8 -*-
-"""能力加载器：把 brain/core_features/ 下的核心能力适配器与 data/installed_plugins/ 下的用户扩展接进运行链路。
+"""核心适配器与可选插件宿主。
 
-**为什么有这个**：以前加一个功能（比如闹钟提醒）要新建 alarm.py、改 reply.py、
-改 server.py、改 persona_store 的提示词，四处都动 —— 改多了 reply.py 就成一堆
-if-else，改一个功能还可能弄坏别的。插件化之后，核心只认下面这几个钩子，
-核心能力由 core_features/ 提供；可选扩展必须安装到 data/installed_plugins/，不从源码仓库目录直接加载。
-
-## 一个插件文件长什么样
-
-    NAME = "reminder"          # 必填，插件名（英文，代码里引用它）
-    DESC = "闹钟/提醒"          # 必填，给人看的
-    FEATURE = "reminder"       # 选填，声明后 App 设置页自动多一个开关
-
-    def prompt(ctx): ...            # 选填 → 拼进 system：告诉她"你有这个本事"
-    def on_turn_in(ctx): ...        # 选填 → 他发来消息时，返回要注入 system 的提示
-    def on_reply(ctx, text): ...    # 选填 → 回复加工完（剥标记/生图/语音之后）
-    def start(brain): ...           # 选填 → 自己的后台线程，进程启动时调一次
-    TOOLS = {"名字": 函数}          # 选填 → 模型可以用 [tool:名字:参数] 调它
-    TOOL_HELP = "..."               # 选填 → 教模型怎么用，随 tools 一起进提示
-    ROUTES = [("POST", "/api/plugin/xxx", 处理函数)]   # 选填 → 自己的 HTTP 接口
-
-钩子都是可选的，写哪个算哪个。返回值约定：
-- prompt / on_turn_in 返回字符串（或 None），拼进给模型的 system
-- on_reply 必须返回字符串；不想动就原样返回，**别返回 None**
-
-## 三条纪律
-
-1. **插件坏了不能拖累她**：每个钩子都单独 try/except，炸了只打印一行，
-   on_reply 出错就返回原文。插件进程内隔离不了 import 副作用，所以插件里
-   禁止在模块顶层做网络请求 —— 要用就在钩子里调。
-2. **开关是黑名单式的**：FEATURE 声明了就受 features 段管（默认开，
-   App 能关）；没声明就永远开。别自己在钩子里读 config 判开关，那等于
-   把白名单又写死一遍。
-3. **插件不认识就是不认识**：run_tool 查不到名字就返回 None，她照实说查不到。
-   模型编出来的工具名由 tools.TOOL_TAG_ANY_RE 兜底扫掉，不会漏给用户。
-"""
+核心适配器从 core_features/ 加载，用户插件从 data/installed_plugins/ 加载。
+NAME、TOOLS 和 TOOL_SPECS 分别提供标识、执行函数与模型工具规格。
+prompt、on_turn_in、on_reply 和 start 等钩子为可选入口；回复钩子需返回字符串。
+宿主处理加载状态、功能开关、工具分发和钩子错误，不提供进程级副作用隔离。
+插件结构与分发说明见 docs/04-大脑/插件系统.md。"""
 import contextlib
 import contextvars
 import hashlib
@@ -506,7 +477,7 @@ def on_turn_in(ctx):
     对应以前硬写在 /api/chat 里的"检测到快递单号"那段 —— 现在那类东西
     归插件管，核心不认识具体功能。
 
-    🔴 **否决整轮靠 `ctx.veto()`，不靠返回值。**
+     **否决整轮靠 `ctx.veto()`，不靠返回值。**
     试过"返回空串 = 否决"，立刻踩坑：`reminder` 插件"没有提醒要注入"
     时返回的也是空串，而"所有插件都放行"时 `join([])` 同样是空串 ——
     三种情况在返回值上完全一样，于是"她一句话都说不出来"，
@@ -550,7 +521,7 @@ def run_tool(name, arg, src=None, arg_dict=None):
     arg_dict  多参数 dict（原生 FC 多参数工具用，如 skill_call 的 name+args）。
               传了 arg_dict 就忽略 arg，调用 fn(ctx, **arg_dict)。
 
-    🔴 **索引是装载时的快照，会有永远查不到的合法工具名。**
+     **索引是装载时的快照，会有永远查不到的合法工具名。**
     技能插件每次真调只有一个正确形状，而宿主上的工具名（`包名__工具名`）
     是运行时才问出来的，`p.tools` 里只有 `skill_list` / `skill_call`
     两个壳。按 name 查不到就返回 None，外层会拼
@@ -662,7 +633,7 @@ def tool_specs(src=None):
                                "params": [("参数名", "参数说明", 是否必填)],
                                "arg_param": "参数名"}}
 
-    🔴 **不声明 = 她看不到这个工具。** 原生工具清单本来是核心写死的一张表，
+     **不声明 = 她看不到这个工具。** 原生工具清单本来是核心写死的一张表，
     插件里 `TOOLS` 写得再全，也只进得了老的 `[tool:...]` 标签那条路；
     而主链路走的是原生 FC —— 没有 schema 的工具，模型压根不知道它存在，
     表现就是"装了、列表里有、开关能点、她就是不用"。
@@ -805,7 +776,7 @@ def tool_help(native=False):
     return "".join(out)
 
 
-# ── 插件 HTTP 路由的请求身份 ───────────────────────────────────
+# ── 插件 HTTP 路由的请求身份
 # server 在派发插件路由前用 use_principal() 写入本请求的已认证身份
 # (kind, id)：("brain","") 主人钥匙 / ("device", device_id) 设备 token。
 # ContextVar 按请求线程隔离，插件 handler 用 principal() 读，做设备归属校验

@@ -254,7 +254,7 @@ def main():
     # 能答的路径上。原先断言的是 tools.run_chat_with_tools（外层标签 ReAct），
     # 现在那条路已经并进 brain.draft_native，这里判的是 _once 直答。
     #
-    # ⚠️ 别按字符串切（"except Exception as e" 在 ast.dump 里根本不是这句，
+    # 注意： 别按字符串切（"except Exception as e" 在 ast.dump 里根本不是这句，
     # rfind 返回 -1，tail 变成末尾一个字符，判据恒红）。按 AST 结构取：
     # 最后一个 Try 的 handler 之后那些语句，就是兜底那段。
     stmts = fn.body

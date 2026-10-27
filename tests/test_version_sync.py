@@ -6,7 +6,7 @@
 
 以前版本号写在四个地方：build.gradle 的 versionCode、chat.html 的 APP_CODE、
 PollService 的 installedCode、云端 app/version.json。手机 App 在 P21.2 下线，
-那四处连同注入脚本一起删了；现在只剩桌面这一条链，钉住它别再分裂。
+那四处连同注入脚本一起删了；现在只剩桌面这一条链，钉住它避免再次分裂。
 """
 import io
 import json

@@ -11,7 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-// 只认这些容器；扩展名不在表里就直接拒，别让任意文件顺带被读出来。
+// 只认这些容器；扩展名不在表里就直接拒，避免任意文件顺带被读出来。
 const MIME = {
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
@@ -25,7 +25,7 @@ const MIME = {
 
 const VIDEO_EXTENSIONS = Object.keys(MIME).map(ext => ext.slice(1));
 
-// ── 为什么需要这一层 ──────────────────────────────────────────────
+// ── 为什么需要这一层
 // Chromium 只认 MP4/MOV 里的 H.264 / AV1 / VP9，以及 WebM 里的 VP8/VP9/AV1。
 // 用户随手一个 MKV（哪怕是 H.264）或 HEVC 的 MP4，播放器都会直接报
 // 「无法播放」。与其让人自己去转码，不如在打开时先看一眼真实编码：

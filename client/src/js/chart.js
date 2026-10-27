@@ -20,7 +20,7 @@
 
   const NS = 'http://www.w3.org/2000/svg';
 
-  /** 千分位：31200 → 31,200（数字展示一律过它，别再裸拼） */
+  /** 千分位：31200 → 31,200（数字展示一律过它，避免再次裸拼） */
   function fmtNum(n) {
     n = Math.round(Number(n) || 0);
     return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
