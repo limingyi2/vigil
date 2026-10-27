@@ -499,8 +499,22 @@ def _dynamic_tool_array(brain=None, src=None):
         got = _skill.tools(src)       # 已按**指定渠道**过滤、带 60s 缓存
     except Exception:
         return []
+    # 专家自带的技能只对召唤了它的**会话**可见。
+    #
+    # 只从工具表里删掉是不够的（模型还能照着历史里的名字硬调），执行层
+    # invoke_spec 里还有同一道判定；两处都问 expert_store.session_expert()，
+    # 保证"看不见"和"调不通"是同一个事实，不是两份各自维护的规则。
+    _owner, _ex = "", None
+    try:
+        import expert_store as _ex
+        _owner = _ex.session_expert(brain)
+    except Exception:
+        _ex = None
     out = []
     for name, t in sorted(got.items()):
+        sid = str(t.get("skill") or "")
+        if sid and _ex is not None and not _ex.skill_visible(sid, _owner):
+            continue
         params = t.get("params")
         # Node 给的 parameters 可能为空 / 不是合法 schema，兜底成无参 object
         if not isinstance(params, dict) or "type" not in params:
@@ -569,13 +583,19 @@ def all_specs(brain=None, src=None):
                 tools.append(_spec)
     except Exception:
         pass
-    # 专家工具白名单：该渠道绑定的专家包声明了 tools 时，只保留白名单内的
-    # 工具。**只能收窄，不能放开** —— 专家是换装不是提权，白名单里写了
+    # 专家工具白名单：当前**会话**绑定的专家包声明了 tools 时，只保留白名单内
+    # 的工具。**只能收窄，不能放开** —— 专家是换装不是提权，白名单里写了
     # 渠道原本没有的工具也放不出来（不在这里查，dispatch 还有一道）。
+    # 取会话而不是渠道：专家自 P27 起绑在会话上，两个对话可以各用各的专家，
+    # 这里读渠道的话 A 会话收窄的工具集会连带把 B 会话也收窄。
     try:
         import expert_store
-        _allow = expert_store.tool_allowlist(
-            getattr(brain, "api", None) or {}, src)
+        _conv = None
+        try:
+            _conv = getattr(brain, "_cur_conversation", None)
+        except Exception:
+            _conv = None
+        _allow = expert_store.tool_allowlist(_conv)
         if _allow is not None:
             def _tool_name(item):
                 return str(((item.get("function") or {}).get("name") or ""))
@@ -814,6 +834,17 @@ def invoke_spec(name, args, ctx=None):
 
     # 动态 JS 技能
     if "__" in n:
+        # 专家自带技能的第二道门：工具表里已经按会话过滤过，这里再挡一次。
+        # 模型完全可能照着上文出现过的工具名直接发一个调用，而工具表是
+        # 每轮重建的 —— 只挡表等于"藏起来"，不是"用不了"。
+        try:
+            import expert_store as _ex
+            _sid = n.split("__", 1)[0]
+            if _sid and not _ex.skill_visible(_sid, _ex.session_expert(
+                    getattr(ctx, "brain", None))):
+                return None
+        except Exception:
+            pass
         try:
             import skill as _skill
             import json as _json

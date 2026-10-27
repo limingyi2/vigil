@@ -96,21 +96,44 @@ def test_cache_invalidates_on_mtime(experts):
     assert expert_store.load_expert('k')['name'] == '新名'
 
 
-# --- 绑定 ---
+# --- 绑定：会话级（P27） ---
+#
+# 以前绑定在 experts_by_src[src] 上，PC 只有一个渠道 => 等于全局。
+# 现在落在 conversations.expert，一个会话一份。
 
-def test_binding_reads_config():
-    cfg = {'experts_by_src': {'pc': 'code-expert', 'app': '../bad'}}
-    assert expert_store.binding(cfg, 'pc') == 'code-expert'
-    assert expert_store.binding(cfg, 'app') == ''      # 非法 key 视为未绑定
-    assert expert_store.binding(cfg, 'wechat') == ''
-    assert expert_store.binding(None, 'pc') == ''
-    assert expert_store.bindings(cfg) == {'pc': 'code-expert'}
+def _new_conv(owner='o', src='pc', persona='p', expert=None):
+    import conversations
+    return conversations.create(owner, src, persona, None, expert)
 
 
-def test_binding_survives_runtime_config_reload():
+def test_binding_is_per_conversation():
+    a = _new_conv(expert='code-expert')
+    b = _new_conv()
+    assert expert_store.binding_for(a['id']) == 'code-expert'
+    assert expert_store.binding_for(b['id']) == ''
+    # 两个会话各绑各的，互不串味
+    expert_store.bind(b['id'], 'writing-expert')
+    assert expert_store.binding_for(a['id']) == 'code-expert'
+    assert expert_store.binding_for(b['id']) == 'writing-expert'
+    # 卸下只影响自己
+    expert_store.bind(a['id'], '')
+    assert expert_store.binding_for(a['id']) == ''
+    assert expert_store.binding_for(b['id']) == 'writing-expert'
+
+
+def test_binding_rejects_bad_conversation_id():
+    assert expert_store.binding_for('') == ''
+    assert expert_store.binding_for('not-a-uuid') == ''
+    assert expert_store.binding_for(None) == ''
+    assert expert_store.bind('../../etc', 'code-expert') is None
+
+
+def test_runtime_no_longer_carries_experts_by_src():
+    """旧配置键已下线：配置刷新不该再把它搬进内存（搬了就会有人去读）。"""
     import runtime
-    cfg = {'experts_by_src': {'pc': 'code-expert'}, 'api_key': 'test'}
-    assert expert_store.binding(runtime.api_cfg_subset(cfg), 'pc') == 'code-expert'
+    assert 'experts_by_src' not in runtime.API_CFG_KEYS
+    assert 'experts_by_src' not in runtime.api_cfg_subset(
+        {'experts_by_src': {'pc': 'code-expert'}, 'api_key': 'k'})
 
 
 def test_frozen_defaults_seed_without_overwriting_user_experts(tmp_path, monkeypatch):
@@ -132,10 +155,13 @@ def test_frozen_defaults_seed_without_overwriting_user_experts(tmp_path, monkeyp
 def test_tool_allowlist_none_means_keep_all(experts):
     _make_expert(experts, 'code-expert', meta=dict(GOOD_META, tools=[]))  # 空 -> 不收窄
     _make_expert(experts, 'strict', meta=dict(GOOD_META, tools=['search', 'weather']))
-    assert expert_store.tool_allowlist({'experts_by_src': {'pc': 'code-expert'}}, 'pc') is None
-    assert expert_store.tool_allowlist(
-        {'experts_by_src': {'pc': 'strict'}}, 'pc') == frozenset({'search', 'weather'})
-    assert expert_store.tool_allowlist({'experts_by_src': {}}, 'pc') is None
+    loose = _new_conv(expert='code-expert')
+    strict = _new_conv(expert='strict')
+    plain = _new_conv()
+    assert expert_store.tool_allowlist(loose['id']) is None
+    assert expert_store.tool_allowlist(strict['id']) == frozenset({'search', 'weather'})
+    assert expert_store.tool_allowlist(plain['id']) is None
+    assert expert_store.tool_allowlist('') is None
 
 
 # --- 场景匹配 ---
@@ -162,6 +188,62 @@ def test_system_overlay_format(experts):
     assert expert_store.system_overlay('') == ''
 
 
+# --- 资源包与技能（专家不再只是一段提示词） ---
+
+def test_resource_pack_is_listed_not_inlined(experts):
+    _make_expert(experts, 'code-expert')
+    ref = experts / 'code-expert' / 'references'
+    ref.mkdir()
+    (ref / '风格.md').write_text('这是一份很长的样稿。' * 500, encoding='utf-8')
+    txt = expert_store.system_overlay('code-expert')
+    assert '【专家资源包：测试专家】' in txt
+    assert 'references/风格.md' in txt
+    # 列清单而不是塞正文：完整路径要给（模型真去读），正文不进来
+    assert str(ref / '风格.md') in txt
+    assert '这是一份很长的样稿' not in txt
+    listed = [e for e in expert_store.list_experts() if e['key'] == 'code-expert'][0]
+    assert listed['resources'] == 1
+
+
+def test_icon_field_is_validated_and_listed(experts):
+    """icon 只收 [a-z0-9-] 且必须是 sprite 名；非法值丢空由前端退回首字。"""
+    _make_expert(experts, 'ok', meta=dict(GOOD_META, icon='Term'))
+    _make_expert(experts, 'bad', meta=dict(GOOD_META, icon='../etc/passwd'))
+    _make_expert(experts, 'none')
+    assert expert_store.load_expert('ok', include_prompt=False)['icon'] == 'term'
+    assert expert_store.load_expert('bad', include_prompt=False)['icon'] == ''
+    assert expert_store.load_expert('none', include_prompt=False)['icon'] == ''
+    # 清单页要带上 icon：会话列表和输入框芯片都靠它画徽标
+    listed = {e['key']: e['icon'] for e in expert_store.list_experts()}
+    assert listed == {'ok': 'term', 'bad': '', 'none': ''}
+    # 界面不再渲染 emoji 头像，但老包带 avatar 不能炸
+    _make_expert(experts, 'legacy', meta=dict(GOOD_META, avatar='✍️'))
+    assert expert_store.load_expert('legacy', include_prompt=False)['avatar'] == '✍️'
+
+
+def test_declared_files_and_skills_are_listed(experts):
+    _make_expert(experts, 'k', meta={
+        "name": "带包专家",
+        "files": ["templates/weekly.md", "missing.md"],
+        "skills": ["data-clean", {"id": "pdf", "name": "PDF 工具", "desc": "拆页与抽表"}],
+    })
+    (experts / 'k' / 'templates').mkdir()
+    (experts / 'k' / 'templates' / 'weekly.md').write_text('周报', encoding='utf-8')
+    txt = expert_store.system_overlay('k')
+    assert 'templates/weekly.md' in txt
+    assert 'missing.md' not in txt            # 声明了但不存在 -> 不列，不骗模型
+    assert '【本专家带的技能】' in txt
+    assert 'PDF 工具' in txt and 'data-clean' in txt
+    assert 'skill_read' in txt
+
+
+def test_absent_resource_dirs_add_nothing(experts):
+    """没有 references/ 的专家包，overlay 与加资源包之前完全一致。"""
+    _make_expert(experts, 'plain')
+    txt = expert_store.system_overlay('plain')
+    assert '资源包' not in txt and '带的技能' not in txt
+
+
 # --- Brain 接入：_persona_text_for 带专家叠加 ---
 
 @pytest.fixture
@@ -171,7 +253,7 @@ def brain(tmp_path, monkeypatch):
     (personas / 'default.json').write_text(json.dumps(
         {'name': '小智', 'personality': '陪伴底线'}), encoding='utf-8')
     cfg = {'persona_file': 'personas/default.json',
-           'experts_by_src': {}, 'features': {'tools': True}}
+           'features': {'tools': True}}
     monkeypatch.setattr(paths, 'CONFIG_PATH', str(tmp_path / 'config.json'))
     monkeypatch.setattr(paths, 'CONFIG_DIR', str(tmp_path))
     import persona_store
@@ -188,17 +270,38 @@ def brain(tmp_path, monkeypatch):
 def test_brain_persona_text_includes_expert_overlay(brain):
     b, root, cfg = brain
     _make_expert(root, 'code-expert')
-    base = b._persona_text_for('pc')
+    cid = _new_conv()['id']
+    base = b._persona_text_for('pc', cid)
     assert '专家模式' not in base
-    cfg['experts_by_src'] = {'pc': 'code-expert'}
+    expert_store.bind(cid, 'code-expert')
     b._ptext_cache = {}
-    overlaid = b._persona_text_for('pc')
+    overlaid = b._persona_text_for('pc', cid)
     assert '专家模式：测试专家' in overlaid
     assert overlaid.startswith(base)      # 人设在前，专家叠加在后
     # 卸下后回到纯人设
-    cfg['experts_by_src'] = {}
+    expert_store.bind(cid, '')
     b._ptext_cache = {}
-    assert b._persona_text_for('pc') == base
+    assert b._persona_text_for('pc', cid) == base
+
+
+def test_brain_persona_text_is_isolated_between_conversations(brain):
+    """会话级隔离的核心断言：A 召唤了专家，B 里的 system 段必须还是纯人设。
+
+    这是从渠道级搬过来的**唯一理由** —— 渠道级在 PC 上等于全局，
+    同一个 src 下所有对话共用一份 system 段，A 换装 B 跟着变。
+    """
+    b, root, cfg = brain
+    _make_expert(root, 'code-expert')
+    conv_a = _new_conv()['id']
+    conv_b = _new_conv()['id']
+    plain = b._persona_text_for('pc', conv_b)
+    expert_store.bind(conv_a, 'code-expert')
+    b._ptext_cache = {}
+    assert '专家模式：测试专家' in b._persona_text_for('pc', conv_a)
+    assert b._persona_text_for('pc', conv_b) == plain
+    # 历史首条也各走各的
+    assert '专家模式' not in b._hist('pc', conv_b)[0]['content']
+    assert '专家模式' in b._hist('pc', conv_a)[0]['content']
 
 
 # --- tools.all_specs 白名单收窄 ---
@@ -207,13 +310,15 @@ def test_all_specs_narrowed_by_expert_allowlist(brain):
     b, root, cfg = brain
     import tools
     _make_expert(root, 'strict', meta=dict(GOOD_META, tools=['weather']))
-    cfg['experts_by_src'] = {'pc': 'strict'}
+    cid = _new_conv(expert='strict')['id']
+    b.use_src('pc', cid)
     specs = tools.all_specs(b, 'pc')
     names = {s['function']['name'] for s in specs}
     assert names <= {'weather'}
-    cfg['experts_by_src'] = {}
+    # 换到没绑专家的会话：工具表照常（收窄只对那一个会话生效）
+    b.use_src('pc', _new_conv()['id'])
     specs = tools.all_specs(b, 'pc')
-    assert specs          # 未绑定专家时不收窄，工具表照常
+    assert specs
 
 
 # --- HTTP：召唤 / 卸下 ---
@@ -274,37 +379,78 @@ def core(tmp_path, monkeypatch):
     expert_store._CACHE.clear()
 
 
-def test_summon_dismiss_roundtrip(core):
+def test_summon_creates_session_and_binds_expert(core):
     b, request, cfg, config = core
     status, r = request('/api/expert?src=pc')
     assert status == 200 and r['ok'] is True
     assert [e['key'] for e in r['experts']] == ['code-expert']
     assert r['active'] == ''
+    assert r['conversation_id'] is None
 
+    # 召唤 = 新开一个会话 + 在这个会话上绑定专家
     status, r = request('/api/expert/summon',
-                        {'key': 'code-expert', 'src': 'pc'})
+                        {'key': 'code-expert', 'src': 'pc', 'new_session': True})
     assert status == 200 and r['ok'] is True and r['name'] == '测试专家'
     assert r['default_init_prompt'] == '看看这段'
-    # 内存与磁盘的绑定都改了
-    assert b.api['experts_by_src']['pc'] == 'code-expert'
-    assert json.loads(config.read_text(encoding='utf-8'))[
-        'experts_by_src']['pc'] == 'code-expert'
+    assert r['created'] is True
+    cid = r['conversation_id']
+    assert cid
+
+    import conversations
+    assert conversations.expert_of_id(cid) == 'code-expert'
+    # 绑定不再写配置文件
+    assert 'experts_by_src' not in json.loads(config.read_text(encoding='utf-8'))
     # system 段真的换装了（历史首条跟着 reload_persona 刷新）
-    assert '专家模式：测试专家' in b._persona_text_for('pc')
+    assert '专家模式：测试专家' in b._persona_text_for('pc', cid)
 
-    status, r = request('/api/expert?src=pc')
+    status, r = request('/api/expert?src=pc&conversation_id=' + cid)
     assert r['active'] == 'code-expert'
+    assert r['active_name'] == '测试专家'
 
-    status, r = request('/api/expert/dismiss', {'src': 'pc'})
+    # 另一个会话完全不受影响（会话级隔离）
+    other = _new_conv()['id']
+    assert '专家模式' not in b._persona_text_for('pc', other)
+
+    status, r = request('/api/expert/dismiss', {'src': 'pc', 'conversation_id': cid})
     assert status == 200 and r['ok'] is True
-    assert 'experts_by_src' not in b.api or \
-        b.api['experts_by_src'].get('pc') in (None, '')
-    assert '专家模式' not in b._persona_text_for('pc')
+    assert conversations.expert_of_id(cid) == ''
+    assert '专家模式' not in b._persona_text_for('pc', cid)
+
+
+def test_summon_without_new_session_binds_current_conversation(core):
+    """composer 里的实时推荐走这条：绑在正在写的那个会话上，不新开。"""
+    b, request, cfg, config = core
+    import conversations
+    # 走接口建会话：owner 由 identity 推导，手写 create() 拿到的行不属于同一个 owner
+    status, r = request('/api/conversations', {'src': 'pc'})
+    assert status in (200, 201) and r['ok'] is True
+    real = r['item']['id']
+
+    status, r = request('/api/expert/summon',
+                        {'key': 'code-expert', 'src': 'pc', 'conversation_id': real})
+    assert status == 200 and r['ok'] is True
+    assert r['created'] is False
+    assert r['conversation_id'] == real
+    assert conversations.expert_of_id(real) == 'code-expert'
+
+    # 会话列表里带出绑定与名字，且空会话不会因为"还没内容"被藏掉
+    status, r = request('/api/conversations?src=pc')
+    assert status == 200 and r['ok'] is True
+    item = next(i for i in r['items'] if i['id'] == real)
+    assert item['expert'] == 'code-expert'
+    assert item['expert_name'] == '测试专家'
 
 
 def test_summon_rejects_unknown_expert(core):
     _b, request, _cfg, _config = core
     status, r = request('/api/expert/summon', {'key': 'ghost', 'src': 'pc'})
+    assert status == 200 and r['ok'] is False
+
+
+def test_dismiss_rejects_missing_conversation(core):
+    _b, request, _cfg, _config = core
+    status, r = request('/api/expert/dismiss',
+                        {'src': 'pc', 'conversation_id': '22222222-2222-4222-8222-222222222222'})
     assert status == 200 and r['ok'] is False
 
 

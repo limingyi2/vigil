@@ -14,6 +14,31 @@
   const { esc, icon, fmtTime, fmtAgo, bytes, toast, empty, fmtNum } = U;
   const { get, post, pick, state } = API;
 
+  // ── 专家徽标 ──────────────────────────────────────────────────
+  // 专家是"这个对话换的装"，需要一枚能一眼认出的标记。这里统一成
+  // **方形徽标 + 单色线稿图标**，和全站图标同一套视觉语言。
+  //
+  // 不用 emoji：emoji 是彩色位图字形，字号、基线、饱和度都不受控，放在
+  // 一排单色线性图标里像贴了张彩色贴纸 —— 越是想强调的地方越显廉价。
+  // 所以 expert.json 的 avatar 字段只做兼容读取，界面不渲染。
+  //
+  // icon 写 sprite 里真实存在的 symbol 名才用；没有或写错就退化成名字
+  // 首字（中文取首字，英文取首字母大写）。这样任何一个用户自建的专家包
+  // 都不会出现"空白方块"。
+  function expertMonogram(name) {
+    const chars = Array.from(String(name || '').trim());
+    if (!chars.length) return '?';
+    const c = chars[0];
+    return /[a-z]/i.test(c) ? c.toUpperCase() : c;
+  }
+  function expertMark(e, cls) {
+    const name = String((e && (e.name || e.key)) || '');
+    const ic = String((e && e.icon) || '');
+    const known = ic && document.getElementById('i-' + ic);
+    return '<span class="expert-tile' + (cls ? ' ' + cls : '') + '" aria-hidden="true">' +
+      (known ? icon(ic, 'sm') : '<i>' + esc(expertMonogram(name)) + '</i>') + '</span>';
+  }
+
   function confirmDialog(message) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
@@ -876,10 +901,21 @@
     function renderSessionRow(s) {
       const s_updated = Number(s.updated_at || s.created_at || 0) * 1000;
       const inWorkspace = !!s.workspace_id;
+      // 会话级专家后，同一个渠道里会并存"普通对话"和"某专家的对话"。
+      // 列表上不标的话，用户只能靠回忆猜哪条是哪个 —— 而专家的差别
+      // 恰恰是"换个对话就没了"，最容易点错。
+      const exName = s.expert ? String(s.expert_name || s.expert) : '';
+      // 专家的会话用专家自己的徽标代替对话气泡：列表里一列图标对齐，
+      // 靠形状就能分出"哪几条是这个专家的"，不用读小字。
+      const lead = exName
+        ? expertMark({ name: exName, icon: s.expert_icon }, 'xs')
+        : icon('chat', 'sm');
       return '<div class="li session-row' + (s.id === activeConversationId ? ' on' : '') + (inWorkspace ? ' in-workspace' : '') + '">' +
         '<button class="session-open" data-session="' + esc(s.id) + '" title="切换会话">' +
-        '<span class="ic">' + icon('chat', 'sm') + '</span><span class="tx"><b>' + esc(String(s.title || '').slice(0, 7)) + '</b>' +
-        '<span>' + esc(relative(s_updated)) + '</span></span></button>' +
+        '<span class="ic">' + lead + '</span><span class="tx"><b>' + esc(String(s.title || '').slice(0, 7)) + '</b>' +
+        '<span>' + esc(relative(s_updated)) +
+        (exName ? ' · <i class="sx-expert" title="这个会话在用专家：' + esc(exName) + '">' + esc(exName) + '</i>' : '') +
+        '</span></span></button>' +
         '<button class="ibtn session-rename" data-rename="' + esc(s.id) + '" aria-label="重命名会话" title="重命名">···</button>' +
         '<button class="ibtn session-delete" data-delete="' + esc(s.id) + '" aria-label="删除会话" title="删除会话">' + icon('x', 'sm') + '</button></div>';
     }
@@ -1054,6 +1090,36 @@
         perm.classList.toggle('wide', wide);
         perm.title = wide ? '当前允许访问整台机器；点这里调整授权范围' : '当前只允许白名单目录；点这里调整授权范围';
       }
+      drawExpertChip();
+    }
+    // ── 当前专家：贴在输入框下面，和模型/工作区/授权并排
+    // 会话级之后"现在用的哪个专家"是每个对话各一份，所以这枚芯片必须跟着
+    // 会话切换实时重画 —— 它同时是唯一的**卸下**入口（人格页只负责召唤）。
+    function drawExpertChip() {
+      const chip = view.querySelector('#expertActive');
+      if (!chip) return;
+      const conv = sessionItems.find((s) => s.id === activeConversationId);
+      const key = conv && conv.expert ? conv.expert : '';
+      if (!key) { chip.hidden = true; chip.innerHTML = ''; return; }
+      const name = conv.expert_name || key;
+      chip.hidden = false;
+      chip.innerHTML = expertMark({ name: name, icon: conv.expert_icon }, 'xs') +
+        '<b>' + esc(name) + '</b>' +
+        '<span class="expert-x" role="button" aria-label="卸下专家" title="卸下专家，回到原人设">×</span>';
+      chip.title = '这个对话正在用「' + name + '」工作方式；点 × 卸下';
+      const x = chip.querySelector('.expert-x');
+      if (x) x.addEventListener('click', (e) => { e.stopPropagation(); dropExpert(); });
+    }
+    async function dropExpert() {
+      if (!activeConversationId) return;
+      const r = pick(await post('/api/expert/dismiss',
+        { src: state.src || 'pc', conversation_id: activeConversationId }));
+      if (!r.ok) { toast('卸下失败：' + (r._err || r.err || '')); return; }
+      sessionItems = sessionItems.map((s) => s.id === activeConversationId
+        ? Object.assign({}, s, { expert: null, expert_name: '', expert_icon: '', expert_avatar: '' }) : s);
+      drawExpertChip();
+      drawSessions();
+      toast('已卸下专家，回到原人设');
     }
     let wsPop = null;
     function closeWsPop() {
@@ -1231,6 +1297,7 @@
       '        <span id="tokenRate" class="token-rate" hidden title="模型输出吞吐率；Provider usage 可能包含推理 Token">—</span>' +
       '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span></button>' +
       '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span></button>' +
+      '        <button class="foot-chip expert-chip" id="expertActive" type="button" hidden title="当前对话使用的专家模式"></button>' +
         '        <button class="foot-chip" id="expertSuggest" hidden title="输入内容命中了专家场景，点一下召唤"></button>' +
         '        <div class="sp"></div>' +
         '        <span class="foot-brand">Vigil · AI Agent Workspace</span>' +
@@ -1652,6 +1719,24 @@
         return;
       }
       if (!msgs.isConnected || initialSelectionSeq!==conversationLoadSeq || busy || submitPending || activeConversationId) return;
+      // 召唤专家后由人格页交过来的跳转意图：选中刚建好的那个会话，
+      // 顺手把专家包的开场白填进输入框（只填不发 —— 发不发由用户决定）。
+      // 取走即清空，否则下次回到聊天页又会把用户拽回这个会话。
+      const pendingConv = state.chatPendingConversation || '';
+      const pendingPrompt = state.chatPendingPrompt || '';
+      state.chatPendingConversation = '';
+      state.chatPendingPrompt = '';
+      if (pendingConv && sessionItems.some((item) => item.id === pendingConv)) {
+        await activateConversation(pendingConv, {persist: true});
+        const ta = view.querySelector('#ta');
+        if (pendingPrompt && ta && !ta.value && !imgB64 && !attachment) {
+          ta.value = pendingPrompt;
+          ta.dispatchEvent(new Event('input', {bubbles: true}));
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+          ta.focus();
+        }
+        return;
+      }
       if (restoreId && sessionItems.some((item) => item.id === restoreId)) {
         await activateConversation(restoreId, {persist:false});
       } else if (restoreDraft) {
@@ -3162,7 +3247,9 @@
       const seq = ++expertSuggestSeq;
       const r = pick(await get('/api/expert/match?text=' +
         encodeURIComponent(text.slice(0, 80)) + '&src=' +
-        encodeURIComponent(state.src || 'pc'), { timeoutMs: 4000 }));
+        encodeURIComponent(state.src || 'pc') +
+        (activeConversationId ? '&conversation_id=' + encodeURIComponent(activeConversationId) : ''),
+        { timeoutMs: 4000 }));
       // 响应回来时输入已经变了/页面已切走：丢弃，别拿旧推荐闪人
       if (seq !== expertSuggestSeq || !chip.isConnected) return;
       const m = (r && r.matches || [])[0];
@@ -3171,15 +3258,31 @@
       chip.textContent = '召唤「' + m.name + '」';
       chip.onclick = async () => {
         chip.disabled = true;
-        const rr = pick(await post('/api/expert/summon', { key: m.key, src: state.src || 'pc' }));
+        // 这里的推荐是"这一句话像是要用某专家的方式处理"，所以绑在**当前
+        // 会话**上，不新开 —— 用户正在打的这段话本来就是给这个对话的。
+        // 没有当前会话时才让服务端新建一个。
+        const payload = { key: m.key, src: state.src || 'pc' };
+        if (activeConversationId) payload.conversation_id = activeConversationId;
+        else payload.new_session = true;
+        const rr = pick(await post('/api/expert/summon', payload));
         chip.disabled = false;
-        if (rr.ok) {
-          toast('已召唤「' + (rr.name || m.name) + '」，下一句话生效' +
-                (rr.default_init_prompt ? ' · 开场白：' + rr.default_init_prompt : ''));
-          chip.hidden = true;
+        if (!rr.ok) { toast('召唤失败：' + (rr._err || rr.err || '')); return; }
+        chip.hidden = true;
+        if (rr.created && rr.conversation_id) {
+          // 服务端顺手建了新会话：把这个会话落进列表并切过去，
+          // 否则下一条消息会发到 old 的 activeConversationId 上。
+          await refreshConversations();
+          if (sessionItems.some((item) => item.id === rr.conversation_id)) {
+            await activateConversation(rr.conversation_id, {persist: true});
+          }
         } else {
-          toast('召唤失败：' + (rr._err || rr.err || ''));
+          sessionItems = sessionItems.map((s) => s.id === rr.conversation_id
+            ? Object.assign({}, s, {expert: rr.key, expert_name: rr.name || m.name, expert_icon: rr.icon || ''})
+            : s);
+          drawExpertChip();
+          drawSessions();
         }
+        toast('已召唤「' + (rr.name || m.name) + '」，这个对话开始按专家方式工作');
       };
     }
     const scheduleExpertSuggest = () => {
@@ -3605,9 +3708,13 @@
       per[c] = { key: pr.src_persona_key || pr.key || '', name: pr.name || '' };
     }
     // 专家（expert）状态：老 Brain 没有这个接口时静默降级，不挡人设面板。
-    let ex = { ok: false, experts: [], bindings: {}, active: '' };
+    // P27 起绑定是**会话级**的 —— 所以这里问的是"当前这个对话在用哪个专家"，
+    // 没有当前对话就问"还没绑"。
+    let ex = { ok: false, experts: [], active: '', active_name: '' };
     const loadExperts = async () => {
-      const rr = pick(await get('/api/expert?src=' + curChan));
+      const cid = state.chatConversationId || '';
+      const rr = pick(await get('/api/expert?src=' + curChan +
+        (cid ? '&conversation_id=' + encodeURIComponent(cid) : '')));
       if (rr.ok) ex = rr;
     };
     await loadExperts();
@@ -3703,21 +3810,46 @@
         cards = [{ key: cur, label: (per[curChan] || {}).name || cur,
                    desc: '当前使用的人设（不在模板清单里）。选一张卡点「应用」就会换掉它。', synthetic: true }].concat(cards);
       }
-      // 专家区：目录包即清单（config/experts/<key>/），召唤 = 绑定到当前渠道。
-      // 人设还是那个人，专家只是"现在的工作方式"——所以放在人设卡片上面。
+      // 专家区：目录包即清单（config/experts/<key>/）。
+      // 召唤 = **新开一个对话**并在这个对话上绑专家：专家是"这个对话的工作
+      // 方式"，插进当前对话中间会把上半段没换装的上下文一起带进新规则里。
+      // 所以这里不再有「卸下」—— 卸下属于当前对话，在输入框那枚芯片上做。
       const expertCards = (ex.experts || []).map((e) => {
         const on = ex.active === e.key;
+        const pack = [];
+        if (e.resources) pack.push('资料 ' + e.resources);
+        if (e.skills) pack.push('技能 ' + e.skills);
+        // bundles = 包里真带的技能（装进宿主、召唤后模型手上就会多出工具）。
+        // 跟上面那个 skills（只是声明"我要用某个已装技能"）是两件事，
+        // 分开写，免得面板上显示"技能 1"而实际一个工具都没多。
+        if (e.bundles) pack.push('工具 ' + e.bundles);
+        const remote = e.source === 'remote';
         return '<div class="pcard' + (on ? ' cur' : '') + '" data-ek="' + esc(e.key) + '">' +
-          '<div class="pch"><b>' + esc((e.avatar ? e.avatar + ' ' : '') + e.name) + '</b>' +
-          (on ? tag('ok', '召唤中') : '') + '</div>' +
+          '<div class="pch">' + expertMark(e, 'md') +
+          '<b>' + esc(e.name) + '</b>' +
+          (on ? tag('ok', '本会话在用') : '') +
+          (remote ? tag('neutral', '远程') : '') + '</div>' +
           (e.description ? '<div class="pdesc">' + esc(String(e.description).slice(0, 90)) + '</div>' : '') +
-          (on ? '<button class="btn oline" data-dismiss="' + esc(e.key) + '">卸下</button>'
-              : '<button class="btn fill" data-summon="' + esc(e.key) + '">召唤</button>') +
-          '</div>';
+          (pack.length ? '<div class="pdesc pcard-pack">' + esc(pack.join(' · ')) + '</div>' : '') +
+          '<div class="pft"><button class="btn fill" data-summon="' + esc(e.key) + '">召唤</button>' +
+          (remote ? '<button class="btn oline" data-uninstall="' + esc(e.key) + '">卸载</button>' : '') +
+          '</div></div>';
       }).join('');
-      const expertSec = (ex.ok && (ex.experts || []).length) ?
-        '<div class="sech"><b>专家</b><span class="muted">召唤后她按这个专家的方式工作；卸下即回到原人设。对话历史保留。</span></div>' +
-        '<div class="pgrid">' + expertCards + '</div>' : '';
+      // 安装入口：只认 owner/repo 和 zip 直链。不提供"浏览市场"——
+      // 现在没有那个服务端，摆一个假列表比没有更糟。
+      const expertInstall =
+        '<div class="expert-install">' +
+        '<input class="input" id="expertInstallSrc" type="text" spellcheck="false" ' +
+        'placeholder="owner/repo 或 zip 直链（如 limingyi2/vigil-experts）" ' +
+        'aria-label="专家包来源">' +
+        '<button class="btn" id="expertInstallBtn">安装</button></div>' +
+        '<div class="expert-install-hint">专家包带的是提示词、资料和 JS 技能工具。' +
+        '装好后会出现在下面，召唤时它自带的工具才会对这个对话可见。</div>';
+      const expertSec = (ex.ok) ?
+        '<div class="sech"><b>专家</b><span class="muted">召唤会新开一个对话，并按这个专家的方式工作；' +
+        '卸下在聊天输入框的专家标签上。对话历史保留。</span></div>' +
+        (expertCards ? '<div class="pgrid">' + expertCards + '</div>' : '') +
+        expertInstall : '';
       ctx.view.innerHTML = '<div class="wrap">' +
         expertSec +
         '<div class="sech"><b>' + esc(n) + '</b><span class="muted">' + esc(d) + '</span></div>' +
@@ -3726,21 +3858,59 @@
         '</div>';
       ctx.view.querySelectorAll('[data-summon]').forEach((b) => b.addEventListener('click', async () => {
         b.disabled = true;
-        const rr = pick(await post('/api/expert/summon', { key: b.dataset.summon, src: curChan }));
+        // new_session: 服务端先建一个空会话再把专家绑上去，回来的是它的 id。
+        const rr = pick(await post('/api/expert/summon',
+          { key: b.dataset.summon, src: curChan, new_session: true }));
         b.disabled = false;
-        if (rr.ok) {
-          toast('已召唤' + (rr.name ? '「' + rr.name + '」' : '') + '，下一句话生效' +
-                (rr.default_init_prompt ? ' · 开场白：' + rr.default_init_prompt : ''));
+        if (!rr.ok) { toast('召唤失败：' + (rr._err || rr.err || '')); return; }
+        // 交给聊天页：跳过去、选中这个新会话、把开场白填进输入框。
+        // 只用内存传（不写 localStorage）—— 这是一次性的跳转意图，
+        // 存下来会在下次冷启动时莫名其妙地"又打开一个新对话"。
+        state.chatPendingConversation = rr.conversation_id || '';
+        state.chatPendingPrompt = rr.default_init_prompt || '';
+        toast('已召唤' + (rr.name ? '「' + rr.name + '」' : '') + '，已新建对话');
+        if (ctx.navigate) ctx.navigate('chat');
+      }));
+      // 安装 / 卸载。下载可能要十几秒（GitHub 慢的时候），所以超时放宽到
+      // 60s，并且按钮就地变成"安装中"—— 不给反馈的话用户会连点三次。
+      const installInput = ctx.view.querySelector('#expertInstallSrc');
+      const installBtn = ctx.view.querySelector('#expertInstallBtn');
+      if (installBtn) {
+        const runInstall = async () => {
+          const src = String((installInput && installInput.value) || '').trim();
+          if (!src) { if (installInput) installInput.focus(); return; }
+          installBtn.disabled = true;
+          installBtn.textContent = '安装中…';
+          const rr = pick(await post('/api/expert/install', { source: src }, { timeoutMs: 60000 }));
+          installBtn.disabled = false;
+          installBtn.textContent = '安装';
+          if (!rr.ok) { toast('安装失败：' + (rr.err || rr._err || '')); return; }
+          const it = rr.item || {};
+          const got = ((it.skill_sync || {}).installed || []);
+          toast('已安装「' + (it.name || it.key || src) + '」' +
+                (got.length ? '，自带工具 ' + got.join('、') : ''));
+          installInput.value = '';
           await loadExperts();
           draw();
-        } else { toast('召唤失败：' + (rr._err || rr.err || '')); }
-      }));
-      ctx.view.querySelectorAll('[data-dismiss]').forEach((b) => b.addEventListener('click', async () => {
+        };
+        installBtn.addEventListener('click', runInstall);
+        installInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); runInstall(); }
+        });
+      }
+      ctx.view.querySelectorAll('[data-uninstall]').forEach((b) => b.addEventListener('click', async () => {
+        const key = b.dataset.uninstall;
+        const okGo = await confirmDialog(
+          '卸载专家「' + key + '」？它自带的技能工具会一起删掉。' +
+          'config/experts 里手写的专家不受影响。');
+        if (!okGo) return;
         b.disabled = true;
-        const rr = pick(await post('/api/expert/dismiss', { src: curChan }));
+        const rr = pick(await post('/api/expert/uninstall', { key }));
         b.disabled = false;
-        if (rr.ok) { toast('专家已卸下'); await loadExperts(); draw(); }
-        else { toast('卸下失败：' + (rr._err || rr.err || '')); }
+        if (!rr.ok) { toast('卸载失败：' + (rr.err || rr._err || '')); return; }
+        toast('已卸载「' + key + '」');
+        await loadExperts();
+        draw();
       }));
       ctx.view.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => {
         editing = b.dataset.edit;

@@ -69,7 +69,11 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 # ollama：本地模型连接段 {base, model, num_ctx, num_predict, think, request_timeout}
 API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
                 "persona_file", "provider", "api_keys", "api_key_bases",
-                "model_mode", "ollama", "persona_by_src", "experts_by_src",
+                "model_mode", "ollama", "persona_by_src",
+                # experts_by_src 已下线（P27 专家改会话级，绑定落在
+                # conversations.expert）。旧值留在 config.json 里也不再读 ——
+                # 渠道级绑定无法翻译成会话级，硬迁移只会把"全渠道都在这一个
+                # 专家上"这种既成事实当成用户的选择，不如让它自然失效。
                 "model_capabilities", "model_stream", "display_records", "agent_execution",
                 "context_compression", "history_retrieval")
 

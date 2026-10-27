@@ -21,6 +21,12 @@
     persona: null,       // 当前人设 {key,name,...}
     cfg: {},             // 主进程里的配置（地址等）
     autoFail: null,      // 启动时自动探测失败的结果（设置页拿它显示原因）
+    // 聊天页的内存状态：会话 id 由聊天页自己维护，但别的页面要知道"现在这个
+    // 对话是谁"，才能把专家标在正确的那一条上、并在召唤后指定"打开哪个对话"。
+    // 只活在内存里（刷新页面靠 localStorage 的 SESS_KEY 恢复），不参与持久化。
+    chatConversationId: '',
+    chatPendingConversation: '',  // 召唤专家后要跳过去的新会话 id，聊天页取走即清空
+    chatPendingPrompt: '',        // 顺带填进输入框的开场白
   };
 
   // A missing bridge in Electron is a preload failure, not a browser preview.

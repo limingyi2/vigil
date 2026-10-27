@@ -603,7 +603,7 @@ class Brain:
         key = (src, conversation_id)
         h = self._hists.get(key)
         if h is None:
-            h = [{"role": "system", "content": self._persona_text_for(src)}]
+            h = [{"role": "system", "content": self._persona_text_for(src, conversation_id)}]
             self._hists[key] = h
         return h
 
@@ -632,7 +632,7 @@ class Brain:
         key = (src, self._cur_conversation if src == self._cur_src else None)
         n = len(self._hists.get(key) or []) - 1
         self._hists[key] = [{"role": "system",
-                             "content": self._persona_text_for(src)}]
+                             "content": self._persona_text_for(src, key[1])}]
         try:
             os.remove(self._log_for(src, key[1]))
         except OSError:
@@ -667,8 +667,8 @@ class Brain:
                 cache[key] = {}
         return cache[key]
 
-    def _persona_text_for(self, src):
-        """这个渠道的 system 段。缓存的是 build 之后的结果（读文件 + 拼装
+    def _persona_text_for(self, src, conversation_id=None):
+        """这个会话的 system 段。缓存的是 build 之后的结果（读文件 + 拼装
         不便宜，但内容只随人设 key 变）。
 
          缓存键必须**同时含渠道**：build_system_text 会按 src 选底线
@@ -677,22 +677,31 @@ class Brain:
         两个渠道会共用同一份文本 —— 改渠道不换底线，助手设定等于没生效，
         而且症状是"人设文件改了没反应"，极难查。
 
-         缓存键还必须含**专家绑定**：召唤/卸下专家只改 experts_by_src，
-        人设 key 不动 —— 键里不带专家的话，换专家后这里命中旧缓存，
-        症状同样是"召唤了但没生效"。专家是提示词叠加，见 expert_store.
-        system_overlay。
+         缓存键还必须含**会话**：专家自 P27 起绑在会话上（不是渠道），
+        两个会话可以各用一个专家。键里不带会话 id 的话，A 会话召唤了
+        代码专家，B 会话第一句就会命中 A 的缓存 —— 表现是"另一个对话也
+        变成专家了"，正是会话级隔离要防的那种串味。
+         键里带会话 id 顺带把"绑了哪个专家"也隔离了：同一个会话换绑专家
+        时 id 不变，所以键里仍然要显式拼 expert_key，否则换了专家命中旧缓存。
         """
         key = self._persona_key_for(src)
+        cid = conversation_id
         expert_key = ""
         try:
             import expert_store
-            expert_key = expert_store.binding(self.api, src)
+            expert_key = expert_store.binding_for(cid)
         except Exception:
             expert_key = ""
-        ckey = "%s\x00%s\x00%s" % (key, str(src or DEFAULT_SRC), expert_key)
+        ckey = "%s\x00%s\x00%s\x00%s" % (key, str(src or DEFAULT_SRC), expert_key,
+                                         str(cid or ""))
         cache = getattr(self, "_ptext_cache", None)
         if cache is None:
             cache = self._ptext_cache = {}
+        # 键里多了会话 id，缓存就从"每渠道一份"变成"每会话一份" —— 会话开着
+        # 不关就一直涨。超量整块丢掉即可：重建一次只是读文件拼字符串，
+        # 而留着不丢是实打实的内存泄漏。
+        if len(cache) > 256:
+            cache.clear()
         if ckey not in cache:
             try:
                 txt = build_system_text(load_persona(key) or {}, src=src)
@@ -723,7 +732,7 @@ class Brain:
     # 显式赋值时用，存进同一个缓存，下一次读还是拿到它。
     @property
     def persona_text(self):
-        return self._persona_text_for(self._cur_src)
+        return self._persona_text_for(self._cur_src, self._cur_conversation)
 
     @persona_text.setter
     def persona_text(self, v):
@@ -818,7 +827,7 @@ class Brain:
         # 换句话说：改渠道人设必须重载，不然旧的对话历史会跟着新的人设走。
         for key in list(self._hists.keys()):
             src, conversation_id = key
-            fresh = self._persona_text_for(src)
+            fresh = self._persona_text_for(src, conversation_id)
             same = self._hist_persona.get(key) == self._persona_key_for(src)
             if keep_history and same and self._hists[key]:
                 self._hists[key][0] = {"role": "system", "content": fresh}
@@ -2947,7 +2956,7 @@ class Brain:
         import conversation_context
         channel = norm_src(src or DEFAULT_SRC)
         self._hists[(channel, conversation_id)] = [{
-            "role": "system", "content": self._persona_text_for(channel)}]
+            "role": "system", "content": self._persona_text_for(channel, conversation_id)}]
         conversation_context.clear_scope(self._persona_key_for(channel), channel, conversation_id)
         try:
             os.remove(self._log_for(src, conversation_id))

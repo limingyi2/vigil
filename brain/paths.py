@@ -39,6 +39,12 @@ PERSONA_DIR = os.path.join(CONFIG_DIR, "personas")
 # 专家目录包：expert.json（元数据）+ SKILL.md（专家提示词正文）。
 # 与 personas/ 同级同性质 —— 你手动放的配置，随 config 搬家。
 EXPERTS_DIR = os.path.join(CONFIG_DIR, "experts")
+# 远程安装的专家包（从 zip / 直链 / GitHub 拉下来的）。
+# 单独放 data/ 而不是并进 config/experts，是为了守住那条界线：
+#   config/ 里的东西是**你写的**，升级与同步都不该覆盖它；
+#   data/ 里的东西是**程序写的**，卸载就该能整目录删掉，不用猜哪些是他建的。
+# 同名 key 同时存在时 config/ 那份优先 —— 用户手改的永远盖过远程装的。
+EXPERT_INSTALL_DIR = os.path.join(DATA_DIR, "installed_experts")
 
 # --- data/：程序自己写的 ---
 MEMORY_DIR = os.path.join(DATA_DIR, "memory")

@@ -1,0 +1,7 @@
+{
+  "id": "writing-tools",
+  "name": "写作工具包",
+  "description": "写作专家自带的工具：字数统计（中文按字、英文按词）。",
+  "version": "1.0.0",
+  "entry": "index.js"
+}

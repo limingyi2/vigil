@@ -1,6 +1,6 @@
 {
   "name": "vigil-client",
-  "version": "1.1.13",
+  "version": "1.1.14",
   "private": true,
   "description": "Vigil 桌面客户端：聊天 + 管理面板 + 本地操控（骨架阶段）",
   "main": "electron/bootstrap.js",
@@ -25,6 +25,8 @@
       "package.json",
       "build-info.json",
       "!src/_harness.html",
+      "!src/_marvis-preview.html",
+      "!src/_expert-preview.html",
       "!src/js/_devstub.js"
     ],
     "asarUnpack": [

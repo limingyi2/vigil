@@ -1673,8 +1673,28 @@ def start_remote_api(brain):
                     # An empty chat opened in a workspace is a deliberate session.
                     if item.get('workspace_id'):
                         item['has_content'] = True
+                    # 召唤专家开出来的空会话同样是有意开的：客户端召唤完就跳过去，
+                    # 这里若因为"还没有内容"把它藏掉，跳过去会落到空白首页 ——
+                    # 用户看到的是"召唤了但什么都没发生"。
+                    if item.get('expert'):
+                        item['has_content'] = True
                 if item['has_content']:
                     visible.append(item)
+            # 会话列表上标出"这个对话在用哪个专家"。名字由这里补，而不是让
+            # 客户端拿 key 再查一次 —— 多一次请求就多一次"列表先画出来、
+            # 名字后到"的闪烁。load_expert 有 mtime 缓存，按行查也不贵。
+            try:
+                import expert_store
+                for item in visible:
+                    _xkey = item.get('expert')
+                    if not _xkey:
+                        continue
+                    _xexp = expert_store.load_expert(_xkey, include_prompt=False) or {}
+                    item['expert_name'] = _xexp.get('name') or _xkey
+                    item['expert_icon'] = _xexp.get('icon') or ''
+                    item['expert_avatar'] = _xexp.get('avatar') or ''
+            except Exception:
+                pass
             return visible
 
         def _conversation_context(self, src='pc', cid=None):
@@ -3663,59 +3683,137 @@ def start_remote_api(brain):
                         self._json(200, {"ok": False, "err": "她正忙着"})
                         return
                     self._json(200, {"ok": True})
-                elif path in ("/api/expert/summon", "/api/expert/dismiss"):
-                    # 召唤/卸下专家：改 config.experts_by_src 绑定 + 热重载。
-                    # 与 /api/persona/apply 同构 —— 内存三份配置
-                    # （api_config / API_CFG / brain.api）必须一起改，
-                    # 否则只写盘的 reload 回读旧值，"召唤了但没生效"。
+                elif path in ("/api/expert/install", "/api/expert/uninstall"):
+                    # 专家包的远程安装 / 卸载。
+                    #
+                    # **不拿 _chat_lock**：下载最多二十秒，拿着聊天锁等于
+                    # 让整个客户端卡在"她正忙着"上。装包与对话没有共享状态，
+                    # 唯一要小心的是装完要让大脑丢掉人设缓存（新专家要能被
+                    # 立即召唤），那一步很短，单独做。
                     try:
-                        import expert_store
-                        _xsrc = _norm_src(body.get("src") or "pc")
+                        import expert_install, expert_store
+                        if path == "/api/expert/uninstall":
+                            _ukey = str(body.get("key") or "").strip()
+                            _ures = expert_install.uninstall(_ukey)
+                            print("[大脑] 专家已卸载 %s（技能 %s）"
+                                  % (_ukey, ",".join(_ures.get("skills_removed") or []) or "-"),
+                                  flush=True)
+                            self._json(200, {"ok": True, **_ures})
+                            return
+                        _src = str(body.get("source") or "").strip()
+                        _item = expert_install.install(
+                            _src,
+                            key_hint=str(body.get("key") or "").strip(),
+                            ref=str(body.get("ref") or "").strip())
+                        print("[大脑] 专家已安装 %s <- %s（自带技能 %s）"
+                              % (_item.get("key"), _src[:120],
+                                 ",".join((_item.get("skill_sync") or {}).get("installed") or []) or "-"),
+                              flush=True)
+                        # 新包可能改了专家目录结构 —— 让下一条消息重新拼 system 段
+                        if hasattr(brain, "reload_persona"):
+                            brain.reload_persona()
+                        self._json(200, {"ok": True,
+                                         "item": _item,
+                                         "skills": _item.get("bundled") or [],
+                                         "source": _src})
+                    except Exception as e:
+                        # InstallError 的 msg 是写给人看的；其他异常按原样截断
+                        _msg = getattr(e, "msg", "") or str(e)
+                        _code = getattr(e, "code", "install_error")
+                        if _code == "install_error":
+                            errlog.log_exc("api/expert/install", e)
+                        self._json(200, {"ok": False, "code": _code,
+                                         "err": _msg[:200]})
+                elif path in ("/api/expert/summon", "/api/expert/dismiss"):
+                    # 召唤/卸下专家：改**会话行**上的 expert 绑定 + 热重载。
+                    #
+                    # P27 从渠道级改成会话级。渠道级在 PC 上等于全局（
+                    # normalize_src 只认 'pc'）：在 A 会话召唤了代码专家，
+                    # 回 B 会话写文案，人还是那个写代码的 —— 这是"串味"，
+                    # 而配置表面上看不出任何问题。
+                    #
+                    # new_session=true 时**先建一个空会话再绑**，并把新会话 id
+                    # 回给客户端跳过去：召唤是一个动作，用户预期落到一个已经
+                    # 换好装的新对话里，而不是在当前对话的中间插入一段专家规则。
+                    try:
+                        import expert_store, conversations
+                        _xsrc_in = _norm_src(body.get("src") or "pc")
+                        _xcid = str(body.get("conversation_id") or "").strip()
+                        _xnew = bool(body.get("new_session"))
                         _xkey = ""
                         _xname = ""
                         _xinit = ""
+                        _xicon = ""
                         if path == "/api/expert/summon":
-                            _xkey = expert_store.validate_key(
-                                body.get("key") or "")
+                            _xkey = expert_store.validate_key(body.get("key") or "")
                             _xexp = expert_store.load_expert(
                                 _xkey, include_prompt=False) if _xkey else None
                             if not _xexp:
-                                self._json(200, {"ok": False,
-                                                 "err": "没有这个专家"})
+                                self._json(200, {"ok": False, "err": "没有这个专家"})
                                 return
                             _xname = _xexp["name"]
                             _xinit = _xexp.get("default_init_prompt") or ""
-                        with _chat_lock():
-                            _xcfg = {}
-                            try:
-                                _xcfg = json.load(
-                                    open(config_path(), encoding="utf-8"))
-                            except Exception:
-                                _xcfg = {}
-                            _xby = _xcfg.get("experts_by_src")
-                            if not isinstance(_xby, dict):
-                                _xby = _xcfg["experts_by_src"] = {}
-                            if path == "/api/expert/summon":
-                                _xby[_xsrc] = _xkey
-                            else:
-                                _xby.pop(_xsrc, None)
-                            with open(config_path(), "w",
-                                      encoding="utf-8") as f:
-                                json.dump(_xcfg, f, ensure_ascii=False,
-                                          indent=2)
-                            for _xdst in (api_config, API_CFG,
-                                          getattr(brain, "api", None)):
-                                if isinstance(_xdst, dict):
-                                    _xdst["experts_by_src"] = dict(_xby)
-                            brain.reload_persona()
-                        if path == "/api/expert/summon":
-                            print("[大脑] 专家已召唤 %s -> %s" % (_xsrc, _xkey),
-                                  flush=True)
+                            _xicon = _xexp.get("icon") or ""
+                        # 会话解析走统一的 _conversation_context：它认得老历史的
+                        # 无归属行（persona=''），自己拼 SQL 会把那些会话漏掉，
+                        # 表现是"老对话里召唤专家没反应"。
+                        _xconv, _xowner, _xsrc, _xpersona = self._conversation_context(
+                            _xsrc_in, _xcid or None)
+                        _xcreated = False
+                        # 老历史（legacy）那一行是个合并视图，不是真会话：大脑侧
+                        # 拿到的 conversation_id 会被归一成 None，专家绑上去永远
+                        # 不生效。所以绑不上就退化成"新建一个真会话"，
+                        # 而不是返回一个看起来成功、下一句却没换装的 ok。
+                        _legacy_row = bool((_xconv or {}).get('legacy'))
+                        if path == "/api/expert/summon" and (_xnew or not _xcid or _legacy_row):
+                            _xitem = conversations.create(
+                                _xowner, _xsrc, str(_xpersona), None, _xkey)
+                            _xcid = _xitem["id"]
+                            _xcreated = True
                         else:
-                            print("[大脑] 专家已卸下 %s" % _xsrc, flush=True)
+                            if not _xcid or not _xconv:
+                                self._json(200, {"ok": False, "err": "会话不存在"})
+                                return
+                            _xok = conversations.set_expert(
+                                _xcid, _xkey if path == "/api/expert/summon" else "")
+                            if _xok is None:
+                                self._json(200, {"ok": False, "err": "会话不存在"})
+                                return
+                        # 专家包自带的技能：召唤时补装一次。
+                        # 远程装的包在安装时已经装过了，这里是给"直接扔进
+                        # config/experts 的手工包"兜底 —— 否则用户把包放进去、
+                        # 召唤成功、工具却调不通，而且没有任何提示。
+                        # install_bundled_skills 会比对 mtime，没变化时是空操作。
+                        _xbundled = {}
+                        if path == "/api/expert/summon" and _xkey:
+                            try:
+                                _xbundled = expert_store.install_bundled_skills(_xkey)
+                                if _xbundled.get("installed"):
+                                    try:
+                                        from core_features import skill as _sk
+                                        _sk._host_reload_checked()
+                                    except Exception:
+                                        pass
+                            except Exception as e:
+                                errlog.log_exc("api/expert/summon:skills", e)
+                        # system 段只在 _hist 建历史时拼一次，绑完不重载的话
+                        # 下一个字的 hist[0] 还是旧的 —— 症状就是"召唤了但没生效"。
+                        try:
+                            with _chat_lock():
+                                brain.reload_persona()
+                        except _Busy:
+                            # 忙的时候只影响热刷新，绑定已经落盘，下一轮照样生效
+                            pass
+                        print("[大脑] 专家%s %s -> %s" % (
+                            "已召唤" if path == "/api/expert/summon" else "已卸下",
+                            _xcid, _xkey or "-"), flush=True)
                         self._json(200, {"ok": True, "key": _xkey,
                                          "name": _xname,
+                                         "icon": _xicon,
                                          "src": _xsrc,
+                                         "conversation_id": _xcid,
+                                         "created": _xcreated,
+                                         "skills": _xbundled,
                                          "default_init_prompt": _xinit})
                     except Exception as e:
                         errlog.log_exc("api/expert/summon", e)
@@ -4608,32 +4706,37 @@ def start_remote_api(brain):
                                  "max": persona_store.MAX_TEMPLATES,
                                  "used": persona_store.template_count()})
             elif path == "/api/expert":
-                # 专家面板：清单 + 各渠道绑定 + 当前渠道激活状态
+                # 专家面板：清单 + **当前会话**的激活状态。
+                # 会话级之后这里不再有"全量绑定快照"这种东西 —— 专家是每个
+                # 对话各一份，问"哪个渠道在用哪个专家"本身就没有答案了。
                 try:
                     import expert_store
-                    _esrc = _norm_src(_query_param(self.path, "src") or "")
-                    _ecfg = getattr(brain, "api", None) or API_CFG
+                    _esrc = _norm_src(_query_param(self.path, "src") or "pc")
+                    _ecid = str(_query_param(self.path, "conversation_id") or "")
+                    _ekey = expert_store.binding_for(_ecid) if _ecid else ""
+                    _eexp = expert_store.load_expert(_ekey, include_prompt=False) if _ekey else None
                     self._json(200, {"ok": True,
                                      "experts": expert_store.list_experts(),
-                                     "bindings": expert_store.bindings(_ecfg),
-                                     "active": expert_store.binding(_ecfg, _esrc),
+                                     "conversation_id": _ecid or None,
+                                     "active": _ekey,
+                                     "active_name": (_eexp or {}).get("name") or "",
                                      "src": _esrc})
                 except Exception as e:
                     errlog.log_exc("api/expert", e)
                     self._json(200, {"ok": False, "err": str(e)[:120],
-                                     "experts": [], "bindings": {},
-                                     "active": "", "src": ""})
+                                     "experts": [], "conversation_id": None,
+                                     "active": "", "active_name": "", "src": ""})
             elif path == "/api/expert/match":
                 # 输入框旁的实时推荐：零成本关键词匹配，不联网不调模型。
-                # 带 src 一起返回该渠道当前绑定 —— 已召唤的专家不再提示。
+                # 带 conversation_id 一起返回该会话当前绑定 —— 已召唤的专家不再提示。
                 try:
                     import expert_store
                     _mtext = _query_param(self.path, "text") or ""
-                    _msrc = _norm_src(_query_param(self.path, "src") or "")
-                    _mcfg = getattr(brain, "api", None) or API_CFG
+                    _msrc = _norm_src(_query_param(self.path, "src") or "pc")
+                    _mcid = str(_query_param(self.path, "conversation_id") or "")
                     self._json(200, {"ok": True,
                                      "matches": expert_store.match_experts(_mtext),
-                                     "active": expert_store.binding(_mcfg, _msrc),
+                                     "active": expert_store.binding_for(_mcid) if _mcid else "",
                                      "src": _msrc})
                 except Exception as e:
                     errlog.log_exc("api/expert/match", e)

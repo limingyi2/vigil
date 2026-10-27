@@ -606,12 +606,26 @@ def _live_skill_lines(max_tools=24, desc_chars=56):
             by_skill.setdefault(sk, []).append((str(full), str((meta or {}).get("desc") or "")))
         if not by_skill:
             return _HELP_LIST
+        # 专家自带的技能：这份清单是**全量**的（TOOL_HELP_FN 拿不到当前会话），
+        # 所以不能在这里删，只能标清楚"它只在召唤了那个专家的对话里可调"。
+        # 不标的话，普通对话里模型看到工具名就会去调、被拒、再解释失败，
+        # 白白烧掉一轮。
+        owner_of = {}
+        try:
+            import expert_store as _es
+            for sk in by_skill:
+                who = _es.skill_owner(sk)
+                if who:
+                    owner_of[sk] = who
+        except Exception:
+            owner_of = {}
         out = ["## JS 技能",
                "服务器上装着这些技能，**它们能给出真实结果，不要自己编**"
                "（这份清单是实时读的）：", ""]
         n = 0
         for sk in sorted(by_skill):
-            out.append("### %s" % sk)
+            tag = "（仅「%s」的对话可用）" % owner_of[sk] if sk in owner_of else ""
+            out.append("### %s%s" % (sk, tag))
             for full, desc in sorted(by_skill[sk]):
                 if n >= max_tools:
                     break

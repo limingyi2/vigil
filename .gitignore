@@ -217,6 +217,12 @@ brain/plugins/_registry.json
 # 这个仓库是公开的，这个文件只留在本地（.workbuddy/scripts/ 也一样没入库）。
 brain/_test_cloud_http.py
 
+# 临时视觉调试页 / 一次性迁移自测脚本：靠 VIGIL_HOME 手跑，进不了打包，
+# 正式契约由 tests/ 下的 pytest 覆盖。
+client/src/_expert-preview.html
+client/src/_marvis-preview.html
+brain/_test_expert_session.py
+
 # ===== 改造前的本地备份（2026-10 起）=====
 # 我改代码前习惯先整目录备份一份。这些目录里**含真实 wxid / 云机 IP**
 # （wxbridge.local.json 就是那种文件），而这个仓库是公开的 ——

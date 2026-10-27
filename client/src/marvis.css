@@ -1,0 +1,359 @@
+/* ═══════════════════════════════════════════════════════════════
+   Marvis 风格壳层（浅色三栏 · 文件管理器语汇）
+
+   设计取向：
+   · 全白底 + 发丝线分隔，彩色只留给状态与文件夹图标
+   · 一级栏常显「图标 + 文字」，不再是纯图标条；顶部有品牌与搜索
+   · 二级栏 = 当前位置 + 列表；主区 = 面包屑 + 内容
+   · 圆角 6/8/12，hover 用一层极淡的灰，没有渐变、没有重阴影
+
+   与壁纸插件的关系：本文件所有颜色都走既有 --bg/--text/--line 语义
+   变量，不引入写死的白底。body.vigil-wallpaper-active 在 body 上把
+   这些变量覆写成深色玻璃，于是同一套几何自动变成暗色玻璃版 —— 版式
+   不变、风格统一。凡是必须写死的地方（文件夹黄、品牌色块），都用
+   color-mix 从变量派生。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 1. 尺度：圆角与三栏尺寸（明暗共用）────────────────────── */
+:root {
+  --r-xs: 6px; --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+  --rail: 212px; --panel: 272px; --right: 288px;
+  --title: 44px; --top: 56px; --status: 28px;
+}
+
+/* ── 2. 浅色（Marvis 底色）───────────────────────────────── */
+:root[data-theme="light"] {
+  --bg: #ffffff; --bg-sub: #fafafb; --bg-sunken: #f2f3f5;
+  --bg-hover: #f3f4f6; --bg-active: #e9ebef;
+  --text: #1a1c20; --text-2: #525a66; --text-3: #79818d; --text-4: #9aa2ae;
+  --line: #ebedf0; --line-soft: #f3f4f6; --line-strong: #e1e3e8;
+  --grid: transparent;
+  --accent: #2f6fed; --accent-soft: rgba(47, 111, 237, .10);
+  --ok: #12a150; --warn: #c77700; --err: #dc2626; --info: #525a66;
+  --fill: #1d1f24; --on-fill: #ffffff; --fill-hover: #33363d;
+  --sh-1: 0 1px 2px rgba(16, 24, 40, .05);
+  --sh-2: 0 12px 32px rgba(16, 24, 40, .14);
+}
+/* 壁纸模式：几何不变，颜色交给壁纸插件的玻璃变量，版式与常规模式一致 */
+
+/* ── 3. 画布 ─────────────────────────────────────────────── */
+body { font-size: 14px; letter-spacing: -.005em; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text-4) 42%, transparent); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-3) 65%, transparent); background-clip: content-box; border: 3px solid transparent; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--r-xs); }
+
+/* ── 4. 标题栏：左上角品牌（与一级栏同一底色，视觉上连成一列）── */
+.titlebar {
+  background: var(--bg); border-bottom: 1px solid var(--line-soft);
+  justify-content: flex-start; gap: 10px; padding-left: 16px;
+}
+.mv-brand { display: flex; align-items: center; gap: 9px; -webkit-app-region: drag; height: 100%; }
+.mv-logo {
+  width: 22px; height: 22px; border-radius: 6px; flex: none;
+  display: grid; place-items: center;
+  background: var(--fill); color: var(--on-fill);
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+}
+.mv-name { font-size: 14px; font-weight: 650; letter-spacing: -.01em; color: var(--text); }
+.mv-ver { font-size: 11px; color: var(--text-4); font-family: var(--mono); margin-left: 2px; }
+.titlebar .wctl { margin-left: auto; }
+.wctl button { width: 44px; height: var(--title); color: var(--text-3); }
+.wctl button:hover { background: var(--bg-hover); color: var(--text); }
+.wctl button.close:hover { background: #e5484d; color: #fff; }
+
+/* ── 5. 一级栏：品牌下移交给标题栏，这里放搜索 + 图标文字行 ── */
+.gnav {
+  align-items: stretch; gap: 2px; padding: 8px 10px 10px;
+  background: var(--bg); border-right: 1px solid var(--line-soft);
+}
+.gnav-brand { display: none; }
+.mv-rail-search {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  height: 32px; margin: 2px 0 10px; padding: 0 10px;
+  border-radius: var(--r-sm); background: var(--bg-sunken); color: var(--text-4);
+  transition: box-shadow 140ms var(--ease), background 140ms var(--ease);
+}
+.mv-rail-search .i { width: 14px; height: 14px; flex: none; }
+.mv-rail-search input {
+  flex: 1; min-width: 0; height: 100%; border: 0; outline: none;
+  background: none; font-size: 12.5px; color: var(--text);
+}
+.mv-rail-search input::placeholder { color: var(--text-4); }
+.mv-rail-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.mv-rail-search:focus-within { background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+.gbtn {
+  width: 100%; height: 34px; padding: 0 10px; gap: 10px; border-radius: var(--r-sm);
+  display: grid; grid-template-columns: 18px minmax(0, 1fr);
+  place-items: center start; color: var(--text-2);
+}
+.gbtn .i { width: 18px; height: 18px; stroke-width: 1.7; }
+.gbtn:hover { background: var(--bg-hover); color: var(--text); }
+.gbtn.on { background: var(--bg-active); color: var(--text); }
+.gbtn.on .i { stroke-width: 1.9; }
+.gnav-label {
+  display: block; font-size: 13px; font-weight: 500; letter-spacing: -.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gbtn.on .gnav-label { font-weight: 600; }
+.gbtn.dragging { opacity: .45; }
+.gbtn[hidden] { display: none; }
+/* 拖窄到纯图标：文字与搜索框都收起来，图标居中 */
+body.rail-tight .gbtn { grid-template-columns: 18px; justify-items: center; padding: 0; }
+body.rail-tight .gnav-label,
+body.rail-tight .mv-rail-search { display: none; }
+.nav-spacer { flex: 1; min-height: 10px; }
+.nav-settings { border-top: 1px solid var(--line-soft); border-radius: 0; margin-top: 6px; padding-top: 6px; }
+
+/* ── 6. 二级栏：当前所在位置 + 列表 ───────────────────────── */
+.panel { background: var(--bg); border-right: 1px solid var(--line-soft); }
+.phead {
+  height: var(--top); padding: 0 8px 0 14px; gap: 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.phead h2 { font-size: 14px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
+.phead h2::before { content: none; }
+.phead .ibtn { margin-left: auto; }
+.mv-crumb {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  height: 26px; padding: 0 9px; border-radius: 7px;
+  background: var(--bg-sunken); color: var(--text-2); font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mv-crumb .i { width: 13px; height: 13px; color: var(--text-3); flex: none; }
+
+.psearch { padding: 0 10px 8px; }
+.pseg { padding: 0 10px 8px; gap: 3px; }
+.pseg button { height: 28px; border-radius: 7px; font-size: 12.5px; color: var(--text-2); }
+.pseg button.on { background: var(--bg-active); color: var(--text); font-weight: 600; }
+
+.plist { padding: 6px 8px 12px; }
+.gtitle {
+  padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  color: var(--text-4); font-family: var(--font);
+}
+.li {
+  min-height: 38px; padding: 0 10px; gap: 9px; border-radius: var(--r-sm);
+  color: var(--text-2);
+}
+.li:hover { background: var(--bg-hover); color: var(--text); }
+.li.on { background: var(--bg-active); color: var(--text); box-shadow: none; }
+.li .ic { width: 18px; height: 18px; color: var(--text-3); }
+.li.on .ic { color: var(--text); }
+.li .ic .m { width: 18px; height: 18px; border-radius: 5px; background: var(--bg-sunken); font-size: 9px; }
+.li .tx b { font-size: 13px; font-weight: 500; }
+.li.on .tx b { font-weight: 600; }
+.li .tx span { font-size: 11.5px; }
+.li .meta { font-size: 11.5px; color: var(--text-4); }
+.li .unread { border-radius: 6px; background: var(--accent); color: #fff; }
+.empty { padding: 28px 16px; font-size: 12.5px; line-height: 1.9; }
+
+/* ── 7. 主区：面包屑顶栏 + 呼吸感内容 ─────────────────────── */
+.main { background-image: none; }
+.topbar {
+  height: var(--top); padding: 0 20px; gap: 10px;
+  border-bottom: 1px solid var(--line-soft); background: var(--bg);
+}
+.tnum {
+  font-size: 11.5px; letter-spacing: .04em; color: var(--text-4);
+  padding: 0; border-radius: 0; background: none;
+}
+/* 分组页会在顶栏放「§ 02」+「§ 021 · 组名」两条编号，留一条就够 */
+.topbar:has(.crumb) .tnum { display: none; }
+.topbar h1 {
+  font-size: 16px; font-weight: 650; letter-spacing: -.015em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.topbar .sub { font-size: 11.5px; color: var(--text-3); }
+.topbar .crumb { font-size: 11.5px; color: var(--text-4); margin-right: 2px; }
+.scroll { padding: 20px 24px 32px; }
+.wrap { max-width: 1320px; }
+
+/* ── 8. 组件重绘 ─────────────────────────────────────────── */
+.btn {
+  height: 32px; padding: 0 12px; border-radius: var(--r-sm);
+  font-size: 12.5px; font-weight: 500; gap: 6px;
+}
+.btn.oline { border: 1px solid var(--line-strong); background: var(--bg); }
+.btn.oline:hover { background: var(--bg-hover); border-color: var(--line-strong); }
+.btn.fill { background: var(--fill); color: var(--on-fill); }
+.btn.fill:hover { background: var(--fill-hover); }
+.btn.md { height: 34px; padding: 0 14px; }
+.ibtn { width: 30px; height: 30px; border-radius: 7px; color: var(--text-3); }
+.ibtn:hover { background: var(--bg-hover); color: var(--text); }
+
+.input {
+  height: 34px; padding: 0 11px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); background: var(--bg);
+  font-size: 13px;
+}
+.input:hover { border-color: color-mix(in srgb, var(--text-4) 60%, var(--line-strong)); }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea.input { padding: 9px 11px; font-size: 13px; }
+
+.card {
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 16px 18px; box-shadow: var(--sh-1);
+}
+.card.hd { padding: 0; }
+.card.hd > .h { padding: 12px 18px; border-bottom: 1px solid var(--line-soft); }
+.card.hd > .h h3 { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+
+.tbl { font-size: 13px; }
+.tbl th {
+  padding: 9px 12px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  color: var(--text-4); font-family: var(--font); border-bottom: 1px solid var(--line);
+}
+.tbl td { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+.tbl tr:hover td { background: color-mix(in srgb, var(--bg-hover) 60%, transparent); }
+
+.tag {
+  height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px;
+  font-family: var(--font); letter-spacing: 0; font-weight: 500;
+}
+.tag.neutral { background: var(--bg-sunken); color: var(--text-2); }
+.sech { margin: 24px 0 12px; padding-bottom: 0; border-bottom: 0; gap: 8px; }
+.sech b { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.sech b::before { content: none; }
+.sech .muted { font-size: 11.5px; font-family: var(--font); }
+.sec { font-size: 11px; font-weight: 600; letter-spacing: .06em; margin: 16px 0 8px; font-family: var(--font); }
+.kv { font-size: 12.5px; }
+.row { min-height: 52px; border-bottom: 1px solid var(--line-soft); }
+.row .lb b { font-size: 13.5px; font-weight: 500; }
+.sw { width: 36px; height: 20px; border-radius: 10px; border: 0; background: var(--line-strong); }
+.sw::after { top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+.sw.on { background: var(--accent); border-color: var(--accent); }
+.sw.on::after { transform: translateX(16px); background: #fff; }
+.seg { border-radius: var(--r-sm); padding: 3px; }
+.seg button { height: 24px; border-radius: 6px; font-size: 12px; }
+.seg button.on { background: var(--fill); color: var(--on-fill); }
+.chip { height: 28px; border-radius: var(--r-sm); font-size: 12px; }
+.pcard { border-radius: var(--r-md); box-shadow: var(--sh-1); }
+.grid { gap: 14px; }
+.kpi .v { font-size: 24px; font-family: var(--font); letter-spacing: -.02em; }
+
+/* ── 9. 状态栏 ───────────────────────────────────────────── */
+.statusbar {
+  background: var(--bg-sub); border-top: 1px solid var(--line-soft);
+  font-size: 11px; letter-spacing: 0; color: var(--text-4); font-family: var(--font);
+  padding: 0 16px; gap: 0;
+}
+.statusbar .sp { flex: 1 1 auto; }
+.statusbar .led {
+  width: 6px; height: 6px; border-radius: 50%; flex: none; margin-right: 8px;
+  background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 16%, transparent);
+}
+.statusbar .led.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
+.statusbar b { color: var(--text-2); font-weight: 500; }
+.statusbar .ssep { margin: 0 10px; color: var(--line-strong); }
+.statusbar .mono { margin-left: 12px; }
+#toast div { border-radius: var(--r-sm); font-size: 12.5px; }
+
+/* ── 10. 聊天页：一级栏与标题栏回到同一块白，靠发丝线分栏 ──── */
+body[data-vigil-page="chat"] .gnav { background: var(--bg); border-right: 1px solid var(--line-soft); }
+body[data-vigil-page="chat"] .panel { background: var(--bg); border-right: 1px solid var(--line-soft); }
+body[data-vigil-page="chat"] .titlebar { background: var(--bg); border-bottom-color: var(--line-soft); }
+
+/* ── 11. 专家：会话级的"现在用什么方式干活" ────────────────
+   这枚芯片是唯一能看出"当前对话换了装"的地方，也是唯一的卸下入口。
+   用强调色而不是中性灰：它是状态，不是又一个可选项。 */
+/* 底部状态行多了一枚芯片后，窄窗会挤。允许换行、不许压字 ——
+   压缩出来的"芯片还在、文字没了"比换行难看得多。 */
+.chatwrap .composer-foot { flex-wrap: wrap; row-gap: 4px; }
+.chatwrap .composer-foot .foot-chip { flex: 0 0 auto; }
+/* [hidden] 必须显式写：chat.css 给 .foot-chip 设了 display:inline-flex，
+   浏览器默认的 [hidden]{display:none} 优先级更低，被压掉以后"隐藏"的芯片
+   会在输入框下面留一个空药丸 —— 现有的「召唤」推荐芯片也一直有这毛病。 */
+.chatwrap .foot-chip[hidden] { display: none; }
+.chatwrap .foot-chip.expert-chip {
+  gap: 5px; max-width: none; padding: 0 6px 0 8px;
+  background: var(--accent-soft); color: var(--accent);
+  /* 不许被挤扁：flex 默认可收缩，芯片一多文字就被压成 0 宽，
+     表现是"芯片还在、名字没了"——比不显示更让人困惑。 */
+  flex: 0 0 auto; white-space: nowrap;
+}
+/* 芯片本身已经是强调色药丸了，里面再套一层同色方块就是"按钮里的按钮"，
+   看着像可点区域。这里只留图标。 */
+.chatwrap .foot-chip.expert-chip .expert-tile {
+  background: transparent; border-color: transparent; color: inherit;
+}
+.chatwrap .foot-chip.expert-chip .expert-tile .i { width: 13px; height: 13px; }
+.chatwrap .foot-chip.expert-chip:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.chatwrap .foot-chip.expert-chip b {
+  font-weight: 600; max-width: 140px; flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chatwrap .foot-chip.expert-chip .expert-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; margin-left: 2px; flex: none;
+  border-radius: 50%; font-size: 14px; line-height: 1; opacity: .62;
+  transition: background .12s ease, opacity .12s ease;
+}
+.chatwrap .foot-chip.expert-chip .expert-x:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent); opacity: 1;
+}
+/* 专家徽标：方形底 + 单色线稿图标，和一级栏、二级栏的图标同一套语言。
+   emoji 不再使用 —— 彩色位图字形在单色线性图标里像贴纸，而且字号/基线
+   都不受控，中文名字旁边会显得忽大忽小。 */
+.expert-tile {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none;
+  /* --fill 是主按钮的深色填充，不是"淡背景" —— 徽标底用 bg-sunken 这一档，
+     壁纸模式下它被插件覆写成半透明白，同一行代码在两种主题里都对。 */
+  border-radius: 8px; background: var(--bg-sunken);
+  border: 1px solid var(--line); color: var(--text-2);
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.expert-tile.md { width: 30px; height: 30px; }
+.expert-tile.xs { width: 18px; height: 18px; border-radius: 5px; border-color: transparent; }
+.expert-tile .i { width: 15px; height: 15px; }
+.expert-tile.xs .i { width: 12px; height: 12px; }
+.expert-tile i {
+  font-style: normal; font-weight: 600; line-height: 1;
+  font-size: 14px; letter-spacing: 0;
+}
+.expert-tile.xs i { font-size: 10px; }
+/* 在用：强调色。它是状态而不是又一个选项，所以整枚徽标跟着亮起来 */
+.pcard.cur .expert-tile,
+.session-row.on .expert-tile.xs {
+  background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.chatwrap .foot-chip.expert-chip .expert-tile.xs {
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+}
+/* 人格页专家卡表头：徽标、名字、状态标签一行排开 */
+.pcard .pch { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pcard .pch b { min-width: 0; }
+/* 会话列表里的专家标记：徽标已经在前面画了身份，名字只做补充说明，
+   不再重复一个 ◆ 符号（两个标记叠在一起反而更吵） */
+.session-row .sx-expert { font-style: normal; color: var(--accent); }
+/* 人格页专家卡上的"带了几份资料、几个技能" */
+.pcard .pcard-pack { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* 专家安装入口。一行输入 + 一个按钮，尺寸跟二级栏搜索框一致 ——
+   这里是"填个地址"而不是"选个文件"，所以不做拖放区，也不做假的浏览器。 */
+.persona-view .expert-install { display: flex; gap: 8px; margin-top: 14px; }
+.persona-view .expert-install .input { flex: 1 1 auto; min-width: 0; }
+.persona-view .expert-install .btn { flex: none; height: 34px; }
+.expert-install-hint {
+  margin-top: 7px; font-size: 12px; line-height: 1.65; color: var(--text-3);
+}
+
+/* ── 12. 壁纸模式：玻璃层已经由插件接管，这里只做几何对齐 ── */
+body.vigil-wallpaper-active .mv-rail-search { background: rgba(255, 255, 255, .08); }
+body.vigil-wallpaper-active .mv-rail-search:focus-within { background: rgba(255, 255, 255, .13); box-shadow: none; }
+body.vigil-wallpaper-active .gbtn.on { background: rgba(255, 255, 255, .14); }
+body.vigil-wallpaper-active .mv-crumb { background: rgba(255, 255, 255, .10); }
+body.vigil-wallpaper-active .card { box-shadow: none; }
+body.vigil-wallpaper-active .statusbar { background: transparent; }
+
+/* ── 13. 窄窗 ────────────────────────────────────────────── */
+@media (max-width: 1240px) { .statusbar > .mono:nth-last-child(2) { display: none; } }
+@media (max-width: 1180px) { :root { --panel: 248px; } }
+@media (max-width: 980px) { :root { --rail: 188px; --panel: 224px; } .topbar .sub { display: none; } }
+@media (max-width: 860px) {
+  .body { grid-template-columns: minmax(0, 1fr); }
+  .panel, #gPanel { display: none; }
+  .scroll { padding: 16px; }
+}

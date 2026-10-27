@@ -50,6 +50,9 @@
         '<span class="gnav-label">' + esc(p.id === 'chat' ? '会话' : p.name) + '</span></button>';
     };
     gnavEl.innerHTML = '<div class="gnav-brand" aria-label="Vigil">Vigil</div>' +
+      // 一级栏顶部搜索：图标栏收窄时藏起来，铺开后才有意义
+      '<label class="mv-rail-search">' + U.icon('search', 'sm') +
+      '<input id="mvRailSearch" type="search" placeholder="搜索页面" aria-label="搜索页面" autocomplete="off" spellcheck="false"></label>' +
       '<div class="gnav-items">' + navPages.map(navBtn).join('') + '</div>' +
       '<div class="gnav-foot">' + navBtn(settingsPage) + '</div>';
     // 更新圆圈挂在设置上方；没有新版时它自己隐藏，不留空位
@@ -72,6 +75,21 @@
           else { state.settingsSub = 'model'; go('system'); }
         } else if(b.dataset.page !== state.page) go(b.dataset.page);
       }));
+    // 搜索过滤：只按页名匹配，回车进第一条命中
+    const railSearch = gnavEl.querySelector('#mvRailSearch');
+    if (railSearch) {
+      railSearch.addEventListener('input', () => {
+        const q = railSearch.value.trim().toLowerCase();
+        gnavEl.querySelectorAll('.gbtn').forEach((b) => {
+          b.hidden = !!q && !String(b.dataset.tip || '').toLowerCase().includes(q);
+        });
+      });
+      railSearch.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const hit = [...gnavEl.querySelectorAll('.gbtn')].find((b) => !b.hidden);
+        if (hit) hit.click();
+      });
+    }
   }
 
   // ── 状态栏
@@ -192,6 +210,7 @@
         '<div class="mono" style="font-size:11.5px;color:var(--err);margin-top:6px">' + esc(e.message) + '</div></div></div>';
     }
     if (navigation !== navigationId) return;
+    decoratePanel(page);
     if (state.settingsDetail && page.id !== 'chat' && page.id !== 'settings' && topbarEl) {
       ensureSettingsBack();
     }
@@ -201,6 +220,23 @@
       topbarEl.insertAdjacentHTML('afterbegin',
         '<span class="tnum mono">§ ' + String(PAGES.indexOf(page) + 1).padStart(2, '0') + '</span>');
     }
+  }
+
+  // ── 二级栏表头：统一补一个刷新入口 ──────────────────────────
+  // 各页自己只画「标题」的 .phead，这里在右端补一颗刷新icon：
+  // 二级栏也有可动作的东西，重进当前页即重新拉一次数据。
+  function decoratePanel(page) {
+    if (!panelEl) return;
+    const head = panelEl.querySelector('.phead');
+    if (!head || !head.querySelector('h2') || head.querySelector('.mv-hbtn')) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ibtn mv-hbtn';
+    b.title = '刷新';
+    b.setAttribute('aria-label', '刷新');
+    b.innerHTML = U.icon('refresh', 'sm');
+    b.addEventListener('click', () => go(page.id));
+    head.appendChild(b);
   }
 
   // ── 「返回设置」必须一直在
@@ -252,7 +288,7 @@
   function bindGutter(el, o) {
     if (!el) return;
     let on = false, x0 = 0, w0 = 0;
-    const KEY = 'vigil.gutter.' + o.var;
+    const KEY = o.key || ('vigil.gutter.' + o.var);
     const cur = () => parseInt(getComputedStyle(document.documentElement).getPropertyValue(o.var), 10) || o.def;
     const put = (v) => {
       v = Math.max(o.min, Math.min(o.max, v));
@@ -373,7 +409,16 @@
       if (badge) badge.textContent = '设置';
     }
     let t = 'light';
-    try { t = localStorage.getItem('vigil_theme') || 'light'; } catch (_) {}
+    try {
+      // Marvis 版式上线（2026-10）：浅色是这套壳的基准色，深色只在壁纸插件
+      // 的玻璃层里出现。老用户 localStorage 里可能还留着已下线的深色开关值，
+      // 这里一次性拉回浅色；标记写死后不再干预。
+      if (!localStorage.getItem('vigil_theme.base.v2')) {
+        localStorage.setItem('vigil_theme.base.v2', 'light');
+        localStorage.setItem('vigil_theme', 'light');
+      }
+      t = localStorage.getItem('vigil_theme') || 'light';
+    } catch (_) {}
     applyTheme(t);
 
     // ── 插件前端注入：暴露全局 API 给插件用 ──
@@ -457,11 +502,16 @@
       window.vigil && window.vigil.agentCenter && window.vigil.agentCenter.onOpen(() => go('agent-center'));
     }
 
-    bindGutter(document.getElementById('gPanel'), { var: '--panel', min: 180, max: 460, def: 240, dir: 1 });
-    // 一级栏：拖窄是纯图标，拖过 112px 自动带上文字标签（替代原来的折叠按钮）
+    bindGutter(document.getElementById('gPanel'), { var: '--panel', min: 200, max: 460, def: 272, dir: 1, key: 'vigil.gutter.panel2' });
+    // 一级栏：默认铺开（图标 + 文字）。Marvis 版式里导航文字常显，
+    // 仍可向左拖窄到纯图标；旧版存下的 62px 宽度换了 key，不沿用。
     bindGutter(document.getElementById('gRail'), {
-      var: '--rail', min: 52, max: 220, def: 62, dir: 1,
-      onChange: (v) => document.body.classList.toggle('rail-wide', v >= 112),
+      var: '--rail', min: 56, max: 260, def: 212, dir: 1, key: 'vigil.gutter.rail2',
+      onChange: (v) => {
+        document.body.classList.toggle('rail-wide', v >= 112);
+        // 拖到 150 以下就没地方放文字与搜索框了，退回纯图标条
+        document.body.classList.toggle('rail-tight', v < 150);
+      },
     });
 
     if (settingsWindow && window.vigil && window.vigil.settings) {
@@ -486,6 +536,11 @@
     window.vigil && window.vigil.local && window.vigil.local.onConfirm(() => {
       if (state.page !== 'chat') go('chat');
     });
+
+    // 直接落在某一页：?page=kb —— 给浏览器里的版式预览和开发时定位用，
+    // 不认识的 id 一律忽略，正常运行不带参数时行为完全不变。
+    const startPage = windowQuery.get('page');
+    if (startPage && PAGES.some((p) => p.id === startPage)) state.page = startPage;
 
     // 首屏先使用本地 shell；壁纸、插件和本机 Brain 连接都异步进行。
     if (settingsWindow) {
