@@ -1,0 +1,72 @@
+name: Windows official release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate release version and excluded pet payload
+        shell: pwsh
+        run: |
+          $version = Get-Content client/version.json -Raw | ConvertFrom-Json
+          if ("v$($version.ver)" -ne $env:GITHUB_REF_NAME) { throw 'Release tag differs from client version' }
+          if (Test-Path pet) { throw 'Pet source must remain outside this public release' }
+          $package = Get-Content client/package.json -Raw | ConvertFrom-Json
+          if ($package.build.extraResources | Where-Object { $_.from -match '(^|[/\\])pet([/\\]|$)' }) { throw 'Pet payload is not approved for distribution' }
+      - name: Install build dependencies
+        run: python -m pip install -r brain/requirements.txt pyinstaller pypdf
+      - name: Install client dependencies
+        run: npm ci --prefix client
+      - name: Build official installer
+        run: python scripts/build_release.py
+      - name: Verify and smoke-test the exact official installer
+        shell: pwsh
+        run: |
+          $manifest = Get-Content client/dist-release/release-manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.candidate) { throw 'Refusing to publish a candidate' }
+          if ($manifest.source_commit -ne $env:GITHUB_SHA) { throw 'Source commit mismatch' }
+          $installer = Join-Path 'client/dist-release' $manifest.setup_file
+          if ((Get-Item $installer).Length -ne $manifest.size) { throw 'Installer size mismatch' }
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.sha256) { throw 'Installer hash mismatch' }
+          python scripts/test_windows_candidate_lifecycle.py $installer --official --expected-source-commit $env:GITHUB_SHA --output "$env:RUNNER_TEMP/vigil-release-lifecycle.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Official installer lifecycle acceptance failed' }
+      - name: Preserve lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-lifecycle-${{ github.ref_name }}
+          path: |
+            ${{ runner.temp }}/vigil-release-lifecycle.json
+            ${{ runner.temp }}/vigil-release-lifecycle-logs/**
+          if-no-files-found: ignore
+      - name: Publish tested installer and update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $manifest = Get-Content client/dist-release/release-manifest.json -Raw | ConvertFrom-Json
+          $installer = Join-Path 'client/dist-release' $manifest.setup_file
+          $contents = [System.IO.Path]::ChangeExtension($installer, '.contents.json')
+          $assets = @($installer, "$installer.blockmap", 'client/dist-release/release-manifest.json', $contents)
+          foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing release asset: $asset" } }
+          $notes = "docs/releases/$env:GITHUB_REF_NAME.md"
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Vigil $($manifest.ver) — 专家模式与检索修复" --notes-file $notes --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed' }

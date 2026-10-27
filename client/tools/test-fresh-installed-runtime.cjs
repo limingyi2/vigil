@@ -119,6 +119,15 @@ async function start() {
   }
   assert.ok(health.exe.startsWith(install), 'Brain executable was not loaded from the fresh install');
   const runtime = await evaluate("vigil.api('GET','/api/runtime')");
+  const experts = await evaluate("vigil.api('GET','/api/expert?src=pc')");
+  assert.equal(experts.status, 200, 'Installed expert API is unavailable');
+  assert.equal(experts.json.ok, true);
+  assert.deepEqual(experts.json.experts.map(item => item.key).sort(), ['code-expert', 'writing-expert'],
+    'Fresh installer did not seed both default expert packages');
+  const summon = await evaluate("vigil.api('POST','/api/expert/summon',{src:'pc',key:'code-expert'})");
+  assert.equal(summon.json.ok, true, 'Installed expert could not be activated');
+  const dismiss = await evaluate("vigil.api('POST','/api/expert/dismiss',{src:'pc'})");
+  assert.equal(dismiss.json.ok, true, 'Installed expert could not be dismissed');
   assert.equal(runtime.status, 200, 'Bundled Brain health endpoint did not return 200');
   assert.equal(runtime.json.pid, health.pid);
   const home = health.home;
