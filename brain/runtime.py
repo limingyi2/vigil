@@ -73,7 +73,7 @@ BRAIN_TOKEN = str(api_config.get("brain_token") or MOB_CFG.get("token") or "")
 # ollama：本地模型连接段 {base, model, num_ctx, num_predict, think, request_timeout}
 API_CFG_KEYS = ("api_base", "api_key", "model", "vision", "voice", "uapi",
                 "persona_file", "provider", "api_keys", "api_key_bases",
-                "model_mode", "ollama", "persona_by_src",
+                "model_mode", "ollama", "persona_by_src", "experts_by_src",
                 "model_capabilities", "model_stream", "display_records", "agent_execution",
                 "context_compression", "history_retrieval")
 

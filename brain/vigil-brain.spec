@@ -6,6 +6,8 @@ import os
 
 _datas = [
     ('version.json', '.'),
+    ('config/experts/code-expert', 'config/experts/code-expert'),
+    ('config/experts/writing-expert', 'config/experts/writing-expert'),
 ]
 
 # 旧调试配置也必须遵守零可选插件规则：不要遍历 SPECPATH/plugins。
