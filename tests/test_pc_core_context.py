@@ -482,23 +482,46 @@ def test_capability_retrieval_defaults_to_current_pc_persona(core, monkeypatch):
     assert seen['src'] == 'pc' and seen['persona'] == 'alpha'
 
 
-def test_memory_partitions_survive_reopen_without_legacy_fallback(tmp_path, monkeypatch):
+def test_main_store_is_the_single_memory_repository(tmp_path, monkeypatch):
+    """P9 收敛：无论 persona/src 参数是什么，记忆都进唯一主仓库 memory.json。
+
+    旧契约（按人设分库、拒绝回退 memory.json）已随分区功能退役 —— 2026-10-26
+    实测打包版 persona key 解析成 pc、源码版解析成 pc_assistant.pc，同一份
+    记忆被拆进两个文件，这正是收敛要消灭的问题。
+    """
     import memory_store_v2 as ms
     monkeypatch.setattr(ms, 'configured_mem_dir', lambda: str(tmp_path))
     monkeypatch.setattr(ms, 'embed_texts', lambda texts: [])
-    old = tmp_path / 'memory.json'
-    old.write_text('{"items": [{"text": "OLD_WECHAT"}]}', encoding='utf-8')
-    before = old.read_bytes()
+    monkeypatch.setattr(ms, '_main_store_migrated', True)
+    main = tmp_path / 'memory.json'
+    main.write_text('{"items": [{"id": "old1", "text": "OLD_MEMORY"}]}', encoding='utf-8')
     for persona in ('alpha', 'beta'):
         store = ms.MemoryStore(ms.default_store_path(persona, 'pc'))
         store.add('MEMORY_' + persona, mtype='fact', chan='pc')
+    # 任何 persona 参数打开的都是同一份主仓库，先前写的内容彼此可见
     for persona in ('alpha', 'beta'):
         store = ms.MemoryStore(ms.default_store_path(persona, 'pc'))
         text = str(store.list_items())
-        assert 'MEMORY_' + persona in text
-        assert 'MEMORY_' + ('beta' if persona == 'alpha' else 'alpha') not in text
-        assert 'OLD_WECHAT' not in text
-    assert old.read_bytes() == before
+        assert 'MEMORY_alpha' in text and 'MEMORY_beta' in text
+        assert 'OLD_MEMORY' in text
+    assert not (tmp_path / 'alpha.pc.memory.json').exists()
+    assert not (tmp_path / 'beta.pc.memory.json').exists()
+
+
+def test_pc_partition_migrates_into_main_store_once(tmp_path, monkeypatch):
+    """一次性迁移：老装机上 pc.memory.json 在主仓库缺位时改名成 memory.json。"""
+    import memory_store_v2 as ms
+    cfg = tmp_path / 'config.json'
+    cfg.write_text(json.dumps({"memory_dir": str(tmp_path)}), encoding='utf-8')
+    monkeypatch.setattr(ms, 'CONFIG_PATH', str(cfg))
+    monkeypatch.setattr(ms, 'embed_texts', lambda texts: [])
+    monkeypatch.setattr(ms, '_main_store_migrated', False)
+    legacy = tmp_path / 'pc.memory.json'
+    legacy.write_text('{"items": [{"text": "PC_ITEM"}]}', encoding='utf-8')
+    ms.configured_mem_dir()
+    assert not legacy.exists()
+    store = ms.MemoryStore(ms.default_store_path())
+    assert 'PC_ITEM' in str(store.list_items())
 
 
 def test_implicit_chat_context_does_not_reuse_previous_session(core):
