@@ -19,7 +19,7 @@
   ② 入口判据只有一个来源：`planner.entry_decision(task_decision)`，
      不得再出现第二套启发式（原关键词词表 `plan_decision`/`should_plan`
      已于 2026-10-27 删除，不许回流）
-  ③ server.py 里那几种结果**都写了 trace**，别再退化成只有成功留痕
+  ③ server.py 里那几种结果**都写了 trace**，避免再次退化成只有成功留痕
 """
 import io
 import os
@@ -147,7 +147,7 @@ class TestServerMarksEveryOutcome(unittest.TestCase):
                          "server 在自己另判一遍，判据就分叉了")
 
     def test_关了要记_off_不能记成失败(self):
-        """🔴 关掉规划之后最容易犯的错，是把它记成"规划失败"。
+        """ 关掉规划之后最容易犯的错，是把它记成"规划失败"。
 
         `plan()` 在 enabled=false 时返回 None → server 会走"判要规划但没解析出
         步骤"那条分支、写 `plan: "empty"`。那样"配置关了"会被统计成

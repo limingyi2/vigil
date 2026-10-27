@@ -6,7 +6,7 @@
 
 用法见 `tests/conftest.py` 的模块注释。
 
-## 设计要点（都是踩过的坑）
+## 设计要点（都是已知问题）
 
 **1. 绝不删 `sys.modules["paths"]`。**
 删掉再 import 会造出第二个模块实例：别处 `import paths` 拿到的还是老对象，
@@ -110,7 +110,7 @@ def isolate(monkeypatch, tmp_path):
                         os.path.join(home, "archive"), raising=False)
 
     # --- 5. 数据库目录 ---
-    # 🔴 **不钉 `_DB_DIR`，让它跟随 `paths.DATA_DIR`。**
+    #  **不钉 `_DB_DIR`，让它跟随 `paths.DATA_DIR`。**
     #
     # `storage.db._dir()` 的优先级是 `_DB_DIR > paths.db_dir()`。如果我们
     # 用 `set_dir()` 硬钉，测试自己 patch `paths.DATA_DIR` 就会失效 ——

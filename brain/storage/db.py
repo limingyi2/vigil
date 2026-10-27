@@ -256,7 +256,7 @@ def write_once(kind="main", timeout=10.0, begin=False):
     和 `write()` 的另一个区别：这里**不共享**进程内长连接，所以不会和
     主库的写锁队列互相等待。诊断库写爆时照样堵不到聊天。
 
-    🔴 **事务边界由调用方决定**（默认不开事务）。
+     **事务边界由调用方决定**（默认不开事务）。
 
     `begin=True` 时本函数在锁内发 `BEGIN IMMEDIATE`，用于「自己开事务、
     自己提交」的场景。`begin=False`（默认）时连接交出去时**不在事务里**，
@@ -264,7 +264,7 @@ def write_once(kind="main", timeout=10.0, begin=False):
     （`task_workflows._transaction(connection=...)`），那就必须由调用方
     掌握事务边界。
 
-    🔴 **但连接与 PRAGMA 必须在写锁内建立。**
+     **但连接与 PRAGMA 必须在写锁内建立。**
 
     `PRAGMA synchronous=FULL` 是**连接级属性**，在事务外改会隐式提交并
     重置连接状态。多个连接并发改它时，连接会被搞成不一致状态 ——
@@ -767,7 +767,7 @@ def _m_logs_4(conn):
 # creator_jobs / display_turns），各自一套连接、各自一套建表语句。
 # P17 的目标是**两个文件**，所以这 5 个库要并进主库。
 #
-# 🔴 关键约束：**列序必须与旧模块完全一致**。
+#  关键约束：**列序必须与旧模块完全一致**。
 # 旧模块用的是位置插入（`INSERT INTO runs VALUES (?,?,?,?,?)`），
 # 列名写错位置就整体错位 —— 而且 SQLite 不会报错，只会静默写错列。
 # 所以这里的 DDL 是照抄旧模块的建表语句，一个字都不改。

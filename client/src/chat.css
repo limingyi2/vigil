@@ -332,7 +332,7 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .mq-context-menu[hidden] { display:none; }
 .chatwrap .mq-detail-note { margin:4px 9px 8px; color:var(--chat-muted); font-size:11px; line-height:1.5; }
 .chatwrap .mq-detail-row:disabled,.chatwrap .mq-context-menu button:disabled { opacity:.55; cursor:default; }
-/* ═══ 运行模式标记（云端 / 本地 / 混合）════════════════════════════ */
+/* ═══ 运行模式标记（云端 / 本地 / 混合） */
 .chatwrap .mode-chip { gap:7px; }
 .chatwrap .mode-chip .mode-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--chat-muted); }
 .chatwrap .mode-chip[data-mode="cloud"] .mode-dot { background:var(--ok); }
@@ -345,7 +345,7 @@ body[data-vigil-page="chat"] :focus-visible { outline:2px solid var(--chat-accen
 .chatwrap .token-rate { flex:none; padding:0 4px; color:var(--chat-muted); font:10.5px var(--mono); white-space:nowrap; }
 .chatwrap .token-rate[hidden] { display:none; }
 @media (max-width:620px) { .chatwrap .token-rate { display:none; } }
-/* ═══ 加号菜单：附件 / 模型 / 创作模式 ═════════════════════════════ */
+/* ═══ 加号菜单：附件 / 模型 / 创作模式  */
 .chatwrap .pluspop {
   left:0; right:auto; bottom:calc(100% + 8px); transform:none;
   width:min(380px,calc(100% - 24px)); max-height:min(520px,66vh);
@@ -549,7 +549,7 @@ body.welcome-home .chatwrap .creatorbar { background:var(--chat-hover); }
 .chatwrap .chat-load-state b { font-size:22px; color:var(--chat-text); }
 .chatwrap .chat-load-state p { max-width:540px; overflow-wrap:anywhere; }
 
-/* ═══ P7.2 工作区：一个真实文件夹，会话只是它内部的对话 ═══════════════ */
+/* ═══ P7.2 工作区：一个真实文件夹，会话只是它内部的对话  */
 /* 顶栏只说明"当前会话属于哪个文件夹"，不提供任何文件读写入口。 */
 .chatwrap .chat-ws-bar {
   flex:none; display:flex; align-items:center; gap:8px; min-width:0;
@@ -614,7 +614,7 @@ body[data-vigil-page="chat"] .ws-chats .li .tx b { font-size:13px; }
 body[data-vigil-page="chat"] .ws-empty { padding:6px 8px; font-size:11.5px; }
 body[data-vigil-page="chat"] .session-row.in-workspace .session-open { padding-left:4px; }
 
-/* ═══ P7.2 Creator 任务卡：只报进度，不铺源码 ═════════════════════════ */
+/* ═══ P7.2 Creator 任务卡：只报进度，不铺源码  */
 .chatwrap .cr-task {
   padding:0; overflow:hidden; border:1px solid var(--chat-line); border-radius:12px;
   background:var(--chat-surface);
@@ -668,7 +668,7 @@ body[data-vigil-page="chat"] .session-row.in-workspace .session-open { padding-l
 .chatwrap .cr-log-list { list-style:none; margin:0; padding:0; color:var(--chat-muted); font:11px/1.65 var(--mono); }
 .chatwrap .cr-log-list li { white-space:pre-wrap; overflow-wrap:anywhere; }
 
-/* ═══ P7.2 生成完成：草稿摘要 + 文件列表（源码默认折叠） ═════════════ */
+/* ═══ P7.2 生成完成：草稿摘要 + 文件列表（源码默认折叠）  */
 .chatwrap .crturn .cr-file-card { padding:0; overflow:hidden; }
 .chatwrap .cr-file-head {
   display:flex; align-items:center; gap:10px; flex-wrap:wrap;

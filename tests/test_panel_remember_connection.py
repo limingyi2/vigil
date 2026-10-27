@@ -29,7 +29,7 @@ SERVER = os.path.join(ROOT, "brain", "server.py")
 def _old(suffix):
     """旧键名，运行时拼出来。
 
-    🔴 仓库规矩：tests/ 里不许出现真实拼音身份字面量
+     仓库规矩：tests/ 里不许出现真实拼音身份字面量
     （test_frontend_invariants.TestNoHardcodedIdentity 钉着），
     连注释和断言里都不许 —— 照那边的做法拼，不自己发明。
     """
@@ -93,7 +93,7 @@ class TestStorageKeyMigration(unittest.TestCase):
         """顺序反了必然失败：没token 时第一次连就是 401，
         页面已判成"未连接"，后面取回配置也来不及。
 
-        🔴 判据要按**行**比较，不能在整段里 `find` ——
+         判据要按**行**比较，不能在整段里 `find` ——
         `checkConnection` 这个词在那段**注释**里也出现过（解释为什么要先取），
         按子串找会命中注释、算出"顺序反了"，对着正确写法报红。
         """
@@ -139,7 +139,7 @@ class TestConnectConfigEndpoint(unittest.TestCase):
         i = next(k for k, ln in enumerate(lines)
                  if 'if _p0 == "/api/panel/connect-config":' in ln)
 
-        # 🔴 判据必须锁在 **_do_GET 这个函数体里**，而且鉴权取
+        #  判据必须锁在 **_do_GET 这个函数体里**，而且鉴权取
         # "该函数体内的第一处"，不能取全文件最后一处。
         #
         # 之前两次都栽在这：把接口挪到鉴权之后，判据照样绿——

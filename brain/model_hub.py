@@ -285,7 +285,7 @@ def probe_provider(base, key, timeout=6):
       "auth"     —— 401/403，密钥不被接受。**必须拦下**：放过去的话
                     界面显示"已切换"，她下一句直接报错。
       "unknown"  —— 连不上/超时/路径不对，说不准。允许照切，但要在响应里
-                    明说"没能验证"，不假装一切正常。
+                    明说"没能验证"，不误报一切正常。
 
     只打一次 GET /models（和拉清单同一个路径），不加别的请求。
     同样走 ProxyHandler({})：不然会被系统代理劫持，拿到假的 502。
@@ -343,7 +343,7 @@ def list_models(base, key, force=False, provider="siliconflow"):
 def current(cfg):
     """从配置读出"现在用哪家、哪个模型"。
 
-    ⚠️ 返回的 `api_key` 是**完整明文**，因为服务端自己要用它去调服务商
+    注意： 返回的 `api_key` 是**完整明文**，因为服务端自己要用它去调服务商
     （`/api/models` 里 `list_models(cur["api_base"], cur["api_key"])`）。
     **不要把它直接放进 HTTP 响应** —— 回给客户端的用 `public_current()`。
     """
@@ -396,7 +396,7 @@ def public_current(cfg):
     k = d.get("api_key") or ""
     d["api_key_set"] = bool(k)
     d["api_key"] = mask_key(k)
-    # 🔴 这里**不能**调 adopt_current_key：那会让"刚切过去、还没配key"的
+    #  这里**不能**调 adopt_current_key：那会让"刚切过去、还没配key"的
     # 厂商把眼下这把（属于别家的）认领走 —— 于是它变成"已存密钥"，
     # 切换看着成功而她拿着别家的 key 去调，必然 401。
     # 迁移只在 run_server 启动时做一次（那时还没切过，key 就是它自己的）。
@@ -404,9 +404,9 @@ def public_current(cfg):
     # 让"点一下就切换"这件事是看得见的：有 key 才切得动。
     d["keys_by_provider"] = {
         pid: has_provider_key(cfg, pid) for pid in PROVIDERS}
-    # 🔴 当前服务商**自己没有**存过密钥 = 这家是"切过来但没配 key"。
+    #  当前服务商**自己没有**存过密钥 = 这家是"切过来但没配 key"。
     # 这时配置里的 api_key 是别家的那把，照它发请求必然被拒。
-    # 前端要能识别这种情况并要 key，别让它显示成"已切换"。
+    # 前端要能识别这种情况并要 key，避免它显示成"已切换"。
     d["key_belongs_to"] = (d.get("provider")
                             if has_provider_key(cfg, d.get("provider"))
                             else "")
@@ -541,7 +541,7 @@ def adopt_current_key(cfg):
     不补这一步的话，界面会把每一家都显示成"还没存密钥"——
     而其中一家明明正拿着那把 key 在用。判据里要能区分"没配"和"配了没登记"。
 
-    🔴 老配置连 `provider` 字段都没有（云上实锤：api_base 有、provider 是
+     老配置连 `provider` 字段都没有（云上实锤：api_base 有、provider 是
     None）——不能因此直接放弃，要按 base 反推出是哪家（跟 current() 同一套
     判断）。不然迁移永远空转：正在用的这家显示"还没存密钥"，切走再切回来
     也得重填，"一键切换"对老用户等于没做。反推出来顺手把 provider 写回去，
@@ -580,9 +580,9 @@ def is_masked(k):
     return bool(k) and set(k) == {"*"}
 
 
-# ── 快速切换清单（主页下拉用的"我用过的模型"）──────────────────
+# ── 快速切换清单（主页下拉用的"我用过的模型"）
 #
-# 🔴 这不是第二份模型配置。真正生效的永远只有 api_config 里那**一份**
+#  这不是第二份模型配置。真正生效的永远只有 api_config 里那**一份**
 # （provider / api_base / api_key / model）；这份清单只回答"下拉里该列
 # 哪些条目"，点一条仍然走 apply_cfg 那条老路写回同一份配置。
 #
@@ -667,7 +667,7 @@ def remember_model(cfg, provider, base, model, name=""):
     if not e["added_at"]:
         e["added_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     cur.append(e)
-    # 只留最近 SAVED_MAX 条：清单会跟着配置一起过同步，别让它无上限地长
+    # 只留最近 SAVED_MAX 条：清单会跟着配置一起过同步，避免它无上限地长
     dst["saved_models"] = cur[-SAVED_MAX:]
     return dst, True
 
@@ -748,7 +748,7 @@ def quick_switch(cfg, provider, model, base=None):
     requested_base = str(base or "").strip().rstrip("/")
     if not mid:
         return cfg, [], "没指定模型", ""
-    # 🔴 切走之前先把"正在用的这一组"记进清单。
+    #  切走之前先把"正在用的这一组"记进清单。
     # 不记的话：老配置里当前这个模型本来就不在清单里（下拉里显示成"未保存"），
     # 用户点别的模型切走之后，它就**从下拉里消失**了 —— 再也点不回来，
     # 只能去设置页重配。"当前选择应能正确恢复"说的就是这件事。
@@ -823,7 +823,7 @@ def quick_switch(cfg, provider, model, base=None):
 def forget_model(cfg, provider, model, base=None):
     """从清单里去掉一条。返回 (新配置, 是不是真去掉了)。
 
-    🔴 只动清单，**不动当前生效的配置**：用户可能正用着它，把 api_base/model
+     只动清单，**不动当前生效的配置**：用户可能正用着它，把 api_base/model
     一起清掉等于偷偷换模型。当前那条被移除后仍然生效，只是在下拉里显示成
     "（未保存）"—— 界面不会因此谎报"当前模型"。
     """
@@ -899,7 +899,7 @@ def apply_cfg(cfg, p):
     changed = []
 
     prov = str(p.get("provider") or "").strip()
-    # 🔴 原服务商和切换前那把密钥必须在改 provider **之前**抓住。
+    #  原服务商和切换前那把密钥必须在改 provider **之前**抓住。
     # 下面第一行就把 cfg["provider"] 覆盖了，之后再想"换走的是哪家"
     # 拿到的已经是新家 —— 于是 `api_keys` 里永远登记不上，
     # 切回去时 `provider_key(原家)` 回退到 api_key，拿到的是别家的密钥。
@@ -929,7 +929,7 @@ def apply_cfg(cfg, p):
             changed.append("接口地址 → " + new_base)
 
     key = str(p.get("api_key") or "").strip()
-    # 🔴 判据一律用**提前捕获**的 prev_prov/prev_key0。
+    #  判据一律用**提前捕获**的 prev_prov/prev_key0。
     # 上面第一行已经把 cfg["provider"] 改成新的了，再用 cfg.get("provider")
     # 比恒为 False —— 于是这段代码整段不执行，小米的key 永远登记不上，
     # 切回去时 provider_key 只能回退到 api_key（那时已是别家的）。

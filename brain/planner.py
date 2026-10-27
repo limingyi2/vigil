@@ -123,7 +123,7 @@ def _available_tools_text(src=None):
     从原生 FC 工具表（all_specs）生成，替代旧的 PROMPT_LINE（只列了三个内置工具）。
     规划阶段是纯文本调用（不传 tools 参数），所以需要在提示词里列工具清单。
 
-    🔴 src 必须用本轮真实渠道：以前这里硬编码 src="app"，微信/群聊触发规划时
+     src 必须用本轮真实渠道：以前这里硬编码 src="app"，微信/群聊触发规划时
     提示词列出的工具和 execute_plan 的授权集合（按真实 src 算）对不上，
     模型规划了一个该渠道被关掉的工具，执行时才被"未授权"打回。
     """
@@ -212,7 +212,7 @@ def _ask_flash(prompt, temperature, max_tokens, timeout):
             pass
     if not api_base or not api_key:
         return None
-    # 🔴 模型和 base 必须同家：planner_model 默认是 DeepSeek flash，主服务商
+    #  模型和 base 必须同家：planner_model 默认是 DeepSeek flash，主服务商
     # 切回小米后这里会 400「Unsupported model」。失败虽然只是静默回退 ReAct，
     # 但那两次 flash 调用就白花了。换家规则统一实现在 model_pick，别在这再抄
     # 一遍 —— 抄两遍必漂移。

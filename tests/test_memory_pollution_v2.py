@@ -168,7 +168,7 @@ class TestStripLeadNoise(unittest.TestCase):
     def test_leaves_normal_text_alone(self):
         """不在剥离列表里的开头必须原样保留。
 
-        ⚠️ 「我想」**在**剥离列表里（老代码就有，不是这次加的）——
+        注意： 「我想」**在**剥离列表里（老代码就有，不是这次加的）——
         别把它写进"必须原样保留"的用例，那测的是一个不存在的行为。
         """
         for t in ["她说了一句", "图书馆在", "今天摸鱼被老板抓到",

@@ -45,7 +45,7 @@ class TestLiveSkillList(unittest.TestCase):
         skill.tools = lambda src=None: table
 
     def test_新装的技能会出现在清单里(self):
-        """🔴 核心：agent-reach 是后装的，写死那份里没有它。"""
+        """ 核心：agent-reach 是后装的，写死那份里没有它。"""
         self._stub({
             "agent-reach__bili_search": {
                 "skill": "agent-reach", "desc": "B 站官方搜索接口搜视频，返回标题、UP主。"},

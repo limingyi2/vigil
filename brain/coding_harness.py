@@ -865,7 +865,7 @@ class CodingHarness:
         if not isinstance(raw, list):
             raise CodingHarnessError("实现器没有返回 operations 数组")
         receipts: list[dict[str, Any]] = []
-        # 🔴 一批 operations 是一个整体：第 3 个操作因为哈希冲突被拒时，
+        #  一批 operations 是一个整体：第 3 个操作因为哈希冲突被拒时，
         # 前两个已经落盘的改动必须退回原样。半批落盘等于给工作区留下
         # 没人知道来源的修改，台账和磁盘也不再对得上。
         changed_before = len(self.patches.changed)

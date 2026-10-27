@@ -15,7 +15,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const ev=s=>win.webContents.executeJavaScript(s,true);
 async function until(s,ms=250){for(let i=0;i<ms;i++){if(await ev(s))return true;await wait(40);}throw Error('Timed out: '+s);}
 
-// ── fixture brain ────────────────────────────────────────────────
+// ── fixture brain
 const WORKSPACE_PATH='F:\\vigil-demo-workspace';
 const MISSING_PATH='F:\\vigil-demo-moved-away';
 const state={
@@ -173,7 +173,7 @@ async function run(){
   assert.equal(await ev("!!document.querySelector('#openFolderBtn, #wsAddBtn, .ws-add')"),false,'侧栏不得有任何打开文件夹按钮');
   assert.equal(await ev("document.querySelector('#sessList').textContent.includes('打开文件夹')"),false,'侧栏文字里不得出现打开文件夹');
 
-  // ── 1. 打开文件夹 = 一个工作区 ───────────────────────────────
+  // ── 1. 打开文件夹 = 一个工作区
   assert.equal(await ev("document.querySelector('#wsPickBtn').textContent.includes('选择工作空间')"),true);
   await ev("document.querySelector('#wsPickBtn').click()");
   await until("!document.querySelector('#wsPop').hidden");
@@ -189,7 +189,7 @@ async function run(){
   assert.equal(state.assignCalls.length,0,'没有会话时打开文件夹只建工作区，不改任何会话归属');
   console.log('PASS 打开文件夹建工作区：显示文件夹名、真实路径与目录状态');
 
-  // ── 2. 同一工作区两个会话，切换后归属不变 ────────────────────
+  // ── 2. 同一工作区两个会话，切换后归属不变
   await ev("document.querySelector('[data-ws-new]').click()");
   await until("document.querySelectorAll('.ws-chats .session-row').length===1");
   await ev("document.querySelector('[data-ws-new]').click()");
@@ -210,7 +210,7 @@ async function run(){
   await shot('p72-workspace-two-chats.png');
   console.log('PASS 一个工作区两个会话，来回切换归属不变');
 
-  // ── 3. 普通聊天不自动进工作区 ────────────────────────────────
+  // ── 3. 普通聊天不自动进工作区
   await ev("document.querySelector('#newTopicBtn').click()");
   await until("!document.querySelector('#hero').hidden");
   assert.equal(await ev("document.querySelector('#chatWsBar').hidden"),true);
@@ -223,7 +223,7 @@ async function run(){
   assert.equal(groups.ws,2);
   console.log('PASS 普通聊天留在“聊天”分组，不自动进入工作区');
 
-  // ── 3b. 输入区排版 + 工作空间选择器 ──────────────────────────
+  // ── 3b. 输入区排版 + 工作空间选择器
   const layout=await ev(`(()=>{const r=(s)=>document.querySelector(s).getBoundingClientRect(),box=r('.cbox'),add=r('#clipBtn'),model=r('#modelBtn'),send=r('#sendBtn'),foot=r('.composer-foot');return{ph:document.querySelector('#ta').placeholder,addX:add.x,modelX:model.x,sendX:send.x,addIn:add.top>=box.top-1&&add.bottom<=box.bottom+1,modelIn:model.top>=box.top-1&&model.bottom<=box.bottom+1,footBelow:foot.top>=box.bottom-1,footText:document.querySelector('.composer-foot').textContent}})()`);
   assert.ok(layout.ph.includes('今天帮你做些什么'),layout.ph);
   assert.ok(layout.addX<layout.modelX && layout.modelX<layout.sendX,'加号在左、模型与发送在右：'+JSON.stringify(layout));
@@ -295,7 +295,7 @@ async function run(){
   await until("document.querySelectorAll('.ws-chats .session-row').length===2");
   console.log('PASS 重载后工作区、会话归属、普通聊天分组都恢复');
 
-  // ── 5b. 多尺寸下界面不溢出（含工作区条）────────────────────
+  // ── 5b. 多尺寸下界面不溢出（含工作区条）
   await ev("document.querySelector('.ws-chats .session-row .session-open').click()");
   await until("!document.querySelector('#chatWsBar').hidden");
   win.show();win.focus();await wait(300);
@@ -318,7 +318,7 @@ async function run(){
   win.hide();
   console.log('PASS 1280/900/600/800 四种宽度下界面都不溢出（最窄 ' + smallest + 'px）');
 
-  // ── 6. Creator 取消：正在取消 → 已取消 ──────────────────────
+  // ── 6. Creator 取消：正在取消 → 已取消
   await ev("document.querySelector('#creatorBtn').click()");
   state.failFirstCancel=true;
   await send('做一个提醒插件');
@@ -357,7 +357,7 @@ async function run(){
   await shot('p72-creator-cancelled.png');
   console.log('PASS 取消确认后显示已取消、移除加载态、不生成也不安装草稿');
 
-  // ── 7. 取消过程中断线：状态不丢，可重试连接 ─────────────────
+  // ── 7. 取消过程中断线：状态不丢，可重试连接
   state.cancelCalls.length=0;
   state.failFirstCancel=false;
   state.streamBroken=true;
@@ -378,7 +378,7 @@ async function run(){
   assert.equal(state.draftFetches,0,'断线恢复后也不得出现草稿');
   console.log('PASS 取消 + 断线：状态保留，重试连接后仍是已取消');
 
-  // ── 8. 大段源码：默认折叠、限高、可展开、页面不溢出 ──────────
+  // ── 8. 大段源码：默认折叠、限高、可展开、页面不溢出
   const big=Array.from({length:420},(_,i)=>`def step_${i}(x):  # 很长的一行注释 ${'#'+i} `+ 'value = '+i).join('\n');
   const draft={id:'draft_p72_big',kind:'plugin',summary:'大文件折叠验收',version:1,model:'fixture',
     requirement:'big file',risks:'仅用于验收',validation:{ok:true,errors:[],warnings:[]},
@@ -427,7 +427,7 @@ async function run(){
   await until(`document.querySelector('${card} [data-cr-file-body="0"]').hidden===true`);
   console.log('PASS 大段源码默认折叠、展开时限高独立滚动、页面无横向溢出');
 
-  // ── 9. 安装仍然是两步人工审核 ───────────────────────────────
+  // ── 9. 安装仍然是两步人工审核
   assert.equal(await ev(`document.querySelector('${card} #crReview')!==null`),true);
   await ev(`document.querySelector('${card} #crReview').click()`);
   await until(`document.querySelector('${card} #crReviewBox').hidden===false`);

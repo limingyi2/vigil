@@ -407,7 +407,7 @@ class _RunBuffer:
     def page(self, after, item):
         """可见事件与游标的**同一时刻**快照。
 
-        🔴 两者分开读会出读-skew：增量在"拍可见集合"之后、"读游标"之前入队，
+         两者分开读会出读-skew：增量在"拍可见集合"之后、"读游标"之前入队，
         这一页就呈现"游标推进了、事件却不存在"，`events()` 会误判成空洞，
         用快照重同步把 `after` 推到游标 —— 那一跳增量从此再也出不来
         （客户端只在那份快照的正文里见过它）。push/next_seq 本来就在这把
@@ -463,7 +463,7 @@ def _buffer(run_id, owner=''):
             fresh = True
         elif owner:
             buf.owner = owner
-    # 🔴 起线程必须放在锁外：_ensure_writer 自己也要拿 _BUFFER_LOCK，
+    #  起线程必须放在锁外：_ensure_writer 自己也要拿 _BUFFER_LOCK，
     # 在锁里调用就是非重入锁自锁（create 第一个 run 时必现）。
     if fresh:
         _ensure_writer()
@@ -695,7 +695,7 @@ def _queue_diagnostic(method, **fields):
 def _read_db():
     """只读连接：不开写事务、不建表、不做启动修复。
 
-    🔴 SSE 每 50ms 读一次事件，以前和写路径共用 `_db()` —— 每次读都
+     SSE 每 50ms 读一次事件，以前和写路径共用 `_db()` —— 每次读都
     `BEGIN IMMEDIATE` + 4 条 CREATE TABLE + commit（synchronous=FULL 下
     每次 commit 都是一次 fsync）。读事件这件事本身在抢写锁，还把轮询变成
     磁盘同步点，于是增量被憋成批。读路径必须完全不碰写路径。
@@ -722,7 +722,7 @@ def _load(db, rid, owner):
 def _get(db, rid, owner):
     """取一条 run。正在执行的那个 run 返回内存里的唯一副本。
 
-    🔴 以前每个增量都要从库里反序列化一份副本，之后又整份写回 —— 两份副本
+     以前每个增量都要从库里反序列化一份副本，之后又整份写回 —— 两份副本
     互相覆盖，正文会丢；而且每个 token 一次全量 JSON 解析 + 序列化。
     """
     live = _LIVE.get(rid)
@@ -877,7 +877,7 @@ def _failure_line(item):
 def failure_brief(owner, exclude=None, now=None):
     """Summarise this session's recent failures as facts the model may rely on.
 
-    🔴 The failure mode this exists for: the previous run died on a tool error,
+     The failure mode this exists for: the previous run died on a tool error,
     the user asks "刚才为什么失败", and the model — with no record in context —
     invents an explanation ("你拒绝了审批"). Everything here comes from the
     ledger: run id, tool name, step state, error class, receipt text. When the
@@ -941,7 +941,7 @@ def hide(owner):
 def _can_resume(status):
     """这个状态能不能续跑。界面与 resume() 共用同一个口径。
 
-    🔴 曾经两边不一致：后端 resume() 接受 STOPPED 里的全部状态，前端
+     曾经两边不一致：后端 resume() 接受 STOPPED 里的全部状态，前端
     只认 paused/paused_budget/interrupted，于是 failed（模型连接中断、
     工具报错等最常见的失败）永远拿不到续跑入口 —— 用户只能重新发一遍，
     前面跑了几十步的上下文全部作废。
@@ -973,9 +973,9 @@ def display_records(owner):
 def events(rid, owner, after=0):
     """读事件：内存里的实时增量 + 已落盘的历史，按 seq 合并。
 
-    🔴 读以前和写共用 `_db()`：每次读都开写事务 + 建表 + commit，等于读事件
+     读以前和写共用 `_db()`：每次读都开写事务 + 建表 + commit，等于读事件
     自己在抢写锁，还把 50ms 一次的轮询变成一次 fsync。现在读走只读连接。
-    🔴 游标与可见集合必须同一时刻拍（见 `_RunBuffer.page`）：分开读的
+     游标与可见集合必须同一时刻拍（见 `_RunBuffer.page`）：分开读的
     读-skew 会把刚入队的增量误判成空洞，SSE 拿快照重同步把它跳过。
     """
     _ensure_repaired()
@@ -1025,7 +1025,7 @@ def _finish(db, item, status, reason=None, detail=None):
                         reason=reason, finished_at=time.time())
     item.update(status=status, stage='stopped' if status != 'succeeded' else 'completed',
                 error=_error(reason, detail) if reason else None)
-    # 🔴 收口顺序：先关增量入口，再写终态。反过来的话，`_save` 与关门之间
+    #  收口顺序：先关增量入口，再写终态。反过来的话，`_save` 与关门之间
     # 到达的增量会排在 done 事件**后面**落盘，客户端会在任务结束后又收到
     # 一段正文（重复渲染）。关门之后 `push` 直接拒绝，连调用方的正文累加
     # 都不会发生（_delta 返回 None）。
@@ -1555,7 +1555,7 @@ def interject(rid, owner, cfg, body=None, brain=None, start=True, workflow_scope
                      run 接着干，种子是父 run 的检查点简报；
       新消息      —— 全新任务，与旧 run 无关。
 
-    🔴 不重放已经生效的操作。新 run 只拿到摘要（"做过什么、结果如何"），
+     不重放已经生效的操作。新 run 只拿到摘要（"做过什么、结果如何"），
     不会把父 run 的工具结果当成待执行队列。在途工具照常收尾 —— `_tool`
     看到 status != running 就不再派发新的，已发出的调用不会被腰斩。
     """
@@ -1965,7 +1965,7 @@ def _tool(rid, owner, started, call, ctx):
             reason = 'tool_failed'
         elif any(r.get('reason') == 'empty_output' for r in receipts):
             # 收据已经说明"执行了、只是没有输出"—— 这比笼统的
-            # tool_unknown 更具体，别再把唯一可行动的诊断抹掉。
+            # tool_unknown 更具体，避免再次把唯一可行动的诊断抹掉。
             reason = 'empty_output'
         if not isinstance(result, str) or not result.strip():
             # A receipt that already explains the failure wins over the generic
@@ -2503,7 +2503,7 @@ def _run(rid, owner, cfg, brain=None, sender_id='', messages=None, workflow_scop
             _reset_stream_stats(rid)
             try:
                 for event in completion_events(provider, prepared_payload, timeout=max(0.001, timeout)):
-                    # 🔴 这里**不再**每个增量开一次 SQLite 事务。以前是
+                    #  这里**不再**每个增量开一次 SQLite 事务。以前是
                     # `with LOCK, _db()`：一次 fsync + 整份 run JSON 重写，
                     # 而写锁按 token 持有 —— 模型吐得越快，卡得越死，SSE 只能
                     # 成批到达。现在增量只进内存队列，由落盘线程合并提交。
@@ -2847,7 +2847,7 @@ def stream(rid, owner, after=0):
             # 迟订户（任务已结束才连上来）：只给权威快照，不从头发历史。
             yield dict(run_id=rid, seq=page['snapshot']['event_cursor'], type='snapshot', payload=page['snapshot'])
             return
-        # 🔴 现场观众：先把这一页的事件全部发出去，再发快照/判终态。
+        #  现场观众：先把这一页的事件全部发出去，再发快照/判终态。
         # 反过来的话（旧写法），终态那一页里的增量——往往是最后一批正文——
         # 只进了快照，客户端一段都收不到：任务显示成功，末尾却缺字。
         for event in page['events']:

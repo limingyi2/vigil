@@ -21,14 +21,14 @@ DEFAULTS 里除核心功能外，插件声明了 FEATURE 的也会登记进来�
 **没写的键跟全局走**，所以只写要关的那几个就够，不用抄一整份。
 全局那份 `features` 是"任何渠道都没覆盖时"的初值。
 
-🔴 **app 跟其它渠道一样，也是一份覆盖**。写和读必须是同一套规则 —— 曾经读取侧单独跳过 app（注释写着
+ **app 跟其它渠道一样，也是一份覆盖**。写和读必须是同一套规则 —— 曾经读取侧单独跳过 app（注释写着
 "app 就是基线"），写入侧却照写 `features_by_src.app`：面板在 App 渠道
 点开关"点了跟没点一样"，还往配置里攒了一堆永远读不出来的"幽灵覆盖"
 （界面上显示已关、运行时全是开的）。详见 `_test_features_src.py`。
 
 为什么不复制一套渠道专属开关：复制的话每加一个功能要改两处，漏一处就出
 bug（"她在群里提醒你加衣服"就是这么来的）。覆盖是**只写差异**，
-全局那一份仍是唯一真源。
+全局那一份仍是统一定义。
 """
 import contextvars
 import json
@@ -43,7 +43,7 @@ except Exception:
 
 # 核心开关与默认值（插件的由 plugin_host._sync_features 追加）
 DEFAULTS = {
-        # 🔴 这里曾有一个 "hotboard": True（热搜进她的世界），现已移除。
+        #  这里曾有一个 "hotboard": True（热搜进她的世界），现已移除。
     # 已经删掉：那套 hotboard_cache + 抖音榜被「百度热梗榜」取代了，
     # 后来又随 meme 插件一起下线（P21.2 删插件），这里不再保留开关。
     "weather": True,          # 天气进她的世界
@@ -60,7 +60,7 @@ _cache = {"t": 0.0, "d": dict(DEFAULTS), "by": {}}
 _lock = threading.RLock()
 # 当前渠道。聊天入口在进入时 set_current_src 一次，管完这一轮。
 #
-# 🔴 必须是 ContextVar，不能是模块级变量：server 是 ThreadingHTTPServer，
+#  必须是 ContextVar，不能是模块级变量：server 是 ThreadingHTTPServer，
 # 两个请求的处理线程会互相覆盖同一个"当前渠道"，A 请求的功能开关/权限判断
 # 可能读到 B 请求的渠道。ContextVar 按线程（按上下文）隔离，请求线程之间
 # 天然不串；后台线程在 start 时复制一份父上下文，也不会回写主流程。
@@ -138,7 +138,7 @@ def _reload():
 def all_features(src=None):
     """当前全部开关（30 秒缓存）。传 src 拿该渠道覆盖后的结果。
 
-    🔴 `src` 一律参与覆盖合并，**不跳过 app**。和写入侧 set_features
+     `src` 一律参与覆盖合并，**不跳过 app**。和写入侧 set_features
     必须同规则：那边写了 features_by_src.app，这边就得读它。
     """
     with _lock:
@@ -168,7 +168,7 @@ def set_features(patch, src=None):
     带 src 时写进 features_by_src.<src>，**只写这几个键**（覆盖语义），
     不动全局那一份。写失败返回 None。
 
-    🔴 写和读必须同一套规则。这里曾经不一致：读取侧跳过 app 的覆盖
+     写和读必须同一套规则。这里曾经不一致：读取侧跳过 app 的覆盖
     （当它是基线），写入侧却老老实实照渠道名写 features_by_src.app ——
     于是面板在 App 渠道点开关"点了跟没点一样"，还往配置里攒了一堆
     读不出来的"幽灵覆盖"：界面上显示已关，运行时全是开的。
@@ -193,7 +193,7 @@ def set_features(patch, src=None):
             cfg["features"] = f
         with open(_CFG, "w", encoding="utf-8", newline="\n") as fp:
             json.dump(cfg, fp, ensure_ascii=False, indent=2)
-        # 🔴 顺序要紧：**先**让缓存失效，**再**回读。
+        #  顺序要紧：**先**让缓存失效，**再**回读。
         # 反过来的话返回的是 30 秒前的旧缓存 —— 调用方（面板）拿到的
                 # 是"修改前"的答案，界面上看着就像开关没写进去。
         invalidate()

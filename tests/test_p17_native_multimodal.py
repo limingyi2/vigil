@@ -71,7 +71,7 @@ def test_ask_with_retry_passes_native_image_and_surfaces_provider_error(tmp_path
 def test_capability_registry_is_truthful_and_permission_checked():
     """写操作要真授权，且身份不能当通行证用。
 
-    🔴 这里刻意不再有 ``authorized=True`` 这种参数：它曾让调用方一句话把
+     这里刻意不再有 ``authorized=True`` 这种参数：它曾让调用方一句话把
     "我是管理员"变成"所有能力都已批准"。现在唯一的通行证是 grant，而 grant
     限定在 (能力, 操作, 身份, 会话, 目标) 上。
     """

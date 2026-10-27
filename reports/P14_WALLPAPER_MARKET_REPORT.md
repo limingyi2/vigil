@@ -45,7 +45,7 @@ Brain 插件扫描继续从运行时插件目录加载插件入口及 frontend �
 - `npx electron tools/test-wallpaper-electron.js`：PASS。加载真实 WebWallGL 3.0.0；Scene 工程含 1 个 animated solid 层；校验动画帧变化、`project.json`/`scene.json` 认证读取、视频解码、嵌套网页资源、pause/resume、resize、关闭及插件清理。帧 SHA-256：
   - `c0a0ba8be64c5adc305519865a0e3fdccd2d0833821fe09b05853bdcdadbc7d7`
   - `31e78bacbe9b90cde43a86eedceec08210dc226df15c39abf9dfcf3cfcf3a5da`
-- Electron 场景截图：[wallpaper-code11.png](../client/_shots/wallpaper-code11.png)。测试使用无用户数据的临时 Electron `userData` 和临时 HTTP fixture。
+- Electron 场景截图：`client/_shots/wallpaper-code11.png`（历史截图，当前仓库未保存）。测试使用无用户数据的临时 Electron `userData` 和临时 HTTP fixture。
 - `npx electron tools/test-plugin-market-electron.js`：PASS。覆盖按钮、连接状态、安装失败重试、安装启用、禁用、卸载、重启和旧 localStorage 导航顺序。
 - `npx electron tools/test-market-live-electron.js`：PASS。真实 Electron renderer/preload/IPC 调用本地 Brain 市场 API，远程 GitHub Raw 清单返回 `ready`，版本 `1.1`，一项插件。
 - `python -m pytest tests/test_plugin_market_state.py tests/test_plugin_manifest.py tests/test_plugin_transactions.py tests/test_plugin_structure.py -q`（从 `brain/` 执行）：PASS，56 passed，3 skipped（共 59 项）。

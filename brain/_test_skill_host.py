@@ -48,7 +48,7 @@ def group(t):
 class Turn(object):
     """假 Turn。只提供插件真正读到的那几个字段。
 
-    🔴 brain 给 None 是**故意的**：真人设昵称读不到（脑是 None），
+     brain 给 None 是**故意的**：真人设昵称读不到（脑是 None），
     正好暴露"判据只依赖人设配置会漏"这个真问题 —— 上一版就是这么挂的。
     """
     src = "wechat"
@@ -59,7 +59,7 @@ class Turn(object):
 def main():
     import plugins.skill as S
     S._cfg = lambda: {"host": HOST}          # 指到测试端口
-    S._CACHE_TTL = 0                          # 别让缓存掩盖变化
+    S._CACHE_TTL = 0                          # 避免缓存掩盖变化
 
     group("0. 宿主活着")
     alive = S.host_alive()

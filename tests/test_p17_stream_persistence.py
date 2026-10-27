@@ -374,7 +374,7 @@ class StreamPersistenceTests(unittest.TestCase):
                              start=False) for intent, rid in specs]
         providers = {intent: FakeStream(['%s-%02d' % (intent, i) for i in range(10)], gap=0.01)
                      for intent, _rid in specs}
-        # 🔴 两个 run 同时给 get_provider 打补丁会互相覆盖（后启动的赢），
+        #  两个 run 同时给 get_provider 打补丁会互相覆盖（后启动的赢），
         # 两个线程最终拿到同一个 provider —— 甲会整段播出乙的内容。
         # 改成一次 patch + 按 cfg 里的标记查表分发。
         def fake_provider(cfg):

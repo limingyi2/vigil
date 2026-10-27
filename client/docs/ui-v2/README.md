@@ -1,5 +1,7 @@
 # Vigil UI V2 — 第一阶段改造记录
 
+> 历史资料：本文保留对应阶段的设计、用法或验证记录，部分模块已移除。当前桌面版请查阅 [文档索引](https://github.com/limingyi2/vigil/blob/dev/docs/README.md)，不要直接照本文部署或推断已交付功能。
+
 后续迭代：[第二轮视觉与回归修正](round2.md)。本文保留第一轮的实现与验证记录；第二轮将聊天最大宽度调整为 860px，并改用正式 preload 进行隔离回归。
 
 日期：2026-10-11。分支：`ui/v2-chat-redesign`。独立工作目录：`F:/vigil-ui-v2`。

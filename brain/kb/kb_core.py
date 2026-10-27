@@ -11,7 +11,7 @@
 """
 import os
 
-# ⚠️ ROCm 运行时必须在 Python 进程启动前就配好 PATH（torch_hip.dll 的依赖
+# 注意： ROCm 运行时必须在 Python 进程启动前就配好 PATH（torch_hip.dll 的依赖
 #    在 ROCm bin 里）。Python 运行中改 os.environ 或 os.add_dll_directory 对
 #    ctypes 的 DLL 搜索无效。已永久加入用户 PATH（安装时配置），新开终端直接
 #    `python ingest.py` 即可；当前会话用同目录下的 kb.bat 启动（它会先设 PATH）。
@@ -21,7 +21,7 @@ os.environ.setdefault("HF_HOME", r"D:\zhixia_kb\models")
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # 消掉 symlink 警告
 
-# ⚠️ 必须先 import torch，再 import sentence_transformers/transformers！
+# 注意： 必须先 import torch，再 import sentence_transformers/transformers！
 #    transformers 在 import torch 之前会改变 DLL 搜索状态（可能调用了
 #    os.add_dll_directory），导致后加载的 torch_hip.dll 找不到 ROCm 依赖（WinError 126）。
 #    先 import torch 让 DLL 提前加载好，后续 transformers 就不会重新加载 torch。

@@ -89,7 +89,7 @@ def _transcript_ids(provider, round_index=1):
             [m['tool_call_id'] for m in tools])
 
 
-# ── 一、Tool Call ID 一致性 ─────────────────────────────────────────
+# ── 一、Tool Call ID 一致性
 
 def test_missing_call_id_round_trips_through_the_whole_transcript(tmp_path):
     # The gateway omitted the id entirely. _call_id() generates one; before
@@ -171,7 +171,7 @@ def test_duplicate_ids_in_one_batch_are_disambiguated_everywhere(tmp_path):
     assert sorted(tool_ids) == ledger
 
 
-# ── 二、执行状态凭回执说话 ───────────────────────────────────────────
+# ── 二、执行状态凭回执说话
 
 
 def test_interleaved_multi_call_deltas_dispatch_both_with_the_right_args(tmp_path):
@@ -352,7 +352,7 @@ def test_late_tool_result_never_flips_a_paused_run(tmp_path):
         assert runs.snapshot(child['run_id'], OWNER)['status'] == 'succeeded'
 
 
-# ── 三、诊断脱敏与 invalid_tool 终态 detail ─────────────────────────
+# ── 三、诊断脱敏与 invalid_tool 终态 detail
 
 def test_invalid_tool_terminal_error_carries_a_redacted_detail(tmp_path):
     broken = call(text='x')
@@ -414,7 +414,7 @@ def test_receipts_in_the_ledger_are_redacted(tmp_path):
     assert secret not in json.dumps(step, ensure_ascii=False)
 
 
-# ── 四、插话幂等 ───────────────────────────────────────────────────
+# ── 四、插话幂等
 
 def _seeded_run(tmp_path, status='running', intent='整理 downloads 目录'):
     with pytest.MonkeyPatch.context() as mp:

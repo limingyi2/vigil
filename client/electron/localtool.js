@@ -24,7 +24,7 @@ const MAX_READ = 200 * 1024;        // 单次读文件上限 200KB
 const MAX_LIST = 200;               // 列目录最多返回多少条
 const MAX_FIND = 50;                // 找文件最多返回多少条
 
-// ── 路径白名单 ────────────────────────────────────────────────
+// ── 路径白名单
 function defaultRoots() {
   const out = [];
   for (const fn of ['getPath']) {
@@ -57,7 +57,7 @@ function inside(target, roots) {
   return null;
 }
 
-// ── symlink / junction 防护 ────────────────────────────────────
+// ── symlink / junction 防护
 // path.resolve 只做**词法**规范化，不解析符号链接；而 fs.stat()/递归遍历
 // 默认跟随链接。允许目录里放一个指向外部的链接，词法检查放过去、读取时就
 // 走出了白名单根（Windows junction 同理）。两道对策：
@@ -168,7 +168,7 @@ function guard(p, cfg) {
   return { abs, root };
 }
 
-// ── 各个工具 ──────────────────────────────────────────────────
+// ── 各个工具
 function sizeText(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -320,7 +320,7 @@ async function tool_file_grep(args, cfg) {
   const pat = String(args.pattern || '').trim();
   if (!p) return '没给要搜的路径';
   if (!pat) return '没给要搜的关键词';
-  // 🔴 这里曾经直接写 `const abs = g.abs(...)`，但函数里根本没定义 g
+  //  这里曾经直接写 `const abs = g.abs(...)`，但函数里根本没定义 g
   // （ReferenceError），grep 一调就炸。先过 guard，拿到白名单解析后的绝对路径。
   const g = guard(p, cfg);
   if (g.err) return g.err;
@@ -418,7 +418,7 @@ async function tool_file_recent(args, cfg) {
   const hours = Math.max(1, Math.min(24 * 30, Number(args.hours) || 24));
   const since = Date.now() - hours * 3600 * 1000;
   const found = [];
-  // 🔴 这里**不跳 `tmp` / `temp`**：Windows 的临时目录就叫 `...\Temp\`，
+  //  这里**不跳 `tmp` / `temp`**：Windows 的临时目录就叫 `...\Temp\`，
   // 一跳就会把"允许目录本身在临时目录下"的情况整个跳过 —— e2e 逮到过这个
   // （沙箱在 %TEMP% 下，刚写完文件却说"没有改动过的文件"）。
   // 只跳真正跟找文件无关的重目录。
@@ -599,7 +599,7 @@ async function tool_file_delete(args, cfg) {
   return { text: '已移到回收站：' + g.abs + tip, backup: (bk && bk.file) ? bk : null };
 }
 
-// ── 备份 / 撤销 ───────────────────────────────────────────────
+// ── 备份 / 撤销
 // 写和删之前先把原文件抄一份到 userData/backups/<时间戳>/ 下。
 // 有了它，"撤销"才有意义；没有它，界面上那个按钮只是个摆设。
 const MAX_BACKUP = 50 * 1024 * 1024;      // 超过 50MB 不备份（磁盘和速度都不划算）
@@ -633,7 +633,7 @@ async function restore(backup) {
   if (!backup || !backup.target) return '这条没有备份，撤不回来';
   try {
     // ① 移动：把东西从 moveto 搬回 target。
-    //    🔴 这条必须在 existed 判断**之前**。移动的撤销不是"删掉"——
+    //     这条必须在 existed 判断**之前**。移动的撤销不是"删掉"——
     //    第一版把移动记成 `existed:false`，于是撤销一次移动等于把文件删了
     //    （源位置和目标位置都没了）。dryrun 逮到过这个。
     if (backup.movedTo) {
@@ -673,11 +673,11 @@ async function restore(backup) {
   }
 }
 
-// ── 进程 ──────────────────────────────────────────────────────
+// ── 进程
 // 用 `wmic` 而不是 `tasklist`：tasklist 的 CSV 在中文 Windows 上会把
 // 内存写成「12,345 K」这种带千分位和单位的格式，解析出来是错的。
 // wmic 给的是纯字节数。
-// 🔴 wmic 在 Win11 24H2 之后被移除了 —— 所以下面留了 tasklist 兜底，
+//  wmic 在 Win11 24H2 之后被移除了 —— 所以下面留了 tasklist 兜底，
 //    而且**不硬编码"哪个更好"**，哪个能跑通用哪个。
 async function listProcesses() {
   const { exec } = require('child_process');
@@ -770,10 +770,10 @@ async function tool_process_kill(args) {
     + (ok ? '' : '\n' + out.trim().slice(0, 300));
 }
 
-// ── 当前窗口 ──────────────────────────────────────────────────
+// ── 当前窗口
 // 纯 JS 碰不到 Win32 API。为了这一个功能引一个原生模块不划算，所以借 PowerShell。
 //
-// 🔴 脚本**写成临时 .ps1 再执行**，不要用 `powershell -Command "..."` 内联：
+//  脚本**写成临时 .ps1 再执行**，不要用 `powershell -Command "..."` 内联：
 //    内联字符串要穿透 JS 转义 + cmd 转义 + PowerShell 解析三层，
 //    里面的 here-string（@" ... "@）转义完就废了 —— e2e 逮到过
 //    "Command failed: powershell -NoProfile -Command Add-Type @" 这种。
@@ -832,7 +832,7 @@ async function tool_active_window() {
   }
 }
 
-// ── 剪贴板 ────────────────────────────────────────────────────
+// ── 剪贴板
 async function tool_clipboard_read() {
   const { clipboard } = require('electron');
   const t = clipboard.readText();
@@ -847,7 +847,7 @@ async function tool_clipboard_write(args) {
   return '已放进剪贴板：' + (t.length > 60 ? t.slice(0, 60) + '…' : t) + '（' + t.length + ' 字）';
 }
 
-// ── 命令执行 ──────────────────────────────────────────────────
+// ── 命令执行
 // 只读白名单：**默认放行的那些**。属于"看一眼状态"，没什么可改的。
 const CMD_ALLOW = [
   'ipconfig', 'systeminfo', 'tasklist', 'ver', 'whoami', 'hostname', 'date', 'time',
@@ -1028,7 +1028,7 @@ const RUN = {
   },
 };
 
-// ── 工具目录 ──────────────────────────────────────────────────
+// ── 工具目录
 // **这份目录是客户端自己的**，不依赖 brain（没网、brain 没跑，工具页照样能用）。
 // 代价是描述文字跟 brain/localtools.py 里的有一份重复 —— 用 e2e 里的
 // "工具名单对账"盯着两边别漂移（名字对不上会当场报出来）。

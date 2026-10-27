@@ -307,7 +307,7 @@ def main():
     finally:
         try:
             features.DEFAULTS.pop(feat, None)
-            # 🔴 还得把**写进配置文件的那份**擦掉。set_channels 是真的
+            #  还得把**写进配置文件的那份**擦掉。set_channels 是真的
             # set_features 落盘了，只 pop 内存里的 DEFAULTS 是不够的 ——
             # 于是 po_test_feat 永远留在 features_by_src 里，
             # 面板上多出一个谁也说不清干什么的开关。
@@ -387,7 +387,7 @@ def main():
     # 跑完只清了plugins/ 目录，配置里的键留了下来。后来打开面板，
     # 多出一个谁也说不清干什么的开关，还以为是谁加的功能。
     #
-    # 🔴 必须**直接读配置文件**，不能用 features.all_features()：
+    #  必须**直接读配置文件**，不能用 features.all_features()：
     # 它不传 src 时只返回基线那份，features_by_src 里的键一个都看不到 ——
     # 于是这条判据永远是 PASS，等于没写。（第一版就是这么写的，
     # 故意塞了个残留键进去它照样报"无"，当场露馅。）
@@ -423,7 +423,7 @@ def main():
     check("重装上了（拿第 14 组那个包）", ok, res)
     import features as _fe
     _fe.invalidate()
-    # 🔴 必须先 register 再 set_channels —— features.set_features 有
+    #  必须先 register 再 set_channels —— features.set_features 有
     # `k in DEFAULTS` 的白名单，而 DEFAULTS 里的插件键是**装载时**
     # （plugin_host 调 features.register）才加进来的，安装本身不加。
     # 跳过register 的话 set_channels 会被静默丢掉，然后这条判据会误报
@@ -445,7 +445,7 @@ def main():
 
     where = _in_cfg(feat2)
     check("装完渠道开关写进配置了（%s）" % (where or "没写"), where is not None, where)
-    # 🔴 两个渠道都要查。只查"在不在任意一个渠道里"的话，
+    #  两个渠道都要查。只查"在不在任意一个渠道里"的话，
     # 只写成功一个渠道也会 PASS —— 而"app 写了 wechat 没写"正是
     # 最典型的漏渠道现场（界面显示两个都开，微信那边其实没生效）。
     with open(os.path.join(str(paths.CONFIG_DIR), "config.json"),

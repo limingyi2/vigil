@@ -116,7 +116,7 @@ def main():
         paths.CONFIG_DIR = cfg_dir
         paths.CONFIG_PATH = os.path.join(cfg_dir, "config.json")
         paths.PERSONA_DIR = os.path.join(cfg_dir, "personas")
-        # 🔴 persona_store.PERSONA_DIR 是 **import 时**从 paths 抓的快照
+        #  persona_store.PERSONA_DIR 是 **import 时**从 paths 抓的快照
         # （它还兜了一条 BASE 分支），只改 paths.PERSONA_DIR 它不跟着变 ——
         # 于是 load() 全都降级成"读不到，用内置空模板"，name 是空串。
         # 这个坑跟"改路径没生效"长得一模一样：都不报错，只是内容不对。
@@ -158,7 +158,7 @@ def main():
         check("找得到 /api/persona/full 那段", bool(seg))
         check("那段里用了 _persona_for_src（按渠道解析）",
               "_persona_for_src" in seg, seg[:200])
-        # 🔴 判据只能问「直不直接用渠道」，不能问「有没有出现某段字节」——
+        #  判据只能问「直不直接用渠道」，不能问「有没有出现某段字节」——
         # 加了中间层之后「区间内含 X」这类判据就不成立了。
         import ast
         tree = ast.parse(src)

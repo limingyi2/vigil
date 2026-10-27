@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════════
+/*
    Vigil 客户端样式 · 编辑部版（借鉴 Hermes Agent 的印刷风）
 
    视觉语言：
@@ -6,7 +6,7 @@
    · 等宽字体承担全部"机器信息"：编号、路径、数字、时间、版本
    · 章节编号体系：§ 01 [ 分区 ] 标题 —— 页面像一份排版好的刊物
    · 方格稿纸底纹、直角卡片、发丝线分隔，没有渐变和毛玻璃
-   ═══════════════════════════════════════════════════════════════ */
+    */
 :root {
   --bg: #ffffff; --bg-sub: #fafaf7; --bg-sunken: #f2f2ee;
   --bg-hover: rgba(21, 23, 26, .045); --bg-active: rgba(21, 23, 26, .085);
@@ -146,7 +146,7 @@ body[data-vigil-page="market"] #gPanel { display:none; }
 .nav-spacer { flex: 1; min-height: 12px; }
 .nav-settings { border-top: 1px solid var(--line-soft); border-radius: 0 0 10px 10px; }
 
-/* ── 左下角的更新圆圈 ─────────────────────────────────────────────
+/* ── 左下角的更新圆圈
    平常整颗隐藏；有新版才出现。下载时圆环按百分比闭合，
    下好了变成可点的实心提示，再点一下才装。不许用弹窗。 */
 .upd-ring {
@@ -312,7 +312,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.55; resize: ver
 .chip.dis { opacity: .38; cursor: not-allowed; }
 .chip.dis:hover { border-color: var(--line); color: var(--text-2); }
 
-/* ── 章节标题：§ 01 [ 分区 ] 标题 ─────────────────────────
+/* ── 章节标题：§ 01 [ 分区 ] 标题
    页内分区的编号体系：sech 由 JS 生成（b + muted），
    编号自动排：用 CSS 计数器按出现顺序给每一节配号。 */
 .sech { --n: auto; display: flex; align-items: baseline; gap: 10px; margin: 26px 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--line); counter-increment: sech; }

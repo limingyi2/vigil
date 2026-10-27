@@ -13,7 +13,7 @@ from core_features import plugin_market as market
 def _builtin_patches(builtin_dir, coreplug_name="coreplug.py"):
     """让 plugin_host 把 ``builtin_dir`` 当成核心能力目录。
 
-    🔴 **为什么不能只 patch ``_DIR``**：`plugin_manager._source()` 判定
+     **为什么不能只 patch ``_DIR``**：`plugin_manager._source()` 判定
     一个插件是 builtin 还是 user，看的是两个常量：
 
     ```python

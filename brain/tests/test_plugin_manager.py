@@ -14,7 +14,7 @@ import plugin_host
 def _builtin_patches(builtin_dir, coreplug_name="coreplug.py"):
     """让 plugin_host 把 ``builtin_dir`` 当成核心能力目录。
 
-    🔴 **为什么不能只 patch ``_DIR``**：`plugin_manager._source()` 判定
+     **为什么不能只 patch ``_DIR``**：`plugin_manager._source()` 判定
     一个插件是 builtin 还是 user，看的是两个常量：
 
     ```python
@@ -698,7 +698,7 @@ def test_uninstall_user_overlay_restores_builtin_tools_and_routes(tmp_path):
 def test_targeted_lifecycle_keeps_real_background_plugins_running(tmp_path):
     """kb/skill have no stop hook; ordinary plugin operations must not block.
 
-    🔴 原来断言的是 ``reminder`` / ``kb`` / ``skill`` 三个插件。
+     原来断言的是 ``reminder`` / ``kb`` / ``skill`` 三个插件。
     ``brain/plugins/reminder.py`` 已在 P24/P25（提交 fb2a5a8，2026-10-25）
     删除 —— 提醒功能改由 ``brain/jobs.py`` 承担，插件形态不再存在。
     这里换成仍然存在、且同样「有 start 无 stop」的两个：kb 与 skill。

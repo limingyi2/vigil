@@ -1,47 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Pytest 全局夹具：把跨测试残留的进程级资源收干净。
+"""Pytest 资源收尾与数据目录隔离。
 
-## 为什么需要这个文件
-
-P17 引入了两个**进程级**资源，生命周期比单个测试长：
-
-1. `storage.db` 的长连接缓存（`_CONN`）
-2. `storage.diag` 的后台写线程
-
-后者是真正踩过的坑：`agent_runs` 每执行一次工具就入队一条诊断日志，
-写线程随后开连接落盘。测试紧接着删临时目录 —— 正好撞在写线程开着连接的
-那几十毫秒上，Windows 报
-`PermissionError: [WinError 32] 另一个程序正在使用此文件`，
-工具调用密集的用例（`test_p2_agent_runs.py` 整片）必现。
-
-生产上这 5ms 的窗口没有任何影响，所以这是**测试基建**要解决的问题，
-不是 diag 要解决的问题 —— 不该为了让测试好过就把诊断改成同步写
-（实测同步写每条 5.1ms，异步入队 0.07ms，差 70 倍）。
-
-## 为什么包 `tearDown`，而不是只用 pytest 钩子
-
-🔴 这个仓库的测试绝大多数是 `unittest.TestCase` 风格，而 pytest 把
-**整个** `TestCase.run()`（setUp + 测试方法 + tearDown）都放在 call 阶段执行。
-`pytest_runtest_teardown` 因此跑在 `tearDown` **之后** ——
-那时候 `self.tmp.cleanup()` 早就炸完了。实测确认过：钩子里能删掉文件，
-unittest 的 tearDown 里删不掉。
-
-🔴 而且不能只包 `unittest.TestCase.tearDown`：`RunTests` 这类子类
-**自己 override 了 tearDown**，包基类会被直接绕开。必须按 MRO 解析出
-"这个类真正会调到的那个 tearDown"，把包出来的版本挂到类自己身上。
-
-## 数据目录隔离（`_isolated_data_dir`）
-
-改造前 `tests/` 与 `brain/tests/` 下共 130+ 个测试文件**没有任何一个**
-统一隔离数据目录 —— 全量跑测试时直接连生产库 `brain/data/db/vigil.db`，
-既污染用户真实数据，又会因 WAL + `BEGIN IMMEDIATE` 竞争报
-`sqlite3.OperationalError: attempt to write a readonly database`，
-表现为「单跑通过、全量失败」且失败数在 3~6 之间波动。
-
-`storage.db.set_dir()` 本来就是为这件事准备的（`test_kb.py`、
-`test_p18_workflows.py` 等 6 个文件已经在用），这里把「各自手动隔离」
-升级成「默认就隔离」。实现见 `brain/_test_data_isolation.py`。
-"""
+测试结束前刷新并停止诊断写线程、关闭数据库连接，避免临时目录被后台连接占用。
+unittest.TestCase 的自定义 tearDown 在 pytest teardown 钩子之前运行，
+因此需要包装实际的 tearDown 方法，提前释放这些进程级资源。
+默认数据隔离由 brain/_test_data_isolation.py 提供，测试不应连接真实用户数据库。"""
 import os
 import sys
 import unittest

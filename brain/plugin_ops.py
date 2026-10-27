@@ -1,20 +1,7 @@
 # -*- coding: utf-8 -*-
-"""插件的安装 / 卸载 / 元数据 —— 管理面。运行时在 `plugin_host`。
+"""插件管理事务：检查制品与清单，在暂存目录验证后提交安装、更新或卸载。
 
-安装事务只负责静态校验和文件提交；提交成功返回 `restart_needed=true`，由受控重启完成动态加载。
-安装器不会为了校验而 import 新插件，避免在事务中触发 `start()`、网络或文件副作用。
-
-## 包形状
-
-zip 接受两种形状：
-
-    xxx.zip
-    ├── xxx.py                # 插件本体
-    └──（可选）zxplugin.json  # 作者/版本等元信息
-
-单文件插件保留原格式。目录插件必须在单一插件目录内包含 `__init__.py`，
-可以附带 `frontend.js`、`frontend.css` 和 Manifest；加载器按目录读取这些资源。
-"""
+运行时加载由 plugin_host 和 plugin_manager 处理。文件回滚不等于撤销插件已经产生的外部副作用。"""
 import io
 import json
 import os
@@ -487,7 +474,7 @@ def re_name_ok_safe(n):
 def _syntax_check(tmp_root, names):
     """py_compile 每一个 .py，返回第一个错误（没有则 None）。
 
-    🔴 cfile **不能写 os.devnull**。Windows 上 devnull 是"nul"这个设备名，
+     cfile **不能写 os.devnull**。Windows 上 devnull 是"nul"这个设备名，
     py_compile 拿它当输出文件会直接抛
     「nul is a non-regular file」—— 于是**每个包都装不进去**，
     而且错误信息里完全看不出是这个原因（第一次跑就被这个坑拦住过）。

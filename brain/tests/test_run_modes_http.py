@@ -275,7 +275,7 @@ class RunModeHttpTests(unittest.TestCase):
         cls.addClassCleanup(cls.ollama.stop)
         cls.addClassCleanup(cls.cloud.stop)
 
-    # ── 工具 ────────────────────────────────────────────────
+    # ── 工具
     def switch(self, mode, model=None, expect_ok=True):
         body = {"mode": mode}
         if model:
@@ -303,7 +303,7 @@ class RunModeHttpTests(unittest.TestCase):
             time.sleep(0.3)
         self.fail("创作作业没有在 %ss 内结束" % timeout)
 
-    # ── 用例 ────────────────────────────────────────────────
+    # ── 用例
     def test_01_status_reports_cloud_and_can_probe_ollama(self):
         code, obj = self.brain.get("/api/run-mode?probe=1")
         self.assertEqual(code, 200, obj)

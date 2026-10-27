@@ -25,7 +25,7 @@ import secrets
 import threading
 import time
 
-# 🔴 这里必须是 `import paths` 而不是 `from paths import DEVICES_PATH`：
+#  这里必须是 `import paths` 而不是 `from paths import DEVICES_PATH`：
 # 后者在 import 那一刻就把值绑死了，测试（或将来想换目录的调用方）
 # 改 paths.DEVICES_PATH 根本不生效 —— 结果就是测试往真实设备表里写数据。
 import paths
@@ -171,7 +171,7 @@ def register(device_name, device_type="other", ip="", capabilities=None,
     with _LOCK:
         data = _all()
         data[did] = rec
-        # 🔴 必须检查落盘结果：写失败时把 cache 里的临时记录回滚。
+        #  必须检查落盘结果：写失败时把 cache 里的临时记录回滚。
         # 否则客户端拿到 token 以为绑定成功，服务端一重启这台设备就"消失"，
         # 排查起来像 token 失效，其实是从来没写进去过。
         if not _write(data):

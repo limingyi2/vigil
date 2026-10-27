@@ -175,7 +175,7 @@ def _ensure_writer():
 def _emit(table, columns, values):
     """把一条日志塞进队列。满就丢，绝不阻塞调用方。
 
-    🔴 **不能在这里看 `_STOP`**。早先拦过，结果 `stop()` 万一没把标志清掉
+     **不能在这里看 `_STOP`**。早先拦过，结果 `stop()` 万一没把标志清掉
     （异常路径），这里就永远返回 False —— 之后再没有写线程，`_BUSY` 永远是 0、
     队列永远没人排，诊断在整个进程里静默死亡。而"多写几条到没人理的队列"
     最坏只是被队列上限丢掉，代价小得多。
@@ -201,7 +201,7 @@ def _in_writer():
 
 
 def _write_batch(records):
-    """一批日志一个事务。任何一条炸掉都不影响同批其它条。"""
+    """一批日志一个事务。任何一条失败都不影响同批其它条。"""
     if not records:
         return
     with db.write_once("logs") as conn:
@@ -280,7 +280,7 @@ def flush(timeout=5.0):
 def stop(timeout=5.0):
     """停掉后台写线程（测试用；生产进程跟着进程一起结束）。
 
-    🔴 `_STOP` 必须在 `finally` 里清。早先是顺序执行，一旦 `join()` 前后
+     `_STOP` 必须在 `finally` 里清。早先是顺序执行，一旦 `join()` 前后
     抛了异常，标志就卡在 set 状态 —— 表现是「之后每条日志都静默丢失、
     每次 flush 白等满超时」，而且完全不报错，极难查。
     线程没在超时内死掉就**留着**标志：下一个 `_ensure_writer()` 会再清一次

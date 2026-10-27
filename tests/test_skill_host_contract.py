@@ -38,7 +38,7 @@ class TestSkillEntryContract(unittest.TestCase):
     def _boot_block(self):
         """把 `const boot = …` 到 `if (!boot)` 之间那段抠出来。
 
-        🔴 **必须限定在这段里面查**，不能查整个文件。第一版就是查全文件里有没有
+         **必须限定在这段里面查**，不能查整个文件。第一版就是查全文件里有没有
         `mod.register` 这个字符串 —— 把选择那行改成 `const boot = mod.setup`、
         留下下面半截 `: … mod.register` 的残骸时，字符串还在、判据照样绿。
         （我拿这个错误改法验过一次，它确实没红。）所以范围要卡死在赋值语句里。

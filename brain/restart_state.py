@@ -23,7 +23,7 @@
 * `skill`  → `<skill_dir>/_pending_restart.json`，大脑写 `changed_at`，
   Node 宿主启动时写 `started_at`（宿主是独立进程，重启它才让技能状态落地）。
 
-🔴 **`note_start` 的调用时机就是"服务真的起来了"的那一刻**：大脑侧在
+ **`note_start` 的调用时机就是"服务真的起来了"的那一刻**：大脑侧在
 `start_remote_api` 里 HTTP 绑定成功之后调用，宿主侧在 `server.listen` 的
 回调里调用。不能图省事放在进程入口 —— 绑定失败（端口被占）时进程不会
 立即退出（run_server 只打印一行然后继续跑收尾循环），入口处的登记会被

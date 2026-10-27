@@ -137,7 +137,7 @@ function cdp(wsUrl) {
     if (!sc || sc.status !== 'ready') throw new Error('sidecar 没就绪');
 
     // 向导：maybeWizard 检测到没 key 应该把页面切到 设置→模型与服务商
-    // 先逐步 Dump 条件，别让 try/catch 把问题吞了
+    // 先逐步 Dump 条件，避免 try/catch 把问题吞了
     {
       const d0 = await ev2("(function(){try{return JSON.stringify({vigil:typeof window.vigil, keys:Object.keys(window.vigil||{}), sidecar:typeof (window.vigil||{}).sidecar});}catch(e){return 'ERR:'+e.message}})()");
       const d1 = await ev2("JSON.stringify(API.state.conn)");

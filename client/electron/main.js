@@ -42,7 +42,7 @@ let pendingSettingsTarget = null;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
 
-// ── 托盘：点关闭 = 隐藏，不退出（2026-10-09 用户要求）──────────────
+// ── 托盘：点关闭 = 隐藏，不退出（2026-10-09 用户要求）
 // 她是常驻的：微信消息、本地操控轮询、转发通道都在这个进程里跑着。
 // 点 ✕ 把整个客户端杀掉 = 微信渠道的本地工具全断。所以：
 //   · 点关闭 → 窗口隐藏，进程照常活着（托盘图标还在）
@@ -86,7 +86,7 @@ function createTray() {
   });
 }
 
-// ── 推送更新（2026-10-26 改版）：不再弹窗，改成一个圆圈 ──────────────
+// ── 推送更新（2026-10-26 改版）：不再弹窗，改成一个圆圈
 // 以前是「发现新版 → 弹框问要不要下 → 进度只写窗口标题 → 下完再弹框问装不装」，
 // 用户既看不到下没下，也不知道下到哪。现在：
 //   启动 / 每小时只「发现」→ 发现新版，左下角圆圈出现；
@@ -108,7 +108,7 @@ const updater = require('./update-manager').createUpdateManager({
   readCode: readLocalCode,
   source: require('./public-updates'),
   downloadPath: UPD_DL,
-  // 两个窗口都发：设置窗口里也挂了同一套渲染层，别让它们状态不一致
+  // 两个窗口都发：设置窗口里也挂了同一套渲染层，避免它们状态不一致
   emit: (state) => {
     for (const w of [win, settingsWin]) {
       if (w && !w.isDestroyed() && w.webContents) {
@@ -127,7 +127,7 @@ function checkUpdate(mode) {
 }
 
 
-// ── 配置：只留本机这一份 ─────────────────────────────────────────
+// ── 配置：只留本机这一份
 // P8.1 起客户端只连随包 Brain。旧版配置里可能写着远程地址、设备 token、
 // 云端同步凭据 —— 读的时候一律不采用；迁移时把这些键挪进 legacy_remote
 // 归档（值原样保留，一条都不删），并把 sync.enabled 显式关掉。
@@ -193,7 +193,7 @@ function readCfg() {
   return { ...readRawCfg(), src: CLIENT_SRC };
 }
 
-// ── 凭据：只有本机 Brain 的 token ────────────────────────────────
+// ── 凭据：只有本机 Brain 的 token
 // token 由随包 Brain 自己在 <userData>/brain/config/config.json 里生成，
 // 每次调用现读 —— Brain 重启换了 token 也不会拿旧的去打 401。
 async function getToken() {
@@ -203,7 +203,7 @@ async function getToken() {
 }
 
 
-// ── HTTP：一个入口，鉴权头在这里统一加 ──────────────────────────────
+// ── HTTP：一个入口，鉴权头在这里统一加
 function request(method, urlStr, body, token, timeoutMs, perfLabel = '') {
   return new Promise((resolve) => {
     let u;
@@ -412,7 +412,7 @@ function requestStream(method, urlStr, body, token, onEvent, isTerminalEvent) {
   });
 }
 
-// ── 窗口 ─────────────────────────────────────────────────────────
+// ── 窗口
 function createWindow() {
   perfLog('window-create');
   win = new BrowserWindow({
@@ -500,7 +500,7 @@ function createWindow() {
     shell.openExternal(url);
     return { action: 'deny' };
   });
-  // 🔴 点关闭 = 隐藏（2026-10-09）：拦截 close，窗口藏起来、进程活着。
+  //  点关闭 = 隐藏（2026-10-09）：拦截 close，窗口藏起来、进程活着。
   // 真退出只走托盘菜单的"退出"（它先把 quitting 置真再 close）。
   // 不拦的话 window-all-closed → app.quit()，微信渠道的本地工具
   // 轮询、转发通道全部跟着一起死。
@@ -555,7 +555,7 @@ function openSettingsWindow(options) {
     },
   });
   const created = settingsWin;
-  // 🔴 设置页画好再显示窗口。设置窗口和主窗口共用一个 index.html，首帧渲染的是
+  //  设置页画好再显示窗口。设置窗口和主窗口共用一个 index.html，首帧渲染的是
   // 聊天 shell（壁纸层、玻璃主题都还没注入），那一帧就是"点设置闪黑一下"的来源；
   // 靠 ready-to-show 只能保证"画过一帧"，保证不了"画的是设置页"。所以让渲染层
   // 在 go('system') 落地后回报 settings:first-paint，收到才 show。
@@ -568,7 +568,7 @@ function openSettingsWindow(options) {
   created.loadFile(path.join(__dirname, '..', 'src', 'index.html'), {
     query: { window: 'settings', section },
   });
-  // 兜底：渲染层要是没回报（脚本报错/被插件打断），也别让窗口一直不出现。
+  // 兜底：渲染层要是没回报（脚本报错/被插件打断），也避免窗口一直不出现。
   setTimeout(showSettings, 2500);
   created.webContents.once('did-finish-load', () => {
     settingsWinReady = true;
@@ -591,7 +591,7 @@ function openSettingsWindow(options) {
   return { ok: true, existing: false };
 }
 
-// ── 只伺候随包 Brain ─────────────────────────────────────────
+// ── 只伺候随包 Brain
 // 地址与凭据都长在本机：sidecar 拉起 <userData>/brain 里的 exe，token 是它
 // 自己生成在 config.json 里的那把。不需要人填地址、端口、token，也没有
 // "连不上就换一台"的逻辑 —— 起不来就把原因报出来并允许重试。
@@ -696,7 +696,7 @@ async function autoConnect() {
 }
 
 
-// ── 本地操控：轮询 → 执行 → 送回结果 ───────────────────────────
+// ── 本地操控：轮询 → 执行 → 送回结果
 //
 // 为什么是轮询而不是 WebSocket：见 brain/localtools.py 顶部那段说明。
 // 一句话——服务端零依赖、隧道/反代不用改、出问题两个 HTTP 请求就能看清。
@@ -832,7 +832,7 @@ function startPolling() {
   pollOnce();
 }
 
-// ── IPC ──────────────────────────────────────────────────────────
+// ── IPC
 // 插件前端注入（收紧版）：渲染层**不能**再把任意代码塞给主进程执行
 // （旧的 run-js 通道等于 renderer → executeJavaScript 的任意代码桥，
 //  插件 JS 或 XSS 都能借它执行任意脚本）。现在由主进程自己拉
@@ -910,7 +910,7 @@ ipcMain.handle('project-picker:directory', async () => {
   }
 });
 
-// ── 工作区（一个真实文件夹）─────────────────────────────────────
+// ── 工作区（一个真实文件夹）
 // 只做两件事：让用户用原生选择器指定一个目录；回答"这个目录现在还在不在"。
 // 两者都不读文件内容，也不改变 localtool 的授权 —— 选中文件夹不等于拿到
 // 读写/执行权限，那边该弹的确认框一个都不会少。
@@ -976,7 +976,7 @@ ipcMain.handle('local:tools', () => ({
 }));
 
 ipcMain.handle('local:run', async (_e, { name, args }) => {
-  // 🔴 主进程是最后一道：危险工具不管调用方是工具页还是插件 JS，
+  //  主进程是最后一道：危险工具不管调用方是工具页还是插件 JS，
   // 都必须走同一个确认气泡（auto 模式除外，那是用户显式选的全自动）。
   // 不能只靠渲染层的"我确认"勾选 —— 注入的插件代码能直接调 local.run，
   // 但弹不弹、用户点不点，在这个主进程分支里说了算。
@@ -1148,7 +1148,7 @@ ipcMain.handle('api:stream', async (e, { path: p = '/', body = null, base = null
 ipcMain.handle('cfg:get', () => ({ ...readCfg(), base: connectionBase() }));
 ipcMain.handle('cfg:set', (_e, patch) => ({ ...writeCfg(patch), base: connectionBase() }));
 
-// ── 本地内核（sidecar）────────────────────────────────────────────
+// ── 本地内核（sidecar）
 ipcMain.handle('sidecar:status', () => sidecar.status());
 ipcMain.handle('sidecar:restart', () => {
   if (testBrain()) return { ok: true, external: true };
@@ -1172,7 +1172,7 @@ ipcMain.handle('sidecar:providers', async () => {
   return r.ok ? { ok: true, json: r.json } : { ok: false, err: r.err || ('HTTP ' + r.status) };
 });
 
-// ── 本机凭据：只用来告诉自己"Brain 是不是活的" ──────────────────
+// ── 本机凭据：只用来告诉自己"Brain 是不是活的"
 // P8.1 起不再向任何服务器注册设备、也不再有主人钥匙/设备 token 两套凭据：
 // 本机 Brain 的 token 就在它自己的配置文件里，由 sidecar 直接读。
 ipcMain.handle('token:get', () => (sidecar.ready() ? '本地 Brain' : ''));
@@ -1204,7 +1204,7 @@ ipcMain.on('win:close', (event) => {
   if (target && !target.isDestroyed()) target.close();
 });
 
-// ── 生命周期 ──────────────────────────────────────────────────────
+// ── 生命周期
 // 单实例：两个客户端同时跑会互相覆盖配置、也会把聊天历史对账搞乱
 if (!app.requestSingleInstanceLock()) {
   app.quit();

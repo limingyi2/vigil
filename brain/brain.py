@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""对话大脑
-
-只有 "api" 一种模式（config.json 的 chat_mode）：直接让 API 产出她的话，
-事实准、会用记忆、守人设。本地 Qwen3-4B + LoRA 那套和 two_stage 均已移除。
-"""
+"""模型对话运行时：构造上下文，调用提供者，并处理流式正文、工具循环与会话记录。"""
 import os, re, json, copy
 import datetime
 import time
@@ -502,7 +498,7 @@ class Brain:
     def _api_snapshot(self):
         """本轮用的配置快照（浅拷贝）。
 
-        🔴 为什么必须有这一层：`CloudProvider` 在**构造时**就把 api_base /
+         为什么必须有这一层：`CloudProvider` 在**构造时**就把 api_base /
         api_key / model 抄进实例，而 payload 里的 `model` 是**发送时**才从
         self.api 读的。用户在 `/api/models/quick-switch` 上切一下模型
         （另一个 HTTP 线程，就地改 self.api 那个字典），正在跑的这一轮就会
@@ -626,7 +622,7 @@ class Brain:
         return self._cur_src
 
     def hist_for(self, src, conversation_id=None):
-        """对外只读：某渠道的历史（建不建由调用方决定，别让读操作产生副作用）。"""
+        """对外只读：某渠道的历史（建不建由调用方决定，避免读操作产生副作用）。"""
         h = self._hists.get((norm_src(src), conversation_id))
         return h if h is not None else []
 
@@ -675,13 +671,13 @@ class Brain:
         """这个渠道的 system 段。缓存的是 build 之后的结果（读文件 + 拼装
         不便宜，但内容只随人设 key 变）。
 
-        🔴 缓存键必须**同时含渠道**：build_system_text 会按 src 选底线
+         缓存键必须**同时含渠道**：build_system_text 会按 src 选底线
         （PC 客户端用助手规则、其他渠道用陪伴规则，见 persona_store.
         ASSISTANT_SRCS）。只按人设 key 缓存的话，同一个人设在 pc 和 app
         两个渠道会共用同一份文本 —— 改渠道不换底线，助手设定等于没生效，
         而且症状是"人设文件改了没反应"，极难查。
 
-        🔴 缓存键还必须含**专家绑定**：召唤/卸下专家只改 experts_by_src，
+         缓存键还必须含**专家绑定**：召唤/卸下专家只改 experts_by_src，
         人设 key 不动 —— 键里不带专家的话，换专家后这里命中旧缓存，
         症状同样是"召唤了但没生效"。专家是提示词叠加，见 expert_store.
         system_overlay。
@@ -717,7 +713,7 @@ class Brain:
         """
         return ""
 
-    # 🔴 persona_text / draft_rules 走**当前渠道**，不再是一份全局的。
+    #  persona_text / draft_rules 走**当前渠道**，不再是一份全局的。
     # 这两个属性按全局 persona_file 生成于 reload_persona 内，而聊天主链路
     # （hist[0]、主动搭话、各渠道）全读这两个属性 —— 于是
     # persona_by_src 配了也白配：分区名算对了、存档分开了，开口却还是
@@ -803,7 +799,7 @@ class Brain:
 
         切换人设时更新 system 段，并按人设重新载入独立会话历史。
         """
-        # 🔴 先丢缓存再重建。persona_text / draft_rules 现在是按
+        #  先丢缓存再重建。persona_text / draft_rules 现在是按
         # (人设 key) 缓存的属性，配置文件刚被改过（换人设/改渠道绑定）时
         # 不清就会继续用旧内容 —— 表现是"保存了但没变化，重启才好"。
         self._persona_cache = {}
@@ -816,7 +812,7 @@ class Brain:
         # 陪伴渠道拼 —— 助手渠道重载后会拿到陪伴底线，设定又变回去。
         self.persona_text = build_system_text(self.persona, src=self._cur_src)
         self.draft_rules = build_draft_rules(self.persona)
-        # 🔴 渠道绑定可能被改了（面板里换人设就是改 persona_by_src），
+        #  渠道绑定可能被改了（面板里换人设就是改 persona_by_src），
         # 所以连 _hist_persona 里记的"这份历史属于哪个人设"也要作废，
         # 否则 key 变了但 same 判定用的是旧 key 的对照结果，历史会被留下来。
         # 换句话说：改渠道人设必须重载，不然旧的对话历史会跟着新的人设走。
@@ -1325,7 +1321,7 @@ class Brain:
         try:
             # 工具循环的轮数与时间预算。
             #
-            # 🔴 原来是 6 轮 / 150 秒 —— 对"查天气、算个数"够，对**多步任务**不够：
+            #  原来是 6 轮 / 150 秒 —— 对"查天气、算个数"够，对**多步任务**不够：
             # "帮我把下载目录按类型分好类"要先列目录、再逐类建子目录、再一批批移动，
             # 6 轮里连热身都算不上，最后只能跟人说"我脑子转不动了"。
             # 干这种活得留够轮次，同时把时间预算放宽（每一步都要等人点确认，
@@ -1574,7 +1570,7 @@ class Brain:
                     _tool_results.append((_fn.get("name") or "", _result))
 
                 if _xml_mode:
-                    # 🔴 XML 模式：MiMo 等不支持 role:tool 回灌的供应商。
+                    #  XML 模式：MiMo 等不支持 role:tool 回灌的供应商。
                     # 把工具结果拼到一条用户消息里，模型看到结果后继续生成最终回复。
                     # 不回灌 assistant 的 tool_calls 字段（MiMo 不认，会卡死）。
                     _result_text = "\n".join(
@@ -1606,7 +1602,7 @@ class Brain:
 
             # 轮次用完了 / 超预算：**不再挂工具，逼她出一段正文**。
             #
-            # 🔴 这里不能直接 return None —— 那样 chat() 判成"API失败"、用户看到
+            #  这里不能直接 return None —— 那样 chat() 判成"API失败"、用户看到
             # "……我脑子有点转不动，等会儿再聊？"，而她其实全程都在正常干活，
             # 只是陷在工具循环里。最后一次不挂 tools，模型只能组织语言，
             # 通常能拿到一段正常回复（工具结果都还在 msgs 里）。
@@ -1880,7 +1876,7 @@ class Brain:
         self.last_usage = {"in": _uin, "out": _uout}
         self.last_tools_used = []
 
-        # 🔴 P8.4 根因修复：成功收尾才落账，且必须进**内存 hist**（下一轮
+        #  P8.4 根因修复：成功收尾才落账，且必须进**内存 hist**（下一轮
         # recent_hist() 立刻可见）+ 磁盘存档。之前只写磁盘存档、从不进
         # self.hist —— 重启之前她"不记得"刚流式说过的话。error/截断/断开
         # 的路径在上面 return，不会走到这里；SSE 中途断开时生成器被
@@ -2648,7 +2644,7 @@ class Brain:
         # 短句闲聊（"嗯""在吗""哈哈"）不检索：这种话本身没信息量，硬凑出来的
         # "最相关"记忆反而把她的话题带跑。
         #
-        # 🔴 **别用长度当判据。** 用 `len(q) >= 6` 会导致
+        #  **别用长度当判据。** 用 `len(q) >= 6` 会导致
         #   "康神是谁"（4 字）—— 恰恰是**最需要记忆**的那类短句 —— 被整条跳过：
         # 她一条记忆都拿不到，回一句"没听说过这个人"。
         # 而那条记忆明明在库里、检索分数还排第一（0.6893）。
@@ -2657,7 +2653,7 @@ class Brain:
         # 判"是不是纯寒暄"用 tools.is_smalltalk：它认的是**内容**
         # （"谁""什么""哪""几"这些字一出现就照检索），不是字数。
         #
-        # 🔴 注意这和"挂不挂工具表"是**两个独立的决策**，只是碰巧共用一个判据。
+        #  注意这和"挂不挂工具表"是**两个独立的决策**，只是碰巧共用一个判据。
         # 工具问的是"有没有需要**外部**信息的东西"，记忆问的是"有没有可能
         # **勾起**她记得的事" —— 前者为否不蕴含后者为否。所以别把两件事
         # 合成一个 if（这轮已经因为这种耦合栽过一次）。
@@ -2828,7 +2824,7 @@ class Brain:
         if proactive:
             # 主动搭话的输入是「说/无」决策提示词，不能进历史 —— 否则正常聊天会
             # 模仿这个格式、回出「说 xxx」开头。历史里只留她的正文，答「无」就都不记。
-            # her_speech 上面已经剥过前缀了，别再来一遍
+            # her_speech 上面已经剥过前缀了，避免再次来一遍
             _clean = her_speech or ""
             if _clean and _clean != "无" and not _failed:
                 self.hist.append({"role": "assistant",
@@ -2859,7 +2855,7 @@ class Brain:
 
         img 是可选的图片路径 —— 手机/App 靠它把图显示出来，只加在 user 那条上。
 
-        🔴 2026-10-08：客户端（pc）不拆分，整条回复存成一条消息。
+         2026-10-08：客户端（pc）不拆分，整条回复存成一条消息。
         拆分是为微信渠道设计的（微信一条消息有长度限制），客户端没有这个限制，
         拆成多条会显示成一堆气泡，而且 Markdown 格式被拆碎了渲染不出来。
         """
@@ -2917,7 +2913,7 @@ class Brain:
         """重启后把存档灌回对话历史，让她还记得刚才聊到哪儿。
 
         只灌最近几轮（默认 16 条消息 ≈ 8 个来回）：灌太多会让每轮 prompt
-        变长、白烧 token，而且模型对太早的上下文本来也记不牢。
+        变长、白消耗 token，而且模型对太早的上下文本来也记不牢。
         必须用存档里的真实时间打标签：把 t 扔掉的话，一排"25 号的票"没有任何
         时间标记，模型只能当成此刻正在谈的事（她"把 4 天前的 25 号当未来"的根源）。
         """

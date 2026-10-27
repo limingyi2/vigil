@@ -63,7 +63,7 @@ def semantic_enabled(api_config=None):
 
 
 def scope_for(owner="", src="", persona="", chan="", workspace_ids=None):
-    """构造检索范围。**这是隔离边界的唯一出处。**"""
+    """构造检索范围。**这是隔离边界的统一入口。**"""
     scope = {}
     if owner:
         scope["owner"] = owner

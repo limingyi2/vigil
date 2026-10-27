@@ -71,7 +71,7 @@ class TestPanelModelFormExists(unittest.TestCase):
         """placeholder 里出现打码串是有害的：它在输入框里，复制重贴回去
         就会把真 key 覆盖掉（apply_cfg 的 is_masked 挡的是另一回事）。
 
-        🔴 判据必须用正则加词边界，不能用 `assertNotIn("placeholder: mCur.api_key")`
+         判据必须用正则加词边界，不能用 `assertNotIn("placeholder: mCur.api_key")`
         —— `mCur.api_key_set` 里含 `mCur.api_key` 这个子串，那样写会对着
         正确写法报红。第一版就是这么写的，结果测试变红而代码没问题。
         """

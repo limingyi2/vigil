@@ -1,32 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Brain 的 HTTP 服务：装配、聊天管线、路由、启动。
+"""Brain HTTP 服务与运行装配。
 
-谁在用它
-  桌面端由 server_launch.py（PyInstaller 入口）选一个空闲端口，经 VIGIL_PORT
-  注入后 import 本模块；手机与桌宠通过远程大脑 API 连同一个进程；没有设置
-  VIGIL_PORT 时才回落到 8788。也就是说它是**这台机器上的大脑**，不是某一台
-  云机的专属服务。
-
-数据在哪
-  记忆、人设、会话、行为配置都在这台机器的 data/ 目录里，本机是唯一权威源，
-  单机独立可用。历史上曾有过"云端是权威源、本地只是终端"的架构，P8.1 之后
-  已经撤掉 —— 现在没有任何进程会启动同步链路（同步客户端模块已于 2026-10-25 删除）。
-  残留的 sync.* 配置不会被读取，但也不代表同步还活着。
-
-模块分工
-  runtime 共享配置｜reply 回复后处理｜selfie 自拍｜
-  imggen 生图锁脸｜proactive 主动搭话｜jobs 后台循环｜
-  capability_registry 能力注册与授权｜agent_runs 任务循环｜
-  plugin_host / plugin_manager 插件｜creator_jobs 创作作业。
-  本文件只管装配大脑、聊天管线、HTTP 路由、启动。
-
-注意
-  这个文件五千行，是历史遗留的装配层，也是后续改动最容易被绊的地方。
-  新逻辑不要再往这里堆：能落成独立模块的（一次性任务、路由组、适配器）
-  就落成模块，这里只留装配和转发。拆分计划见 docs/ARCHITECTURE.md。
-
-用法：python server.py（源码直跑）；打包后由 server_launch 调 main()。
-"""
+托管入口为 server_launch.py，监听端口通过 VIGIL_PORT 传入；独立运行默认使用 8788。
+本模块连接聊天、任务、Creator、资料和管理接口，配置与数据由 paths.py 定位。
+旧云端与手机部署记录不作为当前桌面版的运行说明。"""
 import os
 import sys
 import json
@@ -43,7 +20,7 @@ from runtime import (
     api_config, API_CFG, MOB_CFG, BRAIN_TOKEN,
     _LOCAL, _trace_write, _trace_tail, load_config, config_path, data_file)
 from api.request import query_param
-# 🔴 也把模块本身绑个名：换模型后刷新 API_CFG 要调 runtime.api_cfg_subset()，
+#  也把模块本身绑个名：换模型后刷新 API_CFG 要调 runtime.api_cfg_subset()，
 # 而上面是 from...import，只把名字引进来了、模块名没绑。
 # 不绑的话只能再抄一份白名单 —— 而"抄一份少一个键"正是这回的病根
 # （vision/voice/persona_file/uapi 已经栽过四回）。
@@ -211,7 +188,7 @@ def _native_image_content(blob, text):
 def _supports_native_image(brain_obj, method="chat"):
     """这个 Brain 的某个入口**显式**接受 native_content 吗。
 
-    🔴 只认显式形参，不认 ``**kwargs``：老桥接实现写的是
+     只认显式形参，不认 ``**kwargs``：老桥接实现写的是
     ``def chat(self, text, **kw)``，传进去的 native_content 会被**静默吞掉**
     —— 图没进模型，用户却以为模型看到了截图。比直接报错更糟。
 
@@ -283,10 +260,10 @@ def _image_ext(blob):
 def _image_note(rejected=None):
     """把"这一轮有没有真的看到图"写进她读到的文本。
 
-    🔴 看不到图时**必须说一声**。什么都不加，她就不知道他发过图，会把
+     看不到图时**必须说一声**。什么都不加，她就不知道他发过图，会把
     一张截图当没发生过；绝不能让她自己编。
 
-    🔴 这里**只有"没看到"这一档**。以前还有"（他发的图：…）"那档 ——
+     这里**只有"没看到"这一档**。以前还有"（他发的图：…）"那档 ——
     那是把另一个视觉模型的转述塞进用户原话，冒充"她看到了图"。
     现在图要么原样进当前对话模型，要么这一轮明确报错；
     没有任何一条路会把描述当成用户的话送进去。
@@ -312,7 +289,7 @@ def _save_turn_image(blob, src=None, desc=''):
         print(f"[大脑] 图片落盘失败（不影响回复）：{e}", flush=True)
         return ''
 
-# ── 设备 Token 权限矩阵（默认拒绝）─────────────────────────────────
+# ── 设备 Token 权限矩阵（默认拒绝）
 # 主人钥匙（brain token）：全部 API。
 # 设备 token 分两种角色（devices.ROLES）：
 #   admin —— 用户自己的桌面客户端，注册时由主人授予，API 面同主人钥匙；
@@ -552,7 +529,7 @@ def _snapshot(b):
             "decision_source": "delegation.router",
             "reason": str(route.get("reason") or "")[:120],
         }
-    # 🔴 **顺带抄一份「她这轮实际看到的工具段」**。
+    #  **顺带抄一份「她这轮实际看到的工具段」**。
     # 排查"技能装了却不调"时，光看 trace.tool 是空根本分不清三种情况：
     #   ① 提示词里压根没那个技能名（拼装时就没进来）
     #   ② 提示词里有，但缓存没刷新（她读的是旧那份）
@@ -620,7 +597,7 @@ def _restore_hist(brain, text, ans, mode=None):
     按内容认、不按下标切：brain.chat 里有历史截断
     （hist = [hist[0]] + hist[-turns:]），一下标就可能切错位置。
 
-    🔴 **失败的兜底话不能写回历史。**
+     **失败的兜底话不能写回历史。**
     上游挂了的时候 brain.chat 故意不 append（它自己判 _failed），而这里原来
     **无条件** append —— 于是那句"……我脑子有点转不动"被当成她说过的话存进
     历史。这正是 brain.chat 注释里记的那次事故（欠费那阵攒了 97 条一模一样的
@@ -696,7 +673,7 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
                                 route_entry="brain_tools",
                                route_decision=_route_decision)
             if native_content is not None:
-                # 🔴 图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
+                #  图片要么原样进模型，要么**明确报错**。悄悄丢掉（或者
                 # 悄悄换成"另一个视觉模型的描述"）就是骗人：用户以为模型看到了
                 # 图，其实这一轮根本没有图。
                 if not _supports_native_image(b):
@@ -722,7 +699,7 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
 
     # Plan-and-Execute：复杂任务先规划步骤再执行，简单任务跳过（零成本判断）
     #
-    # 🔴 **这一节在观察期**（见 planner.note/stats）：将来判它"删还是留"要靠数据，
+    #  **这一节在观察期**（见 planner.note/stats）：将来判它"删还是留"要靠数据，
     # 所以三种结果**都必须能在 trace 里看见**。只给"成功"那种留痕
     # （plan_steps/revised），下面这两种只打一行日志、trace 里什么都没有：
     #   * 判要规划、但 plan() 一步都没解析出来 → 悄悄回退直答
@@ -795,7 +772,7 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
         # 原来在它前面还有一套 planner 关键词启发式，两处判据已合并到
         # entry_decision 一处 —— 「为什么规划」直接取分类的 reason。
         _yes, _plan_why = planner.entry_decision(_task_decision)
-        # 🔴 **关掉之后要单独记一笔，不能当成"规划失败"。**
+        #  **关掉之后要单独记一笔，不能当成"规划失败"。**
         # `plan()` 自己在 enabled=false 时返回 None，于是 server 会走下面
         # "判要规划但没解析出步骤"那条分支、写 `plan: "empty"` ——
         # 那样"配置关了"会被记成"它失败了"，观测数据直接废掉。
@@ -945,7 +922,7 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
     src：本机 PC 上下文，省略时使用 pc。
     dry_run：**不写聊天存档、也不改历史**。给"用 API 打探测句"用。
 
-    🔴 **dry_run 是踩了坑才加的。** 我调试时用 `/api/chat` 直接打了一串探测句
+     **dry_run 是踩了坑才加的。** 我调试时用 `/api/chat` 直接打了一串探测句
     （"嘉豪""我买了新键盘""哈基米到底什么梗"…），它们**全进了她的正式聊天记录**。
     于是她"最近在聊什么"看到的是我的一串测试题 —— 群里真有人说话时，
     她答的是上一条测试句（实测同一句"嘉豪"六次里有一次回的是"新键盘？啥轴的"）。
@@ -1044,12 +1021,12 @@ def ask_with_retry(text, img_b64=None, display=None, trace_out=None, src=None,
                     _log_history_error(src, e, "write")
             return ans, mode, ""
         except _Busy:
-            # 排队超时：明确说出来，别让调用方无限期等
+            # 排队超时：明确说出来，避免调用方无限期等
             return "", "忙碌", "她正在回上一条，几秒后再发一次就好"
         except Exception as e:
             return "", "", f"{type(e).__name__}: {e}"
 
-    # 理论上到不了这里（run_server 一定会先装配大脑），但别让调用方拿到 None
+    # 理论上到不了这里（run_server 一定会先装配大脑），但避免调用方拿到 None
     return "", "", "大脑没起来"
 
 
@@ -1144,7 +1121,7 @@ def _cloud_history(limit=60, src="pc"):
                               "img": img, "attachments": atts})
     except OSError:
         return []
-    # 🔴 入参必须夹紧。直接 int(limit) 的写法：
+    #  入参必须夹紧。直接 int(limit) 的写法：
     #   limit=abc → ValueError 冒到 do_GET，而 do_GET 没有兜底 except →
     #               连接直接断掉，**客户端收不到任何响应**（只有一个 traceback）
     #   limit=0   → items[-0:] 等于 items[0:]，**把整个存档全返回**
@@ -1234,7 +1211,7 @@ def _sync_route_get(path, qp):
 def _sync_route_post(path, body):
     """同步 POST 路由（推送：记忆批量 / 人设 / 人设删除 / 行为段）。全部幂等。
 
-    🔴 权威源语义：这几条是"本地 → 云端"的推入口，云端自己**不开**同步
+     权威源语义：这几条是"本地 → 云端"的推入口，云端自己**不开**同步
     端调用方已不存在，这里收到什么就按
     账本规则应用什么，不会再转发出去 —— 没有回声环。
     """
@@ -2468,7 +2445,7 @@ def start_remote_api(brain):
                 try:
                     import capability_registry as _caps
                     _caps.bootstrap(API_CFG)
-                    # 🔴 身份来自**这次请求的凭据**，不是请求体里的字段。
+                    #  身份来自**这次请求的凭据**，不是请求体里的字段。
                     # 管理员身份只是"有权管理能力"，不等于"每个能力操作都已获批准"。
                     _who_kind, _who_id = getattr(self, "_who", ("", ""))
                     _identity = _who_kind if _who_kind == "brain" else (
@@ -2490,7 +2467,7 @@ def start_remote_api(brain):
                             session=_session, target=_target)
                         self._json(200 if out.get('ok') else 409, out)
                     elif path.endswith('/approve'):
-                        # 🔴 审批主体只签名（approved_by 进审计记录）。执行
+                        #  审批主体只签名（approved_by 进审计记录）。执行
                         # 范围锁死在审批请求产生时的 identity/session/target/
                         # 参数上，审批动作不能改写原任务的身份或扩大范围。
                         out = _caps.REGISTRY.approve(
@@ -3013,7 +2990,7 @@ def start_remote_api(brain):
                     # "手上还有哪些到点要喊的事"喂进上下文）。
                     # 拼在系统提示里而不是塞进 _in_text —— 后者会被当他说的话存档。
                     #
-                    # 🔴 **否决靠 ctx.veto() 显式声明，不靠返回值**。
+                    #  **否决靠 ctx.veto() 显式声明，不靠返回值**。
                     # 不能用"on_turn_in 返回空串 = 否决"，看着省事实际立刻炸：
                     # reminder 插件"没有提醒要注入"返回的也是空串，
                     # 而"所有插件都放行"时 join([]) 同样是空串 ——
@@ -3113,7 +3090,7 @@ def start_remote_api(brain):
                             "task_decision": _snap.get("task_decision"),
                             "mode": mode,
                             "fallback": 1 if err or mode == "API失败" else 0,
-                            # 🔴 规划分支的观测字段**必须显式列出来**。
+                            #  规划分支的观测字段**必须显式列出来**。
                             # 字段是白名单式的（上面每一条都得手写），所以
                             # trace_out 里塞了不等于落进 trace 文件 ——
                             # plan_steps 在 reply.trace 里看得见、
@@ -3133,7 +3110,7 @@ def start_remote_api(brain):
                         pass
                     # reply 整段保留给旧版 App；messages 按她的换行拆好段，
                     # 新版 App 逐条渲染成连发气泡，存档也按这个粒度拆
-                    # 🔴 **trace 必须回给客户端**。只把 _snap 写进落盘日志，
+                    #  **trace 必须回给客户端**。只把 _snap 写进落盘日志，
                     # 返回体里一个 trace 键都没有 —— 于是前端
                     # `d.trace.plan_steps` 恒为 undefined。
                     # 症状特别有欺骗性：日志里明明打了
@@ -3166,7 +3143,7 @@ def start_remote_api(brain):
                                          "rules_has_must": _snap.get("rules_has_must"),
                                      }})
                 elif path == "/api/chat/stream":
-                    # 🔴 流式聊天：SSE 实时推送思考过程和正文。
+                    #  流式聊天：SSE 实时推送思考过程和正文。
                     # 客户端用 EventSource 或 fetch + ReadableStream 接收。
                     # 事件格式：data: {"type":"think"/"text"/"done"/"error", ...}\n\n
                     if body.get("attachments"):
@@ -3205,7 +3182,7 @@ def start_remote_api(brain):
                         pass
                     # 图片：只做服务端校验与原始附件保存；像素和原文作为同一条
                     # 原生多模态消息交给当前对话模型。
-                    # 🔴 必须放在 Agent 判定**之前**。以前 img 只出现在
+                    #  必须放在 Agent 判定**之前**。以前 img 只出现在
                     # `not body.get('img')` 这个排除条件里 —— 带图的请求因此
                     # 被踢出 Agent 分支，又落进从不消费 img 的流式分支，
                     # 图就凭空消失了：上传成功，模型却什么都没看到。
@@ -3240,7 +3217,7 @@ def start_remote_api(brain):
                     _existing_legacy = _display.find_request(_owner, body.get('request_id')) if body.get('request_id') else None
                     # 断点续跑走同一条 SSE 通道：客户端带上 resume_of + 自己的
                     # request_id，续跑 run 的事件直接投影进会话气泡。
-                    # 🔴 resume 与新建必须互斥（elif）：resume 刚建的 run 用同一个
+                    #  resume 与新建必须互斥（elif）：resume 刚建的 run 用同一个
                     # request_id，下面新建分支的 find_request 会立刻查到它，拿空
                     # text 再 create 一次只会报"request_id 已用于不同请求"。
                     _resume_of = str(body.get('resume_of') or '')
@@ -3343,7 +3320,7 @@ def start_remote_api(brain):
                             "tools_in_request": _request_tool_names})
                     except Exception:
                         pass
-                    # 🔴 图片能力闸门：**必须在做任何 Agent Run 工作之前**判。
+                    #  图片能力闸门：**必须在做任何 Agent Run 工作之前**判。
                     # 放到流里判就晚了：客户端已经收到 200，再补一个 error
                     # 事件，它看起来像"回复完了"，而图根本没进模型。
                     if _native_content is not None:
@@ -3766,7 +3743,7 @@ def start_remote_api(brain):
                     # 落盘 + 热重载两处都要，只改一处会出现"界面变了、她没变"
                     try:
                         import persona_store
-                        # 🔴 判据要用**这个渠道**当前那套人设，不是全局那份。
+                        #  判据要用**这个渠道**当前那套人设，不是全局那份。
                         # 不能拿 key_from_config（= App 的 key）当判据：编辑
                         # 微信人设时 key 对不上，被当成"你在编辑别的模板"
                         # 故意不重载 —— 接口回 ok、界面弹"她马上就是这个设定"，
@@ -3947,7 +3924,7 @@ def start_remote_api(brain):
                     # 绝不出现"界面已切换、下一条还在打旧 Provider"。
                     try:
                         import run_modes
-                        # 🔴 必须传完整 api_config，不能传 API_CFG 子集：返回的
+                        #  必须传完整 api_config，不能传 API_CFG 子集：返回的
                         # _cfg 会被整份写回 config.json，子集里没有 brain_token，
                         # 落一次盘凭据就没了 —— 之后客户端每次现读配置拿不到
                         # token，所有请求 401 "bad token"（切到本地就再也换不回来）。
@@ -4173,7 +4150,7 @@ def start_remote_api(brain):
                     patch = body if isinstance(body, dict) else {}
                     patch.pop("token", None)
                     # 渠道取值优先级：body 显式给的 > query 里的（Electron 放
-                    # query）> 都没有 = 全局那一份。🔴 不能用 _norm_src("") 兜
+                    # query）> 都没有 = 全局那一份。 不能用 _norm_src("") 兜
                     # 底 —— 它把空串归成 "pc"，"不带 src 改全局"就永远走不到。
                     _raw = str(patch.pop("src", "") or qp.get("src") or "").strip()
                     _fsrc = _norm_src(_raw) if _raw else None
@@ -4254,14 +4231,14 @@ def start_remote_api(brain):
         def _do_GET(self):
             if self._reject_retired_context():
                 return
-            # 🔴 /api/health 在鉴权之前放行：sidecar 的启动壳（server_launch）
+            #  /api/health 在鉴权之前放行：sidecar 的启动壳（server_launch）
             # 和 Electron 壳靠它做就绪探测 —— 此时可能还没配 token，
             # 走鉴权就永远探测不到。只回存活信息，不吐任何配置。
             if self.path.split("?")[0] == "/api/health":
                 self._json(200, {"ok": True, "pid": os.getpid(),
                                  "frozen": bool(getattr(sys, "frozen", False))})
                 return
-            # 🔴 取连接配置这个接口必须**在鉴权之前**处理。
+            #  取连接配置这个接口必须**在鉴权之前**处理。
             # 它存在的意义就是"本地没有 token"，走正常鉴权必然 401 ——
             # 死锁，一次都拿不到。放行条件是回环地址，见该分支内的说明。
             _p0 = self.path.split("?")[0]
@@ -4591,7 +4568,7 @@ def start_remote_api(brain):
                     cur = _persona_for_src("pc")
                 except Exception:
                     pass
-                #🔴 这里**必须用 list_templates**，别再手搓一份。
+                # 这里**必须用 list_templates**，避免再次手搓一份。
                 # 下面这四行若自己读 json 取 `desc`，卡片上那句介绍
                 # 只认预设写死的元数据 —— 而编辑器里根本没有这一栏，
                 # 用户把整份人设换掉之后介绍还是老那句，看着像"换了没生效"。
@@ -4625,7 +4602,7 @@ def start_remote_api(brain):
                                  "relation": persona_store.relation_of(
                                      persona_store.load(_pkey)),
                                  "templates": persona_store.list_templates(_pkey),
-                                 # 🔴 这个渠道在用哪套人设（面板靠它标「微信在用」）
+                                 #  这个渠道在用哪套人设（面板靠它标「微信在用」）
                                  "src_persona_key": _pkey,
                                  "src": _psrc,
                                  "max": persona_store.MAX_TEMPLATES,
@@ -4716,7 +4693,7 @@ def start_remote_api(brain):
             elif path == "/api/models":
                 # force=1 = 用户点了"重新拉取"，不用缓存（换 key 之后必须这样拉一次）
                 #
-                # 🔴 **preview 参数是"按我刚填的地址和密钥试拉"，不读当前配置。**
+                #  **preview 参数是"按我刚填的地址和密钥试拉"，不读当前配置。**
                 # 不这么做的话，前端点"硅基流动"只改了输入框里的文字，
                 # 服务端照样拿**小米那把 key** 去拉 —— 界面显示"硅基流动"，
                 # 列表里全是 mimo，看着像分类错了。
@@ -4887,7 +4864,7 @@ def start_remote_api(brain):
                           parse_qs(urlparse(self.path).query).items()}
                 except Exception:
                     _q = {}
-                # 不带 src 读全局视角（_norm_src 会把空串兜成 "pc"，别让它
+                # 不带 src 读全局视角（_norm_src 会把空串兜成 "pc"，避免它
                 # 混进来 —— 渠道视角只在明确带了 src 时才生效）
                 _fsrc = (_norm_src(_q.get("src"))
                          if (_q.get("src") or "").strip() else None)
@@ -5031,7 +5008,7 @@ def start_remote_api(brain):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"[大脑] 远程大脑 API 就绪：{host}:{port}", flush=True)
     # 「待重启」判据的另一端：本进程的服务**真的起来了**才登记启动时刻。
-    # 🔴 必须放在绑定成功之后：端口被占（一次失败的重启）时 run_server 只是
+    #  必须放在绑定成功之后：端口被占（一次失败的重启）时 run_server 只是
     # 打印"没起来"然后继续跑收尾循环，进程并不会退出 —— 要是在函数开头就
     # 登记，started_at 会被这次失败的重启推新，"重启失败"反倒把用户真正
     # 待重启的提示悄悄抹掉，界面看着像重启成功了。真实 UI 验收
@@ -5056,7 +5033,7 @@ def run_server():
         print("[Kestrel Hub] Bridge startup skipped (Brain remains available): %s" % str(e)[:100], flush=True)
     # 注：插件 scope 的"启动时刻"登记在 start_remote_api 里绑定成功之后
     # （见那边注释）—— 放这里会在"重启失败"时虚假清除待重启提示。
-    # 🔴 把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。
+    #  把眼下这把密钥登记到当前服务商名下（老配置才有这问题）。
     # 不做的话界面会把每一家都显示成"还没存密钥"，
     # 于是"点一下就切换"永远切不动 —— 而实际有一家正拿着它在用。
     # 只在缺失时写、幂等，写完落盘所以重启后状态一致。

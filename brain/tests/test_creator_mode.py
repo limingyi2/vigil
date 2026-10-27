@@ -32,7 +32,7 @@ sys.path.insert(0, str(BRAIN_DIR))
 import creator  # noqa: E402
 
 
-# ── 假模型 fixture：OpenAI 兼容 /chat/completions ──────────────
+# ── 假模型 fixture：OpenAI 兼容 /chat/completions
 # 它按请求内容里的标记切换行为（测试替身的本分）：正常出码 / 500 /
 # 坏代码 / 非 JSON / 路径逃逸。每次响应带请求计数，用来证明"重新生成"
 # 真的发生了（内容随次数变）。
@@ -101,7 +101,7 @@ class ModelFixture:
                     body = json.loads(self.rfile.read(n).decode("utf-8"))
                 except ValueError:
                     body = {}
-                # 🔴 只认最后一条 user 消息：system 提示词里同时写着插件和
+                #  只认最后一条 user 消息：system 提示词里同时写着插件和
                 # 技能的契约字样，扫整个请求体会把插件请求误判成技能请求
                 # （test_01 实测踩过）。
                 msgs = body.get("messages") or []
@@ -202,7 +202,7 @@ def _http(method, url, body=None, token=None, timeout=30):
             return e.code, {}
 
 
-# ── 单元层 ───────────────────────────────────────────────────
+# ── 单元层
 
 class CreatorUnitTests(unittest.TestCase):
     def setUp(self):
@@ -304,7 +304,7 @@ class CreatorUnitTests(unittest.TestCase):
         self.assertIn("模型调用失败", err)
 
 
-# ── HTTP 层：真实 Brain 服务器 + 隔离一切 ─────────────────────
+# ── HTTP 层：真实 Brain 服务器 + 隔离一切
 
 class CreatorHttpTests(unittest.TestCase):
     fx = None

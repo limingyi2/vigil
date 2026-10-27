@@ -40,7 +40,7 @@
     const order=[...new Set([...saved,...navPages.map(p=>p.id)])];
     navPages.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
     const navBtn = (p) => {
-      // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，别让按钮变成空白图标
+      // 插件可能注册 'i-img' 这种带前缀的名字，这里归一化，避免按钮变成空白图标
       const ic = String(p.icon === 'image' ? 'img' : p.icon || '').replace(/^i-/, '') || 'puzzle';
       const isSet = p.id === 'settings';
       return '<button draggable="' + (isSet ? 'false' : 'true') + '" ' + (isSet ? 'id="settingsBtn" ' : '') +
@@ -74,7 +74,7 @@
       }));
   }
 
-  // ── 状态栏 ────────────────────────────────────────────────
+  // ── 状态栏
   // 等宽字分段读数：● 状态 │ 模型 │ 今日 TOKENS │ 版本，像终端。
   // 数字来自 /api/stats，随 ping 一起刷；拿不到就不显示，不摆假数。
   let lastStats = null;
@@ -104,7 +104,7 @@
     } catch (_) { /* 静默：状态栏少一段总比假数字好 */ }
   }
 
-  // ── 路由 ──────────────────────────────────────────────────
+  // ── 路由
   let disposePage = () => {};
   let navigationId = 0;
   let settingsBackObserver = null;
@@ -203,7 +203,7 @@
     }
   }
 
-  // ── 「返回设置」必须一直在 ──────────────────────────────────
+  // ── 「返回设置」必须一直在
   // 设置子页的功能分区会 `topbar.innerHTML = ...` 重写整条顶栏，之前把按钮
   // 追加在 topbar 里，用户一点左栏换分区按钮就没了 —— 而 .settings-detail
   // 又隐藏了左侧导航，等于走进死胡同。现在按钮由 go() 之外的一个观察器守着，
@@ -238,7 +238,7 @@
     settingsBackObserver.observe(topbarEl, { childList: true });
   }
 
-  // ── 主题 ──────────────────────────────────────────────────
+  // ── 主题
   function applyTheme(t) {
     state.theme = t === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.theme = state.theme;
@@ -287,7 +287,7 @@
     if (o.onChange) o.onChange(cur());
   }
 
-  // ── 启动 ──────────────────────────────────────────────────
+  // ── 启动
   // ── 插件前端注入：CSS 在渲染层注入；JS 由主进程加载并注入 ──
   // 安全收紧（2026-10）：渲染层不再有 window.vigil.runJS 这种"任意代码 →
   // executeJavaScript"通道。插件 JS 由主进程凭服务端 token 自己拉取后注入，
@@ -345,7 +345,7 @@
           return;
         }
         // 插件 JS 在主进程里执行，出错只有 console 一条 —— 用户看不见就以为
-        // 功能坏了。这里把每个失败都念出来，别再静默。
+        // 功能坏了。这里把每个失败都念出来，避免再次静默。
         if (Array.isArray(lr.errors) && lr.errors.length) {
           toast('插件界面加载失败：' + lr.errors.join('；'));
         }
@@ -562,7 +562,7 @@
     refreshStats();
   }
 
-  // ── 首启向导（填 key 即用）─────────────────────────────────
+  // ── 首启向导（填 key 即用）
   // 本地内核跑着、连接正常、但一个模型 key 都没配 → 直接把人领到
   // "模型与服务商"表单前。配过一次（wizard_done）就再也不弹。
   async function maybeWizard() {

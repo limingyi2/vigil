@@ -358,7 +358,7 @@ def refresh(persona_key="", src="pc", mem_path=None, verbose=False):
         have.add(key)
         added += 1
 
-    # 清掉很久以前的，别让文件无限长
+    # 清掉很久以前的，避免文件无限长
     today = datetime.date.today()
     keep = []
     for it in known:

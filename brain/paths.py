@@ -1,27 +1,15 @@
 # -*- coding: utf-8 -*-
-"""所有路径的唯一出处 —— 想挪文件夹，只改这一个文件。
+"""配置、数据、日志和扩展的路径定义。
 
-两条规矩：你会手动改的放 config/，程序自己写的放 data/。
-新代码一律从这里 import，不要再自己拼 os.path.join。
-
-config/  config.json 主配置、world.json 世界设定、personas/ 人设
-core_features/ 随核心发布的能力适配器（计算、知识库、Agent 本地操控等）
-data/installed_plugins/ 由插件市场安装的可选扩展，独立于客户端安装包
-plugins/ 旧版本扩展目录，仅用于升级迁移，不作为新版本内置插件源
-data/    memory 记忆库、her_life 经历流、
-         chat_history.jsonl 聊天存档、upload 手机发来的图、run 运行时标记
-logs/watchdog.log 看门狗日志        archive/ 备份与旧数据
-"""
+VIGIL_HOME 可指定数据根目录。安装版由 Electron 指定独立用户目录；
+独立冻结运行未指定时使用可执行文件目录，源码运行默认使用 brain/。
+config/ 保存配置与模板，data/ 保存运行数据，logs/ 保存日志。
+core_features/ 为随包适配器，可选扩展安装在 data/installed_plugins/。"""
 import os
 import sys
 
-# --- 冻结模式（PyInstaller sidecar）---
-# 打包成 exe 后：代码与只读资源被解到 sys._MEIPASS（每次启动的临时目录），
-# 而她的家 —— config/ data/ logs/ 这些要**活得比进程久**的东西 ——
-# 必须落在 exe 旁边。所以冻结时 ROOT 指向 exe 所在目录；
-# 非冻结（云端/本机源码跑）行为一字不变。
-# 注意：全项目其余地方的 `os.path.dirname(__file__)` 都只是"单独跑某个
-# 文件"的兜底分支，正常都走本文件的常量 —— 所以改这一处就够。
+# VIGIL_HOME 优先；托管安装版通过该变量指定用户数据目录。
+# 独立冻结运行使用 exe 所在目录，源码运行使用当前模块目录。
 if os.environ.get('VIGIL_HOME'):
     ROOT = os.path.abspath(os.environ['VIGIL_HOME'])
 elif getattr(sys, "frozen", False):

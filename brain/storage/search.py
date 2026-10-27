@@ -624,7 +624,7 @@ def search(query, scope=None, kinds=None, top_k=DEFAULT_TOP_K,
 def _default_backend():
     """默认向量后端。从 config.json 的 `embedding` 段读。
 
-    🔴 **没有 config.json 时返回 none（只跑 BM25），不默认 local。**
+     **没有 config.json 时返回 none（只跑 BM25），不默认 local。**
     "本地优先"体现在 `backend_from_config` 的 mode 默认值上（有配置时就是
     local）；这里是另一回事：本地模式走 sentence-transformers 时，
     `SentenceTransformer(model)` 发现本地没缓存会**自己去 HuggingFace 下**

@@ -23,7 +23,7 @@ def _cloud_gen_image(prompt, model=None, negative_prompt=None, size=None,
 
     negative_prompt：压"AI 味"的关键，默认 GEN_NEGATIVE，显式传 "" 可关掉。
     size：自拍用 768x1024 竖图更像手机随手拍；哪个尺寸不认就退回 1024x1024 ——
-    别让一张图因为尺寸参数整个挂掉。
+    避免一张图因为尺寸参数整个挂掉。
     image：参考图，**必须是 data URI 字符串**（传数组会报 "image should be a
     string"）。传了就是图生图，用来锁住她的长相。这条路不通会自动丢掉图重试。
     """
@@ -162,7 +162,7 @@ def _look_ref_uri():
         if fresh and _LOOK_CACHE["uri"]:
             return _LOOK_CACHE["uri"]
     elif _LOOK_CACHE["uri"]:
-                # 能找到过、现在找不到了（参考图被删）：缓存作废，别再拿旧的凑
+                # 能找到过、现在找不到了（参考图被删）：缓存作废，避免再次拿旧的凑
         _look_cache_reset()
 
     try:
@@ -239,7 +239,7 @@ def _cloud_image_blob(name):
                      os.path.join(data_root, "upload", c)]
             for cp in cands:
                 cand = os.path.abspath(cp)
-                # 🔴 前缀比较必须带上路径分隔符。
+                #  前缀比较必须带上路径分隔符。
                                 # 用 cand.startswith(data_root) 判不出这一类，而
                 # "data" 和 "data_secret" 只是前缀相同 ——
                 # name="../data_secret/x.png" 拼出来是

@@ -32,7 +32,7 @@ def home(monkeypatch):
 def store(home, monkeypatch):
     """干净的 storage 模块（重置连接与迁移状态）。
 
-    🔴 **不要删 `sys.modules["paths"]`**。删掉再 import 会造出第二个模块实例：
+     **不要删 `sys.modules["paths"]`**。删掉再 import 会造出第二个模块实例：
     别处（`conversations` / `workspaces` / 测试）`import paths` 拿到的还是老对象，
     而 `storage.db` 拿到的是新对象 —— 两边 `DATA_DIR` 不是同一个变量，
     patch 完一个、另一个还指着真实用户目录。表现就是"单跑通过、全量失败"。
@@ -1176,7 +1176,7 @@ def test_table_failure_is_not_recorded_as_file_ok(home, store):
     os.makedirs(data_dir, exist_ok=True)
     old = os.path.join(data_dir, "agent_runs.sqlite3")
 
-    # 🔴 先建主库连接（此刻 v6 迁移跑完，data_dir 里还没有旧文件），
+    #  先建主库连接（此刻 v6 迁移跑完，data_dir 里还没有旧文件），
     # 再放旧文件 —— 顺序反了台账里已经是 ok，这个测试就变成空跑。
     main = store.connection("main")
     _make_agent_runs_db(old)

@@ -158,7 +158,7 @@ def main():
         with open(os.path.join(ob, "outbox.jsonl"), "a",
                   encoding="utf-8") as f:
             f.write(entry * 2)          # 同条目写两遍 = 重推
-        # 🔴 wait_until 等的是 truthy：total=1 也是 truthy 会立刻返回。
+        #  wait_until 等的是 truthy：total=1 也是 truthy 会立刻返回。
         # 目标条件必须写进 lambda（==2），不能"返回值、比较放 check"。
         atot_ok = wait_until(lambda: _store_total(pa, tok, "memory") == 2,
                              timeout=25, trace=lambda: "A.man=%s"

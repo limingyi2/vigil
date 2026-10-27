@@ -18,7 +18,7 @@
     GET  /skills      -> {ok:true, skills:[{id,name,version,description,tools:[...]}]}
     POST /reload      -> {ok:true, reloaded:N}
 
-🔴 **`/skills` 的 `tools[].name` 必须是全名**（`skill前缀.工具名`），
+ **`/skills` 的 `tools[].name` 必须是全名**（`skill前缀.工具名`），
 `server.js` 里存的是 `t.full`，而 `skill.py` 的 `list_skills` 直接透传。
 假宿主要是图省事只写短名，测出来的「工具对得上」是假的。
 """
@@ -117,7 +117,7 @@ class FakeHost(object):
                 "name": meta.get("name") or name,
                 "version": meta.get("version") or "",
                 "description": str(meta.get("description") or ""),
-                # 🔴 全名：真宿主存的是 t.full（"包名.工具名"）。
+                #  全名：真宿主存的是 t.full（"包名.工具名"）。
                 # 这里写短名的话，"工具名对得上" 这条判据就是假的。
                 "tools": [{"name": "%s.hello" % name,
                            "title": "打招呼",

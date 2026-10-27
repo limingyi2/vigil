@@ -55,7 +55,7 @@ def check(name, ok, extra=None):
 def selftest_checker():
     """先验 check 本身。
 
-    🔴 `check(cond, label)` 参数写反 = 恒真（非空字符串是真）→ 满屏 OK 一条没测。
+     `check(cond, label)` 参数写反 = 恒真（非空字符串是真）→ 满屏 OK 一条没测。
     这个坑在本项目踩过两次，所以每个测试文件都得先自检一遍判据工具。
     """
     n0, f0 = PASS[0], len(FAIL)
