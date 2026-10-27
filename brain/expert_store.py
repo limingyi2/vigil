@@ -33,6 +33,7 @@
                                 带 .expert-owner 标记，只在召唤了本专家的会话里
                                 可见（见 skill_visible）。
 """
+import hashlib
 import json
 import os
 import shutil
@@ -70,38 +71,147 @@ INSTALL_MARK_FILE = ".installed.json"
 _CACHE = {}          # key -> (mtime, data)；磁盘改动靠 mtime 失效，热更新零成本
 _KEY_BLACKLIST = {"", ".", ".."}
 
+# 内置包种子指纹：记录"上一次是我们把哪个版本种进去的"。
+# 有了它才能区分"用户改过"和"用户没改、只是包升级了" —— 只靠"文件已存在
+# 就不覆盖"分不出来，代价是老用户的 expert.json 永远停在首次安装那一版：
+# 新字段（icon、skills）拿不到，而面板上看不出任何异常，只是图标退化成首字。
+SEED_FILE = ".seed.json"
+_SEED_SKIP_DIRS = {"__pycache__", ".git", ".idea"}
+_SEED_SKIP_FILES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+_SEED_DONE = set()   # 已种过的 (defaults, target) 组合：一次进程只种一遍
+
+
+def _file_sha(path):
+    try:
+        digest = hashlib.sha256()
+        with open(path, 'rb') as handle:
+            for chunk in iter(lambda: handle.read(65536), b''):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return ""
+
+
+def _load_seed(pkg_dir):
+    try:
+        with open(os.path.join(pkg_dir, SEED_FILE), 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    files = data.get('files') if isinstance(data, dict) else None
+    return files if isinstance(files, dict) else {}
+
+
+def _save_seed(pkg_dir, files):
+    try:
+        with open(os.path.join(pkg_dir, SEED_FILE), 'w', encoding='utf-8') as handle:
+            json.dump({'files': files}, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write('\n')
+    except OSError:
+        pass
+
+
+def _json_merge_missing(target, source):
+    """把内置 json 里用户没有的**顶层键**补进去，已有值一律不动。
+
+    老用户升级上来时没有种子记录，没法判断这份 expert.json 是他改的还是我们
+    种的。退回最保守的做法：只补键、不覆盖 —— 元数据文件因此总能拿到新字段
+    （icon / default_init_prompt / skills），而 name、description 这些用户可能
+    认真调过的东西原样保留。
+    """
+    try:
+        with open(target, 'r', encoding='utf-8') as handle:
+            current = json.load(handle)
+        with open(source, 'r', encoding='utf-8') as handle:
+            fresh = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(current, dict) or not isinstance(fresh, dict):
+        return False
+    missing = [key for key in fresh if key not in current]
+    if not missing:
+        return False
+    for key in missing:
+        current[key] = fresh[key]
+    try:
+        with open(target, 'w', encoding='utf-8') as handle:
+            json.dump(current, handle, ensure_ascii=False, indent=2)
+            handle.write('\n')
+    except OSError:
+        return False
+    return True
+
+
+def _seed_package(source, target):
+    """把一个内置专家包同步到用户目录，返回改动过的相对路径列表。
+
+    规则（既要保护用户手改，又不能让包卡在旧版本）：
+    - 目标没有这个文件 → 种下去（新版本新增的 references/ skills/ 也走这条）
+    - 内容和内置完全一样 → 不动，只补种子记录
+    - 有种子记录且当前内容 == 上次种的内容 → 用户没动过，跟着升级
+    - 用户改过，或老版本没有种子记录 → json 只补缺失键，其他文件保留用户版本
+    """
+    seed = _load_seed(target)
+    before = json.dumps(seed, sort_keys=True)
+    touched = []
+    for root, dirs, names in os.walk(source):
+        dirs[:] = [item for item in dirs if item not in _SEED_SKIP_DIRS]
+        rel_dir = os.path.relpath(root, source)
+        for name in names:
+            if name.startswith('.') or name in _SEED_SKIP_FILES:
+                continue
+            source_file = os.path.join(root, name)
+            rel = name if rel_dir == '.' else os.path.join(rel_dir, name)
+            rel = rel.replace('\\', '/')
+            target_file = os.path.join(target, rel)
+            fresh_sha = _file_sha(source_file)
+            if not fresh_sha:
+                continue
+            current_sha = _file_sha(target_file)
+            if not current_sha:
+                os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                shutil.copy2(source_file, target_file)
+                seed[rel] = fresh_sha
+                touched.append(rel)
+                continue
+            if current_sha == fresh_sha:
+                seed[rel] = fresh_sha
+                continue
+            if seed.get(rel) == current_sha:
+                shutil.copy2(source_file, target_file)
+                seed[rel] = fresh_sha
+                touched.append(rel)
+                continue
+            if rel.endswith('.json') and _json_merge_missing(target_file, source_file):
+                # 合并结果是"内置键 + 用户值"的混血，**不记进种子**：记了下次
+                # 就会被当成"我们种的原样"整份覆盖，把用户的字段和格式冲掉。
+                # 留空的话下次仍走合并分支，此时已无可补的键，自然幂等。
+                touched.append(rel)
+    if json.dumps(seed, sort_keys=True) != before:
+        _save_seed(target, seed)
+    return touched
+
 
 def experts_root():
-    # Frozen defaults live in the immutable payload. Seed only missing expert
-    # packages; upgrades must preserve the user's edited expert directories.
+    # 打包内置包在不可变的 payload 里；用户目录是活的。两者不是一处时把它们
+    # 对齐一次（见 _seed_package 的规则），后续同一进程不再重复扫。
     bundle = getattr(sys, '_MEIPASS', None) or os.path.dirname(__file__)
     defaults = os.path.join(bundle, 'config', 'experts')
-    if os.path.realpath(defaults) != os.path.realpath(paths.EXPERTS_DIR) and os.path.isdir(defaults):
-        os.makedirs(paths.EXPERTS_DIR, exist_ok=True)
-        for key in ('code-expert', 'writing-expert'):
-            source = os.path.join(defaults, key)
-            target = os.path.join(paths.EXPERTS_DIR, key)
-            if not os.path.isdir(source):
-                continue
-            if not os.path.lexists(target):
-                try:
-                    shutil.copytree(source, target)
-                except FileExistsError:
-                    pass
-                continue
-            # 专家目录已存在：用户可能改过 SKILL.md / expert.json，**不覆盖**。
-            # 只有新版本才带来的子目录（references/ assets/ skills/）按"缺了才补"，
-            # 否则升级后老用户的新专家包永远是"提示词有、资料没有 / 工具没有"，
-            # 而面板上看不出区别 —— 只能靠模型凭空编造。
-            for sub in ('references', 'assets', 'skills'):
-                s_dir = os.path.join(source, sub)
-                t_dir = os.path.join(target, sub)
-                if os.path.isdir(s_dir) and not os.path.lexists(t_dir):
-                    try:
-                        shutil.copytree(s_dir, t_dir)
-                    except FileExistsError:
-                        pass
-    return paths.EXPERTS_DIR
+    target_root = paths.EXPERTS_DIR
+    if os.path.realpath(defaults) == os.path.realpath(target_root) or not os.path.isdir(defaults):
+        return target_root
+    once = (os.path.realpath(defaults), os.path.realpath(target_root))
+    if once in _SEED_DONE:
+        return target_root
+    _SEED_DONE.add(once)
+    os.makedirs(target_root, exist_ok=True)
+    # 扫目录而不是写死两个 key：以后包里多一个内置专家，老用户升级就能拿到。
+    for key in sorted(os.listdir(defaults)):
+        source = os.path.join(defaults, key)
+        if key.startswith('.') or not os.path.isdir(source):
+            continue
+        _seed_package(source, os.path.join(target_root, key))
+    return target_root
 
 
 def validate_key(key):

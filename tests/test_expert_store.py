@@ -152,6 +152,89 @@ def test_frozen_defaults_seed_without_overwriting_user_experts(tmp_path, monkeyp
     expert_store._CACHE.clear()
 
 
+def _seed_env(tmp_path, monkeypatch, bundle_meta, user_meta=None):
+    """搭一套"打包内置包 + 用户目录"，返回用户专家根。"""
+    bundle = tmp_path / 'bundle'
+    _make_expert(bundle / 'config' / 'experts', 'code-expert', meta=bundle_meta)
+    root = tmp_path / 'user-experts'
+    if user_meta is not None:
+        _make_expert(root, 'code-expert', meta=user_meta)
+    monkeypatch.setattr(sys, '_MEIPASS', str(bundle), raising=False)
+    monkeypatch.setattr(paths, 'EXPERTS_DIR', str(root))
+    expert_store._CACHE.clear()
+    expert_store._SEED_DONE.clear()
+    return root
+
+
+def test_legacy_user_expert_json_gets_new_fields_without_losing_edits(tmp_path, monkeypatch):
+    """老用户没有种子记录：只补新键，用户改过的名字/描述不能被顶掉。
+
+    这是 1.1.14 真实踩到的坑：内置包加了 icon 字段，但种子的老规则是
+    "目录已存在就整个跳过"，于是老用户永远拿不到 icon，面板上图标退化成
+    名字首字，看起来"跟没升级一样"。
+    """
+    root = _seed_env(tmp_path, monkeypatch,
+                     {'name': '内置代码', 'description': '内置描述', 'icon': 'term'},
+                     {'name': '用户代码', 'description': '我改过的描述'})
+    expert_store.experts_root()
+    meta = json.loads((root / 'code-expert' / 'expert.json').read_text(encoding='utf-8'))
+    assert meta['name'] == '用户代码'
+    assert meta['description'] == '我改过的描述'
+    assert meta['icon'] == 'term'
+    assert (root / 'code-expert' / '.seed.json').is_file()
+
+
+def test_seeded_package_upgrades_when_user_did_not_touch_it(tmp_path, monkeypatch):
+    """种过且用户没动：新版本的内容要能覆盖上去。"""
+    root = _seed_env(tmp_path, monkeypatch, {'name': 'v1', 'icon': 'term'})
+    expert_store.experts_root()
+    assert json.loads((root / 'code-expert' / 'expert.json').read_text(
+        encoding='utf-8'))['name'] == 'v1'
+    bundle = tmp_path / 'bundle' / 'config' / 'experts'
+    _make_expert(bundle, 'code-expert', meta={'name': 'v2', 'icon': 'book'})
+    expert_store._SEED_DONE.clear()
+    expert_store._CACHE.clear()
+    expert_store.experts_root()
+    meta = json.loads((root / 'code-expert' / 'expert.json').read_text(encoding='utf-8'))
+    assert meta['name'] == 'v2'
+    assert meta['icon'] == 'book'
+
+
+def test_user_edited_package_survives_upgrade(tmp_path, monkeypatch):
+    """用户手改过：内容保留，但新版本带来的新键仍然补上。"""
+    root = _seed_env(tmp_path, monkeypatch, {'name': 'v1'})
+    expert_store.experts_root()
+    user_json = root / 'code-expert' / 'expert.json'
+    edited = json.loads(user_json.read_text(encoding='utf-8'))
+    edited['name'] = '我改的'
+    user_json.write_text(json.dumps(edited, ensure_ascii=False), encoding='utf-8')
+    bundle = tmp_path / 'bundle' / 'config' / 'experts'
+    _make_expert(bundle, 'code-expert', meta={'name': 'v2', 'icon': 'term'})
+    expert_store._SEED_DONE.clear()
+    expert_store._CACHE.clear()
+    expert_store.experts_root()
+    meta = json.loads(user_json.read_text(encoding='utf-8'))
+    assert meta['name'] == '我改的'
+    assert meta['icon'] == 'term'
+
+
+def test_reseeding_merged_package_is_idempotent(tmp_path, monkeypatch):
+    """补齐过一次之后，再启动不能又改一遍 —— 否则每次开机都重写用户文件。"""
+    root = _seed_env(tmp_path, monkeypatch, {'name': '内置', 'icon': 'term'},
+                     {'name': '内置', 'avatar': '🛠️'})
+    expert_store.experts_root()
+    target = root / 'code-expert' / 'expert.json'
+    first = target.read_bytes()
+    assert b'icon' in first
+    expert_store._SEED_DONE.clear()
+    expert_store._CACHE.clear()
+    expert_store.experts_root()
+    assert target.read_bytes() == first
+    meta = json.loads(first.decode('utf-8'))
+    assert meta['avatar'] == '🛠️'   # 老字段留着，没人用但也不该被顺手删掉
+    assert meta['icon'] == 'term'
+
+
 def test_tool_allowlist_none_means_keep_all(experts):
     _make_expert(experts, 'code-expert', meta=dict(GOOD_META, tools=[]))  # 空 -> 不收窄
     _make_expert(experts, 'strict', meta=dict(GOOD_META, tools=['search', 'weather']))
