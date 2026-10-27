@@ -241,6 +241,14 @@ class TestEngine(KBTestBase, unittest.TestCase):
         self.assertIn("a.md", block)
         self.assertIn("相关度", block)
 
+    def test_default_threshold_accepts_unified_bm25_match(self):
+        kb.ingest_text('keyword testsearch installation', 'default.md', persona_key='p', src='pc')
+        rows = kb.search('testsearch', persona_key='p', src='pc')
+        self.assertEqual([r['source'] for r in rows], ['default.md'])
+        self.assertAlmostEqual(rows[0]['score'], 0.5)
+        self.assertLess(rows[0]['rank_score'], 0.02)
+        self.assertEqual(kb.search('testsearch', persona_key='p', src='pc', min_score=0.9), [])
+
     def test_注入块有字数上限(self):
         kb.ingest_text("甲" * 4000, "大.md", persona_key="p", src="app")
         rows = kb.search("甲", persona_key="p", src="app", min_score=0.0)

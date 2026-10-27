@@ -129,7 +129,7 @@ def search(query, persona_key="", src="pc", top_k=None, min_score=None, query_co
     query = str(query or "").strip()
     if not query or not cfg["enabled"]:
         return []
-    from storage import unified
+    from storage import unified, search as unified_search
     try:
         results, _info = unified.retrieve(
             query, owner="", src=src or "pc", persona=persona_key or "", chan="",
@@ -139,10 +139,16 @@ def search(query, persona_key="", src="pc", top_k=None, min_score=None, query_co
         print("[知识库] 主库检索失败：%s" % type(exc).__name__, flush=True)
         return []
     threshold = cfg["min_score"] if min_score is None else float(min_score)
+    # Unified search returns reciprocal-rank fusion scores (at most 2/(k+1)),
+    # not cosine similarity. Preserve the UI's 0..1 threshold on that scale.
+    def confidence(result):
+        return min(1.0, max(0.0, float(result.score or 0.0))
+                   * (unified_search.RRF_K + 1) / 2.0)
     return [{"source": r.source or r.title or "文档", "text": r.body or "",
-             "score": float(r.score or 0.0), "chunk": (r.meta or {}).get("chunk", 0),
+             "score": confidence(r), "rank_score": float(r.score or 0.0),
+             "chunk": (r.meta or {}).get("chunk", 0),
              "heading": r.title or ""}
-            for r in results if float(r.score or 0.0) >= threshold]
+            for r in results if confidence(r) >= threshold]
 
 
 def list_docs(persona_key="", src="pc"):
