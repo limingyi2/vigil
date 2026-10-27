@@ -47,6 +47,7 @@ Vigil 是一个桌面 Agent 工作台：Electron 客户端 + 本机 Python Brain
 | **Creator** | 插件创作与修改、真实流式作业、快照、取消与草稿管理；草稿不等于已安装 |
 | **模型接入** | OpenAI 兼容接口，按服务商 / 端点 / 模型适配参数与结果形态；密钥登记在服务商名下，可多套切换 |
 | **本地资料** | 记忆与约定、知识库导入与混合检索、分人设配置 |
+| **Codex 桌宠** | 移植自 codex-bailong-desktop-pet 的桌面小助手：直读本机 Codex，桌面查看任务状态、完成提醒、额度与 Token 日报；Agent Center 负责启动与 CLI 引导（见 `pet/README.md`） |
 
 ### 工作台预览
 

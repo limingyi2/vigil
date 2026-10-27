@@ -41,6 +41,12 @@ let settingsWinReady = false;
 let pendingSettingsTarget = null;
 require('./agent-center-notifications').register({ipcMain, Notification, getWindow:() => win,
   indexPath:path.join(__dirname, '..', 'src', 'index.html'), onClick:() => showMainWindow()});
+// 桌宠 sidecar（pet/app，移植自 codex-bailong-desktop-pet）：Agent Center 页面
+// 通过 pet:start / pet:stop / pet:status 管理这个独立进程。
+const pet = require('./pet');
+ipcMain.handle('pet:start', () => pet.start());
+ipcMain.handle('pet:stop', () => pet.stop());
+ipcMain.handle('pet:status', () => pet.status());
 
 // ── 托盘：点关闭 = 隐藏，不退出（2026-10-09 用户要求）──────────────
 // 她是常驻的：微信消息、本地操控轮询、转发通道都在这个进程里跑着。

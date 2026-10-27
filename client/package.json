@@ -34,6 +34,15 @@
       {
         "from": "../dist/brain-release/vigil-brain",
         "to": "vigil-brain"
+      },
+      {
+        "from": "../pet",
+        "to": "pet",
+        "filter": [
+          "**/*",
+          "!**/__pycache__",
+          "!**/*.pyc"
+        ]
       }
     ],
     "win": {

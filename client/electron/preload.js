@@ -187,4 +187,10 @@ contextBridge.exposeInMainWorld('vigil', {
     notify: (event) => ipcRenderer.invoke('agent-center:notify', event),
     onOpen: (fn) => ipcRenderer.on('agent-center:open', () => fn()),
   },
+  // 桌宠（pet/app sidecar）：启动 / 停止 / 查询运行状态。
+  pet: {
+    start: () => ipcRenderer.invoke('pet:start'),
+    stop: () => ipcRenderer.invoke('pet:stop'),
+    status: () => ipcRenderer.invoke('pet:status'),
+  },
 });

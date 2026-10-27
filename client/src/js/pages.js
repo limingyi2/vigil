@@ -1231,8 +1231,9 @@
       '        <span id="tokenRate" class="token-rate" hidden title="模型输出吞吐率；Provider usage 可能包含推理 Token">—</span>' +
       '        <button class="foot-chip" id="wsPickBtn" type="button" title="选择这个对话所属的本地文件夹">' + icon('folder', 'sm') + '<span data-ws-label>选择工作空间</span></button>' +
       '        <button class="foot-chip" id="permChip" type="button" title="本地文件与命令的授权范围"><span class="perm-dot"></span><span data-perm-label>仅授权目录</span></button>' +
-      '        <div class="sp"></div>' +
-      '        <span class="foot-brand">Vigil · AI Agent Workspace</span>' +
+        '        <button class="foot-chip" id="expertSuggest" hidden title="输入内容命中了专家场景，点一下召唤"></button>' +
+        '        <div class="sp"></div>' +
+        '        <span class="foot-brand">Vigil · AI Agent Workspace</span>' +
       '        <span class="ccount" id="ccount">0 字</span>' +
       '      </div>' +
       '      </div>' +
@@ -3148,9 +3149,47 @@
       finishBusy(turnScope);
     }
     taEl.addEventListener('input', updateComposer);
+    // ── 专家实时推荐：输入命中专家场景关键词时，composer 底部亮一枚
+    // 「召唤」chip。零成本关键词匹配（服务端 /api/expert/match），
+    // 防抖 500ms；已召唤的专家不再提示。老 Brain 没有接口时静默不亮。──
+    let expertSuggestTimer = 0;
+    let expertSuggestSeq = 0;
+    async function expertSuggestTick() {
+      const chip = view.querySelector('#expertSuggest');
+      if (!chip) return;
+      const text = (taEl.value || '').trim();
+      if (text.length < 2) { chip.hidden = true; return; }
+      const seq = ++expertSuggestSeq;
+      const r = pick(await get('/api/expert/match?text=' +
+        encodeURIComponent(text.slice(0, 80)) + '&src=' +
+        encodeURIComponent(state.src || 'pc'), { timeoutMs: 4000 }));
+      // 响应回来时输入已经变了/页面已切走：丢弃，别拿旧推荐闪人
+      if (seq !== expertSuggestSeq || !chip.isConnected) return;
+      const m = (r && r.matches || [])[0];
+      if (!r.ok || !m || m.key === r.active) { chip.hidden = true; return; }
+      chip.hidden = false;
+      chip.textContent = '召唤「' + m.name + '」';
+      chip.onclick = async () => {
+        chip.disabled = true;
+        const rr = pick(await post('/api/expert/summon', { key: m.key, src: state.src || 'pc' }));
+        chip.disabled = false;
+        if (rr.ok) {
+          toast('已召唤「' + (rr.name || m.name) + '」，下一句话生效' +
+                (rr.default_init_prompt ? ' · 开场白：' + rr.default_init_prompt : ''));
+          chip.hidden = true;
+        } else {
+          toast('召唤失败：' + (rr._err || rr.err || ''));
+        }
+      };
+    }
+    const scheduleExpertSuggest = () => {
+      clearTimeout(expertSuggestTimer);
+      expertSuggestTimer = setTimeout(() => { expertSuggestTick().catch(() => {}); }, 500);
+    };
     const resizeComposer = () => { if (taEl.isConnected) { updateComposer(); applySessions(); } };
     window.addEventListener('resize', resizeComposer);
     updateComposer();
+    taEl.addEventListener('input', scheduleExpertSuggest);
     // 她调本地工具时，把每一步打在这轮消息下面。
     // 这个监听挂在 window 上（一次），但只往当前页面的 #liveSteps 里塞东西 ——
     // 换页之后那个节点没了，addStep 会自己跳过。
@@ -3565,6 +3604,13 @@
       const pr = pick(await get('/api/persona?src=' + c));
       per[c] = { key: pr.src_persona_key || pr.key || '', name: pr.name || '' };
     }
+    // 专家（expert）状态：老 Brain 没有这个接口时静默降级，不挡人设面板。
+    let ex = { ok: false, experts: [], bindings: {}, active: '' };
+    const loadExperts = async () => {
+      const rr = pick(await get('/api/expert?src=' + curChan));
+      if (rr.ok) ex = rr;
+    };
+    await loadExperts();
 
     ctx.topbar.className = 'topbar';
     ctx.topbar.innerHTML = topbar('人格与语气', '存在本机 Brain · 应用/编辑立即生效，下一句话就是新人设',
@@ -3657,11 +3703,45 @@
         cards = [{ key: cur, label: (per[curChan] || {}).name || cur,
                    desc: '当前使用的人设（不在模板清单里）。选一张卡点「应用」就会换掉它。', synthetic: true }].concat(cards);
       }
+      // 专家区：目录包即清单（config/experts/<key>/），召唤 = 绑定到当前渠道。
+      // 人设还是那个人，专家只是"现在的工作方式"——所以放在人设卡片上面。
+      const expertCards = (ex.experts || []).map((e) => {
+        const on = ex.active === e.key;
+        return '<div class="pcard' + (on ? ' cur' : '') + '" data-ek="' + esc(e.key) + '">' +
+          '<div class="pch"><b>' + esc((e.avatar ? e.avatar + ' ' : '') + e.name) + '</b>' +
+          (on ? tag('ok', '召唤中') : '') + '</div>' +
+          (e.description ? '<div class="pdesc">' + esc(String(e.description).slice(0, 90)) + '</div>' : '') +
+          (on ? '<button class="btn oline" data-dismiss="' + esc(e.key) + '">卸下</button>'
+              : '<button class="btn fill" data-summon="' + esc(e.key) + '">召唤</button>') +
+          '</div>';
+      }).join('');
+      const expertSec = (ex.ok && (ex.experts || []).length) ?
+        '<div class="sech"><b>专家</b><span class="muted">召唤后她按这个专家的方式工作；卸下即回到原人设。对话历史保留。</span></div>' +
+        '<div class="pgrid">' + expertCards + '</div>' : '';
       ctx.view.innerHTML = '<div class="wrap">' +
+        expertSec +
         '<div class="sech"><b>' + esc(n) + '</b><span class="muted">' + esc(d) + '</span></div>' +
         (cards.length ? '<div class="pgrid">' + cards.map(cardOf).join('') + '</div>'
                       : r.ok ? empty('暂无人格配置', '添加人格配置后，可以在这里查看和编辑。') : errBox('读不到人设列表', r._err || '')) +
         '</div>';
+      ctx.view.querySelectorAll('[data-summon]').forEach((b) => b.addEventListener('click', async () => {
+        b.disabled = true;
+        const rr = pick(await post('/api/expert/summon', { key: b.dataset.summon, src: curChan }));
+        b.disabled = false;
+        if (rr.ok) {
+          toast('已召唤' + (rr.name ? '「' + rr.name + '」' : '') + '，下一句话生效' +
+                (rr.default_init_prompt ? ' · 开场白：' + rr.default_init_prompt : ''));
+          await loadExperts();
+          draw();
+        } else { toast('召唤失败：' + (rr._err || rr.err || '')); }
+      }));
+      ctx.view.querySelectorAll('[data-dismiss]').forEach((b) => b.addEventListener('click', async () => {
+        b.disabled = true;
+        const rr = pick(await post('/api/expert/dismiss', { src: curChan }));
+        b.disabled = false;
+        if (rr.ok) { toast('专家已卸下'); await loadExperts(); draw(); }
+        else { toast('卸下失败：' + (rr._err || rr.err || '')); }
+      }));
       ctx.view.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => {
         editing = b.dataset.edit;
         draw();
@@ -3674,7 +3754,7 @@
         if (rr.ok) { per[curChan] = { key: b.dataset.apply, name: rr.name || b.dataset.apply }; draw(); }
       }));
     };
-    U.bindSeg(ctx.panel.querySelector('.pseg'), (k) => { curChan = k; draw(); });
+    U.bindSeg(ctx.panel.querySelector('.pseg'), (k) => { curChan = k; loadExperts().then(draw); });
     ctx.topbar.querySelector('#reloadP').addEventListener('click', async () => {
       const rr = pick(await post('/api/reload_persona'));
       toast(rr.ok ? '人设已重载' : '重载失败');
@@ -3715,7 +3795,7 @@
     let curStore = 'memory';
     const storeSel = () => ctx.view.querySelector('#memStore');
     function storeLabel(name) {
-      if (name === 'memory') return '主记忆库 · 未分区';
+      if (name === 'memory') return '主仓库';
       const stem = String(name).replace(/\.memory$/, '');
       const channels = [
         ['wechat_group', '微信群'], ['wechat', '微信'], ['app', '旧 App'], ['pc', 'PC'],
@@ -3737,7 +3817,7 @@
       sel.innerHTML = names.map((n) =>
         '<option value="' + esc(n) + '"' + (n === curStore ? ' selected' : '') + '>' +
         esc(storeLabel(n)) + '</option>').join('');
-      sel.title = '按人设与来源渠道隔离的记忆分区；切换这里只查看对应分区，不会搬动或删除数据。';
+      sel.title = '记忆主仓库（唯一记忆库）；历史分区仅在残留数据时列出，不会搬动或删除数据。';
       sel.onchange = () => { curStore = sel.value; load(); };
     }
 
@@ -3941,46 +4021,6 @@
       docs();
     });
     docs();
-  }
-
-  // ═══ 5. 生活 ═══════════════════════════════════════════════
-  async function renderLife(ctx) {
-    ctx.topbar.className = 'topbar';
-    // 2026-10-08：日记与朋友圈模块已在 brain 侧整体移除，这里只剩快递
-    const subs = [['pkgs', '快递', 'bell']];
-    ctx.panel.innerHTML = '<div class="phead"><h2>生活</h2></div>' +
-      '<div class="plist"><div>' +
-      subs.map(([k, n, ic], i) => li({ icon: ic, title: n, on: i === 0, attrs: ' data-k="' + k + '"' })).join('') +
-      '<div id="lifePanel"></div></div></div>';
-    ctx.topbar.innerHTML = topbar('生活面板', '快递跟踪');
-    ctx.view.innerHTML = '<div class="wrap" id="lifeView"></div>';
-    const v = ctx.view.querySelector('#lifeView');
-    const pnl = ctx.panel.querySelector('#lifePanel');
-
-    async function pkgs() {
-      const p = pick(await get('/api/packages'));
-      const items = p.items || [];
-      pnl.innerHTML = '<div class="gtitle">' + esc(items.length) + ' 个单号</div>';
-      v.innerHTML = items.length ? '<div class="card hd"><table class="tbl">' +
-        '<tr><th>单号</th><th>承运商</th><th>状态</th><th>最新</th><th>备注</th><th></th></tr>' +
-        items.map((x) => '<tr><td class="mono">' + esc(x.number) + '</td><td>' + esc(x.carrier || '') + '</td>' +
-          '<td>' + tag(/签收|完成/.test(x.status || '') ? 'ok' : /异常|失败/.test(x.status || '') ? 'err' : 'neutral', x.status || '') + '</td>' +
-          '<td class="muted">' + esc(String(x.latest || '').slice(0, 40)) + '</td>' +
-          '<td class="muted">' + esc(x.note || '') + '</td>' +
-          '<td><button class="btn" data-del="' + esc(x.number) + '">删</button></td></tr>').join('') +
-        '</table></div>' : empty('没有在跟踪的快递', '在聊天里发单号会自动加进来');
-      v.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-        await post('/api/packages/del', { number: b.dataset.del });
-        pkgs();
-      }));
-    }
-
-    const draw = { pkgs };
-    ctx.panel.querySelectorAll('.li[data-k]').forEach((n) => n.addEventListener('click', () => {
-      ctx.panel.querySelectorAll('.li').forEach((x) => x.classList.toggle('on', x === n));
-      draw[n.dataset.k] && draw[n.dataset.k]();
-    }));
-    pkgs();
   }
 
   // ═══ 6. 能力 ═══════════════════════════════════════════════
@@ -4964,15 +5004,17 @@
   }
 
   // ═══ 9. 功能分组页（按功能分类的聚合壳）════════════════════
-  // 顶部导航：01 工作台 · 插件市场 · 设置 · 02 对话与人格 · 03 能力与扩展 · 04 连接与系统 · 05 自动化任务 · 统一管理 · 数据。
+  // 顶部导航：01 工作台 · 插件市场 · 设置 · 02 知识库 · 03 能力与扩展 · 04 连接与系统 · 统一管理 · 数据。
   // 原有各页面**一个不少**，按功能归入分组，作为组内功能项
   // （左栏 § 编号 + 等宽路径尾标）。各渲染器一行不改：给它们一个
   // "假 panel"挂副导航（横排在内容上沿），view 照旧，topbar 由它们自己写。
+  // （05 自动化任务/生活面板已随 brain 侧生活模块下线移除，/api/packages 仍保留。）
   const FUNC_GROUPS = [
-    { id: 'persona', name: '对话与人格', num: '02', icon: 'user', items: [
-      { k: 'persona', num: '021', name: '人格与语气', path: '/persona', icon: 'user', render: renderPersona },
+    { id: 'kbgroup', name: '知识库', num: '02', icon: 'lib', items: [
+      { k: 'kb', num: '021', name: '知识库', path: '/kb', icon: 'lib', render: renderKb },
       { k: 'memory', num: '022', name: '记忆与约定', path: '/memory', icon: 'brain', render: renderMemory },
-      { k: 'kb', num: '023', name: '知识库', path: '/kb', icon: 'lib', render: renderKb },
+      { k: 'marvis', num: '023', name: 'Marvis 分类方案', path: '/marvis', icon: 'lib', render: global.VigilRenderMarvis },
+      { k: 'persona', num: '024', name: '人格与语气', path: '/persona', icon: 'user', render: renderPersona },
     ] },
     { id: 'ability', name: '能力与扩展', num: '03', icon: 'puzzle', items: [
       { k: 'ability', num: '031', name: '能力与技能', path: '/abilities', icon: 'puzzle', render: renderAbility },
@@ -4980,9 +5022,6 @@
     ] },
     { id: 'system', name: '连接与系统', num: '04', icon: 'set', items: [
       { k: 'settings', num: '041', name: '连接与设备', path: '/connection', icon: 'set', render: renderSettings },
-    ] },
-    { id: 'auto', name: '自动化任务', num: '05', icon: 'activity', items: [
-      { k: 'life', num: '051', name: '生活面板', path: '/life', icon: 'heart', render: renderLife },
     ] },
   ];
 
@@ -5082,7 +5121,7 @@
       ctx.navigate('chat');
     });
     const cards = [
-      {title:'自动化任务', desc:'打开生活面板与任务入口', icon:'activity', page:'auto', group:'life'},
+      {title:'知识库', desc:'文档导入、检索与分类方案', icon:'lib', page:'kbgroup', group:'kb'},
       {title:'工作区', desc:'节点、运行情况与管理工具', icon:'mon', page:'management'},
       {title:'本地内核', desc:'随包 Brain 状态、连接与权限', icon:'set', page:'system', sub:'conn'},
       {title:'模型与推理', desc:'模型服务商、推理与快速切换', icon:'brain', page:'system', sub:'model'},

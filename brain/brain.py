@@ -680,15 +680,29 @@ class Brain:
         ASSISTANT_SRCS）。只按人设 key 缓存的话，同一个人设在 pc 和 app
         两个渠道会共用同一份文本 —— 改渠道不换底线，助手设定等于没生效，
         而且症状是"人设文件改了没反应"，极难查。
+
+        🔴 缓存键还必须含**专家绑定**：召唤/卸下专家只改 experts_by_src，
+        人设 key 不动 —— 键里不带专家的话，换专家后这里命中旧缓存，
+        症状同样是"召唤了但没生效"。专家是提示词叠加，见 expert_store.
+        system_overlay。
         """
         key = self._persona_key_for(src)
-        ckey = "%s\x00%s" % (key, str(src or DEFAULT_SRC))
+        expert_key = ""
+        try:
+            import expert_store
+            expert_key = expert_store.binding(self.api, src)
+        except Exception:
+            expert_key = ""
+        ckey = "%s\x00%s\x00%s" % (key, str(src or DEFAULT_SRC), expert_key)
         cache = getattr(self, "_ptext_cache", None)
         if cache is None:
             cache = self._ptext_cache = {}
         if ckey not in cache:
             try:
-                cache[ckey] = build_system_text(load_persona(key) or {}, src=src)
+                txt = build_system_text(load_persona(key) or {}, src=src)
+                if expert_key:
+                    txt += expert_store.system_overlay(expert_key)
+                cache[ckey] = txt
             except Exception:
                 cache[ckey] = ""
         return cache[ckey]
@@ -737,11 +751,10 @@ class Brain:
         return self._persona_key_for(src)
 
     def _mem_for(self, src=None):
-        """这个渠道 + 当前人设的记忆库。
+        """当前渠道的记忆库：P9 收敛后全库唯一，就是主仓库 memory.json。
 
-        换人设 = 换一个人，记忆库必须跟着换 —— 否则人设换了但她还记得你说过
-        的所有事，感知上就完全没变（"换了人设但感觉还是她"）。
-        用记忆库自己的 persona/src 分区（见 memory_store_v2.get_default_store）。
+        聊天历史仍按人设/渠道隔离（见 _log_for），长期记忆统一进主仓库
+        （见 memory_store_v2.default_store_path）。
         """
         s = norm_src(src or self._cur_src)
         persona = self._persona_key_for(s)

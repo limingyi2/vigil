@@ -337,6 +337,8 @@ DEVICE_GET_ALLOW = frozenset({
     "/api/route",                       # 只读：当前路由状态
     "/api/persona",
     "/api/persona/full",
+    "/api/expert",                      # 专家清单：只读，面板要展示
+    "/api/expert/match",                # 输入推荐：只读关键词匹配
     "/api/voices",
     "/api/models",
     "/api/models/saved",                # 主页快速切换下拉：只有名字和布尔状态，无密钥
@@ -788,11 +790,11 @@ def _chat_with_tools(text, img_path, trace_out=None, src=None,
             return _td.TOOL_TAG_ANY_RE.sub("", ans or "").strip(), mode
 
         import planner
-        _yes, _plan_why = planner.plan_decision(text)
-        if (_task_decision.get("task_category") != "complex_execution"
-                or _task_decision.get("fallback_reason")):
-            _yes = False
-            _plan_why = "任务类别不需要多步规划"
+        # 入口只有两个（2026-10-27 起）：task_intent 判 complex_execution 且
+        # 无 fallback → 规划（复杂任务）；其余一律直接 ReAct（简单任务）。
+        # 原来在它前面还有一套 planner 关键词启发式，两处判据已合并到
+        # entry_decision 一处 —— 「为什么规划」直接取分类的 reason。
+        _yes, _plan_why = planner.entry_decision(_task_decision)
         # 🔴 **关掉之后要单独记一笔，不能当成"规划失败"。**
         # `plan()` 自己在 enabled=false 时返回 None，于是 server 会走下面
         # "判要规划但没解析出步骤"那条分支、写 `plan: "empty"` ——
@@ -3682,6 +3684,63 @@ def start_remote_api(brain):
                         self._json(200, {"ok": False, "err": "她正忙着"})
                         return
                     self._json(200, {"ok": True})
+                elif path in ("/api/expert/summon", "/api/expert/dismiss"):
+                    # 召唤/卸下专家：改 config.experts_by_src 绑定 + 热重载。
+                    # 与 /api/persona/apply 同构 —— 内存三份配置
+                    # （api_config / API_CFG / brain.api）必须一起改，
+                    # 否则只写盘的 reload 回读旧值，"召唤了但没生效"。
+                    try:
+                        import expert_store
+                        _xsrc = _norm_src(body.get("src") or "pc")
+                        _xkey = ""
+                        _xname = ""
+                        _xinit = ""
+                        if path == "/api/expert/summon":
+                            _xkey = expert_store.validate_key(
+                                body.get("key") or "")
+                            _xexp = expert_store.load_expert(
+                                _xkey, include_prompt=False) if _xkey else None
+                            if not _xexp:
+                                self._json(200, {"ok": False,
+                                                 "err": "没有这个专家"})
+                                return
+                            _xname = _xexp["name"]
+                            _xinit = _xexp.get("default_init_prompt") or ""
+                        with _chat_lock():
+                            _xcfg = {}
+                            try:
+                                _xcfg = json.load(
+                                    open(config_path(), encoding="utf-8"))
+                            except Exception:
+                                _xcfg = {}
+                            _xby = _xcfg.get("experts_by_src")
+                            if not isinstance(_xby, dict):
+                                _xby = _xcfg["experts_by_src"] = {}
+                            if path == "/api/expert/summon":
+                                _xby[_xsrc] = _xkey
+                            else:
+                                _xby.pop(_xsrc, None)
+                            with open(config_path(), "w",
+                                      encoding="utf-8") as f:
+                                json.dump(_xcfg, f, ensure_ascii=False,
+                                          indent=2)
+                            for _xdst in (api_config, API_CFG,
+                                          getattr(brain, "api", None)):
+                                if isinstance(_xdst, dict):
+                                    _xdst["experts_by_src"] = dict(_xby)
+                            brain.reload_persona()
+                        if path == "/api/expert/summon":
+                            print("[大脑] 专家已召唤 %s -> %s" % (_xsrc, _xkey),
+                                  flush=True)
+                        else:
+                            print("[大脑] 专家已卸下 %s" % _xsrc, flush=True)
+                        self._json(200, {"ok": True, "key": _xkey,
+                                         "name": _xname,
+                                         "src": _xsrc,
+                                         "default_init_prompt": _xinit})
+                    except Exception as e:
+                        errlog.log_exc("api/expert/summon", e)
+                        self._json(200, {"ok": False, "err": str(e)[:120]})
                 elif path == "/api/persona/split_raw":
                     # 从整段人设里认名字和小名。**只给面板做预览用** ——
                     # 真正的落点在 /api/persona/save：整段落在 notes。
@@ -4569,6 +4628,38 @@ def start_remote_api(brain):
                                  "src": _psrc,
                                  "max": persona_store.MAX_TEMPLATES,
                                  "used": persona_store.template_count()})
+            elif path == "/api/expert":
+                # 专家面板：清单 + 各渠道绑定 + 当前渠道激活状态
+                try:
+                    import expert_store
+                    _esrc = _norm_src(_query_param(self.path, "src") or "")
+                    _ecfg = getattr(brain, "api", None) or API_CFG
+                    self._json(200, {"ok": True,
+                                     "experts": expert_store.list_experts(),
+                                     "bindings": expert_store.bindings(_ecfg),
+                                     "active": expert_store.binding(_ecfg, _esrc),
+                                     "src": _esrc})
+                except Exception as e:
+                    errlog.log_exc("api/expert", e)
+                    self._json(200, {"ok": False, "err": str(e)[:120],
+                                     "experts": [], "bindings": {},
+                                     "active": "", "src": ""})
+            elif path == "/api/expert/match":
+                # 输入框旁的实时推荐：零成本关键词匹配，不联网不调模型。
+                # 带 src 一起返回该渠道当前绑定 —— 已召唤的专家不再提示。
+                try:
+                    import expert_store
+                    _mtext = _query_param(self.path, "text") or ""
+                    _msrc = _norm_src(_query_param(self.path, "src") or "")
+                    _mcfg = getattr(brain, "api", None) or API_CFG
+                    self._json(200, {"ok": True,
+                                     "matches": expert_store.match_experts(_mtext),
+                                     "active": expert_store.binding(_mcfg, _msrc),
+                                     "src": _msrc})
+                except Exception as e:
+                    errlog.log_exc("api/expert/match", e)
+                    self._json(200, {"ok": False, "err": str(e)[:120],
+                                     "matches": [], "active": "", "src": ""})
             elif path == "/api/voices":
                 # 清单是 VOICE_CATALOG 里的死数据，不联网 —— 设置页必须永远打得开
                 try:

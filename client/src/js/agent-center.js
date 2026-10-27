@@ -2,11 +2,9 @@
   'use strict';
   const {esc,icon,fmtTime,toast} = U;
   const listeners = new Set();
-  const labels = {idle:'就绪',starting:'启动中',running:'运行中',waiting_approval:'等待审批',
-    waiting_input:'等待输入',completed:'已完成',failed:'失败',interrupted:'已中断',unknown:'未知'};
-  const operations = {commandExecution:'执行命令',fileChange:'文件操作',mcpToolCall:'MCP 工具',
-    dynamicToolCall:'动态工具',webSearch:'网页检索'};
   let started = false, timer;
+  // 状态轮询与桌面通知保留：审批事件、Codex 能力上报仍由 Brain 侧驱动；
+  // 页面本身不再渲染受管任务，改由桌宠展示本机 Codex 状态。
   const controller = AgentCenterState.create({
     request:async path => API.pick(await API.get(path)),
     connect:async () => API.pick(await API.post('/api/agent-center/connect',{})),
@@ -43,37 +41,11 @@
     started = true;
     const tick = async () => {
       await controller.poll();
-      const active = controller.state.owned.some(t => ['starting','running','waiting_approval','waiting_input'].includes(t.status));
-      timer = setTimeout(tick,active ? 2000 : 5000);
+      timer = setTimeout(tick,5000);
     };
     tick();
     global.addEventListener('beforeunload', () => clearTimeout(timer),{once:true});
   }
-  function badge(status) {
-    return `<span class="ac-state ac-${esc(status)}">${esc(labels[status] || '未知')}</span>`;
-  }
-  function write(el, html) { if (el.innerHTML !== html) el.innerHTML = html; }
-  function approvalCard(a,s,connected) {
-    const generation=a.connection_generation||a.generation;
-    const stale=s.stale||!connected||generation!==s.status.generation;
-    const risk=a.risk||{}, usable=!!a.response_enabled&&!stale&&a.state==='pending';
-    const identity=`<details class="ac-risk-identity"><summary>核对请求归属</summary><dl><div><dt>连接</dt><dd>${esc(a.connection)}</dd></div><div><dt>连接代次</dt><dd>${esc(generation)}</dd></div><div><dt>Thread</dt><dd>${esc(a.thread_id)}</dd></div><div><dt>Turn</dt><dd>${esc(a.turn_id)}</dd></div><div><dt>Request ID</dt><dd>${esc(String(a.request_id))}</dd></div><div><dt>Item ID</dt><dd>${esc(a.item_id)}</dd></div></dl></details>`;
-    let detail='';
-    if(a.method==='item/commandExecution/requestApproval') detail=`<div class="ac-risk"><b>拟执行命令</b><pre>${esc(risk.command||'缺失')}</pre><p>工作目录：<code>${esc(risk.cwd||'缺失')}</code></p>${risk.reason?`<p>原因：${esc(risk.reason)}</p>`:''}${risk.environment_id?`<p>执行环境：<code>${esc(risk.environment_id)}</code></p>`:''}${risk.command_actions?`<details><summary>Codex 解析出的操作范围</summary><pre>${esc(JSON.stringify(risk.command_actions,null,2))}</pre></details>`:''}${risk.additional_permissions?`<div class="ac-warning">请求额外文件/网络权限：<pre>${esc(JSON.stringify(risk.additional_permissions,null,2))}</pre></div>`:''}${risk.network_approval_context?`<div class="ac-warning">网络审批上下文：<pre>${esc(JSON.stringify(risk.network_approval_context,null,2))}</pre></div>`:''}${risk.proposed_execpolicy_amendment||risk.proposed_network_policy_amendments?`<div class="ac-warning">请求持久权限策略变更：<pre>${esc(JSON.stringify({execpolicy:risk.proposed_execpolicy_amendment,network:risk.proposed_network_policy_amendments},null,2))}</pre></div>`:''}</div>`;
-    else if(a.method==='item/fileChange/requestApproval') detail=`<div class="ac-risk"><b>文件修改预览（${(risk.changes||[]).length} 项）</b>${risk.reason?`<p>原因：${esc(risk.reason)}</p>`:''}${risk.grant_root?`<p class="ac-warning">请求授权根目录：<code>${esc(risk.grant_root)}</code></p>`:''}${(risk.changes||[]).map(c=>`<details class="ac-file-change"><summary>${esc(c.kind)} · ${esc(c.path)}</summary><pre>${esc(c.diff)}</pre></details>`).join('')}</div>`;
-    else if(a.method==='item/tool/requestUserInput') detail=`<div class="ac-risk"><b>Codex 请求补充输入</b><form class="ac-answer-form" data-ac-answer="${esc(a.id)}">${(risk.questions||[]).map(q=>`<fieldset><legend>${esc(q.header)} · ${esc(q.question)}</legend>${(q.options||[]).map((o,i)=>`<label class="ac-choice"><input type="checkbox" name="answer-${esc(q.id)}" value="${esc(o.label)}"><span><b>${esc(o.label)}</b><small>${esc(o.description)}</small></span></label>`).join('')}${q.isOther||!q.options?.length?`<label class="ac-free-answer">${q.isSecret?'安全输入':'补充回答'}<input type="${q.isSecret?'password':'text'}" name="other-${esc(q.id)}" maxlength="8192" autocomplete="${q.isSecret?'new-password':'off'}"></label>`:''}${q.isSecret?'<small>此答案仅在提交时发送，不写入本地历史。</small>':''}</fieldset>`).join('')}<button class="btn fill" type="submit" ${usable?'':'disabled'}>提交回答</button></form></div>`;
-    const denied=a.state==='expired'?'请求已过期，不能答复':a.state==='responded'||a.state==='resolved'?'请求已处理':stale?'连接或状态已过期，不能答复':a.response_enabled?'':'风险信息不完整或协议类型不支持，已禁用答复';
-    const decisions=a.method==='item/tool/requestUserInput'?`<span class="ac-muted">需要你填写并主动提交</span>`:usable?`<button class="btn" data-ac-respond="decline" data-approval="${esc(a.id)}">拒绝本次请求</button><button class="btn fill" data-ac-respond="accept" data-approval="${esc(a.id)}">仅本次批准</button>`:`<span class="ac-muted">${esc(denied)}</span>`;
-    return `<article class="ac-approval ac-approval-full"><header><strong>${a.method==='item/tool/requestUserInput'?'需要输入':a.method==='item/fileChange/requestApproval'?'文件修改审批':'命令审批'}</strong><span class="ac-state">${esc(a.state)}</span></header><p>owned 受管会话 · 任务 ${esc(a.task_id.slice(0,8))} · ${esc(fmtTime(a.created_at,'full'))} · ${Math.max(0,Math.ceil((a.expires_at-Date.now()/1000)/60))} 分钟后过期</p>${detail}${identity}<footer>${decisions}</footer><small>所有批准仅对此请求生效，由你点击提交；Codex 原生沙箱与权限校验仍由 App Server 执行。</small></article>`;
-  }
-  const pendingAgents = [
-    { id:'deepseek-harness', name:'DeepSeek Harness', type:'待接入适配器', purpose:'模型代理与任务执行',
-      connection_source:'未配置 Agent Adapter' },
-    { id:'work-buddy', name:'Work Buddy', type:'待接入适配器', purpose:'办公协作与自动化',
-      connection_source:'未配置 Agent Adapter' },
-  ];
-  const overviewLabels = { online:'在线', connecting:'连接中', disconnected:'已断开',
-    stale:'状态已过期', unsupported:'版本不支持', error:'连接错误', unknown:'未知', pending:'待接入' };
   function overviewError(raw) {
     const text = String(raw || '');
     if (AgentCenterState.connectionErrors[text]) return AgentCenterState.connectionErrors[text];
@@ -90,159 +62,75 @@
     const runtime=s.status.runtime || {}, code=s.status.last_error || runtime.error;
     const auth={unchecked:'等待检测',unknown:'未知',logged_in:'已登录（官方 CLI 本地状态）',logged_out:'未登录',logging_in:'等待官方浏览器登录'}[runtime.auth_status] || '等待检测';
     const blocked=busy || s.stale || runtime.auth_status==='logging_in' || s.status.connection_status==='connecting';
-    return `<h3>本机 Codex 连接</h3><p>CLI：${esc(runtime.version || (runtime.installed===false?'未找到':'等待检测'))} · 登录：${esc(auth)}</p>${code?`<p role="status">${esc(overviewError(code))}</p>`:''}<p class="ac-muted">Vigil 启动独立的受管 App Server；已有 Codex 桌面会话仅可读取历史，无法确认或控制其实时状态。</p><div class="ac-actions"><button class="btn" data-ac-help="install">官方安装说明</button><button class="btn" data-ac-help="auth">官方登录说明</button><button class="btn" data-ac-help="login" ${blocked||runtime.installed===false||s.status.connection_status==='connected'?'disabled':''}>通过官方 CLI 登录</button><button class="btn" data-ac-help="connect" ${blocked?'disabled':''}>重新检测并连接</button></div><p class="ac-muted">终端安装：<code>npm install -g @openai/codex</code> · 终端登录：<code>codex login</code>。账号认证由 Codex 管理。</p>${s.status.reconnect_attempts?`<p>本轮自动重连：${Number(s.status.reconnect_attempts)} / ${Number(s.status.reconnect_limit)||3}</p>`:''}`;
+    return `<h3>本机 Codex 连接</h3><p>CLI：${esc(runtime.version || (runtime.installed===false?'未找到':'等待检测'))} · 登录：${esc(auth)}</p>${code?`<p role="status">${esc(overviewError(code))}</p>`:''}<p class="ac-muted">桌宠直接读取本机 Codex 的会话与额度；受管 App Server 仅供后台通知使用。已有 Codex 桌面会话仅可读取历史。</p><div class="ac-actions"><button class="btn" data-ac-help="install">官方安装说明</button><button class="btn" data-ac-help="auth">官方登录说明</button><button class="btn" data-ac-help="login" ${blocked||runtime.installed===false||s.status.connection_status==='connected'?'disabled':''}>通过官方 CLI 登录</button><button class="btn" data-ac-help="connect" ${blocked?'disabled':''}>重新检测并连接</button></div><p class="ac-muted">终端安装：<code>npm install -g @openai/codex</code> · 终端登录：<code>codex login</code>。账号认证由 Codex 管理。</p>`;
   }
-  function codexOverview(s) {
-    const status = s.error && /版本不支持/.test(s.error) ? 'unsupported' :
-      s.error ? 'error' : s.stale ? (s.ready ? 'stale' : 'unknown') :
-      ({connected:'online',connecting:'connecting',disconnected:'disconnected'}[s.status.connection_status] || 'unknown');
-    const active = (s.owned || []).find(t => ['starting','running','waiting_approval','waiting_input'].includes(t.status));
-    const latestActivity = (s.owned || []).slice().sort((a,b) => Number(b.last_activity || 0) - Number(a.last_activity || 0))[0];
-    const pending = (s.approvals || []).filter(a => a.ownership === 'owned' && a.state === 'pending' &&
-      (a.connection_generation || a.generation) === s.status.generation).length;
-    const capabilities = ['受管任务', 'owned / observed'];
-    if (s.status.approval_response_enabled) capabilities.push('原生审批响应');
-    else capabilities.push('审批只读');
-    return { id:'codex', name:'Codex', type:'Coding Agent', purpose:'代码、文件与任务执行',
-      status, statusText:overviewLabels[status], current_task:active ? (active.current_operation ?
-        (operations[active.current_operation.type] || '执行中') : (labels[active.status] || '执行中')) : '暂无运行中的任务',
-      taskCount:(s.owned || []).length, pending, capabilities,
-      recent_activity:latestActivity ? fmtTime(latestActivity.last_activity || latestActivity.created_at, 'full') || '暂无活动记录' : '暂无活动记录',
-      connection_source:'本机 Brain · Codex App Server', error:overviewError(s.error || s.status.last_error),
-      connected:status === 'online' };
-  }
-  function agentCard(a) {
-    const ready = a.id === 'codex' && a.status === 'online';
-    const statusClass = 'ac-agent-status-' + a.status;
-    const action = a.id === 'codex' ? '打开管理' : '查看接入要求';
-    return `<article class="ac-agent-card ac-agent-${esc(a.id)} ${a.id === 'codex' ? 'is-live' : 'is-pending'}" data-ac-agent-card="${esc(a.id)}" tabindex="0" role="button" aria-label="${esc(a.name)}：${esc(a.statusText)}">
-      <header class="ac-agent-card-head"><span class="ac-agent-mark">${icon(a.id === 'codex' ? 'activity' : 'plug','sm')}</span><div><h3>${esc(a.name)}</h3><p>${esc(a.type)} · ${esc(a.purpose)}</p></div><span class="ac-agent-status ${statusClass}"><i></i>${esc(a.statusText)}</span></header>
-      <div class="ac-agent-current"><span>当前任务</span><strong>${esc(a.current_task || '—')}</strong>${a.error ? `<small>${esc(a.error)}</small>` : ''}</div>
-      <div class="ac-agent-meta"><span><b>${esc(a.taskCount == null ? '—' : a.taskCount)}</b> 个任务</span><span><b>${esc(a.pending || 0)}</b> 待处理</span></div>
-      <div class="ac-agent-activity"><span>最近活动</span><strong>${esc(a.recent_activity || '暂无活动记录')}</strong></div>
-      <div class="ac-agent-chips">${(a.capabilities || []).map(x => `<span>${esc(x)}</span>`).join('')}</div>
-      <footer><span class="ac-agent-source">${esc(a.connection_source)}</span><button class="btn ${ready ? 'fill' : ''}" type="button" data-ac-agent-action="${esc(a.id)}">${action}</button></footer>
-    </article>`;
+  const petLabels = {stopped:'未运行',starting:'启动中',running:'运行中',unavailable:'不可用'};
+  function petCard(pet) {
+    const status = pet && pet.status || 'stopped';
+    const running = status === 'running';
+    const chip = `ac-pet-chip ac-pet-${status}`;
+    return `<section class="ac-card ac-pet" id="ac-pet-card">
+      <div class="ac-heading"><h2>Codex 桌宠</h2><span class="${chip}"><i></i>${esc(petLabels[status] || '未知')}</span></div>
+      <p class="ac-muted">移植自 codex-bailong-desktop-pet 的桌面小助手：桌面上直接查看 Codex 任务状态、完成提醒、额度环与 Token 日报。进程独立运行，与客户端互不阻塞；同一时刻只能有一个实例。</p>
+      <p class="ac-muted">当前构建不含人物动画素材，桌宠以状态卡片模式显示；动画可在桌宠设置里从上游发布渠道单独下载。</p>
+      <div class="ac-actions">
+        <button class="btn fill" id="ac-pet-start" type="button" ${running||status==='starting'?'disabled':''}>${icon('activity','xs')} 启动桌宠</button>
+        <button class="btn" id="ac-pet-stop" type="button" ${running?'':'disabled'}>退出桌宠</button>
+        <span class="ac-muted" id="ac-pet-updated"></span>
+      </div>
+      <p class="ac-error" id="ac-pet-error" role="alert" ${pet && pet.lastError ? '' : 'hidden'}>${esc(pet && pet.lastError || '')}</p>
+    </section>`;
   }
   function render(ctx) {
     ctx.view.classList.add('ac-view'); ctx.topbar.classList.add('ac-topbar');
-    ctx.topbar.innerHTML = `<h1>Agent 工作室</h1><span class="sp"></span><span>统一查看和管理多个 Agent</span>`;
-    const overviewHtml = `<div class="ac-workspace" id="ac-overview">
-      <section class="ac-workspace-hero"><div><p class="ac-eyebrow">AGENT WORKSPACE</p><h2>你的 Agent 团队</h2><p class="ac-muted">把不同来源的 Agent 放在同一张工作台上。只有接入真实 Adapter 的 Agent 才会显示在线和任务控制。</p></div><div class="ac-hero-actions"><span class="ac-sync-note" id="ac-overview-updated">等待同步…</span><button class="btn" id="ac-add-agent" type="button">${icon('plus','xs')} 添加 Agent</button><button class="btn" id="ac-overview-refresh" type="button">${icon('refresh','xs')} 刷新</button></div></section>
+    ctx.topbar.innerHTML = `<h1>Agent 工作室</h1><span class="sp"></span><span>桌宠与 Codex 本机状态</span>`;
+    ctx.view.innerHTML = `<div class="ac-workspace" id="ac-overview">
+      <section class="ac-workspace-hero"><div><p class="ac-eyebrow">AGENT WORKSPACE</p><h2>你的桌面助手</h2><p class="ac-muted">桌宠常驻桌面展示 Codex 实时状态；这里负责把它拉起来，以及保证本机 Codex CLI 可用。</p></div><div class="ac-hero-actions"><span class="ac-sync-note" id="ac-overview-updated">等待同步…</span><button class="btn" id="ac-overview-refresh" type="button">${icon('refresh','xs')} 刷新</button></div></section>
       <p class="ac-error" id="ac-overview-error" role="alert" hidden></p>
-      <div class="ac-section-heading"><div><h2>Agent 总览</h2><p class="ac-muted" id="ac-agent-count">正在读取连接状态…</p></div><span class="ac-muted">桌面控制台 · 本机工作区</span></div>
+      <div id="ac-pet-host"></div>
       <section class="ac-card" id="ac-overview-connection"></section>
-      <section class="ac-agent-grid" id="ac-agent-grid" aria-label="Agent 总览"></section>
-      <section class="ac-recent-strip"><div class="ac-section-heading"><div><h2>最近任务</h2><p class="ac-muted">只显示已接入 Agent 的轻量摘要</p></div></div><div id="ac-recent-tasks" class="ac-recent-list"></div></section>
-    </div><div id="ac-agent-detail-shell" hidden></div>`;
-    ctx.view.innerHTML = overviewHtml;
-    ctx.panel.innerHTML = `<div class="ac-studio-nav"><div class="phead"><h2>Agent 工作室</h2><p>多 Agent 总览</p></div><button class="ac-nav-item on" id="ac-nav-overview" type="button">${icon('activity','sm')} <span>全部 Agent</span><b id="ac-nav-count">1</b></button><div class="ac-nav-hint">Codex 当前已接入<br>其他 Agent 等待 Adapter</div></div>`;
-    let selected = null, busy = false, disposed = false, detailOpen = false, summaryTaskKey = null;
-    const q = id => ctx.view.querySelector('#' + id) || ctx.panel.querySelector('#' + id);
+    </div>`;
+    ctx.panel.innerHTML = `<div class="ac-studio-nav"><div class="phead"><h2>Agent 工作室</h2><p>桌宠与 Codex</p></div><button class="ac-nav-item on" id="ac-nav-overview" type="button">${icon('activity','sm')} <span>总览</span></button><div class="ac-nav-hint">桌宠独立进程<br>直读本机 Codex 数据</div></div>`;
+    let busy = false, disposed = false, petTimer;
+    const q = id => ctx.view.querySelector('#' + id);
     function write(el, html) { if (el && el.innerHTML !== html) el.innerHTML = html; }
-    function currentTask(s) { return (s.owned || []).find(t => ['starting','running','waiting_approval','waiting_input'].includes(t.status)); }
-    function renderPanelOverview() {
-      ctx.panel.innerHTML = `<div class="ac-studio-nav"><div class="phead"><h2>Agent 工作室</h2><p>多 Agent 总览</p></div><button class="ac-nav-item on" id="ac-nav-overview" type="button">${icon('activity','sm')} <span>全部 Agent</span><b id="ac-nav-count">1</b></button><div class="ac-nav-hint">Codex 当前已接入<br>其他 Agent 等待 Adapter</div></div>`;
+    async function refreshPet(paint=true) {
+      if (disposed || !global.vigil || !global.vigil.pet) return;
+      const r = await global.vigil.pet.status().catch(() => null);
+      if (disposed) return;
+      const host = q('ac-pet-host');
+      if (host) {
+        const html = petCard(r);
+        if (host.innerHTML !== html) host.innerHTML = html;
+        bindPet();
+        q('ac-pet-updated').textContent = '同步于 ' + fmtTime(Date.now()/1000,'full');
+      }
     }
-    function renderPanelDetail() {
-      ctx.panel.innerHTML = `<div class="ac-sidebar"><button class="btn ac-back-panel" id="ac-back-panel" type="button">${icon('arrow-up','xs')} 返回 Agent 总览</button><h2>Codex 任务</h2><p>owned · Vigil 受管</p><div id="ac-tasks"></div><h2>历史观察</h2><p>observed · 只读元数据</p><button class="btn" id="ac-observe">读取历史列表</button><div id="ac-observed"></div></div>`;
+    function petAction(fn, label) {
+      if (busy) return; busy = true;
+      const host = q('ac-pet-host');
+      host && host.querySelectorAll('button').forEach(b => b.disabled = true);
+      fn().then(r => {
+        if (r && r.ok === false && r.error) toast(r.error, 6000);
+      }).catch(() => toast(label + '失败', 5000)).finally(() => { busy = false; refreshPet(); });
     }
-    function detailTemplate() {
-      return `<div class="ac-detail-page"><header class="ac-detail-header"><div><button class="btn ac-back-inline" id="ac-back" type="button">${icon('arrow-up','xs')} Agent 总览</button><p class="ac-eyebrow">CONNECTED AGENT · CODEX</p><h2>Codex 管理台</h2><p class="ac-muted">这里显示真实 App Server 状态、owned / observed 身份和受保护的原生审批。</p></div><div class="ac-actions"><button class="btn" data-ac-action="connect">连接</button><button class="btn" data-ac-action="reconnect">重新连接</button><button class="btn" data-ac-action="disconnect">断开</button><button class="btn" id="ac-refresh">刷新</button></div></header>
-        <section class="ac-card ac-connection"><div><h2>Codex App Server</h2><p id="ac-connection" role="status">正在读取连接状态…</p></div></section>
-        <section class="ac-card" id="ac-setup"></section>
-        <p class="ac-error" id="ac-error" role="alert" hidden></p><p class="ac-warning" id="ac-gap" role="status" hidden></p>
-        <section class="ac-card"><h2>待处理事项 <span id="ac-pending-count"></span></h2><p class="ac-muted">仅处理 Vigil 创建的 owned 会话。逐条核对命令或文件变更；批准不会扩展到后续请求。</p><div id="ac-approvals"></div></section>
-        <section class="ac-card"><div class="ac-heading"><h2>任务详情</h2><button class="btn" id="ac-interrupt" hidden>中断受管任务</button></div><div id="ac-detail"></div></section>
-        <section class="ac-card" id="ac-timeline"><div class="ac-heading"><h2>Agent Timeline</h2><span class="ac-muted" id="ac-cursor"></span></div><p id="ac-timeline-state" role="status" aria-live="polite"></p><p class="ac-muted">状态流转、工具开始/完成与思考摘要。历史回放不触发通知；事件窗口之外的记录可能缺失。</p><ol id="ac-events" class="ac-events ac-timeline" aria-label="Agent 活动时间线"></ol></section>
-        <details class="ac-card"><summary>新建受管任务</summary><p class="ac-muted">独立工作目录 · 只读沙箱 · 网络禁用。启动会调用所选 Codex 模型，可能等待审批；此阶段不能答复。</p><form id="ac-create"><label>Codex 模型<select id="ac-model" class="input" required></select></label><label>任务描述<textarea id="ac-prompt" class="input" maxlength="16000" rows="3" required placeholder="描述要交给 Codex 的任务"></textarea></label><button class="btn fill" id="ac-start" type="submit">创建并启动</button><p id="ac-action-result" role="status"></p></form></details>
-        <p class="ac-muted">仅限 loopback 上的管理员连接。独立桌面会话的实时状态不可确认，始终显示 unknown。</p></div>`;
+    function bindPet() {
+      const startBtn = q('ac-pet-start'), stopBtn = q('ac-pet-stop');
+      if (startBtn) startBtn.onclick = () => petAction(() => global.vigil.pet.start(), '启动桌宠');
+      if (stopBtn) stopBtn.onclick = () => petAction(() => global.vigil.pet.stop(), '退出桌宠');
     }
-    function paintOverview(s) {
+    function paint(s) {
       write(q('ac-overview-connection'), connectionHelp(s,busy));
-      const live = codexOverview(s);
-      const agents = [live, ...pendingAgents.map(x => ({...x,status:'pending',statusText:'待接入',current_task:'尚无真实连接',taskCount:null,pending:0,recent_activity:'尚无活动记录',capabilities:['无控制能力']}))];
-      write(q('ac-agent-grid'), agents.map(agentCard).join(''));
-      const connectedCount = live.status === 'online' ? 1 : 0;
-      const offlineCount = live.status === 'disconnected' ? 1 : 0;
-      const unknownCount = connectedCount || offlineCount ? 0 : 1;
-      q('ac-agent-count').textContent = `${connectedCount} 个在线 · ${offlineCount} 个离线 · ${unknownCount} 个状态待确认 · ${pendingAgents.length} 个待接入`;
-      q('ac-nav-count') && (q('ac-nav-count').textContent = String(1 + pendingAgents.length));
       q('ac-overview-updated').textContent = s.updatedAt ? '同步于 ' + fmtTime(s.updatedAt, 'full') : '等待同步…';
       const error = overviewError(s.error || (s.stale && s.ready ? '状态已过期' : ''));
       q('ac-overview-error').hidden = !error; q('ac-overview-error').textContent = error;
-      const recent = (s.owned || []).slice().sort((a,b) => (b.last_activity || 0) - (a.last_activity || 0)).slice(0,4);
-      write(q('ac-recent-tasks'), recent.map(t => `<div class="ac-recent-item"><span class="ac-state ac-${esc(t.status)}">${esc(labels[t.status] || '未知')}</span><strong>${esc(t.model || 'Codex')}</strong><span>${esc(t.last_error || (t.current_operation ? operations[t.current_operation.type] || '执行中' : '受管任务'))}</span><time>${esc(fmtTime(t.last_activity,'full') || '—')}</time></div>`).join('') || '<p class="ac-muted ac-empty">暂无已创建任务</p>');
     }
-    function paintDetail(s) {
-      write(q('ac-setup'), connectionHelp(s,busy));
-      const connected = !s.stale && s.status.connection_status === 'connected';
-      q('ac-connection').textContent = `${s.stale ? '服务不可用 · 状态已过期' : ({connected:'已连接',connecting:'连接中',disconnected:'已断开'}[s.status.connection_status] || '未知')} · ${s.updatedAt ? '最近同步 '+fmtTime(s.updatedAt,'full') : '尚未同步'}`;
-      q('ac-error').hidden = !s.error && !s.status.last_error; q('ac-error').textContent = overviewError(s.error || s.status.last_error || '');
-      q('ac-gap').hidden = !s.notice; q('ac-gap').textContent = s.notice;
-      if (!selected) selected = s.owned[0] ? 'owned:'+s.owned[0].id : null;
-      const list = (rows, owned) => rows.map(t => { const id = owned ? t.id : t.thread_id, key = (owned?'owned:':'observed:')+id, status = owned && !s.stale ? t.status : 'unknown'; return `<button class="ac-task ${selected===key?'on':''}" data-task="${esc(key)}" aria-pressed="${selected===key}"><strong>${owned?'任务':'历史线程'} ${esc(id.slice(0,8))}</strong>${badge(status)}<span>${owned?esc(t.model || 'Codex'):'历史元数据 · 不代表实时状态'}</span></button>`; }).join('') || '<p class="ac-muted ac-empty">暂无记录</p>';
-      write(q('ac-tasks'), list(s.owned,true)); write(q('ac-observed'), list(s.observed,false));
-      const task = s.owned.find(t=>'owned:'+t.id===selected) || s.observed.find(t=>'observed:'+t.thread_id===selected), owned = task && task.ownership==='owned';
-      write(q('ac-detail'), task ? `<div class="ac-heading"><strong>${owned?'受管任务 · owned':'历史观察 · observed'}</strong>${badge(owned && !s.stale ? task.status : 'unknown')}</div><dl class="ac-metrics"><div><dt>最近活动</dt><dd>${esc(owned ? fmtTime(task.last_activity,'full') || '—' : '仅历史读取 '+fmtTime(task.history_read_at,'full'))}</dd></div><div><dt>证据来源</dt><dd>${s.stale ? '缓存 · 已过期' : task.live && task.source==='realtime' ? '实时事件' : '历史元数据 · 无实时进度'}</dd></div>${owned?`<div><dt>当前工具操作</dt><dd>${esc(connected && task.live && task.current_operation ? operations[task.current_operation.type] || '工具操作' : '—')}</dd></div><div><dt>工具失败次数</dt><dd>${Number(task.tool_failures)||0}</dd></div>`:''}<div><dt>历史轮次</dt><dd>${Object.keys(task.turns || {}).length}</dd></div></dl>${owned && task.last_error?`<p class="ac-error">${esc(task.last_error)}</p>`:''}` : '<p class="ac-muted ac-empty">从左侧选择任务；连接后可创建受管任务。</p>');
-      const waiting = s.approvals.filter(a=>a.state==='pending'&&a.ownership==='owned'&&(a.connection_generation||a.generation)===s.status.generation);
-      q('ac-pending-count').textContent = waiting.length ? `(${waiting.length})` : '';
-      write(q('ac-approvals'), s.approvals.filter(a=>a.ownership==='owned'&&['pending','expired','responding','responded','resolved'].includes(a.state)).slice().reverse().map(a=>approvalCard(a,s,connected)).join('') || '<p class="ac-muted ac-empty">暂无待处理事项</p>');
-      bindApprovalControls();
-      paintTimeline(s, task);
-      q('ac-cursor').textContent = 'cursor '+s.cursor;
-      q('ac-interrupt').hidden = !(owned && connected && task.live && ['starting','running','waiting_approval','waiting_input'].includes(task.status)); q('ac-interrupt').disabled = busy;
-      const loggingIn=s.status.runtime?.auth_status==='logging_in';
-      ctx.view.querySelectorAll('[data-ac-action]').forEach(b=>b.disabled=busy||s.stale||(loggingIn&&b.dataset.acAction!=='disconnect')||(b.dataset.acAction==='disconnect'&&!connected&&!loggingIn)); q('ac-observe').disabled=busy||!connected;
-      const model=q('ac-model'), value=model.value; write(model,(s.status.models||[]).map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')); if ([...model.options].some(o=>o.value===value)) model.value=value; else if(s.status.default_model) model.value=s.status.default_model; q('ac-start').disabled=busy||!connected||!model.options.length;
-    }
-    function timelineRow(row) {
-      let content = '';
-      if (row.kind === 'summary') {
-        const parts = row.parts.filter(part=>part.text);
-        content = `<details data-ac-timeline-summary="${esc(row.id)}"><summary>思考摘要${parts.length ? ' · '+parts.length+' 段' : ''}</summary>${row.truncated?'<p class="ac-muted">摘要较长，已截断</p>':''}<div class="ac-timeline-summary-parts">${parts.map((part,i)=>`<section class="ac-reasoning-part"><h3>第 ${i+1} 段</h3><div class="ac-reasoning-text">${esc(part.text)}</div></section>`).join('') || '<p class="ac-muted">摘要生成中…</p>'}</div></details>`;
-      } else if (row.kind === 'state') {
-        content = `<strong>Agent 状态</strong><span>${row.from?esc(labels[row.from]||'未知')+' → ':''}${badge(row.state)}</span>`;
-      } else if (row.kind === 'connection') {
-        content = `<strong>Codex 连接</strong><span>${row.state === 'connected'?'已连接':'已断开'}</span>`;
-      } else if (row.kind === 'tool') {
-        const status = {completed:'完成',failed:'失败',declined:'已拒绝',interrupted:'已中断'}[row.status] || '结束（状态未知）';
-        const info = [row.exitCode!=null?'退出码 '+row.exitCode:null,row.durationMs!=null?'耗时 '+(row.durationMs/1000).toFixed(2)+'s':null].filter(Boolean).join(' · ');
-        content = `<strong>${esc(operations[row.type]||row.type)} · ${row.phase === 'started'?'开始':status}</strong><span>${esc(info)}</span>${row.missingStart?'<small>未收到对应开始事件</small>':''}`;
-      }
-      return `<li class="ac-timeline-${row.kind}"><time>${row.at!=null?esc(fmtTime(row.at,'full')):'—'}</time><div>${content}</div><small>${row.source==='snapshot'?'摘要快照':row.source==='history'?'历史元数据':row.delivery==='history'?'历史回放':'实时事件'}</small></li>`;
-    }
-    function paintTimeline(s, task) {
-      const view = q('ac-events'), sameTask = summaryTaskKey === selected;
-      const open = new Set(sameTask ? [...view.querySelectorAll('details[data-ac-timeline-summary][open]')].map(x=>x.dataset.acTimelineSummary) : []);
-      const focused = sameTask && document.activeElement.closest && document.activeElement.closest('details[data-ac-timeline-summary]');
-      const focusKey = focused && focused.dataset.acTimelineSummary;
-      summaryTaskKey = selected;
-      const scroll = view.scrollTop;
-      const rows = AgentTimeline.build(s.events, task);
-      write(view, rows.map(timelineRow).join('') || '<li class="ac-muted">暂无可用活动；历史观察仅提供元数据。</li>');
-      view.querySelectorAll('details[data-ac-timeline-summary]').forEach(el=>{
-        el.open = open.has(el.dataset.acTimelineSummary);
-        if (focusKey === el.dataset.acTimelineSummary) el.querySelector('summary').focus({preventScroll:true});
-      });
-      view.scrollTop = scroll;
-      const connection = s.stale ? '状态已过期' : ({connected:'已连接',connecting:'连接中',disconnected:'已断开'}[s.status.connection_status] || '未知');
-      q('ac-timeline-state').innerHTML = `连接：${esc(connection)} · 任务：${badge(task && task.ownership==='owned' && !s.stale ? task.status : 'unknown')}${task && task.ownership==='owned' && !rows.some(row=>row.kind==='summary')?' · 暂无思考摘要':''}`;
-    }
-    function paint(s) { paintOverview(s); if (detailOpen) paintDetail(s); }
-    async function action(fn) { if(busy||disposed)return; busy=true; paint(controller.state); try{const r=API.pick(await fn());if(!r.ok)throw new Error(overviewError(r._err||r.err)||'操作失败');}catch(e){if(!disposed){const result=q('ac-action-result');if(result)result.textContent=e.message;toast(e.message);}}finally{busy=false;await controller.poll();} }
-    function bindApprovalControls() {
-      ctx.view.querySelectorAll('[data-ac-respond]').forEach(button=>button.onclick=()=>{const a=controller.state.approvals.find(x=>x.id===button.dataset.approval);if(!a)return;const identity={connection:a.connection,connection_generation:a.connection_generation||a.generation,thread_id:a.thread_id,turn_id:a.turn_id,request_id:a.request_id,item_id:a.item_id};action(()=>API.post('/api/agent-center/approvals/'+encodeURIComponent(a.id)+'/respond',{...identity,action:button.dataset.acRespond}));});
-      ctx.view.querySelectorAll('[data-ac-answer]').forEach(form=>form.onsubmit=e=>{e.preventDefault();const a=controller.state.approvals.find(x=>x.id===form.dataset.acAnswer);if(!a)return;const answers={};for(const question of(a.risk?.questions||[])){const chosen=[...form.querySelectorAll(`[name="answer-${CSS.escape(question.id)}"]:checked`)].map(x=>x.value);const other=form.querySelector(`[name="other-${CSS.escape(question.id)}"]`);if(other&&other.value.trim())chosen.push(other.value.trim());answers[question.id]=chosen;}const identity={connection:a.connection,connection_generation:a.connection_generation||a.generation,thread_id:a.thread_id,turn_id:a.turn_id,request_id:a.request_id,item_id:a.item_id};action(()=>API.post('/api/agent-center/approvals/'+encodeURIComponent(a.id)+'/respond',{...identity,action:'answer',answers}));});
-    }
-    const selectTask=e=>{const b=e.target.closest('[data-task]');if(b){selected=b.dataset.task;paint(controller.state);}};
-    const onViewClick=e=>{const help=e.target.closest('[data-ac-help]');if(help){const kind=help.dataset.acHelp;if(help.disabled)return;if(kind==='install'||kind==='auth'){global.vigil.openExternal(kind==='install'?'https://developers.openai.com/codex/cli':'https://developers.openai.com/codex/auth').catch(()=>toast('无法打开浏览器，请检查系统默认浏览器。'));}else action(()=>API.post('/api/agent-center/'+kind,{}));return;}const card=e.target.closest('[data-ac-agent-card]');if(card){if(card.dataset.acAgentCard==='codex')openCodex();else toast('该 Agent 尚未接入可信 Adapter，当前没有在线状态、任务或控制能力。',4500);}};
-    const onViewKey=e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-ac-agent-card]')){e.preventDefault();e.target.closest('[data-ac-agent-card]').click();}};
-    function openCodex(){if(detailOpen)return;detailOpen=true;q('ac-overview').hidden=true;const shell=q('ac-agent-detail-shell');shell.hidden=false;shell.innerHTML=detailTemplate();renderPanelDetail();ctx.topbar.querySelector('h1').textContent='Codex 管理台';bindDetail();paint(controller.state);}
-    function closeDetail(){if(!detailOpen)return;detailOpen=false;q('ac-agent-detail-shell').hidden=true;q('ac-agent-detail-shell').innerHTML='';q('ac-overview').hidden=false;renderPanelOverview();ctx.topbar.querySelector('h1').textContent='Agent 工作室';paint(controller.state);}
-    function bindDetail(){q('ac-back').onclick=closeDetail;q('ac-back-panel').onclick=closeDetail;ctx.view.querySelectorAll('[data-ac-action]').forEach(b=>b.onclick=()=>action(()=>API.post('/api/agent-center/'+b.dataset.acAction,{})));q('ac-refresh').onclick=()=>controller.poll();q('ac-observe').onclick=()=>action(()=>API.get('/api/agent-center/observed'));q('ac-interrupt').onclick=()=>action(()=>API.post('/api/agent-center/tasks/'+encodeURIComponent(selected.slice(6))+'/interrupt',{}));q('ac-create').onsubmit=e=>{e.preventDefault();const text=q('ac-prompt').value.trim(),model=q('ac-model').value;if(!text||!model)return;action(async()=>{const created=API.pick(await API.post('/api/agent-center/tasks',{model}));if(!created.ok)return{ok:false,json:created};selected='owned:'+created.id;const r=await API.post('/api/agent-center/tasks/'+encodeURIComponent(created.id)+'/turns',{text});if(r.ok&&!disposed){q('ac-prompt').value='';q('ac-action-result').textContent='受管任务已启动';}return r;});};}
-    q('ac-overview-refresh').onclick=()=>controller.poll();q('ac-add-agent').onclick=()=>toast('通用 Agent Adapter 尚未开放；请先接入可信的状态、任务和权限接口。',4500);ctx.view.addEventListener('click',onViewClick);ctx.view.addEventListener('keydown',onViewKey);ctx.panel.addEventListener('click',selectTask);listeners.add(paint);ctx.onDispose(()=>{disposed=true;listeners.delete(paint);ctx.view.removeEventListener('click',onViewClick);ctx.view.removeEventListener('keydown',onViewKey);ctx.panel.removeEventListener('click',selectTask);});paint(controller.state);start();
-    if(!global.vigil){q('ac-overview-error').hidden=false;q('ac-overview-error').textContent=API.runtime.preview?'浏览器预览：Agent Center 需要 Electron preload 和本机管理员连接。':'Electron preload 未加载，Agent Center IPC 不可用。';}
+    const onViewClick=e=>{const help=e.target.closest('[data-ac-help]');if(help){const kind=help.dataset.acHelp;if(help.disabled)return;if(kind==='install'||kind==='auth'){global.vigil.openExternal(kind==='install'?'https://developers.openai.com/codex/cli':'https://developers.openai.com/codex/auth').catch(()=>toast('无法打开浏览器，请检查系统默认浏览器。'));}else{busy=true;API.post('/api/agent-center/'+kind,{}).then(API.pick).then(r=>{if(!r.ok)throw new Error(overviewError(r._err||r.err)||'操作失败');}).catch(err=>toast(err.message||'操作失败')).finally(async()=>{busy=false;await controller.poll();});}}};
+    ctx.view.addEventListener('click',onViewClick);
+    listeners.add(paint); paint(controller.state); start();
+    refreshPet(); petTimer = setInterval(refreshPet, 5000);
+    ctx.onDispose(()=>{disposed=true;listeners.delete(paint);ctx.view.removeEventListener('click',onViewClick);clearInterval(petTimer);});
+    if(!global.vigil){q('ac-overview-error').hidden=false;q('ac-overview-error').textContent=API.runtime.preview?'浏览器预览：Agent Center 需要 Electron preload 和本机管理员连接。':'Electron preload 未加载，桌宠与 Agent Center IPC 不可用。';}
   }
 
   global.VigilAgentCenter = {start,controller};

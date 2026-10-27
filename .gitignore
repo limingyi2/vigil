@@ -262,3 +262,5 @@ brain/plugins/_pending_restart.json
 pytest-cache-files-*/
 .host_started
 brain/config/plugin_market_cache.json
+docs/agent-center-codex-p2-evidence/
+.rea-tmp/

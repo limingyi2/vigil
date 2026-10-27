@@ -578,6 +578,19 @@ def all_specs(brain=None, src=None):
                 tools.append(_spec)
     except Exception:
         pass
+    # 专家工具白名单：该渠道绑定的专家包声明了 tools 时，只保留白名单内的
+    # 工具。**只能收窄，不能放开** —— 专家是换装不是提权，白名单里写了
+    # 渠道原本没有的工具也放不出来（不在这里查，dispatch 还有一道）。
+    try:
+        import expert_store
+        _allow = expert_store.tool_allowlist(
+            getattr(brain, "api", None) or {}, src)
+        if _allow is not None:
+            def _tool_name(item):
+                return str(((item.get("function") or {}).get("name") or ""))
+            tools = [t for t in tools if _tool_name(t) in _allow]
+    except Exception:
+        pass
     return tools
 
 

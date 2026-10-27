@@ -100,3 +100,10 @@ body.vwp-active[data-vigil-page="agent-center"] { --ok:#67d79e;--warn:#edbe72;--
 .ac-back-inline:hover,.ac-back-panel:hover { color:var(--text); }
 @media(max-width:1120px) { .ac-agent-grid { grid-template-columns:repeat(2,minmax(220px,1fr)); } }
 @media(max-width:760px) { .ac-view { padding:16px; }.ac-card { padding:16px; }.ac-workspace-hero,.ac-detail-header { align-items:flex-start; flex-direction:column; }.ac-hero-actions { justify-content:flex-start; }.ac-agent-grid,.ac-recent-list { grid-template-columns:1fr; }.ac-agent-card { padding:16px; }.ac-topbar>span:not(.sp):not(.tnum) { display:none; } }
+
+/* 桌宠控制卡（pet/app sidecar） */
+.ac-pet-chip { display:inline-flex; align-items:center; gap:5px; flex:none; padding:3px 7px; border:1px solid var(--line); border-radius:999px; color:var(--text-3); font-size:11px; white-space:nowrap; }
+.ac-pet-chip i { width:6px; height:6px; border-radius:50%; background:currentColor; }
+.ac-pet-running { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 45%,var(--line)); }
+.ac-pet-starting { color:var(--warn); }
+.ac-pet-unavailable { color:var(--err); }

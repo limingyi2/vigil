@@ -2254,14 +2254,17 @@ def _run_coding(rid, owner, cfg, brain=None, sender_id='', workflow_scope=None):
             return result
 
         def plan_provider(request, snapshot):
-            # Reuse planner.py's single complexity heuristic for telemetry and
-            # policy alignment, while keeping execution in this agent run.  We
-            # intentionally do not call planner.plan(), whose legacy chat path
-            # has a five-step response format and no repair state machine.
+            # Reuse the shared two-way entry decision (task_intent) for
+            # telemetry and policy alignment, while keeping execution in this
+            # agent run.  We intentionally do not call planner.plan(), whose
+            # legacy chat path has a five-step response format and no repair
+            # state machine.
             try:
-                import planner as legacy_planner
-                decision, why = legacy_planner.plan_decision(request)
-                persist('coding_planning_decision', {'would_plan': bool(decision), 'why': why})
+                import task_intent
+                decision = task_intent.classify(request)
+                persist('coding_planning_decision', {
+                    'would_plan': decision.get('task_category') == 'complex_execution',
+                    'why': str(decision.get('reason') or '')})
             except Exception:
                 pass
             return ask('规划器', '为任务生成结构化计划。字段为 complexity、rationale、steps；每步含 id、title、description、dependencies、acceptance、verification。不要超过 20 步。',
