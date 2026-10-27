@@ -1,498 +1,80 @@
-> 详细使用与架构参考。返回 [Vigil 首页](../README.md)。
+# 使用说明
 
-﻿# Vigil
+本文对应 `dev` 分支和当前桌面安装版。安装、更新和源码入口见 [项目主页](../README.md)；目录与权限说明见 [架构](ARCHITECTURE.md)。
 
-Vigil 是以桌面端为中心的独立 Agent。Electron 客户端与本地 Brain 组成完整运行端，
-负责对话、工具执行、插件和本地数据。记忆、人设、会话、任务都在这台机器上，
-**不存在需要连上的云端大脑**；联网只用于调用远程模型 API 和下载插件包。
-模型可通过 OpenAI 兼容接口接入本机 Ollama 或远程模型服务。
-Core 运行上下文仅为本机 PC。微信 Bridge 源码仅作归档，未来通过独立扩展接入。
-完全离线对话需要本机模型——这与"要不要连云端"无关，因为已经没有云端大脑了。
+## 开始使用
 
-**人格与项目无关。** 人格是 `brain/config/personas/*.json` 里各自定义的配置，
-仓库不预置角色。项目叫 Vigil，人格叫什么是人格自己的事。
+从 [GitHub Releases](https://github.com/limingyi2/vigil/releases/latest) 下载 Windows 安装程序。启动客户端后，在设置中填写模型接口、模型名与 API Key。客户端会管理随包 Brain，不需要另外部署云端服务。
 
-技术栈：Python 3.12 · Electron（桌面客户端）· PyQt6（桌宠，旧版）·
-Android WebView（手机）· Node（JS 技能宿主）· LLM 走 OpenAI 兼容接口 ·
-语音走阿里云百炼
+源码运行时先准备 Python 环境和本地配置：
 
----
-
-## 目录
-
-| 章节 | 内容 |
-|---|---|
-| [架构总览](#架构总览) | 进程怎么分工、数据归谁 |
-| [装起来跑通](#装起来跑通) | 各端怎么启动 |
-| [运行形态与数据归属](#运行形态与数据归属) | 数据放哪、为什么没有同步链路 |
-| [配 API 与模型](#配-api-与模型) | 接哪个服务商、密钥怎么管 |
-| [说话多少与搭话](#说话多少与搭话) | 话痨度滑条与 1 档只@ |
-| [桌面客户端](#桌面客户端) | Electron 控制台有什么、怎么发版 |
-| [写插件](#写插件) | 加一个工具/一个功能 |
-| [装技能（JS）](#装技能js) | 另一条通道 |
-| [本地知识库](#本地知识库) | 让她翻你自己的文档 |
-| [改人设](#改人设) | 人格文件怎么改 |
-| [功能开关](#功能开关) | 按渠道开停 |
-| [模块表](#模块表) | 每个文件负责什么 |
-| [构建 APK](#构建-apk) | 打包手机端 |
-| [测试](#测试) | 跑用例 |
-| [Agent 评测记录与对照数据](evaluation/README.md) | Planner A/B、Qwen 实战、原始轨迹与复测前后 |
-| [最新测试报告](../测试/README.md) | Qwen 六题实战、资源消耗与本地知识库验证 |
-
----
-
-## 架构总览
-
-```mermaid
-flowchart LR
-  Desktop[Electron 桌面端] <--> Local[本地 Brain / Agent 运行时]
-  Local --> Model[本机 Ollama 或独立配置的模型 API]
-  Local --> Data[本地配置、记忆、知识库与工具]
-  Local --> Caps[能力注册表：权限与审批]
-  Caps --> Ext[插件 / 技能 / 本地工具]
-  Mobile[手机等受限设备] -.-> Local
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r brain/requirements.txt
+Copy-Item brain/config/config.example.json brain/config/config.json
+.\.venv\Scripts\python.exe brain/server.py
 ```
 
-运行原则：
+在另一个终端启动 Electron：
 
-1. **桌面端独立运行**。本地 Brain 保存本机配置和数据，提供对话与工具执行。
-   Electron 负责交互与本机能力，两者共同构成桌面 Agent。
-2. **没有云端权威源**。P8.1 起撤掉了"云端维护同步版本权威"那套：同步推送线程、
-   拉取循环都不再启动，配置里残留的 `sync.*` 无人读取。微信渠道与双 Brain 转发
-   返回 410 退役，Bridge 源码只在归档目录。
-3. **模型连接单独配置**。本机 Ollama 可支持离线推理；采用远程模型 API 时，
-   生成回答需要相应网络连接。设备凭据只用于连接这台机器上的 Brain。
-
----
-
-## 装起来跑通
-
-### 本地 Brain（源码运行）
-
-```bash
-pip install -r brain/requirements.txt
-cp brain/config/config.example.json brain/config/config.json   # 填模型配置
-python brain/server.py                                          # 挑空闲端口，回落到 :8788
+```powershell
+cd client
+npm ci
+npm start
 ```
 
-`brain_token` 没配时接口只接受本机回环。局域网或远程设备要连就得配，配完用
-`Authorization: Bearer <token>` 走请求头。
-
-`fastembed` 第一次跑会下载 bge-m3 模型（记忆检索用），需要联网。
+源码调试时根据 Brain 的启动日志配置本地连接。托管 Brain 使用动态端口，不应将它与独立运行的默认 `8788` 端口混用。详见 [客户端开发说明](../client/README.md)。
 
-### 桌面客户端（Electron）
-
-```bash
-cd client && npm install && npm start
-```
+## 模型与对话
 
-启动后客户端把 PyInstaller 打包的 `vigil-brain.exe`（sidecar）当子进程养起来：
-选空闲端口、注入 `VIGIL_PORT`、验证 API 就绪后进入工作台。源码直跑 Brain 时，
-客户端会探测到已运行的实例而不是再起一个。
+模型配置包含接口地址、模型名与凭据。服务商提供的模型是否支持图片、工具调用和思考内容，需要分别确认。界面显示的思考区只包含服务商实际返回的内容。
 
-### 手机端
+远程模型请求会将本轮上下文发送给相应服务商。配置本机模型后，能否离线使用还取决于模型、嵌入后端和当前任务依赖的工具。
 
-```bash
-python deploy/rebuild_apk.py
-```
-
-装好后「我 → 设置」里填服务地址与 token，只需填一次。
-
-### 旧版桌宠（PyQt6）
+会话列表保存已有对话，新建对话使用独立会话。图片通过当前模型的多模态输入传递。运行中的任务可取消；取消后已启动的外部操作不一定能立即停止。
 
-`pet/` 还在，维护优先级已让位给 Electron 客户端。
+## 专家与人设
 
----
+在人格与语气页面选择代码或写作专家，启用后从下一轮请求开始生效。卸下专家后恢复原人设，对话历史保留。专家绑定保存在配置中，重启后仍可使用。
 
-## 运行形态与数据归属
-
-| 能力 | 在哪 |
-|---|---|
-| 本机对话 / 工具 / 配置 / 记忆 | 本地 Brain；单机完整可用 |
-| 跨设备同步 | **没有**。本地是唯一权威源，改动即落盘，不存在"上云才算存住" |
-| 微信与双 Brain 转发 | 已退役，旧请求返回 410；Bridge 源码在 `wechat-bridge/archive/` |
-| 手机等远程设备 | 以受限设备角色连同一台 Brain（`devices.json` 只存令牌哈希），权限按白名单路径走 |
-| 工具与风险分级 | 按只读 / 代理 / 写入三档分级；有副作用先进审批卡 |
+专家包位于 Brain 数据根目录的 `config/experts/<key>/`，由 `expert.json` 和 `SKILL.md` 组成。默认包会随安装程序提供，已有用户包不会被升级覆盖。专家调整提示词和工具范围，不会增加本机权限或代替第三方账户登录。
 
-- **残留的 `sync_client.py` / `sync_outbox.py` 不会被启动**：推送线程和拉取循环
-  都没有调用方，`record()` 恒为 no-op。它们保留只为兼容旧数据与历史接口。
-  配置里的 `sync.*` 无人读取，`cloud_token` 按"已泄露"处理——轮换见
-  [运维手册](OPERATIONS.md#密钥与凭据)。
-- **记忆管理**在客户端「人格与人格 → 记忆与约定」：分区浏览、行内改删，
-  走 `/api/memory/*`，改动立即落盘。
-
-## 配 API 与模型
-
-改的是 `brain/config/config.json`（从 `config.example.json` 复制）。也可以在
-客户端「设置 → 模型与服务商」或 App「设置 → 模型」里改，不用重启。
-
-```json
-{
-  "provider": "siliconflow",
-  "api_base": "https://api.siliconflow.cn/v1",
-  "api_key": "<你的 key>",
-  "api_keys": { "siliconflow": "<这家的 key>" },
-  "chat": "deepseek-ai/DeepSeek-V4-Flash",
-  "vision": "Qwen/Qwen3-VL-30B-A3B-Instruct"
-}
-```
-
-- `chat` 对话模型，**必填**；`vision` / `image` / `audio` 留空就是不启用
-- **密钥按家各存各的**（`api_keys`）：换服务商时自动换上那一把，切回存过
-  密钥的老家不用重填。客户端会在服务商下拉里标（已存密钥），密钥框下面
-  会显示当前这把属于哪家
-- 服务端预拉模型清单时按 `provider` 参数认领密钥：显式传入 > 这家自己存的 >
-  当前那把，三级回落。拿别家的 key 去试拉只会 401，这是"换了服务商模型
-  列表不变"的老坑，已钉死（见 `tests/test_model_provider_switch.py`）
-- 老配置没有 `provider`/`api_keys` 字段也没关系：启动时按接口地址反推并
-  自动登记（`model_hub.adopt_current_key`），幂等
-
-### 加一家服务商
-
-只改 `brain/model_hub.py` 一处：
-
-```python
-PROVIDERS = {
-    "siliconflow": {"name": "硅基流动", "base": "https://api.siliconflow.cn/v1",
-                    "models_doc": "https://docs.siliconflow.cn"},
-    "xiaomi":      {"name": "小米 MiMo",  "base": "https://api.xiaomimimo.com/v1",
-                    "models_doc": "https://mimo.mi.com/docs"},
-    "custom":      {"name": "自定义",     "base": "", "models_doc": ""},
-}
-```
-
-加完重启，客户端和 App 的服务商列表里自动多一家 —— 前端按服务端返回的
-`providers` 渲染，不用改前端代码。选好服务商：接口地址自动带出、模型清单
-自动拉；本地部署（Ollama / LM Studio / vllm）选「自定义」手填地址。
-
-模型清单由服务端问服务商的 `/v1/models` 拉，按名字关键字自动分成
-对话 / 看图 / 生图 / 语音四栏（视觉版有正则兜底：`glm-<版本号>v` 这种
-命名子串匹配钉不住）；拉不到就退回内置清单，界面会标明来源。
-
-> 兜底清单里的模型 id 要照实测写，照文档抄会给出选不上的项。
-> "思考默认开启"的模型当看图模型时 `max_tokens` 要给大，不然推理把
-> token 吃光、正文为空，看着像"不支持图"。
-
-## 说话多少与搭话
-
-`brain/chatty.py`：话痨度 1–10，按渠道（App / 微信私聊 / 微信群 / 本机）
-各存一份，客户端「能力 → 功能开关」里是滑条，App/微信渠道的份自本机 Brain
-的各渠道配置读取（微信渠道已退役，实际只在本机生效）。
-
-- 2 档以上：搭话判定照旧，判定不过再按 `(档位-1)/9 × 0.45` 的概率救回
-- 旧版 `gate` 插件曾提供“只在被 @ 时回复”的硬闸；该可选插件已在 P21.2 下线，
-  不会随新客户端安装，也不会在升级时从旧源码目录复活。
-
-## 桌面客户端
-
-`client/`，Electron。功能面：
-
-- **工作台**：聊天（流式）、聊天输入框旁的盾牌面板管本地操控授权
-- **数据**：仅查看本机 PC 的历史、长期记忆与知识库。旧微信数据保留，不自动读入或覆盖。
-- **人格与记忆**：本机人设编辑与切换、记忆分区管理、知识库导入。
-- **能力与扩展**：功能开关（滑条按渠道）、本地操控（她在你这台电脑上干活，
-  全程确认气泡 + 操作日志 + 撤销）、生活面板、Brain Python 插件管理。
-  现有 Python 插件机制不是 Electron 桌面扩展安装器，也不提供远程 Bridge 生命周期管理。
-- **连接与系统**：本地大脑状态/重启、模型与服务商、设备配对、危险操作
-- **Wallpaper Engine**：使用原来的 Brain Python 插件，从「能力与扩展 → 插件市场」安装；插件源不随客户端或 Brain 安装包内置，下载后的插件独立存放在运行时数据目录。
-- **常驻**：托盘图标（左键显示/隐藏，右键退出）、推送更新
-
-### 推送更新（桌面客户端自己的一套）
-
-发版用 `scripts/build_release.py`（一次出 Brain + 客户端，正式包要求工作区干净）：
-
-1. 改 `client/version.json` 的 `code` +1 和 `ver`（`package.json`、lock 保持一致，构建脚本会校验）
-2. `.\scripts\build_client.bat` → 产出 `client/dist-release/Kestrel.Setup.<版本>.exe` 与 `release-manifest.json`
-3. 在 GitHub Releases 新建 release，**exe、release-manifest.json、contents.json 三件一起传**
-4. 客户端启动 15 秒、每小时各查一次 GitHub Releases（`public-updates.js`）；发现新版弹窗询问，同意后下载 → sha256 校验 → 起安装向导覆盖装
-
-历史教训：release 只传 manifest 不传 exe，访客和自动更新都拿不到包——上传后
-务必在 assets 列表里确认三件都在。
-
-## 写插件
-
-Vigil 有三种扩展入口：Python 后端插件、目录型市场插件、Node 侧 JS 技能。
-Python 插件可声明工具、路由、提示词钩子和前端资源，但必须通过明确的市场/安装流程进入运行时。
-`brain/plugins/` 只保留历史源码和升级迁移来源；新客户端不扫描或打包这个目录。
-Brain 插件市场默认从独立 `vigil-plugins` GitHub 仓库的 `market.json` 读取；GitHub Raw 裸连
-不可达时自动回退到 jsDelivr 等公开镜像（清单与制品都先过 SHA-256 强校验，镜像不引入信任风险）。
-如果在运行目录的
-`config/config.json` 中显式配置 `market_repo`，则改用该本地 Git 仓库并通过
-fast-forward-only `git pull` 刷新。市场制品先校验 ZIP SHA-256、Manifest、协议、权限与逐文件 SHA-256，再由 Brain 安装器做
-静态结构检查和事务提交。市场插件安装到 `brain/data/installed_plugins/`，不会写进跟踪源码的
-`brain/plugins/`，也不会被后续 GitHub 源码提交或正式安装包收录。Wallpaper 是普通 Brain
-Python 插件，不是 Electron 桌面扩展；具体路径与边界见
-[`docs/04-插件市场使用指南.md`](04-插件市场使用指南.md)。
+## 本机工具
 
-插件开发源码与安装包应放在仓库目录之外；通过插件市场或审核安装流程安装到 `data/installed_plugins/`。
-把新代码放入 `brain/plugins/` 不会使它生效，也不会让它随客户端发布。
+本机工具由 Electron 执行。使用前选择只读、默认或全部允许等权限模式，并检查可访问路径与命令设置。是否弹出确认取决于所选模式和具体操作。
 
-最小可用的插件：
+工具结果区分执行成功、失败、拒绝、等待授权和结果未知。出现超时或连接中断时，应先核查实际状态，避免重复执行可能有副作用的操作。
 
-```python
-# hello.py（外部插件包源码；完成结构检查后显式打包并安装）
-NAME = "hello"
-DESC = "打招呼"
+## 知识库与记忆
 
-def on_turn_in(ctx):
-    """每轮聊天前跑一次。返回字符串会拼进系统提示。"""
-    return "现在是新的一天，记得主动问好。"
+知识库引擎支持导入可读取的文件或目录。管理页面仍调用 kb 插件接口，需要先明确安装并启用对应插件；核心的 knowledge_base 能力与引擎不依赖该页面。正文、全文索引和向量记录通过主存储管理，检索使用关键词和可选的向量结果融合。语义检索关闭或嵌入服务不可用时，关键词检索仍可工作。
 
-def prompt(ctx, native):
-    """往提示词里加内容。native=True 表示主链路在用原生 function calling。"""
-    return ""
+记忆、会话历史和知识库是不同数据来源。当前长期记忆使用主仓库，聊天历史仍按会话等上下文隔离。记忆星图用于只读查看，不会替代数据库备份。检索方式见 [混合检索说明](RAG混合检索系统设计与优化.md)。
 
-def on_reply(reply):
-    """她回完话之后跑一次。"""
-    pass
-```
+## 插件、技能与 Creator
 
-### 四个钩子
+可选插件通过插件市场、安装清单链接或显式安装操作进入 `data/installed_plugins/`。把源码放进 `brain/plugins/` 不会自动安装，也不会使其进入正式包。
 
-| 钩子 | 什么时候跑 | 能做什么 |
-|---|---|---|
-| `on_turn_in` | 每轮聊天前 | 返回文本拼进系统提示；`ctx.veto(why)` 可以**否决这轮**（不问她） |
-| `prompt(ctx, native)` | 组装提示词时 | 追加内容。`native` 区分主链路是原生 FC 还是标签解析 |
-| `on_reply` | 她回完话 | 后处理，比如记账、发通知 |
-| `start(brain)` | 服务启动时 | 拿 brain 引用，起自己的线程 |
+按链接安装需要可解析的清单及文件哈希；不带清单的裸 ZIP 直链不能替代安装条目。来源与权限审批结果以安装回执为准。
 
-### 加一个工具（让她能调）
+JavaScript 技能由独立宿主执行。指令型 `SKILL.md` 是任务指南及配套资源，导入后不会自动获得执行脚本或访问账户的权限。
 
-光有钩子只能改行为。要让她**主动调用**，得给工具声明 schema：
+Creator 生成的内容先进入草稿或作业。生成成功、安装成功和实际功能可用需要分别确认。扩展开发资料见 [插件说明](04-大脑/插件系统.md)、[JS 技能](04-大脑/JS技能支持.md) 与 [P9_extension_protocol.md](P9_extension_protocol.md)。
 
-```python
-NAME = "weather"
-DESC = "查天气"
+## 视频与外部应用
 
-TOOL_SPECS = [{
-    "name": "weather",
-    "description": "查询某个城市的实时天气",
-    "parameters": {
-        "type": "object",
-        "properties": {"city": {"type": "string", "description": "城市名"}},
-        "required": ["city"],
-    },
-}]
+视频工作台使用系统文件对话框选片，经带票据的本地媒体通道播放。必要的格式转换依赖 ffmpeg。问答与视觉检索还需要配置 EgoAgent 环境，详见 [视频接入说明](EGOAGENT_VIGIL_INTEGRATION.md)。
 
-def invoke(name, args):
-    """真正执行。args 是 dict。返回字符串，或 dict（会被转成 JSON）。"""
-    if name != "weather":
-        return None
-    return fetch_weather(args.get("city"))      # 你的实现
-```
+MCP、CLI 和指令型 Skill 的注册、验证与调用见 [外部应用及本地补丁](local-integrations-and-patches.md)。保存配置只表示已注册，连接验证成功后才表示服务可访问；账户登录和授权仍由对应应用处理。
 
-🔴 **`TOOL_SPECS` 不能少**。只声明 `TOOLS` + `TOOL_HELP` 走的是标签解析那条
-兼容路径；主链路读的是请求里的 `tools` 字段，没有 schema 的工具模型看不见。
-症状是"装了、列表里有、开关能点、就是不用" —— 很难查。
+## 更新与数据
 
-### 声明功能开关
+客户端从 GitHub Releases 读取更新。左下角按钮显示更新和下载状态，下载后再由用户发起安装。关于页也可检查更新。
 
-```python
-FEATURE = "weather"       # 受功能开关和渠道开关管
-```
+安装版数据保存在客户端用户目录的 `brain/` 下。备份前完整退出客户端，再备份 `config/` 与 `data/`。准确目录、恢复方式与日志位置见 [运维手册](OPERATIONS.md)。
 
-不声明的话它在所有渠道都开着。
+桌宠与相关 Agent Center 改版保留在 `zk` 分支，本次公开安装包不包含桌宠。历史手机、微信和陪伴功能文档不作为当前安装步骤。
 
-### 装 / 卸
+## 问题反馈
 
-面板「插件」页拖个 `.zip` 就能装。zip 里只允许 `.py` / `.json` / `.md` / `.txt`，
-且只能有一个 `.py`。
-
-### 哪些 import 会失败
-
-```python
-from config import X          # ❌ brain/ 下没有 config.py
-from runtime import CFG_PATH  # ✅ 配置路径从这儿拿
-from paths import PLUGIN_DATA_DIR   # ✅ 插件自己的持久化目录
-```
-
-🔴 这类错**模块能 import、加载器也验得过** —— 错在函数体里的 import 又被
-`except Exception` 吞掉，所以插件静默不干活、零日志。写完直接调一次那个函数
-把 import 逼出来。
-
-详见 [`docs/04-大脑/插件系统.md`](04-大脑/插件系统.md)。
-
----
-
-## 装技能（JS）
-
-Python 插件是 import 进大脑进程的。外面能下到的技能包（QQ Agent 等用的那套，
-`skill.json` + `index.js`）是 JavaScript，塞进同一个上传口只会装上一个必然
-import 失败的假条目，所以另开一条通道：
-
-```
-Python 插件  brain/plugins/*.py     → import 进大脑进程
-JS 技能      brain/skill_host/      → Node 侧跑，大脑用 HTTP 调
-```
-
-模型用两个固定入口，不把每个技能名硬编进工具清单：
-
-- `skill_list` —— 看有什么
-- `skill_call` —— 调其中一个
-
-宿主默认只监听 `127.0.0.1:8790`，先起它：
-
-```bash
-cd brain/skill_host && node server.js
-```
-
-技能包形状是 `包名/index.js` 或 `包名/包名/index.js`。
-详见 [`docs/04-大脑/JS技能支持.md`](04-大脑/JS技能支持.md)。
-
----
-
-## 本地知识库
-
-知识库引擎位于 `brain/kb/`；本地知识库页面、API、聊天自动检索和 `kb_search` 工具由
-可选插件 `kb` 接线。新安装需要等待独立市场制品；旧版升级会迁移旧插件副本。插件安装后，
-索引与文档块存储在
-`brain/data/kb/`，按「人设 × 渠道」分区。打包运行时的数据位于本地 Brain 可执行文件
-旁的 `data/kb/`；设置 `VIGIL_HOME` 时按该目录定位。
-检索需要启用知识库并通过导入接口建立索引，直接复制文件到索引目录不会自动入库。
-嵌入后端可配置为 API、本地 bge-m3 或 fastembed；具体依赖与实际效果取决于所选后端。
-
-```bash
-# 导入一个文件或整个目录
-curl -X POST http://127.0.0.1:8788/api/plugin/kb/ingest \
-  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"path": "D:/文档/手册"}'
-
-# 看她能查到什么（门槛设 0，看全貌）
-curl "http://127.0.0.1:8788/api/plugin/kb/search?q=怎么配&k=3" \
-  -H "Authorization: Bearer <token>"
-```
-
-她聊天时每轮自动检索一次并注入命中的段落（门槛 0.45，宁可不给也不塞无关内容），
-也可以自己调 `kb_search` 主动去查。嫌每轮多一次 embedding 就把 `inject` 关掉，
-只留工具。
-
-接口都在 `/api/plugin/kb/*`，靠插件机制接线，**没改 `server.py`**。
-搭建说明见 [`docs/archive/本地知识库.md`](archive/本地知识库.md)，最新验证见
-[`测试/本地知识库验证报告.md`](../测试/本地知识库验证报告.md)。
-
----
-
-## 改人设
-
-人设是 `brain/config/personas/` 下的 json，**仓库不预置角色**，自己写。
-
-```json
-{
-  "name": "麦麦",
-  "nicknames": ["麦麦"],
-  "personality": "说话简短，会开玩笑",
-  "relation": "女朋友",
-  "notes": "这里可以粘一整份人设，会整段拼进系统提示"
-}
-```
-
-- `name` 她自称什么（也是"叫名字"判定的兜底）
-- `nicknames` 群里 @ 她、或者直接叫名字时，靠这个判断是不是在叫她
-- `notes` 整份人设正文，粘进去就行
-
-本地 Brain 与客户端共同使用本机人设配置，编辑与切换在本机立即生效。
-
-### 按渠道绑不同人设
-
-PC 默认使用 `persona_file`；兼容已有 `persona_by_src.pc` 覆盖。人设页面只管理 PC，“应用”会更新 `persona_file` 并取消旧 PC 覆盖，其他渠道配置原样保留。换人设会换记忆分区：
-
-🔴 记忆、摘要、存档都按 `人设key.渠道` 算。换成另一个 key 就是**一片空白**
-——旧记忆还在，只是不会再被检索到。所以换人格前想清楚。
-
-## 功能开关
-
-`brain/features.py`，按「人设 × 渠道」存。客户端和 App 都能点，改完即时生效。
-
-- 全局 `features` 段 = 任何渠道都没覆盖时的初值
-- `features_by_src.<渠道>` = 该渠道的覆盖
-
-⚠️ 读写必须同一套规则。历史上读和写不一致过（界面显示已关、运行时其实全开），
-最难排查的一类坑。
-
-## 模块表
-
-| 模块 | 作用 |
-|---|---|
-| `brain/server.py` | HTTP 服务与全部路由：装配大脑、聊天管线、推送更新源 |
-| `brain/brain.py` | 决策核心：上下文组装、人设注入、失败兜底 |
-| `brain/persona_store.py` | 人设：白名单字段、关系档、身份底线 |
-| `brain/memory_store_v2.py` | 长期记忆，bge-m3 向量检索 |
-| `brain/conversation_context.py` / `brain/history_retrieval.py` | 会话级历史压缩与检索，按人设 × 渠道 × conversation_id 隔离 |
-| `brain/agenda.py` | 约定账本：到期提醒，过期标 missed |
-| `brain/tools.py` | 工具调用：原生 function calling + 兼容标签解析 |
-| `brain/model_hub.py` | 服务商表、密钥按家存、模型清单拉取与分组 |
-| `brain/planner.py` | 多步规划：判是否需要规划、逐步执行、结果核对 |
-| `brain/chatty.py` | 话痨度（1~10），按渠道各一份 |
-| `wechat-bridge/archive/core-forward/` | 已退役的双大脑转发源码，仅供历史参考 |
-| `brain/sync_client.py` / `sync_outbox.py` | 已停用的同步残留：不会被启动，仅兼容旧数据（见[运行形态](#运行形态与数据归属)） |
-| `brain/paths.py` | 数据路径：长期记忆、聊天存档及运行状态目录 |
-| `brain/life_engine.py` | 她的生活推演与日记 |
-| `brain/moments.py` | 朋友圈 |
-| `brain/voice.py` / `imggen.py` / `selfie.py` | 语音 / 生图 / 自拍 |
-| `brain/features.py` | 功能开关，按渠道覆盖 |
-| `brain/plugin_host.py` | 插件加载面：从显式允许的核心适配器和 `data/installed_plugins/` 加载、汇总工具 schema、拼提示词；旧 `plugins/` 只作升级迁移来源 |
-| `brain/plugin_ops.py` | 插件管理面：装卸 .zip、元数据、渠道开关 |
-| `brain/kb/` | 本地知识库（RAG）底层引擎；可选 `kb` 插件负责页面/API/聊天接线，独立制品发布前仅旧版迁移用户保留此功能 |
-| `brain/skill_host/` | JS 技能的 Node 宿主 |
-| `client/` | 桌面客户端（Electron）：控制台 + 本地大脑宿主 + 推送更新 |
-| `pet/` | Windows 桌宠（PyQt6，旧版入口） |
-| `android-app/` | Android 客户端 |
-| `admin/` | Web 管理面板（单文件 html） |
-| `tests/` | 不联网的回归用例；发版前过 `docs/回归检查表.md` |
-
-## 构建 APK
-
-```bash
-python deploy/rebuild_apk.py                     # gradle 全量构建
-python deploy/rebuild_apk.py --version 29 --name 5.5   # 顺便升版本号
-```
-
-手机端 UI 唯一真源是 `android-app/app/src/main/assets/chat.html`。
-构建脚本往里注入 `APP_CODE` 和服务地址，打完还原成空占位 ——
-所以仓库里那份看到 `APP_CODE = 0` 是正常的。
-
-## 测试
-
-```bash
-pip install -r requirements-dev.txt
-python -m unittest discover -s tests -t tests
-```
-
-不联网、不读真实配置。CI 在每个 push 上跑这套用例 + 一次全仓 `compileall`。
-
-新增用例当天就靠它抓出过多个真 bug（人设静默回退、插件静默失效、
-密钥泄露、面板改了但不生效、模型页密钥错配）。
-
-## 微信接话
-
-WeChat Bridge 是独立渠道服务，发行项目源码仓库为
-[`zhixia-wechat-bridge`](https://github.com/limingyi2/zhixia-wechat-bridge)；Vigil 仓库的
-`wechat-bridge/` 是有固定来源摘要的归档兼容快照，非 Core 运行依赖。生产部署版本仍需检查桥接机部署记录。
-Bridge 的 OPEN/PASS 处理与旧 Brain Python `gate` 插件是不同交付物。旧 Brain gate 插件已退役；
-`wechat-bridge/brain-plugin/gate.py` 仅是 Bridge 兼容代码，不是 Kestrel 可选插件的打包或发布来源。
-本机微信登录态留在专用桥接运行机。凭据不应进入 Manifest、命令行、日志或聊天历史。
-Bridge 仍使用旧 HTTP/WS 接口；WeChat Bridge 的 Core 安装生命周期和新 RPC 尚未实现。P9.1 已实现 Wallpaper 独立桌面扩展的本地安装和启停，但不构成进程沙箱。
-P9 拆分方案见 [扩展通信契约](P9_extension_protocol.md) 与 [数据迁移约定](P9_data_migration.md)。
-
-## 文档
-
-全部现行文档的分类索引见 [`docs/README.md`](README.md)。常用几份：
-
-| 文档 | 解决什么问题 |
-|---|---|
-| [`04-大脑/插件系统.md`](04-大脑/插件系统.md) | 加载面与管理面怎么分、渠道开关复用什么、.zip 的形状约定 |
-| [`本地知识库.md`](archive/本地知识库.md) | 知识库和记忆为什么是两回事、嵌入三条后端怎么选、门槛为什么是 0.45 |
-| [`04-大脑/JS技能支持.md`](04-大脑/JS技能支持.md) | 两条通道为什么不能合并、Node 宿主的契约 |
-| [`04-大脑/设计与取舍.md`](04-大脑/设计与取舍.md) | 能力构成、踩过的坑、实测数据 |
-| [`03-客户端/客户端详细架构方案-v2.0.md`](03-客户端/客户端详细架构方案-v2.0.md) | 桌面客户端的架构与演进 |
-| [`02-开发指南/回归检查表.md`](02-开发指南/回归检查表.md) | 发版前必过的七节检查 |
-| [`archive/微信接入方案.md`](archive/微信接入方案.md) / [`archive/微信群聊接入.md`](archive/微信群聊接入.md) | 微信两端怎么接、坑在哪（已归档） |
-| [`04-大脑/推理架构方案.md`](04-大脑/推理架构方案.md) | 哪些能力能挪到本地、哪些必须留在云端 |
-| [`archive/时间感与主动性修复.md`](archive/时间感与主动性修复.md) | 她分不清"刚说的"和"六小时前说的"怎么修的（已归档） |
-| [`archive/语音平台成本对比.md`](archive/语音平台成本对比.md) | 各家月成本换算（已归档） |
-
-## 许可
-
-MIT，见 [LICENSE](../LICENSE)。
-
-PC Core 的完整数据保留与兼容规则见 [微信遗留清理](PC_CORE_LEGACY_WECHAT_CLEANUP.md)。
+反馈时提供版本、操作步骤、预期结果、实际结果和相关日志摘要。发送日志前移除密钥、令牌、会话原文与私人路径。软件许可见仓库根目录 [LICENSE](../LICENSE)，第三方组件以各自声明为准。

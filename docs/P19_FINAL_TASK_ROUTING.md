@@ -1,5 +1,7 @@
 # P19 final task routing and stream behavior
 
+> 历史资料：本文保留对应阶段的设计、用法或验证记录，部分模块已移除。当前桌面版请查阅 [文档索引](https://github.com/limingyi2/vigil/blob/dev/docs/README.md)，不要直接照本文部署或推断已交付功能。
+
 Task categories (`chat`, `retrieval`, `simple_execution`, `complex_execution`) select an existing entry point. They do not grant tool permissions. `cloud_direct`, `local_direct`, and `hybrid_delegate` remain model/execution-location routes in the existing route decision.
 
 ## Streaming behavior

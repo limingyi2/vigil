@@ -1,119 +1,59 @@
-<p align="center">
-  <img src="docs/assets/vigil-header.svg" alt="Vigil — Local-first Agent Workspace" width="100%">
-</p>
+# Vigil
 
-<p align="center">
-  <strong>把对话、工具执行与插件创作，放进同一个桌面工作台。</strong><br>
-  本地 Brain · 流式对话 · Agent 任务 · 能力授权
-</p>
+Vigil 是一个 Windows 桌面 Agent 工作台。Electron 提供界面，本地 Python Brain 负责模型请求、工具执行和数据存储。
 
-<p align="center">
-  <a href="https://github.com/limingyi2/vigil/releases/latest"><strong>下载 Windows 版</strong></a> ·
-  <a href="#开始使用">开始使用</a> ·
-  <a href="#架构">架构</a> ·
-  <a href="#文档导航">文档导航</a>
-</p>
+你可以用它进行带图对话、执行本机任务、检索本地资料、切换代码或写作专家，也可以安装插件和技能。模型接口需要自行配置；使用远程模型时，对话内容会发送给对应的服务商。
 
----
+[下载 Windows 安装包](https://github.com/limingyi2/vigil/releases/latest) · [使用说明](docs/USER_GUIDE.md) · [开发源码](https://github.com/limingyi2/vigil/tree/dev) · [更新日志](CHANGELOG.md)
 
-Vigil 是一个桌面 Agent 工作台：Electron 客户端 + 本机 Python Brain。你可以在这里对话、让它调用经过授权的工具、管理本地资料，也可以让 Creator 生成、修改并安装插件草稿。
+## 安装与使用
 
-**整台机器就是完整系统。** 记忆、人设、会话、插件、任务记录都在这台电脑的 `brain/data/` 里，Brain 是本机进程，只监听本机端口。没有云端大脑参与日常对话，也没有"同步上去才算存住"这回事——联网只在两处发生：调用远程模型 API，以及你主动安装插件时下载包。
+1. 在 Releases 中下载 `Kestrel.Setup.<版本>.exe` 并安装。Kestrel 是客户端的构建名称。
+2. 打开设置，填写模型服务商、接口地址、模型名和 API Key。
+3. 在工作台开始对话。需要操作文件或执行命令时，先选择本机工具的权限模式。
 
-> 历史说明：早期版本是"云端权威源 + 本地终端"，P8.1 起改为本地优先，相关同步链路、微信通道和云部署脚本都已退役。代码里仍能看到 `sync_client` / `sync_outbox` 等残留模块，它们不会被启动，详见 [架构说明](docs/ARCHITECTURE.md)。
+更新入口在客户端左下角，也可在关于页检查更新。安装包尚未签名；文件大小和 SHA-256 记录在每次发布的 `release-manifest.json` 中。
 
-## 开始使用
+![Vigil 工作台界面示意](docs/assets/workspace-preview.png)
 
-| Windows 安装版 | Windows 便携版 |
-|:---|:---|
-| [下载最新版 Kestrel Setup](https://github.com/limingyi2/vigil/releases/latest) | [在 Releases 里选便携包](https://github.com/limingyi2/vigil/releases) |
-| 使用安装向导，适合日常使用 | 解压后由启动程序处理所需组件 |
+*截图使用测试数据，界面以当前安装版为准。*
 
-安装包文件名形如 `Kestrel.Setup.<版本>.exe`（`Kestrel` 是桌面端的构建名，产品仍叫 Vigil）。版本号、SHA-256 与发布说明以 [Releases](https://github.com/limingyi2/vigil/releases) 里对应那一条为准。当前 Windows 包尚未代码签名，首次运行可能触发 SmartScreen 提示。
+## 功能
 
-1. 下载并启动客户端。
-2. 在「设置 → 模型与服务商」填写接口地址、模型名和自己的 API Key。
-3. 在工作台开始对话。需要本机操作时，工具会先申请授权，你在卡片上确认后才会执行。
-4. 需要装扩展时，把插件或技能仓库链接发给它，或从插件市场里选。
+| 功能 | 说明 |
+| --- | --- |
+| 对话与任务 | 流式回复、图片输入、工具执行记录、取消和任务状态查询 |
+| 专家模式 | 代码与写作专家，可在人格与语气页面启用或卸下，保留原有对话历史 |
+| 本机工具 | 文件、目录、命令等操作，受客户端权限设置与执行范围约束 |
+| 知识库与记忆 | 知识库引擎与混合检索、记忆管理和只读星图；知识库管理页需要已安装的 kb 插件 |
+| 视频工作台 | 本地视频播放、视频检索与问答；分析功能需要另行配置 EgoAgent 服务 |
+| 插件与技能 | 插件市场、按清单链接安装、Python 插件、JavaScript 技能和指令型 Skill |
+| 外部应用 | 注册和验证 MCP 或 CLI 接入；账户登录和第三方授权仍需分别完成 |
+| Creator | 生成和修改插件草稿，查看作业、快照与安装结果 |
 
-## 能做什么
+桌宠及关联的 Agent Center 改版仍在 `zk` 分支，不包含在公开安装包中。
 
-| 模块 | 已有能力 |
-|---|---|
-| **流式工作台** | 正文逐字输出；提供者允许时展示思考内容（默认折叠）；工具调用有阶段与进度；失败原因留在会话里可复查 |
-| **Agent 任务** | 多轮模型 / 工具循环，记录每一步的调用与结果；支持预算停止、取消、同一 run 内工具去重 |
-| **能力与授权** | 统一注册表（`capability_registry`）管住插件、知识库、本地工具等入口；读操作直接给，写操作和外部副作用先出审批卡，一次性令牌只生效一次 |
-| **扩展** | 目录型插件市场、按链接安装插件与技能、Python 插件与 JS 技能两套宿主、插件权限声明与装后核验 |
-| **Creator** | 插件创作与修改、真实流式作业、快照、取消与草稿管理；草稿不等于已安装 |
-| **模型接入** | OpenAI 兼容接口，按服务商 / 端点 / 模型适配参数与结果形态；密钥登记在服务商名下，可多套切换 |
-| **本地资料** | 记忆与约定、知识库导入与混合检索、分人设配置 |
+## 运行方式
 
-### 工作台预览
+安装版由 Electron 启动随包 Brain，使用动态本机端口。配置、会话、记忆、任务与已安装插件保存在客户端用户目录下，独立于程序安装目录。实际位置可以在本地内核状态中查看。
 
-![Vigil 工作台界面示意，使用测试数据](docs/assets/workspace-preview.png)
-
-*界面示意使用测试数据，实际界面随版本更新。*
-
-## 架构
-
-```mermaid
-flowchart LR
-    UI[Electron 工作台<br/>client/] <--> Brain[本机 Brain<br/>brain/ · 127.0.0.1:动态端口]
-    Brain <--> Model[模型 API / 本机模型]
-    Brain <--> Caps[能力注册表<br/>授权与审批]
-    Caps <--> Tools[本地工具 · 插件 · 技能]
-    Brain <--> Store[(brain/data<br/>记忆 · 会话 · 任务 · 插件)]
-    Phone[手机 / 远程设备<br/>受限设备角色] -.-> Brain
-```
-
-模型提出下一步，执行器检查预算、状态与工具参数，再经能力注册表派发；结果回到模型进入下一轮。模型永远不会直接拿到工具句柄，也填不了调用方身份——这两件事都由进程内状态决定。
-
-进程与端口、模块分工、事件协议、权限模型、发布流程见 **[架构说明](docs/ARCHITECTURE.md)**；日常运行、日志、备份与密钥轮换见 **[运维手册](docs/OPERATIONS.md)**。
-
-## 开发进度
-
-默认分支 `dev`，当前版本 `1.1.9-p21.7`（版本号在 [`client/version.json`](client/version.json)，`code` 用于客户端判断更新）。
-
-| 阶段 | 状态 | 交付 |
-|---|---|---|
-| P0 · 执行契约 | 已冻结 | 路由、模型能力策略、执行状态、事件与旧接口兼容规则 |
-| P1 · 模型与 Creator 流式 | 已实现 | 动态输出参数、结果归一化、Creator 流式作业与会话展示恢复 |
-| P2 · Agent 执行循环 | 已实现 | 多轮模型 / 工具循环、持久运行记录、预算、取消与防重放 |
-| P8.1 · 本地优先 | 已实现 | 撤掉云端权威源：同步链路、微信通道、云部署脚本退出运行路径 |
-| P19–P21 · 路由与插件分发 | 已实现 | 任务路由契约、插件包隔离、可选插件独立分发 |
-| P22 · 按链接安装 | 已实现 | 链接解析 + 分层放行：可信来源直装，其他来源先出审批卡 |
-| P23 · 管理上报默认关闭 | 已实现 | 心跳开关改为 fail-closed，去掉 `sync` 配置兜底 |
-| 任务检查点与显式继续 | 独立工作线暂停 | 已有设计契约，尚未交付完整 Resume / Recovery |
-
-**当前边界：**
-
-- 预算耗尽不会自动追加预算或续跑；进程重启后，在途任务标记为中断，不自动重放工具。
-- 取消会阻止后续派发，但已经开始的外部操作（比如已在执行的命令）可能仍会完成。
-- 工具去重只保证同一 run 内相同调用身份与规范化参数不重复派发，不等于外部系统的事务保证。
-- 插件安装只校验清单、域名白名单与哈希，**不审计插件代码行为**——装第三方插件等于信任其作者。
-
-各阶段的一次性交付记录已从仓库移除，追溯用 `git log -- docs/`。
+源码版默认将运行数据放在 `brain/` 下，也可用 `VIGIL_HOME` 指定独立目录。模型 API、插件下载、已配置的外部应用和可选连接功能可能访问网络；数据保存在本地不代表运行过程完全离线。
 
 ## 从源码运行
 
-环境：Windows 10/11、Python 3.12、Node.js 20+。
+开发代码在 `dev` 分支。需要 Python 3.12 和 Node.js 22；Windows 安装包使用 GitHub Windows runner 构建。
 
 ```powershell
-git clone https://github.com/limingyi2/vigil.git
+git clone --branch dev https://github.com/limingyi2/vigil.git
 cd vigil
-
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r brain/requirements.txt
 Copy-Item brain/config/config.example.json brain/config/config.json
-```
-
-填好 `brain/config/config.json` 里的模型配置后启动 Brain：
-
-```powershell
+# 编辑本地模型配置后，在独立终端运行 Brain
 .\.venv\Scripts\python.exe brain/server.py
 ```
 
-另开终端启动界面：
+另开终端启动客户端：
 
 ```powershell
 cd client
@@ -121,32 +61,20 @@ npm ci
 npm start
 ```
 
-测试与发布包构建：
+源码调试与 Brain 连接方式见 [客户端开发说明](client/README.md)。测试和提交要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests -q
-.\scripts\build_client.bat          # Brain + 客户端安装包，要求工作区干净
-```
+## 文档
 
-## 文档导航
+- [使用说明](docs/USER_GUIDE.md)：模型、工具权限、专家、资料与扩展。
+- [架构说明](docs/ARCHITECTURE.md)：进程、模块、数据和执行流程。
+- [运维手册](docs/OPERATIONS.md)：数据目录、备份、更新与故障排查。
+- [发布流程](docs/03-客户端/客户端打包与推送更新流程.md)：版本、安装包、验收与更新清单。
+- [文档索引](docs/README.md)：接口契约、专题说明与历史资料。
 
-| 想了解什么 | 入口 |
-|---|---|
-| 全部现行文档的分类索引 | [文档索引](docs/README.md) |
-| 系统怎么组成、数据放哪、权限怎么判 | [架构说明](docs/ARCHITECTURE.md) |
-| 日常启动、日志、备份、密钥轮换、下线检查 | [运维手册](docs/OPERATIONS.md) |
-| 使用、配置、插件结构、构建细节 | [使用与架构手册](docs/USER_GUIDE.md) |
-| 统一执行协议与阶段范围 | [执行契约](docs/VIGIL_AGENT_EXECUTION_STAGE1_CONTRACT.md) |
-| Creator 的作业、草稿与流式协议 | [Creator 契约](docs/VIGIL_CREATOR_STAGE1_CONTRACT.md) |
-| 任务恢复的设计与验收约定 | [任务恢复契约](docs/VIGIL_TASK_RECOVERY_STAGE1.md) |
-| 扩展清单、权限与兼容规则 | [扩展通信契约](docs/P9_extension_protocol.md) |
-| 插件市场怎么用 | [插件市场指南](docs/04-插件市场使用指南.md) |
-| 评测方法与对照数据 | [评测文档](docs/evaluation) |
+## 使用范围
 
-## 配置与隐私
+取消任务会停止后续工具派发，已经开始的外部操作可能继续运行。进程重启不会自动重放中断的工具操作。
 
-仓库只提交示例配置与测试数据。真实的模型密钥、`brain_token`、人设、聊天记录、日志和私钥都留在本机受保护的位置，`brain/config/config.json` 已被 `.gitignore` 排除。
+插件安装会验证清单、来源与文件哈希，但不替代对插件行为的审查。专家模式只调整提示词和可用工具范围，不会增加文件或账户权限。涉及外部账户的功能需要在对应应用中完成登录。
 
-如果你曾经把密钥写进过会被同步或提交的位置，**请直接轮换**，不要指望删除文件就安全了。轮换步骤见 [运维手册 · 密钥与凭据](docs/OPERATIONS.md#密钥与凭据)。
-
-本仓库曾为清理历史中的密钥重写 Git 历史，**旧克隆不要直接推送或合并回远程，请重新克隆**。维护说明见 [PRIVACY_MAINTENANCE.md](PRIVACY_MAINTENANCE.md)，轮换清单见 [TOKEN_ROTATION_CHECKLIST.md](TOKEN_ROTATION_CHECKLIST.md)。
+仓库提供示例配置。实际 API Key、Brain 令牌、用户资料和日志不应提交到 Git。凭据处理与历史克隆注意事项见 [维护说明](PRIVACY_MAINTENANCE.md) 和 [轮换清单](TOKEN_ROTATION_CHECKLIST.md)。

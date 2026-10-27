@@ -1,5 +1,7 @@
 # Vigil UI V2 0.1.8 打包与安装记录
 
+> 历史资料：本文保留对应阶段的设计、用法或验证记录，部分模块已移除。当前桌面版请查阅 [文档索引](https://github.com/limingyi2/vigil/blob/dev/docs/README.md)，不要直接照本文部署或推断已交付功能。
+
 日期：2026-10-11。开发分支：`ui/v2-chat-redesign`，最终发布至 `master`。应用源码基线：`f8f3a821618953cdec5bf1bf8533f316c0a446de`。
 
 ## 发布范围

@@ -9,8 +9,8 @@
 
 ## 实际 Electron 截图
 
-- [普通模式欢迎页（浅色主题）](evidence/welcome-light.png)
-- [已有聊天历史（浅色主题）](evidence/history-light.png)
+- 普通模式欢迎页（浅色主题）：`evidence/welcome-light.png`（历史截图，当前仓库未保存）
+- 已有聊天历史（浅色主题）：`evidence/history-light.png`（历史截图，当前仓库未保存）
 
 截图由 `client/tools/test-chat-v2-electron.js` 启动实际 Electron 窗口后生成，窗口尺寸为 2100×1350。壁纸回归场景在该测试环境中使用纯色 Wallpaper fixture，因此不把该场景截图作为实际动态壁纸观感证据。
 
