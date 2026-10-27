@@ -218,8 +218,9 @@ def main() -> int:
                     ("api_base", "api_key", "model", "provider", "persona_file") if key in cfg})
     brain = IsolatedBrain(mem=None, api_config=cfg, mode="api")
     session_src = "eval_" + re.sub(r"[^A-Za-z0-9_-]", "_", task["id"] + "_" + spec["run_id"][:8])
-    import planner
-    eligible, reason = planner.plan_decision(task["request"])
+    import task_intent
+    decision = task_intent.classify(task["request"])
+    eligible, reason = planner.entry_decision(decision)
     planner_enabled = planner.enabled()
     trace = {"route": "direct", "planner_decision": False, "plan": "not_entered",
              "plan_count": 0, "plan_steps": [], "plan_effective": False, "fallback": False,

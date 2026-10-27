@@ -250,7 +250,7 @@ def main():
     body = _a.dump(fn)
     chk("TOOL_TAG_ANY_RE" in body,
         "规划分支里有清扫（不然 [tool:x] 会直接发给用户）")
-    # 规划失败（should_plan 假阳性、plan 返回空、执行抛异常）必须落到一条
+    # 规划失败（入口判据假阳性、plan 返回空、执行抛异常）必须落到一条
     # 能答的路径上。原先断言的是 tools.run_chat_with_tools（外层标签 ReAct），
     # 现在那条路已经并进 brain.draft_native，这里判的是 _once 直答。
     #

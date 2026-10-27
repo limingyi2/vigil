@@ -48,6 +48,9 @@ PLUGIN_INSTALL_DIR = os.path.join(DATA_DIR, "installed_plugins")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 WORLD_PATH = os.path.join(CONFIG_DIR, "world.json")
 PERSONA_DIR = os.path.join(CONFIG_DIR, "personas")
+# 专家目录包：expert.json（元数据）+ SKILL.md（专家提示词正文）。
+# 与 personas/ 同级同性质 —— 你手动放的配置，随 config 搬家。
+EXPERTS_DIR = os.path.join(CONFIG_DIR, "experts")
 
 # --- data/：程序自己写的 ---
 MEMORY_DIR = os.path.join(DATA_DIR, "memory")
@@ -158,7 +161,7 @@ CATCHUP_LOCK = os.path.join(RUN_DIR, "catchup.lock")  # 生活补算的跨进程
 WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
 
 # 会自动建出来的目录
-_DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR,
+_DIRS = (CONFIG_DIR, DATA_DIR, LOGS_DIR, ARCHIVE_DIR, PERSONA_DIR, EXPERTS_DIR,
          MEMORY_DIR, LIFE_DIR, UPLOAD_DIR,
          RUN_DIR, CORE_FEATURES_DIR, PLUGIN_DATA_DIR, KB_DIR,
          CONTEXT_COMPACTION_DIR, DB_DIR)

@@ -664,34 +664,61 @@ def cosine_sim(a, b):
     return float(a @ b)
 
 
+_main_store_migrated = False
+
+
+def _migrate_pc_store_to_main(d):
+    """一次性迁移：pc 分区改名主仓库（memory.json）。
+
+    P9 收敛后全库只有 memory.json 一份（见 default_store_path）。老装机上
+    pc 渠道的记忆落在 pc.memory.json，主仓库文件不存在时把它改名为
+    memory.json，避免迁移后星图/记忆页突然变空。其余旧分区不动 —— 删除
+    是数据操作，不放在读取路径里。
+    """
+    global _main_store_migrated
+    if _main_store_migrated:
+        return
+    _main_store_migrated = True
+    main = os.path.join(d, "memory.json")
+    legacy = os.path.join(d, "pc.memory.json")
+    try:
+        if not os.path.exists(main) and os.path.exists(legacy):
+            os.replace(legacy, main)
+    except OSError:
+        pass
+
+
 def configured_mem_dir():
     """记忆目录：读 config.json 的 memory_dir，没有则用脚本同级的 memory_v2"""
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             p = json.load(f).get("memory_dir")
         if p:
+            _migrate_pc_store_to_main(p)
             return p
     except Exception:
         pass
+    _migrate_pc_store_to_main(FALLBACK_MEM_DIR)
     return FALLBACK_MEM_DIR
 
 
 def default_store_path(persona_key=None, src="app"):
-    """Return the configured memory file path for a persona/channel partition."""
-    d = configured_mem_dir()
-    if persona_key is None:
-        return os.path.join(d, "memory.json")
-    import paths
-    return paths.scoped(os.path.join(d, "memory.json"), persona_key, src)
+    """主仓库路径（唯一记忆库，文件名固定 memory.json）。
+
+    P9 收敛：Core 只支持 pc 渠道、人设唯一，persona/src 分区名存实亡 ——
+    2026-10-26 实测同一台机器因打包版与源码版 persona key 解析不同
+    （pc vs pc_assistant.pc），记忆被写进了两个文件。参数保留只为兼容
+    旧签名，不再参与路径计算。
+    """
+    return os.path.join(configured_mem_dir(), "memory.json")
 
 
 def get_default_store(persona_key=None, src="app"):
-    """按 config.json 打开默认记忆库。
+    """打开主仓库（全库唯一记忆库）。
 
-    persona_key / src 决定用哪一份数据：换人设 = 换一个人，她不该带着上一段
-    的记忆上岗（那正是"换了人设但感知不明显"的根源 —— 人设文本换了，
-    可她还记得你说过的所有事，说话方式自然还是老的）。
-    两者都为空时沿用老路径，老数据不用搬。
+    persona_key / src 参数仅为兼容旧签名保留。换人设不再换记忆库 ——
+    聊天历史仍按人设隔离（见 brain._mem_for 与 paths.scoped 的其它调用），
+    长期记忆统一进主仓库。
     """
     return _cached_store(default_store_path(persona_key, src))
 
@@ -1209,10 +1236,10 @@ class MemoryStore:
         }
 
     # ========================================================================
-    # 同步账本（M2 云端权威源）：seq 单调递增 + 墓碑 + 幂等 upsert
+    # 同步账本（历史接口，P8.1 起本地是唯一权威源）
     # ========================================================================
-    # 本地侧（sidecar）启动时问云端"seq > 我见过的最大值"拿增量；反过来
-    # 本地新写的记忆按 id 推上云（重推无副作用）。删除走墓碑，不丢。
+    # 同步推送线程 / 拉取循环已随 P8.1 撤销：sync_outbox 不存在，record()
+    # 无调用方。下面这段账本代码只为兼容旧数据与 /api/sync/* 历史接口保留。
 
     def _next_seq(self):
         """下一个账本号。必须在 self._lock 里调。"""

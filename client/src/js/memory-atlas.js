@@ -5,7 +5,7 @@
   const rendererModuleUrl = new URL('../memory-atlas/tide-renderer.js', document.currentScript.src);
   const palette = ['#dce9df', '#accdd8', '#f1cc91', '#b2d6c9', '#ccc0e0', '#ddb9a2', '#aec7dc'];
   function storeLabel(name) {
-    if (name === 'memory') return '主记忆库 · 未分区';
+    if (name === 'memory') return '主仓库';
     const stem = String(name).replace(/\.memory$/, '');
     const channels = [['wechat_group', '微信群'], ['wechat', '微信'], ['app', '旧 App'], ['pc', 'PC']];
     for (const [key, label] of channels) {
@@ -215,7 +215,7 @@
         option.textContent = storeLabel(name);
         storeSelect.append(option);
       }
-      storeSelect.title = '按人设与来源渠道隔离的记忆分区；切换这里只查看对应分区，不会搬动或删除数据。';
+      storeSelect.title = '记忆主仓库（唯一记忆库）；历史分区仅在残留数据时列出，不会搬动或删除数据。';
       currentStore = choices.includes('memory') ? 'memory' : choices[0];
       storeSelect.value = currentStore;
     }

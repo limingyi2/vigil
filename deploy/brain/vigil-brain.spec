@@ -88,7 +88,11 @@ a = Analysis(
     [os.path.join(BLOCK, "server_launch.py")],
     pathex=[BLOCK],
     binaries=[],
-    datas=core_feature_data + skill_host_data + [(os.path.join(BLOCK, 'build-info.json'), '.')],
+    datas=core_feature_data + skill_host_data + [
+        (os.path.join(BLOCK, 'build-info.json'), '.'),
+        (os.path.join(BLOCK, 'config', 'experts', 'code-expert'), 'config/experts/code-expert'),
+        (os.path.join(BLOCK, 'config', 'experts', 'writing-expert'), 'config/experts/writing-expert'),
+    ],
     hiddenimports=[
         "websocket",  # Optional Hub Bridge imports websocket-client lazily.
         "kb", "kb.config", "kb.chunker", "kb.engine",

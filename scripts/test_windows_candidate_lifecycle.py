@@ -164,7 +164,7 @@ def run_historical_upgrade(installer, expected_commit, expected_version, root):
     return report
 
 
-def main(installer, expected_commit, output, expected_version=None):
+def main(installer, expected_commit, output, expected_version=None, official=False):
     assert os.name == 'nt', 'This acceptance check must run on an isolated Windows runner'
     installer = Path(installer).resolve()
     output = Path(output).resolve()
@@ -173,7 +173,7 @@ def main(installer, expected_commit, output, expected_version=None):
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     if expected_version is None:
         expected_version = manifest['ver']
-    assert manifest['candidate'] is True and manifest['ver'] == expected_version
+    assert manifest['candidate'] is (not official) and manifest['ver'] == expected_version
     assert manifest['source_commit'] == expected_commit, 'Candidate source commit mismatch'
     assert manifest['setup_file'] == installer.name
     installer_hash = sha256(installer)
@@ -398,11 +398,12 @@ if __name__ == '__main__':
     parser.add_argument('--expected-source-commit', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--expected-version')
+    parser.add_argument('--official', action='store_true', help='Require a non-candidate official build')
     args = parser.parse_args()
     if Path(args.output).resolve().exists():
         parser.error('Refusing to overwrite an existing lifecycle report')
     try:
-        main(args.installer, args.expected_source_commit, args.output, args.expected_version)
+        main(args.installer, args.expected_source_commit, args.output, args.expected_version, args.official)
     except Exception as error:
         output = Path(args.output).resolve()
         if output.exists():
