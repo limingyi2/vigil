@@ -37,6 +37,16 @@ jobs:
         run: npm ci --prefix client
       - name: Build official installer
         run: python scripts/build_release.py
+      - name: Preserve immutable official build
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-windows-installer-${{ github.ref_name }}
+          path: |
+            client/dist-release/Kestrel.Setup.*.exe
+            client/dist-release/Kestrel.Setup.*.exe.blockmap
+            client/dist-release/release-manifest.json
+            client/dist-release/Kestrel.Setup.*.contents.json
+          if-no-files-found: error
       - name: Verify and smoke-test the exact official installer
         shell: pwsh
         run: |

@@ -52,8 +52,8 @@ def main(args):
     candidate_contents_path = candidate.with_suffix('.contents.json')
     manifest = json.loads(candidate_manifest_path.read_text(encoding='utf-8'))
     contents = json.loads(candidate_contents_path.read_text(encoding='utf-8'))
-    if manifest.get('candidate') is not True:
-        raise RuntimeError('Current installer must be an unpublished candidate')
+    if manifest.get('candidate') is not (not args.official):
+        raise RuntimeError('Current installer build kind differs from the requested acceptance mode')
     if manifest.get('ver') != args.expected_new_version:
         raise RuntimeError('Candidate release-manifest version differs from the expected version')
     if manifest.get('source_commit') != args.expected_new_source_commit:
@@ -207,6 +207,7 @@ if __name__ == '__main__':
     parser.add_argument('--expected-new-version', required=True)
     parser.add_argument('--authenticode-status', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--official', action='store_true', help='Require a non-candidate official build')
     parsed = parser.parse_args()
     if parsed.expected_old_source_commit != 'd0a7e90409614961fda3a4a33523e42d4d4b92dc':
         parser.error('Unexpected historical release source commit')
