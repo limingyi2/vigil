@@ -5183,8 +5183,7 @@
     { id: 'kbgroup', name: '知识库', num: '02', icon: 'lib', items: [
       { k: 'kb', num: '021', name: '知识库', path: '/kb', icon: 'lib', render: renderKb },
       { k: 'memory', num: '022', name: '记忆与约定', path: '/memory', icon: 'brain', render: renderMemory },
-      { k: 'marvis', num: '023', name: 'Marvis 分类方案', path: '/marvis', icon: 'lib', render: global.VigilRenderMarvis },
-      { k: 'persona', num: '024', name: '人格与语气', path: '/persona', icon: 'user', render: renderPersona },
+      { k: 'persona', num: '023', name: '人格与语气', path: '/persona', icon: 'user', render: renderPersona },
     ] },
     { id: 'ability', name: '能力与扩展', num: '03', icon: 'puzzle', items: [
       { k: 'ability', num: '031', name: '能力与技能', path: '/abilities', icon: 'puzzle', render: renderAbility },
