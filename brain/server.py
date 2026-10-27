@@ -3472,6 +3472,8 @@ def start_remote_api(brain):
                                         route_entry=_task_entry)
                                     if _native_content is not None:
                                         _stream_kwargs['native_content'] = _native_content
+                                    if _img_path:
+                                        _stream_kwargs['image_path'] = _img_path
                                     yield from _LOCAL['brain'].stream_chat_with_tools(
                                         _in_text, **_stream_kwargs)
                             else:

@@ -2285,7 +2285,7 @@ class Brain:
 
     def stream_chat_with_tools(self, user_text, src=None, conversation_id=None,
                                native_content=None, request_id=None,
-                               route_entry=None):
+                               route_entry=None, image_path=None):
         """彻底版流式工具循环：全量 FC 循环全程在流上（P24"循环即流"）。
 
         背景：此前带工具的聊天走阻塞式 chat()——工具循环期间客户端收不到

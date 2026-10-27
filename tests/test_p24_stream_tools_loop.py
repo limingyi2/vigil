@@ -12,6 +12,7 @@
 4. 成功收尾才 _commit_turn，done 带聚合后的 token_rate。
 """
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'brain'))
@@ -74,6 +75,7 @@ class _FakeSelf:
 
     def _commit_turn(self, user_text, ans, **kw):
         self.committed.append((user_text, ans))
+        self.committed_image = kw.get('img')
 
 
 def _script_events(provider, payload, timeout=0):
@@ -98,7 +100,8 @@ def _script_events(provider, payload, timeout=0):
             'tool_calls': [], 'usage': {'prompt_tokens': 20, 'completion_tokens': 8}}}
 
 
-def test_stream_tools_loop_event_sequence(monkeypatch):
+@pytest.mark.parametrize('image_path', [None, '/isolated/upload.png'])
+def test_stream_tools_loop_event_sequence(monkeypatch, image_path):
     # ---- 模块级打桩（生成器内部是函数内 import，认的是模块属性）----
     _script_events.rounds = 0
     monkeypatch.setattr(features, 'on', lambda *a, **k: True)
@@ -140,7 +143,7 @@ def test_stream_tools_loop_event_sequence(monkeypatch):
 
     fake = _FakeSelf()
     events = list(brain_mod.Brain.stream_chat_with_tools(
-        fake, '北京今天天气怎么样？', src='pc'))
+        fake, '北京今天天气怎么样？', src='pc', image_path=image_path))
 
     # ---- 断言 1：事件序列 ----
     seq = [e['type'] for e in events]
@@ -168,6 +171,7 @@ def test_stream_tools_loop_event_sequence(monkeypatch):
 
     # ---- 断言 4：成功收尾才落账 ----
     assert fake.committed and fake.committed[0][1] == done['text']
+    assert fake.committed_image == image_path
     assert fake.last_tools_used == ['search']
     assert fake.last_usage == {'in': 30, 'out': 13}
 
@@ -176,5 +180,5 @@ if __name__ == '__main__':
     class _MP:
         def setattr(self, obj, name, value):
             setattr(obj, name, value)
-    test_stream_tools_loop_event_sequence(_MP())
+    test_stream_tools_loop_event_sequence(_MP(), None)
     print('SMOKE OK: stream_chat_with_tools 事件序列/回灌/落账全部通过')
