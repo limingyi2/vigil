@@ -99,7 +99,7 @@ def authenticode_presence(path):
     return 'SignedPresent' if certificate_file_offset and certificate_size else 'NotSigned'
 
 
-def run_historical_upgrade(installer, expected_commit, expected_version, root):
+def run_historical_upgrade(installer, expected_commit, expected_version, root, official=False):
     """Use the published P21.2 setup executable, never a synthesized old layout."""
     old_version = '1.1.9-p21.2.20261025.1'
     old_source = 'd0a7e90409614961fda3a4a33523e42d4d4b92dc'
@@ -122,7 +122,7 @@ def run_historical_upgrade(installer, expected_commit, expected_version, root):
         raise RuntimeError('Published P21.2 release manifest identity mismatch')
     auth_status = authenticode_presence(historical_installer)
     output = root / 'historical-upgrade.json'
-    result = subprocess.run([
+    command = [
         sys.executable, str(Path(__file__).with_name('test_windows_historical_upgrade.py')),
         str(historical_installer), str(installer),
         '--expected-old-source-commit', old_source,
@@ -132,7 +132,10 @@ def run_historical_upgrade(installer, expected_commit, expected_version, root):
         '--expected-new-version', expected_version,
         '--authenticode-status', auth_status,
         '--output', str(output),
-    ], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800)
+    ]
+    if official:
+        command.append('--official')
+    result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800)
     if result.returncode:
         detail = failure_detail(result)
         if is_known_unsigned_p212_startup_block(auth_status, detail):
@@ -320,7 +323,7 @@ def main(installer, expected_commit, output, expected_version=None, official=Fal
     assert user_data_after == user_data_before, 'Uninstall changed or removed files in the default user-data directory'
     assert sha256(outside) == outside_hash, 'Uninstall crossed the application/profile boundary'
 
-    historical_upgrade = run_historical_upgrade(installer, expected_commit, expected_version, root)
+    historical_upgrade = run_historical_upgrade(installer, expected_commit, expected_version, root, official=official)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     logs_dir = output.parent / (output.stem + '-logs')
