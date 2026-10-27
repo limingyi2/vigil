@@ -52,10 +52,18 @@ def _preflight():
         raise RuntimeError("first batch must contain exactly eight distinct tasks")
     sys.path.insert(0, str(REPO / "brain"))
     import planner as planner_module
-    eligibility = {tid: bool(planner_module.plan_decision(tasks[tid]["request"])[0])
-                   for tid in TASK_IDS}
-    if sum(eligibility.values()) != 5:
-        raise RuntimeError("Planner eligibility changed from five tasks; no API call started")
+    import task_intent
+    # 2026-10-27 起入口只有两档：判据 = task_intent 分类折算
+    # （planner.entry_decision），原关键词启发式（旧判据下 5/8 命中）已删除。
+    eligibility = {}
+    for tid in TASK_IDS:
+        decision = task_intent.classify(tasks[tid]["request"])
+        eligibility[tid] = bool(planner_module.entry_decision(decision)[0])
+    if sum(eligibility.values()) < 1:
+        raise RuntimeError(
+            "entry rule changed on 2026-10-27 (two entries: simple/complex); "
+            "no task in this batch enters the planner branch, so the "
+            "B_current arm is empty — refresh the dataset or retire this script")
     return api, planner, tasks, eligibility
 
 

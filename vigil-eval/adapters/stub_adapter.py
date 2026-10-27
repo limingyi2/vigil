@@ -9,12 +9,17 @@ from pathlib import Path
 
 
 def _planner_would_run(text: str) -> bool:
-    """Use Planner's pure local heuristic without loading runtime config or APIs."""
+    """Use the shared two-way entry decision without loading runtime config or APIs.
+
+    2026-10-27 起，入口判据由 task_intent 分类折算（planner.entry_decision），
+    原关键词启发式已删除。
+    """
     brain_dir = str(Path(__file__).resolve().parents[2] / "brain")
     if brain_dir not in sys.path:
         sys.path.insert(0, brain_dir)
     import planner
-    return planner.plan_decision(text)[0]
+    import task_intent
+    return planner.entry_decision(task_intent.classify(text))[0]
 
 
 def _safe_path(root: Path, rel: str) -> Path:

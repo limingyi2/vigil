@@ -1,95 +1,61 @@
 # -*- coding: utf-8 -*-
-"""Plan-and-Execute 单元测试：验证 should_plan / _extract_json / build_final_prompt。
+"""Plan-and-Execute 单元测试：验证 entry_decision / _extract_json / build_final_prompt。
 
 不实际调 API（plan() 需要网络和 key，在真实环境测）。
+
+入口判据（2026-10-27 起）只有 `planner.entry_decision(task_decision)` 一处：
+要不要规划由 task_intent 的分类折算，不再有关键词启发式。
 """
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import planner
+import task_intent
 
 
-def test_should_plan_short():
-    print("== 测试1：短句不规划 ==")
-    assert planner.should_plan("在吗") == False
-    assert planner.should_plan("嗯") == False
-    assert planner.should_plan("哈哈") == False
-    assert planner.should_plan("晚安") == False
-    print("  ✅ 短句全部不规划")
+def test_entry_decision_two_entries():
+    print("== 测试0：入口只有两个（简单/复杂） ==")
+    # 复杂任务：task_intent 判 complex_execution 且无 fallback → 规划
+    yes, why = planner.entry_decision(
+        {"task_category": "complex_execution", "reason": "多个独立操作需要分步执行"})
+    assert yes is True, why
+    assert "多个独立操作" in why
+    # 简单任务：其余一切分类都直接 ReAct
+    for cat in ("chat", "retrieval", "capability", "simple_execution"):
+        yes, _ = planner.entry_decision({"task_category": cat,
+                                         "reason": "测试:%s" % cat})
+        assert yes is False, "分类 %s 不该进规划" % cat
+    # 带 fallback 的复杂任务也不规划（fail-closed 姿态保持不变）
+    yes, why = planner.entry_decision(
+        {"task_category": "complex_execution", "reason": "x",
+         "fallback_reason": "unsupported_complex_task"})
+    assert yes is False
+    assert "fallback:unsupported_complex_task" in why
+    # 空决策不炸
+    assert planner.entry_decision(None)[0] is False
+    assert planner.entry_decision({})[0] is False
+    print("  ✅ 复杂任务进规划，其余分类全部直答")
 
 
-def test_should_plan_keywords():
-    print("\n== 测试2：关键词触发规划 ==")
-    assert planner.should_plan("帮我写一份工作总结") == True
-    assert planner.should_plan("帮我查一下今天的天气和股票") == True
-    assert planner.should_plan("整理一下这些文件") == True
-    assert planner.should_plan("对比一下这两个方案") == True
-    print("  ✅ 关键词全部触发规划")
-
-
-def test_should_plan_long():
-    print("\n== 测试3：长句自动规划 ==")
-    # 40 字以上，没有规划词也规划。
-    #
-    # 🔴 原来这句是 31 字，靠的是单字「然后」命中规划词 —— 测的其实是词表，
-    # 不是长度规则。单字词表删掉「然后」之后它就该返回 False：一句话讲完
-    # 今天干了啥，没有任何工具要调，规划它等于白花两次模型调用。
-    # 所以换成一句真的超过 40 字的，让断言确实作用在长度这条规则上。
-    long_text = ("我今天下午去了趟超市买了不少东西回来之后自己做了顿饭，"
-                 "吃完饭又看了一会儿电视，中途还顺手把厨房收拾了一下。")
-    assert len(long_text) >= 40, "这句得真的够长，否则测的不是长度规则"
-    assert not any(k in long_text for k in planner._PLAN_KEYWORDS), \
-        "这句不该命中规划词，否则又变成在测词表"
-    assert planner.should_plan(long_text) == True
-    print("  ✅ 长句触发规划（%d 字，无规划词命中）" % len(long_text))
-
-
-def test_should_plan_short_narrative():
-    print("\n== 测试3b：中等长度的纯叙述不该规划 ==")
-    # 与测试3方向相反：长度到了也不一定规划，因为没有工具要调。
-    t = "我今天下午去超市买了很多东西然后回家做饭吃完饭后看了一会儿电视"
-    assert len(t) < 40
-    assert planner.should_plan(t) == False
-    print("  ✅ %d 字纯叙述不规划" % len(t))
-
-
-def test_no_single_char_keywords():
-    print("\n== 测试3c：词表里不许有单字 ==")
-    # 单字是这一版最容易踩的坑：跳过词的单字砍掉真实请求（「早」砍掉
-    # 「帮我查一下早上的会议」），规划词的单字把闲聊拖进规划
-    #（「三个」拖「我运行了三个小时」）。这里直接把这条钉死。
-    for label, words in (("规划词", planner._PLAN_KEYWORDS),
-                         ("跳过词", planner._SKIP_KEYWORDS)):
-        singles = [w for w in words if len(w) == 1]
-        assert not singles, "%s里有单字：%s" % (label, singles)
-    print("  ✅ 规划词 %d 个、跳过词 %d 个，全是多字词"
-          % (len(planner._PLAN_KEYWORDS), len(planner._SKIP_KEYWORDS)))
-
-
-def test_should_plan_regression():
-    print("\n== 测试3d：误触发和漏判都得为零 ==")
-    CHAT = ["在吗", "早上好呀", "今天好累", "你吃了吗", "困死了", "你在干嘛呢",
-            "想你了", "晚安啦", "谢谢你", "陪我聊会儿", "明天见",
-            # 下面三句以前被单字词拖进规划
-            "我运行了三个小时", "她再也不会来了", "所有人都在"]
-    TASK = ["帮我写一份工作总结", "帮我查一下今天的天气", "对比一下这两个方案",
-            "总结一下我们上周聊的", "如何提高睡眠质量",
-            # 下面两句以前被单字跳过词砍掉
-            "帮我总结一下啊", "帮我查一下早上的会议"]
-    for t in CHAT:
-        assert planner.should_plan(t) == False, "闲聊被误判成要规划：%s" % t
-    for t in TASK:
-        assert planner.should_plan(t) == True, "真实请求被判成闲聊：%s" % t
-    print("  ✅ 闲聊 %d 条零误触发，任务 %d 条零漏判"
-          % (len(CHAT), len(TASK)))
-
-
-def test_should_plan_skip_words():
-    print("\n== 测试4：跳过词优先 ==")
-    # 即使长度够，包含跳过词也不规划
-    assert planner.should_plan("帮我个忙，在吗") == False
-    print("  ✅ 跳过词优先")
+def test_entry_decision_matches_classify():
+    print("\n== 测试0b：entry_decision 对 classify 的真实输出成立 ==")
+    # 真实分类输出喂进判据。复杂侧用已授权工作区的编码任务（非编码的
+    # complex_execution 策略上带 unsupported_complex_task fallback，
+    # fail-closed，不进规划 —— 这是既有姿态，不是判据的问题）。
+    complex_text = "重构整个项目的所有模块，修复所有测试失败，然后更新依赖并运行构建验证"
+    decision = task_intent.classify(complex_text, workspace_authorized=True)
+    yes, why = planner.entry_decision(decision)
+    assert decision["task_category"] == "complex_execution", decision
+    assert not decision.get("fallback_reason"), decision
+    assert yes is True, why
+    for simple_text in ("在吗", "晚安啦", "帮我查一下明天的天气",
+                        "解释一下什么是哈希表"):
+        decision = task_intent.classify(simple_text)
+        yes, _ = planner.entry_decision(decision)
+        assert yes is False, "%s 不该进规划（%s）" % (
+            simple_text, decision["task_category"])
+    print("  ✅ 复杂编码任务判规划，闲聊/检索/解释全部判直答")
 
 
 def test_extract_json_plain():
@@ -267,8 +233,10 @@ def test_plan_normalises_tool_names():
     import tools
     import plugin_host
     plugin_host.load()
+    # ip_city 已从注册表摘除（TOOLS 现在只有 weather/tracking），
+    # 用在册工具验证「plan() 出来的名字调得动」。
     steps = [{"step": "查天气", "tool": "weather:北京", "arg": None},
-             {"step": "定位", "tool": "ip_city", "arg": None},
+             {"step": "查快递", "tool": "tracking:12345", "arg": None},
              {"step": "答", "tool": None, "arg": None}]
     n = 0
     for s in steps:
@@ -283,13 +251,8 @@ def test_plan_normalises_tool_names():
 
 
 if __name__ == "__main__":
-    test_should_plan_short()
-    test_should_plan_keywords()
-    test_should_plan_long()
-    test_should_plan_short_narrative()
-    test_no_single_char_keywords()
-    test_should_plan_regression()
-    test_should_plan_skip_words()
+    test_entry_decision_two_entries()
+    test_entry_decision_matches_classify()
     test_extract_json_plain()
     test_extract_json_markdown()
     test_extract_json_with_prefix()
@@ -304,5 +267,5 @@ if __name__ == "__main__":
     test_plan_normalises_tool_names()
 
     print("\n" + "=" * 50)
-    print("ALL PLAN-AND-EXECUTE TESTS PASSED (18 tests)")
+    print("ALL PLAN-AND-EXECUTE TESTS PASSED (13 tests)")
     print("=" * 50)
